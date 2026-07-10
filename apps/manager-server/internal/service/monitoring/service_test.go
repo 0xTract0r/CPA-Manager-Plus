@@ -1489,7 +1489,7 @@ func TestAccountHistoryReturnsRollupTotalsAndCost(t *testing.T) {
 	ctx := context.Background()
 	baseMS := int64(1_700_000_000_000)
 	if err := db.SaveModelPrices(ctx, map[string]store.ModelPrice{
-		"resolved-a": {
+		"claude-resolved-a": {
 			Prompt:        1,
 			Completion:    2,
 			Cache:         0.5,
@@ -1500,14 +1500,14 @@ func TestAccountHistoryReturnsRollupTotalsAndCost(t *testing.T) {
 		t.Fatalf("save model prices: %v", err)
 	}
 
-	first := monitoringEvent("history-a-1", baseMS+1_000, "alias-a", "auth-1", "source-a", false, 1_000_000, 500_000, 0, 100_000, 1_530_000, nil)
-	first.ResolvedModel = "resolved-a"
+	first := monitoringEvent("history-a-1", baseMS+1_000, "claude-resolved-a", "auth-1", "source-a", false, 1_000_000, 500_000, 0, 100_000, 1_530_000, nil)
+	first.ResolvedModel = "claude-resolved-a"
 	first.AccountSnapshot = "hist@example.com"
 	first.Source = "hist@example.com"
 	first.CacheReadTokens = 20_000
 	first.CacheCreationTokens = 10_000
-	second := monitoringEvent("history-a-2", baseMS+2_000, "alias-a", "auth-1", "source-a", true, 0, 0, 0, 0, 0, nil)
-	second.ResolvedModel = "resolved-a"
+	second := monitoringEvent("history-a-2", baseMS+2_000, "claude-resolved-a", "auth-1", "source-a", true, 0, 0, 0, 0, 0, nil)
+	second.ResolvedModel = "claude-resolved-a"
 	second.AccountSnapshot = "hist@example.com"
 	second.Source = "hist@example.com"
 	if _, err := db.InsertEvents(ctx, []usage.Event{first, second}); err != nil {
@@ -1541,11 +1541,18 @@ func TestAccountHistoryReturnsRollupTotalsAndCost(t *testing.T) {
 	if history.SuccessRate == nil || math.Abs(*history.SuccessRate-0.5) > 0.000001 {
 		t.Fatalf("success rate = %#v", history.SuccessRate)
 	}
-	// input_tokens (1_000_000) includes the 20_000 cache_read + 10_000
-	// cache_creation tokens, so those are subtracted from the full-rate prompt
-	// and priced once at their own rates. The pre-fix value 1.985 double-counted
-	// the 30_000 cache tokens at the full prompt rate (delta 0.03).
-	if math.Abs(history.TotalCost-1.955) > 0.000001 {
+	// Anthropic/Claude semantics: input_tokens (1_000_000) does NOT contain the
+	// 20_000 cache_read + 10_000 cache_creation tokens (they are additive buckets),
+	// so input is charged in full and each cache bucket is priced once on top.
+	// The store strips the fine-grained buckets out of the legacy cached mirror,
+	// so the compat cached value is 100_000 - 20_000 - 10_000 = 70_000, and the
+	// uncached prompt is input - compat cached = 1_000_000 - 70_000 = 930_000.
+	// 0.93M*1 + 0.5M*2 + 0.07M*0.5 + 0.02M*0.25 + 0.01M*1.5
+	//   = 0.93 + 1.0 + 0.035 + 0.005 + 0.015 = 1.985.
+	// The OpenAI-style subtraction (8da50f15) wrongly also stripped cache_read +
+	// cache_creation from input, under-charging 30_000 tokens by the full prompt
+	// rate (delta 0.03) and returning 1.955.
+	if math.Abs(history.TotalCost-1.985) > 0.000001 {
 		t.Fatalf("total cost = %v", history.TotalCost)
 	}
 	if history.FirstSeenMS == nil || *history.FirstSeenMS != baseMS+1_000 || history.LastSeenMS == nil || *history.LastSeenMS != baseMS+2_000 {

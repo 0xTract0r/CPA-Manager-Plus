@@ -43,11 +43,36 @@ func TestCostForModelPricesFineGrainedCacheOutsideInput(t *testing.T) {
 		"claude-cached": {Prompt: 2, Completion: 4, Cache: 1, CacheRead: 1, CacheCreation: 3},
 	}
 
-	// InputTokens as reported by the ingest pipeline includes the fine-grained
-	// cache_read/cache_creation buckets. Here 2_600_000 = 500_000 uncached +
-	// 2_000_000 cache_read + 100_000 cache_creation. Cost must charge the 500_000
-	// uncached prompt at the full rate and each cache bucket exactly once.
+	// Anthropic/Claude semantics: input_tokens does NOT contain the fine-grained
+	// cache_read/cache_creation buckets; they are additive. Input (500_000) is
+	// charged in full and each cache bucket is priced once on top of it.
 	cost := CostForModel("claude-cached", ModelTokens{
+		InputTokens:         500_000,
+		OutputTokens:        250_000,
+		CachedTokens:        0,
+		CacheReadTokens:     2_000_000,
+		CacheCreationTokens: 100_000,
+	}, prices)
+
+	// 0.5M*2 + 0.25M*4 + 2M*1 + 0.1M*3 = 1 + 1 + 2 + 0.3 = 4.3
+	if math.Abs(cost-4.3) > 0.000001 {
+		t.Fatalf("cost = %v, want 4.3", cost)
+	}
+}
+
+// TestCostForModelOpenAIFineGrainedCacheStripsInput pins the OpenAI-style
+// semantics where input_tokens is a superset that already contains the cache
+// buckets, so they must be subtracted before pricing the uncached prompt.
+func TestCostForModelOpenAIFineGrainedCacheStripsInput(t *testing.T) {
+	prices := map[string]model.ModelPrice{
+		"gpt-cached": {Prompt: 2, Completion: 4, Cache: 1, CacheRead: 1, CacheCreation: 3},
+	}
+
+	// input_tokens (2_600_000) = 500_000 uncached + 2_000_000 cache_read +
+	// 100_000 cache_creation. Cost must charge only the 500_000 uncached prompt
+	// at the full rate and each cache bucket once — identical dollar total to the
+	// Claude case above because the same uncached prompt/cache split is used.
+	cost := CostForModel("gpt-cached", ModelTokens{
 		InputTokens:         2_600_000,
 		OutputTokens:        250_000,
 		CachedTokens:        0,
@@ -61,21 +86,44 @@ func TestCostForModelPricesFineGrainedCacheOutsideInput(t *testing.T) {
 	}
 }
 
-func TestCostForModelPricesResidualCompatCachedWithFineGrainedCache(t *testing.T) {
+func TestCostForModelPricesResidualCompatCachedAnthropic(t *testing.T) {
 	prices := map[string]model.ModelPrice{
-		"mixed-cache": {Prompt: 2, Completion: 4, Cache: 1, CacheRead: 0.5, CacheCreation: 3},
+		"claude-mixed": {Prompt: 2, Completion: 4, Cache: 1, CacheRead: 0.5, CacheCreation: 3},
 	}
 
-	// InputTokens (1_400_000) includes residual compat cached (100_000),
-	// cache_read (200_000) and cache_creation (100_000); the remaining
-	// 1_000_000 is uncached prompt.
-	cost := CostForModel("mixed-cache", ModelTokens{
+	// Anthropic semantics: input_tokens (1_000_000) is entirely uncached prompt
+	// after stripping the legacy compat cached mirror (100_000). cache_read and
+	// cache_creation are additive buckets outside input, priced once each.
+	cost := CostForModel("claude-mixed", ModelTokens{
+		InputTokens:         1_000_000,
+		CachedTokens:        100_000,
+		CacheReadTokens:     200_000,
+		CacheCreationTokens: 100_000,
+	}, prices)
+
+	// prompt = input - cached = 0.9M
+	// 0.9M*2 + 0.1M*1 + 0.2M*0.5 + 0.1M*3 = 1.8 + 0.1 + 0.1 + 0.3 = 2.3
+	if math.Abs(cost-2.3) > 0.000001 {
+		t.Fatalf("cost = %v, want 2.3", cost)
+	}
+}
+
+func TestCostForModelPricesResidualCompatCachedOpenAI(t *testing.T) {
+	prices := map[string]model.ModelPrice{
+		"gpt-mixed": {Prompt: 2, Completion: 4, Cache: 1, CacheRead: 0.5, CacheCreation: 3},
+	}
+
+	// OpenAI semantics: input_tokens (1_400_000) is a superset containing residual
+	// compat cached (100_000), cache_read (200_000) and cache_creation (100_000);
+	// the remaining 1_000_000 is uncached prompt.
+	cost := CostForModel("gpt-mixed", ModelTokens{
 		InputTokens:         1_400_000,
 		CachedTokens:        100_000,
 		CacheReadTokens:     200_000,
 		CacheCreationTokens: 100_000,
 	}, prices)
 
+	// prompt = input - cached - cacheRead - cacheCreation = 1.0M
 	// 1M*2 + 0.1M*1 + 0.2M*0.5 + 0.1M*3 = 2 + 0.1 + 0.1 + 0.3 = 2.5
 	if math.Abs(cost-2.5) > 0.000001 {
 		t.Fatalf("cost = %v, want 2.5", cost)
@@ -127,6 +175,52 @@ func TestCostForModelDoesNotDoubleCountCacheRead(t *testing.T) {
 	delta := withCacheRead - noCacheRead
 	if math.Abs(delta-0.1) > 0.000001 {
 		t.Fatalf("cache_read delta = %v, want 0.1 (discounted rate only, no full-rate double charge)", delta)
+	}
+}
+
+// TestCostForModelProviderCacheSemantics locks the two provider formulas side by
+// side using the SAME raw token counts, so a regression that collapses them back
+// to one branch fails loudly. The OpenAI leg treats input as a superset (subtract
+// cache), the Anthropic leg treats the cache buckets as additive (do not subtract).
+func TestCostForModelProviderCacheSemantics(t *testing.T) {
+	// Identical per-1M rates for both providers to isolate the semantic difference.
+	rates := model.ModelPrice{Prompt: 2, Completion: 4, Cache: 1, CacheRead: 0.5, CacheCreation: 3}
+	prices := map[string]model.ModelPrice{
+		"gpt-5.5":           rates,
+		"claude-sonnet-4-5": rates,
+	}
+
+	// OpenAI (gpt-5.5): input_tokens (1_000_000) already contains cache_read
+	// (200_000) + cache_creation (100_000). Uncached prompt = 700_000.
+	// 0.7M*2 + 0.05M*4 + 0.2M*0.5 + 0.1M*3 = 1.4 + 0.2 + 0.1 + 0.3 = 2.0
+	openai := CostForModel("gpt-5.5", ModelTokens{
+		InputTokens:         1_000_000,
+		OutputTokens:        50_000,
+		CacheReadTokens:     200_000,
+		CacheCreationTokens: 100_000,
+	}, prices)
+	if math.Abs(openai-2.0) > 0.000001 {
+		t.Fatalf("openai cost = %v, want 2.0", openai)
+	}
+
+	// Anthropic (claude): input_tokens (1_000_000) is fully uncached prompt;
+	// cache_read/cache_creation are additive, priced once on top.
+	// 1M*2 + 0.05M*4 + 0.2M*0.5 + 0.1M*3 = 2 + 0.2 + 0.1 + 0.3 = 2.6
+	anthropic := CostForModel("claude-sonnet-4-5", ModelTokens{
+		InputTokens:         1_000_000,
+		OutputTokens:        50_000,
+		CacheReadTokens:     200_000,
+		CacheCreationTokens: 100_000,
+	}, prices)
+	if math.Abs(anthropic-2.6) > 0.000001 {
+		t.Fatalf("anthropic cost = %v, want 2.6", anthropic)
+	}
+
+	// The Anthropic total must exceed the OpenAI total by exactly the fine-grained
+	// cache tokens charged once at the full prompt rate (the buckets OpenAI folds
+	// into input): (200_000 + 100_000) * 2 / 1e6 = 0.6.
+	if delta := anthropic - openai; math.Abs(delta-0.6) > 0.000001 {
+		t.Fatalf("provider delta = %v, want 0.6", delta)
 	}
 }
 

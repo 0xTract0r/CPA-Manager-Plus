@@ -27,15 +27,29 @@ type ModelTokens struct {
 }
 
 // CostForModel computes the dollar cost for a single (model, tokens) pair.
-// When CPA provides fine-grained cache read/create tokens, InputTokens still
-// includes those cached portions (CPA/OpenAI-style input_tokens is a superset),
-// so the cache buckets are subtracted from input before pricing the remaining
-// uncached prompt at the full rate, and each cache dimension is then priced once
-// at its own rate. Any residual CachedTokens are charged at the legacy cache
+//
+// Fine-grained cache accounting is provider-dependent, and the ingest pipeline
+// preserves whatever the upstream reported without reconciling the two shapes:
+//
+//   - OpenAI-style (gpt-*): input_tokens is a SUPERSET that already contains the
+//     cache_read (and, when present, cache_creation) tokens. Billing must strip
+//     those cache buckets out of input before charging the remaining uncached
+//     prompt at the full rate, then price each cache dimension once at its own
+//     rate. Otherwise the cached portion is billed twice (full rate inside input
+//     plus the discounted cache rate) — the gpt-5.5 dashboard over-count.
+//   - Anthropic-style (claude-*): input_tokens does NOT contain cache_read/
+//     cache_creation; those are independent, additive buckets (see the ingest
+//     TotalTokens = input + output + reasoning + compatCached + cacheRead +
+//     cacheCreation and TestNormalizeRawReadsAnthropicCacheUsageFields, where
+//     input 100 + cacheRead 23 + cacheCreation 11 sum with output to 154). Here
+//     input must be charged in full and each cache bucket added once — never
+//     subtracted — or the cached portion is UNDER-charged by a full-rate token.
+//
+// In both cases any residual legacy CachedTokens are charged at the legacy cache
 // price; callers must pass the compatibility cached value (already stripped of
-// cache_read/cache_creation), not CPA's Claude mirror copy.
-// Older payloads without fine-grained cache buckets keep the OpenAI-style
-// cached-in-input behavior (input minus cached).
+// cache_read/cache_creation via CompatibleCachedTokens), not CPA's Claude mirror
+// copy. Payloads without fine-grained cache buckets keep the OpenAI-style
+// cached-in-input behavior (input minus cached) for both providers.
 func CostForModel(modelName string, tokens ModelTokens, prices map[string]model.ModelPrice) float64 {
 	price, ok := resolveModelPrice(modelName, prices)
 	if !ok {
@@ -55,16 +69,16 @@ func costForPrice(modelName string, tokens ModelTokens, price model.ModelPrice) 
 	cacheReadTokens := maxInt64(tokens.CacheReadTokens, 0)
 	cacheCreationTokens := maxInt64(tokens.CacheCreationTokens, 0)
 	if cacheReadTokens > 0 || cacheCreationTokens > 0 {
-		// input_tokens as reported by CPA/OpenAI-style usage still includes the
-		// fine-grained cache_read and cache_creation buckets (see the ingest
-		// pipeline: TotalTokens = input + output + reasoning + compatCached +
-		// cacheRead + cacheCreation treats these as additive, non-overlapping
-		// buckets, and CompatibleCachedTokens only strips the legacy cached
-		// mirror, never input). Charging the whole input at the full prompt rate
-		// and then charging cache_read/cache_creation again double-counted the
-		// cached portion. Subtract all cache buckets from input first so each
-		// token is billed exactly once, mirroring the gpt-5.6 segment logic.
-		promptTokens := maxInt64(inputTokens-cachedTokens-cacheReadTokens-cacheCreationTokens, 0)
+		// Whether input_tokens already contains cache_read/cache_creation depends
+		// on the provider (see CostForModel doc). For OpenAI-style models input is
+		// a superset, so subtract the cache buckets before pricing the uncached
+		// prompt at the full rate; for Anthropic-style models input excludes the
+		// cache buckets, so leave input intact and only strip the legacy compat
+		// cached mirror. In both shapes each cache dimension is then priced once.
+		promptTokens := maxInt64(inputTokens-cachedTokens, 0)
+		if inputIncludesFineGrainedCache(modelName) {
+			promptTokens = maxInt64(inputTokens-cachedTokens-cacheReadTokens-cacheCreationTokens, 0)
+		}
 		cacheReadPrice := fallbackPrice(price.CacheRead, price.Cache)
 		cacheCreationPrice := fallbackPrice(price.CacheCreation, price.Prompt)
 		return float64(promptTokens)*price.Prompt/PerMillion +
@@ -249,6 +263,23 @@ func isModelFamily(modelName string, family string) bool {
 
 func isGPT56Model(modelName string) bool {
 	return isModelFamily(modelName, "gpt-5.6")
+}
+
+// isAnthropicModel reports whether the model is served by Anthropic/Claude,
+// whose usage reports cache_read/cache_creation as buckets independent of (not
+// contained in) input_tokens. The map maps by model slug because the pricing
+// entrypoints only receive model names, not an explicit provider string.
+func isAnthropicModel(modelName string) bool {
+	slug := normalizedModelSlug(modelName)
+	return strings.HasPrefix(slug, "claude") || strings.HasPrefix(slug, "anthropic")
+}
+
+// inputIncludesFineGrainedCache reports whether a model's reported input_tokens
+// is a superset that already contains cache_read/cache_creation. This is true
+// for OpenAI-style models (the default) and false for Anthropic-style models,
+// where those cache buckets are additive and must not be subtracted from input.
+func inputIncludesFineGrainedCache(modelName string) bool {
+	return !isAnthropicModel(modelName)
 }
 
 func resolveModelPrice(modelName string, prices map[string]model.ModelPrice) (model.ModelPrice, bool) {
