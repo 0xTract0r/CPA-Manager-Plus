@@ -53,6 +53,7 @@ import { AuthFileCard } from '@/features/authFiles/components/AuthFileCard';
 import { AuthJsonPasteModal } from '@/features/authFiles/components/AuthJsonPasteModal';
 import { AuthFileModelsModal } from '@/features/authFiles/components/AuthFileModelsModal';
 import { AuthFilesPrefixProxyEditorModal } from '@/features/authFiles/components/AuthFilesPrefixProxyEditorModal';
+import { AuthFilesAccountSettingsModal } from '@/features/authFiles/components/AuthFilesAccountSettingsModal';
 import { OAuthExcludedCard } from '@/features/authFiles/components/OAuthExcludedCard';
 import { OAuthModelAliasCard } from '@/features/authFiles/components/OAuthModelAliasCard';
 import { CodexReauthDialog } from '@/features/oauth/CodexReauthDialog';
@@ -75,6 +76,7 @@ import { useAuthFilesData } from '@/features/authFiles/hooks/useAuthFilesData';
 import { useAuthFilesModels } from '@/features/authFiles/hooks/useAuthFilesModels';
 import { useAuthFilesOauth } from '@/features/authFiles/hooks/useAuthFilesOauth';
 import { useAuthFilesPrefixProxyEditor } from '@/features/authFiles/hooks/useAuthFilesPrefixProxyEditor';
+import { useAuthFilesAccountSettings } from '@/features/authFiles/hooks/useAuthFilesAccountSettings';
 import { useAuthFilesStatusBarCache } from '@/features/authFiles/hooks/useAuthFilesStatusBarCache';
 import { useAntigravitySubscriptions } from '@/features/authFiles/hooks/useAntigravitySubscriptions';
 import {
@@ -371,6 +373,31 @@ export function AuthFilesPage() {
     disableControls: connectionStatus !== 'connected',
     loadFiles,
   });
+
+  const {
+    accountSettingsEditor,
+    accountSettingsUpdatedText,
+    accountSettingsDirty,
+    openAccountSettingsEditor,
+    closeAccountSettingsEditor,
+    handleAccountSettingsChange,
+    handleAccountSettingsSave,
+  } = useAuthFilesAccountSettings({
+    disableControls: connectionStatus !== 'connected',
+    loadFiles,
+    // cpamp 当前没有独立的「key/用量统计」重载入口；account settings 保存后
+    // `loadFiles()` 已经足以刷新该 auth 文件（含 account_settings 投影），
+    // 这里传空实现只是满足 hook 的双回调契约，不引入未在本次范围内的新状态源。
+    loadKeyStats: async () => {},
+  });
+
+  // 认证文件卡片内两个审计面板（reauth / 状态检查历史）的按文件重载键。
+  // 重新认证成功、账号设置保存成功等会改历史的操作后，对该文件的 key +1，
+  // 面板下次展开时据此重新拉取，而不是长期缓存旧历史。
+  const [auditReloadKeys, setAuditReloadKeys] = useState<Record<string, number>>({});
+  const bumpAuditReloadKey = useCallback((fileName: string) => {
+    setAuditReloadKeys((prev) => ({ ...prev, [fileName]: (prev[fileName] ?? 0) + 1 }));
+  }, []);
 
   const disableControls = connectionStatus !== 'connected';
   const normalizedFilter = normalizeProviderKey(String(filter));
@@ -1286,6 +1313,9 @@ export function AuthFilesPage() {
     const target = codexReauthTarget;
     await loadFiles();
     await loadCodexInspectionSnapshots();
+    if (target?.fileName) {
+      bumpAuditReloadKey(target.fileName);
+    }
     if (!target?.fileName) return;
 
     const targetKey = getAuthFileCodexInspectionKey(target.fileName, target.authIndex ?? null);
@@ -1295,7 +1325,18 @@ export function AuthFilesPage() {
         return itemKey !== targetKey || !isStaleCodexReauthSnapshot(item);
       })
     );
-  }, [codexReauthTarget, loadCodexInspectionSnapshots, loadFiles]);
+  }, [bumpAuditReloadKey, codexReauthTarget, loadCodexInspectionSnapshots, loadFiles]);
+
+  // 账号设置保存成功后（hook 内部会把 editor 置空）也会改变身份/审计相关历史，
+  // 这里包一层：调用 hook 自带的保存逻辑，再据「保存前 fileName、保存后 editor 已关闭」
+  // 判断成功，据此 bump 该文件的审计面板重载键。
+  const handleAccountSettingsSaveWithAuditReload = useCallback(async () => {
+    const fileName = accountSettingsEditor?.fileName;
+    await handleAccountSettingsSave();
+    if (fileName) {
+      bumpAuditReloadKey(fileName);
+    }
+  }, [accountSettingsEditor, bumpAuditReloadKey, handleAccountSettingsSave]);
 
   const openExcludedEditor = useCallback(
     (provider?: string) => {
@@ -1740,6 +1781,8 @@ export function AuthFilesPage() {
                       }
                       onDownload={handleDownload}
                       onOpenPrefixProxyEditor={openPrefixProxyEditor}
+                      onOpenAccountSettings={openAccountSettingsEditor}
+                      auditReloadKey={auditReloadKeys[file.name] ?? 0}
                       onDelete={handleDelete}
                       onToggleStatus={handleStatusToggle}
                       onToggleSelect={() => toggleSelect(getAuthFileSelectionKey(file))}
@@ -1827,6 +1870,17 @@ export function AuthFilesPage() {
         onCopyText={copyTextWithNotification}
         onSave={handlePrefixProxySave}
         onChange={handlePrefixProxyChange}
+      />
+
+      <AuthFilesAccountSettingsModal
+        disableControls={disableControls}
+        editor={accountSettingsEditor}
+        updatedText={accountSettingsUpdatedText}
+        dirty={accountSettingsDirty}
+        onClose={closeAccountSettingsEditor}
+        onCopyText={copyTextWithNotification}
+        onSave={() => void handleAccountSettingsSaveWithAuditReload()}
+        onChange={handleAccountSettingsChange}
       />
 
       <AuthJsonPasteModal

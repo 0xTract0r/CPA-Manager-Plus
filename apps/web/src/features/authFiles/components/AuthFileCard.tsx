@@ -9,6 +9,7 @@ import {
   IconModelCluster,
   IconRefreshCw,
   IconSettings,
+  IconShield,
   IconTrash2,
 } from '@/components/ui/icons';
 import { ProviderStatusBar } from '@/components/providers/ProviderStatusBar';
@@ -20,7 +21,7 @@ import {
   normalizeUsageTotal,
   statusBarDataFromRecentRequests,
 } from '@/utils/recentRequests';
-import { formatFileSize, formatUnixTimestamp } from '@/utils/format';
+import { formatDateTime, formatFileSize, formatUnixTimestamp } from '@/utils/format';
 import {
   QUOTA_PROVIDER_TYPES,
   formatModified,
@@ -38,6 +39,8 @@ import type { AntigravitySubscriptionState } from '@/features/authFiles/hooks/us
 import type { AuthFileCodexStatusBadge } from '@/features/authFiles/model/authFilesPageModel';
 import type { QuotaCooldownInfo } from '@/services/api/usageService';
 import { AuthFileQuotaSection } from '@/features/authFiles/components/AuthFileQuotaSection';
+import { AuthFilesReauthHistoryPanel } from '@/features/authFiles/components/AuthFilesReauthHistoryPanel';
+import { AuthFilesStatusHistoryPanel } from '@/features/authFiles/components/AuthFilesStatusHistoryPanel';
 import styles from '@/features/authFiles/AuthFilesPage.module.scss';
 
 const HEALTHY_STATUS_MESSAGES = new Set(['ok', 'healthy', 'ready', 'success', 'available']);
@@ -61,6 +64,10 @@ export type AuthFileCardProps = {
   onReauth?: (file: AuthFileItem) => void;
   onDownload: (name: string) => void;
   onOpenPrefixProxyEditor: (file: AuthFileItem) => void;
+  /** 打开身份隔离账号设置弹窗（与「编辑原始 JSON」的 onOpenPrefixProxyEditor 并存，互不替代）。 */
+  onOpenAccountSettings: (file: AuthFileItem) => void;
+  /** 该文件的审计面板重载键；reauth / 账号设置保存成功等操作后由页面 bump，用于让已展开的面板重新拉取历史。 */
+  auditReloadKey?: number;
   onDelete: (name: string) => void;
   onToggleStatus: (file: AuthFileItem, enabled: boolean) => void;
   onToggleSelect: (name: string) => void;
@@ -99,6 +106,8 @@ export function AuthFileCard(props: AuthFileCardProps) {
     onReauth,
     onDownload,
     onOpenPrefixProxyEditor,
+    onOpenAccountSettings,
+    auditReloadKey = 0,
     onDelete,
     onToggleStatus,
     onToggleSelect,
@@ -219,6 +228,15 @@ export function AuthFileCard(props: AuthFileCardProps) {
     info: styles.codexStatusBadgeInfo,
   } satisfies Record<AuthFileCodexStatusBadge['tone'], string>;
 
+  // 风控命中计数：只读契约字段，未提供（undefined）或 <=0 时不渲染徽章。
+  const cyberPolicyFlagCount =
+    typeof file.cyber_policy_flag_count === 'number' && file.cyber_policy_flag_count > 0
+      ? file.cyber_policy_flag_count
+      : 0;
+  const lastCyberPolicyAtRaw =
+    typeof file.last_cyber_policy_at === 'string' ? file.last_cyber_policy_at.trim() : '';
+  const lastCyberPolicyAtLabel = lastCyberPolicyAtRaw ? formatDateTime(lastCyberPolicyAtRaw) : '';
+
   return (
     <div
       className={`${styles.fileCard} ${compact ? styles.fileCardCompact : ''} ${providerCardClass} ${selected ? styles.fileCardSelected : ''} ${file.disabled ? styles.fileCardDisabled : ''}`}
@@ -307,6 +325,23 @@ export function AuthFileCard(props: AuthFileCardProps) {
                     {t('auth_files.quota_cooldown_badge', {
                       recoverAt: formatUnixTimestamp(quotaCooldown.recoverAtMs),
                       defaultValue: 'Cooldown until {{recoverAt}}',
+                    })}
+                  </span>
+                )}
+                {cyberPolicyFlagCount > 0 && (
+                  <span
+                    className={`${styles.codexStatusBadge} ${styles.codexStatusBadgeDanger}`}
+                    title={t('auth_files.cyber_policy_flag_badge_title', {
+                      count: cyberPolicyFlagCount,
+                      lastAt: lastCyberPolicyAtLabel || '-',
+                      defaultValue:
+                        'This auth file has been flagged by cyber policy risk control {{count}} time(s). Last hit: {{lastAt}}.',
+                    })}
+                  >
+                    <IconShield className={styles.actionIcon} size={12} />
+                    {t('auth_files.cyber_policy_flag_badge', {
+                      count: cyberPolicyFlagCount,
+                      defaultValue: 'Risk control x{{count}}',
                     })}
                   </span>
                 )}
@@ -452,6 +487,21 @@ export function AuthFileCard(props: AuthFileCardProps) {
                         <IconSettings className={styles.actionIcon} size={16} />
                       </Button>
                       <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => onOpenAccountSettings(file)}
+                        className={styles.iconButton}
+                        title={t('auth_files.account_settings_button', {
+                          defaultValue: 'Account settings',
+                        })}
+                        aria-label={t('auth_files.account_settings_button', {
+                          defaultValue: 'Account settings',
+                        })}
+                        disabled={disableControls}
+                      >
+                        <IconShield className={styles.actionIcon} size={16} />
+                      </Button>
+                      <Button
                         variant="danger"
                         size="sm"
                         onClick={() => onDelete(file.name)}
@@ -484,6 +534,13 @@ export function AuthFileCard(props: AuthFileCardProps) {
               </div>
             )}
           </div>
+
+          {!isRuntimeOnly && (
+            <div className={styles.cardAuditPanels}>
+              <AuthFilesReauthHistoryPanel authFileName={file.name} reloadKey={auditReloadKey} />
+              <AuthFilesStatusHistoryPanel authFileName={file.name} reloadKey={auditReloadKey} />
+            </div>
+          )}
         </div>
       </div>
     </div>

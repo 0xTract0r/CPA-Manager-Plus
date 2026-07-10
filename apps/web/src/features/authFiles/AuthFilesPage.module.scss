@@ -1720,6 +1720,13 @@
   flex: 1;
 }
 
+.cardAuditPanels {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
 .primaryActionButton:global(.btn.btn-sm) {
   min-width: 0;
   padding-inline: 10px;
