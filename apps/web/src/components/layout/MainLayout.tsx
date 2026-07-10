@@ -144,6 +144,14 @@ const headerIcons = {
       <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z" />
     </svg>
   ),
+  wool: (
+    <svg {...headerIconProps}>
+      <path d="M7 3h10a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" />
+      <path d="M8 8h8" />
+      <path d="M8 12h8" />
+      <path d="M8 16h5" />
+    </svg>
+  ),
   autoTheme: (
     <svg {...headerIconProps}>
       <rect x="4" y="5" width="16" height="11" rx="2" />
@@ -188,6 +196,7 @@ const THEME_OPTIONS: Array<{
 }> = [
   { key: 'auto', labelKey: 'theme.auto', icon: headerIcons.autoTheme },
   { key: 'white', labelKey: 'theme.white', icon: headerIcons.sun },
+  { key: 'wool', labelKey: 'theme.wool', icon: headerIcons.wool },
   { key: 'dark', labelKey: 'theme.dark', icon: headerIcons.moon },
 ];
 
@@ -842,7 +851,9 @@ export function MainLayout({ routeBase = '', demoMode = false }: MainLayoutProps
                   ? headerIcons.autoTheme
                   : theme === 'dark'
                     ? headerIcons.moon
-                    : headerIcons.sun}
+                    : theme === 'wool'
+                      ? headerIcons.wool
+                      : headerIcons.sun}
               </Button>
               {themeMenuOpen && (
                 <div
