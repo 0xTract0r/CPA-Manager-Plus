@@ -43,14 +43,19 @@ func TestCostForModelPricesFineGrainedCacheOutsideInput(t *testing.T) {
 		"claude-cached": {Prompt: 2, Completion: 4, Cache: 1, CacheRead: 1, CacheCreation: 3},
 	}
 
+	// InputTokens as reported by the ingest pipeline includes the fine-grained
+	// cache_read/cache_creation buckets. Here 2_600_000 = 500_000 uncached +
+	// 2_000_000 cache_read + 100_000 cache_creation. Cost must charge the 500_000
+	// uncached prompt at the full rate and each cache bucket exactly once.
 	cost := CostForModel("claude-cached", ModelTokens{
-		InputTokens:         500_000,
+		InputTokens:         2_600_000,
 		OutputTokens:        250_000,
 		CachedTokens:        0,
 		CacheReadTokens:     2_000_000,
 		CacheCreationTokens: 100_000,
 	}, prices)
 
+	// 0.5M*2 + 0.25M*4 + 2M*1 + 0.1M*3 = 1 + 1 + 2 + 0.3 = 4.3
 	if math.Abs(cost-4.3) > 0.000001 {
 		t.Fatalf("cost = %v, want 4.3", cost)
 	}
@@ -61,15 +66,67 @@ func TestCostForModelPricesResidualCompatCachedWithFineGrainedCache(t *testing.T
 		"mixed-cache": {Prompt: 2, Completion: 4, Cache: 1, CacheRead: 0.5, CacheCreation: 3},
 	}
 
+	// InputTokens (1_400_000) includes residual compat cached (100_000),
+	// cache_read (200_000) and cache_creation (100_000); the remaining
+	// 1_000_000 is uncached prompt.
 	cost := CostForModel("mixed-cache", ModelTokens{
-		InputTokens:         1_000_000,
+		InputTokens:         1_400_000,
 		CachedTokens:        100_000,
 		CacheReadTokens:     200_000,
 		CacheCreationTokens: 100_000,
 	}, prices)
 
-	if math.Abs(cost-2.3) > 0.000001 {
-		t.Fatalf("cost = %v, want 2.3", cost)
+	// 1M*2 + 0.1M*1 + 0.2M*0.5 + 0.1M*3 = 2 + 0.1 + 0.1 + 0.3 = 2.5
+	if math.Abs(cost-2.5) > 0.000001 {
+		t.Fatalf("cost = %v, want 2.5", cost)
+	}
+}
+
+// TestCostForModelDoesNotDoubleCountCacheRead pins the gpt-5.5 billing bug:
+// InputTokens reported by CPA includes the cache_read portion. The old formula
+// charged the whole input at the full prompt rate AND charged cache_read again
+// at the discounted rate, roughly 4x-ing real cost in the dashboard. The fix
+// subtracts cache_read (and cache_creation) from input first so each token is
+// billed exactly once.
+func TestCostForModelDoesNotDoubleCountCacheRead(t *testing.T) {
+	// gpt-5.5 official rates (per 1M): prompt 1.25, completion 10,
+	// cache read 0.125 (10% of prompt).
+	prices := map[string]model.ModelPrice{
+		"gpt-5.5": {Prompt: 1.25, Completion: 10, Cache: 0.125, CacheRead: 0.125, CacheReadConfigured: true},
+	}
+
+	// Real ingest shape: input_tokens (1_000_000) already contains the
+	// cache_read tokens (800_000); only 200_000 are uncached prompt.
+	withCacheRead := CostForModel("gpt-5.5", ModelTokens{
+		InputTokens:     1_000_000,
+		OutputTokens:    50_000,
+		CacheReadTokens: 800_000,
+	}, prices)
+
+	// Correct: 0.2M*1.25 + 0.05M*10 + 0.8M*0.125 = 0.25 + 0.5 + 0.1 = 0.85.
+	// The old double-counting formula returned 1.85 (0.8M charged at both the
+	// full 1.25 rate inside input and again at 0.125).
+	if math.Abs(withCacheRead-0.85) > 0.000001 {
+		t.Fatalf("cost with cache_read = %v, want 0.85 (double-count would be 1.85)", withCacheRead)
+	}
+
+	// Explicit non-double-count check: with cache_read = 0, the same 200_000
+	// uncached prompt (input dropped to what remains after cache is removed)
+	// plus output must equal the withCacheRead cost minus exactly the discounted
+	// cache_read charge, never the full-rate charge.
+	noCacheRead := CostForModel("gpt-5.5", ModelTokens{
+		InputTokens:  200_000,
+		OutputTokens: 50_000,
+	}, prices)
+	if math.Abs(noCacheRead-0.75) > 0.000001 {
+		t.Fatalf("cost without cache_read = %v, want 0.75", noCacheRead)
+	}
+
+	// The only delta between the two must be the cache_read tokens priced once
+	// at the discounted cache-read rate: 800_000 * 0.125 / 1e6 = 0.1.
+	delta := withCacheRead - noCacheRead
+	if math.Abs(delta-0.1) > 0.000001 {
+		t.Fatalf("cache_read delta = %v, want 0.1 (discounted rate only, no full-rate double charge)", delta)
 	}
 }
 
@@ -282,14 +339,17 @@ func TestCostForModelWithServiceTierPreservesCacheBuckets(t *testing.T) {
 		"gpt-5.4": {Prompt: 2, Completion: 4, Cache: 1, CacheRead: 0.5, CacheCreation: 3},
 	}
 
+	// InputTokens (1_400_000) includes cached/cache_read/cache_creation; the
+	// remaining 1_000_000 is uncached prompt. Base cost 2.5, gpt-5.4 priority x2.
 	cost := CostForModelWithServiceTier("gpt-5.4", "priority", ModelTokens{
-		InputTokens:         1_000_000,
+		InputTokens:         1_400_000,
 		CachedTokens:        100_000,
 		CacheReadTokens:     200_000,
 		CacheCreationTokens: 100_000,
 	}, prices)
 
-	if math.Abs(cost-4.6) > 0.000001 {
-		t.Fatalf("priority cache cost = %v, want 4.6", cost)
+	// base = 1M*2 + 0.1M*1 + 0.2M*0.5 + 0.1M*3 = 2.5; gpt-5.4 priority x2 = 5
+	if math.Abs(cost-5) > 0.000001 {
+		t.Fatalf("priority cache cost = %v, want 5", cost)
 	}
 }

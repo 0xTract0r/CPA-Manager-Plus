@@ -1541,7 +1541,11 @@ func TestAccountHistoryReturnsRollupTotalsAndCost(t *testing.T) {
 	if history.SuccessRate == nil || math.Abs(*history.SuccessRate-0.5) > 0.000001 {
 		t.Fatalf("success rate = %#v", history.SuccessRate)
 	}
-	if math.Abs(history.TotalCost-1.985) > 0.000001 {
+	// input_tokens (1_000_000) includes the 20_000 cache_read + 10_000
+	// cache_creation tokens, so those are subtracted from the full-rate prompt
+	// and priced once at their own rates. The pre-fix value 1.985 double-counted
+	// the 30_000 cache tokens at the full prompt rate (delta 0.03).
+	if math.Abs(history.TotalCost-1.955) > 0.000001 {
 		t.Fatalf("total cost = %v", history.TotalCost)
 	}
 	if history.FirstSeenMS == nil || *history.FirstSeenMS != baseMS+1_000 || history.LastSeenMS == nil || *history.LastSeenMS != baseMS+2_000 {

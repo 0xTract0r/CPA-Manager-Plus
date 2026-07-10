@@ -27,11 +27,15 @@ type ModelTokens struct {
 }
 
 // CostForModel computes the dollar cost for a single (model, tokens) pair.
-// When CPA provides fine-grained cache read/create tokens, input tokens are
-// treated as non-cache input and those cache dimensions are priced separately.
-// Any residual CachedTokens are still charged at the legacy cache price; callers
-// must pass the compatibility cached value, not CPA's Claude mirror copy.
-// Older payloads keep the OpenAI-style cached-in-input behavior.
+// When CPA provides fine-grained cache read/create tokens, InputTokens still
+// includes those cached portions (CPA/OpenAI-style input_tokens is a superset),
+// so the cache buckets are subtracted from input before pricing the remaining
+// uncached prompt at the full rate, and each cache dimension is then priced once
+// at its own rate. Any residual CachedTokens are charged at the legacy cache
+// price; callers must pass the compatibility cached value (already stripped of
+// cache_read/cache_creation), not CPA's Claude mirror copy.
+// Older payloads without fine-grained cache buckets keep the OpenAI-style
+// cached-in-input behavior (input minus cached).
 func CostForModel(modelName string, tokens ModelTokens, prices map[string]model.ModelPrice) float64 {
 	price, ok := resolveModelPrice(modelName, prices)
 	if !ok {
@@ -51,7 +55,16 @@ func costForPrice(modelName string, tokens ModelTokens, price model.ModelPrice) 
 	cacheReadTokens := maxInt64(tokens.CacheReadTokens, 0)
 	cacheCreationTokens := maxInt64(tokens.CacheCreationTokens, 0)
 	if cacheReadTokens > 0 || cacheCreationTokens > 0 {
-		promptTokens := maxInt64(inputTokens-cachedTokens, 0)
+		// input_tokens as reported by CPA/OpenAI-style usage still includes the
+		// fine-grained cache_read and cache_creation buckets (see the ingest
+		// pipeline: TotalTokens = input + output + reasoning + compatCached +
+		// cacheRead + cacheCreation treats these as additive, non-overlapping
+		// buckets, and CompatibleCachedTokens only strips the legacy cached
+		// mirror, never input). Charging the whole input at the full prompt rate
+		// and then charging cache_read/cache_creation again double-counted the
+		// cached portion. Subtract all cache buckets from input first so each
+		// token is billed exactly once, mirroring the gpt-5.6 segment logic.
+		promptTokens := maxInt64(inputTokens-cachedTokens-cacheReadTokens-cacheCreationTokens, 0)
 		cacheReadPrice := fallbackPrice(price.CacheRead, price.Cache)
 		cacheCreationPrice := fallbackPrice(price.CacheCreation, price.Prompt)
 		return float64(promptTokens)*price.Prompt/PerMillion +
