@@ -3,7 +3,15 @@
  */
 
 import { apiClient } from './client';
-import type { AuthFilesResponse } from '@/types/authFile';
+import type {
+  AuthFileAccountSettings,
+  AuthFileAccountSettingsPatchRequest,
+  AuthFileAccountSettingsResponse,
+  AuthFilesResponse,
+  AuthFileReauthHistoryEntry,
+  AuthFileStatusHistoryEntry,
+  AuthFileStatusHistoryTrigger,
+} from '@/types/authFile';
 import type { OAuthModelAliasEntry } from '@/types';
 import { parseTimestampMs } from '@/utils/timestamp';
 
@@ -12,6 +20,41 @@ type AuthFileStatusResponse = { status: string; disabled: boolean };
 type AuthFilePatchPayload = { name: string; disabled?: boolean; [key: string]: unknown };
 type AuthFileEntry = AuthFilesResponse['files'][number];
 type AuthFileJsonValue = Record<string, unknown> | Record<string, unknown>[];
+// --- 迁移自 cpa fork：账号设置 / 状态刷新 / 测试消息 / 历史查询相关类型 ---
+type AuthFileStatusRefreshResponse = {
+  status?: string;
+  error?: string;
+  file?: AuthFileEntry;
+};
+type AuthFileStatusRefreshOptions = {
+  trigger?: AuthFileStatusHistoryTrigger;
+};
+export type AuthFileTestMessageRequest = {
+  name: string;
+  model?: string;
+  message?: string;
+  max_tokens?: number;
+};
+export type AuthFileTestMessageResponse = {
+  status: 'ok';
+  name?: string;
+  auth_id?: string;
+  selected_auth_id?: string;
+  provider?: string;
+  model?: string;
+  latency_ms?: number;
+  output_preview?: string;
+};
+type OAuthReauthHistoryResponse = {
+  events?: AuthFileReauthHistoryEntry[];
+  limit?: number;
+  auth_name?: string;
+};
+type AuthStatusHistoryResponse = {
+  events?: AuthFileStatusHistoryEntry[];
+  limit?: number;
+  auth_name?: string;
+};
 export type AuthFileFieldsPatch = {
   prefix?: string;
   proxy_url?: string;
@@ -356,6 +399,14 @@ const dedupeAuthFilesResponse = (payload: AuthFilesResponse): AuthFilesResponse 
   };
 };
 
+// 迁移自 cpa fork：refreshStatus 返回的单个 file 也需要走同一套去重/合并归一化，
+// 保证与 list() 返回的 AuthFileEntry 形状一致。
+const normalizeSingleAuthFileEntry = (entry: unknown): AuthFileEntry | null => {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+  const normalized = dedupeAuthFilesResponse({ files: [entry as AuthFileEntry] }).files;
+  return normalized[0] ?? null;
+};
+
 const parseAuthFileJsonObject = (rawText: string): Record<string, unknown> => {
   const trimmed = rawText.trim();
 
@@ -626,6 +677,69 @@ const OAUTH_MODEL_ALIAS_ENDPOINT = '/oauth-model-alias';
 
 export const authFilesApi = {
   list: async () => dedupeAuthFilesResponse(await apiClient.get<AuthFilesResponse>('/auth-files')),
+
+  // --- 迁移自 cpa fork：账号设置 / 状态刷新 / 测试消息 / 历史查询 ---
+
+  async getAccountSettings(name: string): Promise<AuthFileAccountSettings> {
+    const payload = await apiClient.get<AuthFileAccountSettingsResponse>(
+      `/auth-files/account-settings?name=${encodeURIComponent(name)}`
+    );
+    return (payload?.account_settings || payload) as AuthFileAccountSettings;
+  },
+
+  async updateAccountSettings(
+    request: AuthFileAccountSettingsPatchRequest
+  ): Promise<AuthFileAccountSettings> {
+    const payload = await apiClient.patch<AuthFileAccountSettingsResponse>(
+      '/auth-files/account-settings',
+      request
+    );
+    return (payload?.account_settings || payload) as AuthFileAccountSettings;
+  },
+
+  refreshStatus: async (name: string, options: AuthFileStatusRefreshOptions = {}) => {
+    const payload = await apiClient.post<AuthFileStatusRefreshResponse>(
+      '/auth-files/refresh-status',
+      {
+        name,
+        trigger: options.trigger ?? 'manual',
+      }
+    );
+    return {
+      status: String(payload?.status ?? '')
+        .trim()
+        .toLowerCase(),
+      error: typeof payload?.error === 'string' ? payload.error.trim() : '',
+      file: normalizeSingleAuthFileEntry(payload?.file),
+    };
+  },
+
+  testMessage: (payload: AuthFileTestMessageRequest) =>
+    apiClient.post<AuthFileTestMessageResponse>('/auth-files/test-message', payload),
+
+  async getAuthStatusHistory(name: string, limit = 20): Promise<AuthFileStatusHistoryEntry[]> {
+    const params = new URLSearchParams();
+    params.set('auth_name', name);
+    params.set('limit', String(limit));
+    const payload = await apiClient.get<AuthStatusHistoryResponse>(
+      `/auth-status-history?${params.toString()}`
+    );
+    return Array.isArray(payload?.events) ? payload.events : [];
+  },
+
+  async getOAuthReauthHistory(name: string, limit = 3): Promise<AuthFileReauthHistoryEntry[]> {
+    const normalizedName = String(name ?? '').trim();
+    if (!normalizedName) return [];
+
+    const data = await apiClient.get<OAuthReauthHistoryResponse>('/oauth-reauth-history', {
+      params: {
+        auth_name: normalizedName,
+        limit,
+      },
+    });
+
+    return Array.isArray(data?.events) ? data.events : [];
+  },
 
   patchFile: (payload: AuthFilePatchPayload) =>
     apiClient.patch<AuthFileStatusResponse>('/auth-files', payload),
