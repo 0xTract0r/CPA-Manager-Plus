@@ -24,10 +24,13 @@ export interface OAuthCallbackResponse {
 const WEBUI_SUPPORTED: string[] = ['codex', 'anthropic', 'antigravity', 'xai'];
 
 export const oauthApi = {
-  startAuth: (provider: OAuthProvider) => {
+  startAuth: (provider: OAuthProvider, options?: { proxyUrl?: string }) => {
     const params: Record<string, string | boolean> = {};
     if (WEBUI_SUPPORTED.includes(provider)) {
       params.is_webui = true;
+    }
+    if (options?.proxyUrl) {
+      params.proxy_url = options.proxyUrl;
     }
     return apiClient.get<OAuthStartResponse>(`/${provider}-auth-url`, {
       params: Object.keys(params).length ? params : undefined,

@@ -35,6 +35,9 @@ interface ProviderState {
   status?: 'idle' | 'waiting' | 'success' | 'error';
   error?: string;
   polling?: boolean;
+  proxyUrl?: string;
+  proxyUrlError?: string;
+  savedProxyUrl?: string;
   callbackUrl?: string;
   callbackSubmitting?: boolean;
   callbackStatus?: 'success' | 'error';
@@ -144,6 +147,22 @@ const getAuthKey = (provider: BuiltInOAuthProvider, suffix: string) =>
 
 const getIcon = (icon: string | { light: string; dark: string }, theme: 'light' | 'dark') => {
   return typeof icon === 'string' ? icon : icon[theme];
+};
+
+const validateProxyUrl = (value: string): string | undefined => {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.toLowerCase() === 'direct' || trimmed.toLowerCase() === 'none') {
+    return undefined;
+  }
+  try {
+    const parsed = new URL(trimmed);
+    if (!['http:', 'https:', 'socks5:', 'socks5h:'].includes(parsed.protocol) || !parsed.host) {
+      return 'Unsupported proxy URL. Use http://, https://, socks5://, socks5h://, direct, or leave it empty.';
+    }
+    return undefined;
+  } catch {
+    return 'Invalid proxy URL. Use http://, https://, socks5://, socks5h://, direct, or leave it empty.';
+  }
 };
 
 const isAbsoluteUrl = (value: string): boolean => {
@@ -363,16 +382,24 @@ export function OAuthPage() {
   const completeProviderAuth = (provider: OAuthProvider) => {
     clearPollingTimer(provider);
     clearSuccessResetTimer(provider);
-    updateProviderState(provider, {
-      url: undefined,
-      state: undefined,
-      status: 'success',
-      error: undefined,
-      polling: false,
-      callbackUrl: '',
-      callbackSubmitting: false,
-      callbackStatus: undefined,
-      callbackError: undefined,
+    setStates((prev) => {
+      const current = prev[provider] ?? {};
+      return {
+        ...prev,
+        [provider]: {
+          ...current,
+          url: undefined,
+          state: undefined,
+          status: 'success',
+          error: undefined,
+          polling: false,
+          savedProxyUrl: (current.proxyUrl || '').trim() || undefined,
+          callbackUrl: '',
+          callbackSubmitting: false,
+          callbackStatus: undefined,
+          callbackError: undefined,
+        },
+      };
     });
     successResetTimers.current[provider] = window.setTimeout(() => {
       resetProviderAttempt(provider);
@@ -410,6 +437,13 @@ export function OAuthPage() {
   };
 
   const startAuth = async (provider: OAuthProvider) => {
+    const proxyUrl = (states[provider]?.proxyUrl || '').trim();
+    const proxyUrlError = validateProxyUrl(proxyUrl);
+    if (proxyUrlError) {
+      updateProviderState(provider, { proxyUrlError });
+      showNotification(proxyUrlError, 'warning');
+      return;
+    }
     clearProviderTimers(provider);
     updateProviderState(provider, {
       url: undefined,
@@ -417,12 +451,14 @@ export function OAuthPage() {
       status: 'waiting',
       polling: true,
       error: undefined,
+      proxyUrlError: undefined,
+      savedProxyUrl: undefined,
       callbackStatus: undefined,
       callbackError: undefined,
       callbackUrl: '',
     });
     try {
-      const res = await oauthApi.startAuth(provider);
+      const res = await oauthApi.startAuth(provider, { proxyUrl: proxyUrl || undefined });
       if (!res.state) {
         const message = t('auth_login.missing_state');
         updateProviderState(provider, {
@@ -616,6 +652,20 @@ export function OAuthPage() {
               >
                 <div className={styles.cardContent}>
                   <div className={styles.cardHint}>{provider.hint}</div>
+                  <Input
+                    label={t('auth_login.account_proxy_label')}
+                    hint={t('auth_login.account_proxy_hint')}
+                    value={state.proxyUrl || ''}
+                    error={state.proxyUrlError}
+                    disabled={Boolean(state.polling)}
+                    onChange={(e) =>
+                      updateProviderState(provider.id, {
+                        proxyUrl: e.target.value,
+                        proxyUrlError: undefined,
+                      })
+                    }
+                    placeholder={t('auth_login.account_proxy_placeholder')}
+                  />
                   {state.url && (
                     <div className={styles.authUrlBox}>
                       <div className={styles.authUrlLabel}>{provider.urlLabel}</div>
@@ -690,6 +740,18 @@ export function OAuthPage() {
                         : state.status === 'error'
                           ? `${getProviderActionText(provider.id, 'oauth_status_error')} ${state.error || ''}`
                           : getProviderActionText(provider.id, 'oauth_status_waiting')}
+                    </div>
+                  )}
+                  {state.status === 'success' && state.savedProxyUrl && (
+                    <div className={styles.connectionBox}>
+                      <div className={styles.keyValueList}>
+                        <div className={styles.keyValueItem}>
+                          <span className={styles.keyValueKey}>
+                            {t('auth_login.oauth_saved_proxy')}
+                          </span>
+                          <span className={styles.keyValueValue}>{state.savedProxyUrl}</span>
+                        </div>
+                      </div>
                     </div>
                   )}
                   {state.status === 'success' && (
