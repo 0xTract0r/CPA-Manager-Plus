@@ -126,10 +126,45 @@ func (s *Service) proxyToSavedSetup(w http.ResponseWriter, r *http.Request, writ
 			rewriteCodexInviteOrigin(req.Header, target)
 		}
 	}
+	proxy.ModifyResponse = stripUpstreamCORSHeadersResponse
 	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
 		writeError(w, http.StatusBadGateway, err)
 	}
 	proxy.ServeHTTP(w, r)
+}
+
+// upstreamCORSResponseHeaders 是上游 core 可能自带的 CORS 响应头。
+// manager-server 自身的 CORS 策略统一由 middleware.WriteCORS 在更外层
+// 直接写入 http.ResponseWriter；这里剥离的是反向代理拿到的**上游**响应头
+// (httputil.ReverseProxy 用 Header().Add 合并响应头，若不剥离会和中间件
+// 已写入的头叠加成重复值，浏览器拒绝多值 CORS 头)。
+// Vary 头一般保留，不在剥离范围内。
+var upstreamCORSResponseHeaders = []string{
+	"Access-Control-Allow-Origin",
+	"Access-Control-Allow-Methods",
+	"Access-Control-Allow-Headers",
+	"Access-Control-Allow-Credentials",
+	"Access-Control-Expose-Headers",
+	"Access-Control-Max-Age",
+}
+
+// stripUpstreamCORSHeaders 从响应头中删除所有上游 CORS 相关头。
+// http.Header.Del 对 header name 做规范化，大小写不敏感。
+func stripUpstreamCORSHeaders(header http.Header) {
+	for _, name := range upstreamCORSResponseHeaders {
+		header.Del(name)
+	}
+}
+
+// stripUpstreamCORSHeadersResponse 是 httputil.ReverseProxy.ModifyResponse
+// 的实现，在响应从上游读回、但尚未写入客户端 ResponseWriter 之前，剥离
+// 上游自带的 CORS 头，避免与 manager-server 中间件的 CORS 头重复叠加。
+func stripUpstreamCORSHeadersResponse(resp *http.Response) error {
+	if resp == nil {
+		return nil
+	}
+	stripUpstreamCORSHeaders(resp.Header)
+	return nil
 }
 
 func rewriteCodexInviteOrigin(header http.Header, target *url.URL) {
@@ -232,6 +267,7 @@ func (s *Service) ProxyModelList(w http.ResponseWriter, r *http.Request, writeEr
 		req.URL.Host = target.Host
 		req.Host = target.Host
 	}
+	proxy.ModifyResponse = stripUpstreamCORSHeadersResponse
 	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
 		writeError(w, http.StatusBadGateway, err)
 	}
