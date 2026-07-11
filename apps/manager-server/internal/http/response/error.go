@@ -63,6 +63,20 @@ func ModelPriceErrorStatus(err error) int {
 	return http.StatusInternalServerError
 }
 
+// UsageSyncErrorStatus maps errors from UsageService.SyncFromCore to an HTTP
+// status code for the /v0/management/usage/sync endpoint.
+func UsageSyncErrorStatus(err error) int {
+	message := err.Error()
+	switch {
+	case strings.Contains(message, "CPA core connection is not configured"):
+		return http.StatusPreconditionFailed
+	case strings.Contains(message, "fetch core usage export"):
+		return http.StatusBadGateway
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
 func UsageServiceErrorCode(err error) string {
 	message := err.Error()
 	switch {
@@ -86,6 +100,10 @@ func UsageServiceErrorCode(err error) string {
 		return "invalid_management_key"
 	case strings.Contains(message, "usage service is not configured"):
 		return "usage_service_not_configured"
+	case strings.Contains(message, "CPA core connection is not configured"):
+		return "cpa_core_connection_not_configured"
+	case strings.Contains(message, "fetch core usage export"):
+		return "cpa_core_usage_export_failed"
 	case strings.Contains(message, "CPA redis-usage-queue-retention-seconds must be greater than 0"):
 		return "cpa_usage_retention_invalid"
 	case strings.Contains(message, "pollIntervalMs must be less than or equal"):

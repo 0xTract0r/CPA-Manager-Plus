@@ -82,7 +82,7 @@ func FromExisting(
 		SetupService:                   setupsvc.New(cfg, st, collectorService, managerConfigService, startedAt, serviceID),
 		ManagerConfigService:           managerConfigService,
 		CollectorService:               collectorService,
-		UsageService:                   usagesvc.New(st),
+		UsageService:                   usagesvc.New(st, managerConfigService),
 		DashboardService:               dashboardsvc.New(st, cfg.DashboardHourlyRollupEnabled),
 		CodexInspectionService:         codexinspectionsvc.New(st, managerConfigService),
 		MonitoringService:              monitoringsvc.New(st),

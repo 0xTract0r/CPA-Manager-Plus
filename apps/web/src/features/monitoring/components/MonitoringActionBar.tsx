@@ -6,6 +6,7 @@ import {
   IconExternalLink,
   IconFileText,
   IconInbox,
+  IconRefreshCw,
   IconSettings,
 } from '@/components/ui/icons';
 import styles from '../MonitoringCenterPage.module.scss';
@@ -14,6 +15,7 @@ type MonitoringActionBarProps = {
   usageTransferAvailable: boolean;
   usageExporting: boolean;
   usageImporting: boolean;
+  usageSyncingFromCore: boolean;
   loggingToFile: boolean;
   modelPricesAvailable: boolean;
   usageImportInputRef: RefObject<HTMLInputElement | null>;
@@ -21,6 +23,7 @@ type MonitoringActionBarProps = {
   onUsageExport: () => void | Promise<void>;
   onUsageImportClick: () => void;
   onUsageImportChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  onSyncCoreHistory: () => void | Promise<void>;
   statusSummary: ReactNode;
 };
 
@@ -34,6 +37,7 @@ export function MonitoringActionBar({
   usageTransferAvailable,
   usageExporting,
   usageImporting,
+  usageSyncingFromCore,
   loggingToFile,
   modelPricesAvailable,
   usageImportInputRef,
@@ -41,6 +45,7 @@ export function MonitoringActionBar({
   onUsageExport,
   onUsageImportClick,
   onUsageImportChange,
+  onSyncCoreHistory,
   statusSummary,
 }: MonitoringActionBarProps) {
   const modelPriceSettingsLabel = shortLabel(
@@ -80,6 +85,22 @@ export function MonitoringActionBar({
         >
           <IconFileText size={16} />
           <span>{usageImporting ? t('common.loading') : t('usage_stats.import')}</span>
+        </button>
+        <button
+          type="button"
+          className={styles.actionButton}
+          onClick={() => void onSyncCoreHistory()}
+          disabled={!usageTransferAvailable || usageExporting || usageImporting || usageSyncingFromCore}
+          title={
+            usageTransferAvailable
+              ? t('usage_stats.sync_core_history')
+              : t('usage_stats.import_export_requires_usage_service')
+          }
+        >
+          <IconRefreshCw size={16} />
+          <span>
+            {usageSyncingFromCore ? t('common.loading') : t('usage_stats.sync_core_history')}
+          </span>
         </button>
         {modelPricesAvailable ? (
           <Link

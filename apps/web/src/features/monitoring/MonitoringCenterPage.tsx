@@ -97,7 +97,11 @@ import {
   type StatusFilter,
 } from '@/features/monitoring/model/monitoringCenterPageModel';
 import { useUsageData } from '@/features/monitoring/hooks/useUsageData';
-import { monitoringAnalyticsApi, type UsageHeaderSnapshot } from '@/services/api/usageService';
+import {
+  getUsageServiceErrorCode,
+  monitoringAnalyticsApi,
+  type UsageHeaderSnapshot,
+} from '@/services/api/usageService';
 import {
   readMonitoringCenterUiState,
   writeMonitoringCenterUiState,
@@ -233,6 +237,7 @@ export function MonitoringCenterPage() {
   const [isCustomRangeModalOpen, setIsCustomRangeModalOpen] = useState(false);
   const [usageExporting, setUsageExporting] = useState(false);
   const [usageImporting, setUsageImporting] = useState(false);
+  const [usageSyncingFromCore, setUsageSyncingFromCore] = useState(false);
   const [accountQuotaStates, setAccountQuotaStates] = useState<Record<string, AccountQuotaState>>(
     {}
   );
@@ -330,6 +335,7 @@ export function MonitoringCenterPage() {
     loadApiKeyAliases,
     exportUsage,
     importUsage,
+    syncCoreHistory,
   } = useUsageData({ loadUsageEvents: false });
 
   const monitoringScopeFilters = useMemo(
@@ -1251,6 +1257,43 @@ export function MonitoringCenterPage() {
     }
   }, [exportUsage, resolveUsageTransferError, showNotification, t]);
 
+  const handleSyncCoreHistory = useCallback(async () => {
+    setUsageSyncingFromCore(true);
+    try {
+      const result = await syncCoreHistory();
+      if (result.noHistoricalData) {
+        showNotification(t('usage_stats.sync_core_history_no_data'), 'warning');
+        return;
+      }
+      const unsupported = result.unsupported ?? 0;
+      showNotification(
+        `${t('usage_stats.sync_core_history_success', {
+          added: result.added ?? 0,
+          skipped: result.skipped ?? 0,
+          total: result.total ?? 0,
+          failed: result.failed ?? 0,
+        })}${unsupported > 0 ? `, ${t('usage_stats.import_unsupported', { count: unsupported })}` : ''}`,
+        (result.failed ?? 0) > 0 || unsupported > 0 ? 'warning' : 'success'
+      );
+      if ((result.warnings ?? []).length > 0) {
+        showNotification(t('usage_stats.import_legacy_warning'), 'warning');
+      }
+      await refreshAll();
+    } catch (error: unknown) {
+      const code = getUsageServiceErrorCode(error);
+      const message =
+        code === 'cpa_core_connection_not_configured'
+          ? t('usage_stats.sync_core_history_not_configured')
+          : resolveUsageTransferError(error);
+      showNotification(
+        `${t('usage_stats.sync_core_history_failed')}${message ? `: ${message}` : ''}`,
+        'error'
+      );
+    } finally {
+      setUsageSyncingFromCore(false);
+    }
+  }, [refreshAll, resolveUsageTransferError, showNotification, syncCoreHistory, t]);
+
   const importUsageFile = useCallback(
     async (file: File) => {
       setUsageImporting(true);
@@ -1354,6 +1397,7 @@ export function MonitoringCenterPage() {
         usageTransferAvailable={usageTransferAvailable}
         usageExporting={usageExporting}
         usageImporting={usageImporting}
+        usageSyncingFromCore={usageSyncingFromCore}
         loggingToFile={isFileLogsAvailable(config)}
         modelPricesAvailable={requestMonitoringAvailability.modelPricesAvailable}
         usageImportInputRef={usageImportInputRef}
@@ -1361,6 +1405,7 @@ export function MonitoringCenterPage() {
         onUsageExport={handleUsageExport}
         onUsageImportClick={handleUsageImportClick}
         onUsageImportChange={handleUsageImportChange}
+        onSyncCoreHistory={handleSyncCoreHistory}
         statusSummary={
           <MonitoringStatusSummary
             connectionTone={connectionTone}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -110,6 +111,33 @@ func SetUsageStatisticsEnabled(ctx context.Context, baseURL string, key string, 
 		return nil
 	}
 	return errors.New("enable CPA usage statistics failed: " + res.Status)
+}
+
+// FetchUsageExport fetches the legacy usage statistics export snapshot from a
+// CPA core instance (GET /v0/management/usage/export) and returns the raw
+// response body. The body is a JSON object shaped like
+// {"version":N,"exported_at":"...","usage":{...}} which the manager-server's
+// own usage import parser already understands (ImportFormatLegacyExport).
+func FetchUsageExport(ctx context.Context, baseURL string, key string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, NormalizeBaseURL(baseURL)+"/v0/management/usage/export", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	client := &http.Client{Timeout: 60 * time.Second}
+	res, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	data, err := io.ReadAll(res.Body)
+	if err != nil {
+		return nil, err
+	}
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return nil, fmt.Errorf("core usage export request failed: %s", res.Status)
+	}
+	return data, nil
 }
 
 func ValidateCollectorConfig(ctx context.Context, baseURL string, key string, pollIntervalMS int) error {

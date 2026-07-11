@@ -8,6 +8,7 @@ import {
   type ModelPriceSyncResponse,
   type UsageExportResponse,
   type UsageImportResponse,
+  type UsageSyncCoreHistoryResponse,
 } from '@/services/api/usageService';
 import { useAuthStore } from '@/stores';
 import { clearModelPrices, loadModelPrices, saveModelPrices, type ModelPrice } from '@/utils/usage';
@@ -34,6 +35,7 @@ export interface UseUsageDataReturn {
   syncModelPrices: (models?: string[]) => Promise<ModelPriceSyncResponse>;
   exportUsage: () => Promise<UsageExportResponse>;
   importUsage: (file: File) => Promise<UsageImportResponse>;
+  syncCoreHistory: () => Promise<UsageSyncCoreHistoryResponse>;
   loadUsage: () => Promise<void>;
 }
 
@@ -113,6 +115,13 @@ export function useUsageData({
     },
     [managementKey, usageEventsServiceBase]
   );
+
+  const syncCoreHistoryFromApi = useCallback(async (): Promise<UsageSyncCoreHistoryResponse> => {
+    if (!usageEventsServiceBase) {
+      throw new Error('usage_import_export_requires_usage_service');
+    }
+    return usageServiceApi.syncCoreHistory(usageEventsServiceBase, managementKey);
+  }, [managementKey, usageEventsServiceBase]);
 
   const loadModelPricesFromStorage = useCallback(async () => {
     const fallbackPrices = loadModelPrices();
@@ -229,6 +238,7 @@ export function useUsageData({
     syncModelPrices,
     exportUsage: exportUsageFromApi,
     importUsage: importUsageToApi,
+    syncCoreHistory: syncCoreHistoryFromApi,
     loadUsage,
   };
 }

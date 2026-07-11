@@ -43,6 +43,8 @@ const USAGE_SERVICE_ERROR_CODES = new Set([
   'model_price_sync_failed',
   'method_not_allowed',
   'account_processing_policy_env_locked',
+  'cpa_core_connection_not_configured',
+  'cpa_core_usage_export_failed',
 ]);
 
 export interface UsageServiceApiError extends Error {
@@ -404,6 +406,17 @@ export interface UsageImportResponse {
 export interface UsageExportResponse {
   blob: Blob;
   filename: string;
+}
+
+export interface UsageSyncCoreHistoryResponse {
+  format?: string;
+  added: number;
+  skipped: number;
+  total: number;
+  failed: number;
+  unsupported?: number;
+  warnings?: string[];
+  noHistoricalData?: boolean;
 }
 
 export interface DashboardSummaryWindow {
@@ -2002,6 +2015,27 @@ export const usageServiceApi = {
       const response = await axios.post<UsageImportResponse>(
         buildUrl(base, '/v0/management/usage/import'),
         payload,
+        {
+          timeout: USAGE_SERVICE_TRANSFER_TIMEOUT_MS,
+          headers: authHeaders(managementKey),
+        }
+      );
+      return response.data;
+    });
+  },
+
+  syncCoreHistory: async (
+    base: string,
+    managementKey?: string
+  ): Promise<UsageSyncCoreHistoryResponse> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return { format: 'legacy_usage_export', added: 0, skipped: 0, total: 0, failed: 0 };
+    }
+
+    return withUsageServiceError(async () => {
+      const response = await axios.post<UsageSyncCoreHistoryResponse>(
+        buildUrl(base, '/v0/management/usage/sync'),
+        undefined,
         {
           timeout: USAGE_SERVICE_TRANSFER_TIMEOUT_MS,
           headers: authHeaders(managementKey),

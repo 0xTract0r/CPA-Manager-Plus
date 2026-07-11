@@ -45,6 +45,10 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 			h.Import(w, r)
 			return
 		}
+		if strings.HasSuffix(r.URL.Path, "/sync") {
+			h.Sync(w, r)
+			return
+		}
 		response.MethodNotAllowed(w)
 	default:
 		response.MethodNotAllowed(w)
@@ -105,6 +109,17 @@ func (h *Handler) Import(w http.ResponseWriter, r *http.Request) {
 			"unsupported": parsed.Unsupported,
 			"warnings":    parsed.Warnings,
 		})
+		return
+	}
+	response.JSON(w, http.StatusOK, result)
+}
+
+// Sync pulls a usage export snapshot from the configured CPA core instance and
+// imports it into the manager-server's own usage_events store.
+func (h *Handler) Sync(w http.ResponseWriter, r *http.Request) {
+	result, err := h.App.UsageService.SyncFromCore(r.Context())
+	if err != nil {
+		response.Error(w, response.UsageSyncErrorStatus(err), err)
 		return
 	}
 	response.JSON(w, http.StatusOK, result)
