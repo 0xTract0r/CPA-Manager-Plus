@@ -324,6 +324,32 @@ function getPortError(value: string): 'port_range' | undefined {
   return parsed >= 1 && parsed <= 65535 ? undefined : 'port_range';
 }
 
+// core 用 Go time.ParseDuration 校验 quota-snapshot-refresh 的 interval/jitter/
+// startup-max-staleness；这里只做前端侧的宽松格式校验（一个或多个"数字+单位"片段，
+// 单位支持 ns/us/µs/ms/s/m/h），不重实现完整 ParseDuration 语义。
+const DURATION_SEGMENT_PATTERN = /(\d+(?:\.\d+)?)(ns|us|µs|ms|s|m|h)/g;
+
+function isValidDurationString(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  let normalized = trimmed;
+  let sign = '';
+  if (normalized.startsWith('-') || normalized.startsWith('+')) {
+    sign = normalized[0] ?? '';
+    normalized = normalized.slice(1);
+  }
+  void sign;
+  const matches = normalized.match(DURATION_SEGMENT_PATTERN);
+  if (!matches) return false;
+  return matches.join('') === normalized;
+}
+
+function getDurationFormatError(value: string): 'duration_format' | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  return isValidDurationString(trimmed) ? undefined : 'duration_format';
+}
+
 function getRedisUsageQueueRetentionError(value: string): 'retention_seconds_range' | undefined {
   const trimmed = value.trim();
   if (!trimmed) return undefined;
@@ -362,6 +388,11 @@ export function getVisualConfigValidationErrors(
     'streaming.bootstrapRetries': getNonNegativeIntegerError(values.streaming.bootstrapRetries),
     'streaming.nonstreamKeepaliveInterval': getNonNegativeIntegerError(
       values.streaming.nonstreamKeepaliveInterval
+    ),
+    'quotaSnapshotRefresh.interval': getDurationFormatError(values.quotaSnapshotRefresh.interval),
+    'quotaSnapshotRefresh.jitter': getDurationFormatError(values.quotaSnapshotRefresh.jitter),
+    'quotaSnapshotRefresh.startupMaxStaleness': getDurationFormatError(
+      values.quotaSnapshotRefresh.startupMaxStaleness
     ),
   };
 }
@@ -422,6 +453,12 @@ function mergeVisualConfigValues(
   if (patch.streaming) {
     nextValues.streaming = { ...currentValues.streaming, ...patch.streaming };
   }
+  if (patch.quotaSnapshotRefresh) {
+    nextValues.quotaSnapshotRefresh = {
+      ...currentValues.quotaSnapshotRefresh,
+      ...patch.quotaSnapshotRefresh,
+    };
+  }
   return nextValues;
 }
 
@@ -476,6 +513,7 @@ function getNextDirtyFields(
       'codexHeaderUserAgent',
       'codexHeaderBetaFeatures',
       'codexIdentityConfuse',
+      'enableGeminiCliEndpoint',
     ] as Array<keyof VisualConfigValues>
   ).forEach(updateScalarDirty);
 
@@ -672,6 +710,42 @@ function getNextDirtyFields(
     }
   }
 
+  if (patch.quotaSnapshotRefresh) {
+    const quotaSnapshotRefreshPatch = patch.quotaSnapshotRefresh;
+    if (Object.prototype.hasOwnProperty.call(quotaSnapshotRefreshPatch, 'enabled')) {
+      updateDirty(
+        'quotaSnapshotRefresh.enabled',
+        nextValues.quotaSnapshotRefresh.enabled === baselineValues.quotaSnapshotRefresh.enabled
+      );
+    }
+    if (Object.prototype.hasOwnProperty.call(quotaSnapshotRefreshPatch, 'interval')) {
+      updateDirty(
+        'quotaSnapshotRefresh.interval',
+        nextValues.quotaSnapshotRefresh.interval === baselineValues.quotaSnapshotRefresh.interval
+      );
+    }
+    if (Object.prototype.hasOwnProperty.call(quotaSnapshotRefreshPatch, 'jitter')) {
+      updateDirty(
+        'quotaSnapshotRefresh.jitter',
+        nextValues.quotaSnapshotRefresh.jitter === baselineValues.quotaSnapshotRefresh.jitter
+      );
+    }
+    if (Object.prototype.hasOwnProperty.call(quotaSnapshotRefreshPatch, 'startupCatchUp')) {
+      updateDirty(
+        'quotaSnapshotRefresh.startupCatchUp',
+        nextValues.quotaSnapshotRefresh.startupCatchUp ===
+          baselineValues.quotaSnapshotRefresh.startupCatchUp
+      );
+    }
+    if (Object.prototype.hasOwnProperty.call(quotaSnapshotRefreshPatch, 'startupMaxStaleness')) {
+      updateDirty(
+        'quotaSnapshotRefresh.startupMaxStaleness',
+        nextValues.quotaSnapshotRefresh.startupMaxStaleness ===
+          baselineValues.quotaSnapshotRefresh.startupMaxStaleness
+      );
+    }
+  }
+
   return nextDirtyFields;
 }
 
@@ -751,6 +825,7 @@ export function useVisualConfig() {
       const remoteManagement = asRecord(parsed['remote-management']);
       const pprof = asRecord(parsed.pprof);
       const quotaExceeded = asRecord(parsed['quota-exceeded']);
+      const quotaSnapshotRefresh = asRecord(parsed['quota-snapshot-refresh']);
       const routing = asRecord(parsed.routing);
       const plugins = asRecord(parsed.plugins);
       const payload = asRecord(parsed.payload);
@@ -810,6 +885,7 @@ export function useVisualConfig() {
 
         proxyUrl: typeof parsed['proxy-url'] === 'string' ? parsed['proxy-url'] : '',
         forceModelPrefix: Boolean(parsed['force-model-prefix']),
+        enableGeminiCliEndpoint: Boolean(parsed['enable-gemini-cli-endpoint']),
         passthroughHeaders: Boolean(parsed['passthrough-headers']),
         requestRetry: String(parsed['request-retry'] ?? ''),
         maxRetryCredentials: String(parsed['max-retry-credentials'] ?? ''),
@@ -867,6 +943,23 @@ export function useVisualConfig() {
         quotaSwitchProject: Boolean(quotaExceeded?.['switch-project'] ?? false),
         quotaSwitchPreviewModel: Boolean(quotaExceeded?.['switch-preview-model'] ?? false),
         quotaAntigravityCredits: Boolean(quotaExceeded?.['antigravity-credits'] ?? false),
+
+        quotaSnapshotRefresh: {
+          enabled: Boolean(quotaSnapshotRefresh?.enabled ?? true),
+          interval:
+            typeof quotaSnapshotRefresh?.interval === 'string'
+              ? quotaSnapshotRefresh.interval
+              : DEFAULT_VISUAL_VALUES.quotaSnapshotRefresh.interval,
+          jitter:
+            typeof quotaSnapshotRefresh?.jitter === 'string'
+              ? quotaSnapshotRefresh.jitter
+              : DEFAULT_VISUAL_VALUES.quotaSnapshotRefresh.jitter,
+          startupCatchUp: Boolean(quotaSnapshotRefresh?.['startup-catch-up'] ?? true),
+          startupMaxStaleness:
+            typeof quotaSnapshotRefresh?.['startup-max-staleness'] === 'string'
+              ? quotaSnapshotRefresh['startup-max-staleness']
+              : DEFAULT_VISUAL_VALUES.quotaSnapshotRefresh.startupMaxStaleness,
+        },
 
         routingStrategy: routing?.strategy === 'fill-first' ? 'fill-first' : 'round-robin',
         routingSessionAffinity: Boolean(
@@ -1077,6 +1170,7 @@ export function useVisualConfig() {
 
         setStringInDoc(doc, ['proxy-url'], values.proxyUrl);
         setBooleanInDoc(doc, ['force-model-prefix'], values.forceModelPrefix);
+        setBooleanInDoc(doc, ['enable-gemini-cli-endpoint'], values.enableGeminiCliEndpoint);
         setBooleanInDoc(doc, ['passthrough-headers'], values.passthroughHeaders);
         setIntFromStringInDoc(doc, ['request-retry'], values.requestRetry);
         setIntFromStringInDoc(doc, ['max-retry-credentials'], values.maxRetryCredentials);
@@ -1244,6 +1338,81 @@ export function useVisualConfig() {
             doc.setIn(['quota-exceeded', 'antigravity-credits'], values.quotaAntigravityCredits);
           }
           deleteIfMapEmpty(doc, ['quota-exceeded']);
+        }
+
+        // quota-snapshot-refresh：五子字段各自按"已存在于 YAML 或用户显式改过"决定是否物化，
+        // 避免无关保存把整块 core 默认值写死进配置。interval/jitter/startup-max-staleness
+        // 是 duration 字符串（time.ParseDuration），必须原样写回，不做数值转换。
+        const writeQuotaSnapshotRefreshEnabled = shouldWriteManagedField(
+          doc,
+          ['quota-snapshot-refresh', 'enabled'],
+          dirtyFields,
+          'quotaSnapshotRefresh.enabled'
+        );
+        const writeQuotaSnapshotRefreshInterval = shouldWriteManagedField(
+          doc,
+          ['quota-snapshot-refresh', 'interval'],
+          dirtyFields,
+          'quotaSnapshotRefresh.interval'
+        );
+        const writeQuotaSnapshotRefreshJitter = shouldWriteManagedField(
+          doc,
+          ['quota-snapshot-refresh', 'jitter'],
+          dirtyFields,
+          'quotaSnapshotRefresh.jitter'
+        );
+        const writeQuotaSnapshotRefreshStartupCatchUp = shouldWriteManagedField(
+          doc,
+          ['quota-snapshot-refresh', 'startup-catch-up'],
+          dirtyFields,
+          'quotaSnapshotRefresh.startupCatchUp'
+        );
+        const writeQuotaSnapshotRefreshStartupMaxStaleness = shouldWriteManagedField(
+          doc,
+          ['quota-snapshot-refresh', 'startup-max-staleness'],
+          dirtyFields,
+          'quotaSnapshotRefresh.startupMaxStaleness'
+        );
+        if (
+          docHas(doc, ['quota-snapshot-refresh']) ||
+          writeQuotaSnapshotRefreshEnabled ||
+          writeQuotaSnapshotRefreshInterval ||
+          writeQuotaSnapshotRefreshJitter ||
+          writeQuotaSnapshotRefreshStartupCatchUp ||
+          writeQuotaSnapshotRefreshStartupMaxStaleness
+        ) {
+          ensureMapInDoc(doc, ['quota-snapshot-refresh']);
+          if (writeQuotaSnapshotRefreshEnabled) {
+            doc.setIn(['quota-snapshot-refresh', 'enabled'], values.quotaSnapshotRefresh.enabled);
+          }
+          if (writeQuotaSnapshotRefreshInterval) {
+            setStringInDoc(
+              doc,
+              ['quota-snapshot-refresh', 'interval'],
+              values.quotaSnapshotRefresh.interval
+            );
+          }
+          if (writeQuotaSnapshotRefreshJitter) {
+            setStringInDoc(
+              doc,
+              ['quota-snapshot-refresh', 'jitter'],
+              values.quotaSnapshotRefresh.jitter
+            );
+          }
+          if (writeQuotaSnapshotRefreshStartupCatchUp) {
+            doc.setIn(
+              ['quota-snapshot-refresh', 'startup-catch-up'],
+              values.quotaSnapshotRefresh.startupCatchUp
+            );
+          }
+          if (writeQuotaSnapshotRefreshStartupMaxStaleness) {
+            setStringInDoc(
+              doc,
+              ['quota-snapshot-refresh', 'startup-max-staleness'],
+              values.quotaSnapshotRefresh.startupMaxStaleness
+            );
+          }
+          deleteIfMapEmpty(doc, ['quota-snapshot-refresh']);
         }
 
         if (

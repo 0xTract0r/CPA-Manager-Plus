@@ -2708,7 +2708,9 @@
           "disable_claude_cloak_mode_desc": "全域原樣傳遞 Claude system 提示詞，不再偽裝成 Claude Code；個別憑證仍可覆寫",
           "session_affinity": "會話黏性路由",
           "ws_auth": "WebSocket 驗證",
-          "ws_auth_desc": "啟用 WebSocket 連線驗證（/v1/ws）"
+          "ws_auth_desc": "啟用 WebSocket 連線驗證（/v1/ws）",
+          "enable_gemini_cli_endpoint": "啟用 Gemini CLI 端點",
+          "enable_gemini_cli_endpoint_desc": "放行 /v1internal:* Gemini CLI 內部端點。注意：home 遠端管理模式下此開關一律被強制關閉，即使這裡已勾選。"
         },
         "quota": {
           "title": "配額回退",
@@ -2718,7 +2720,19 @@
           "switch_preview_model": "切換預覽模型",
           "switch_preview_model_desc": "配額耗盡時切換到預覽版本模型",
           "antigravity_credits": "Antigravity Credits 重試",
-          "antigravity_credits_desc": "Antigravity 回傳 quota_exhausted 429 時，使用 enabledCreditTypes=[\"GOOGLE_ONE_AI\"] 重試一次"
+          "antigravity_credits_desc": "Antigravity 回傳 quota_exhausted 429 時，使用 enabledCreditTypes=[\"GOOGLE_ONE_AI\"] 重試一次",
+          "snapshot_refresh_title": "配額快照刷新",
+          "snapshot_refresh_desc": "控制背景定期持久化配額快照的刷新器",
+          "snapshot_refresh_enabled": "啟用背景刷新",
+          "snapshot_refresh_enabled_desc": "背景定期刷新並持久化配額快照",
+          "snapshot_refresh_startup_catch_up": "啟動時補齊刷新",
+          "snapshot_refresh_startup_catch_up_desc": "啟動時若既有快照過舊，立即補刷新一次",
+          "snapshot_refresh_interval": "刷新間隔",
+          "snapshot_refresh_interval_hint": "形如 45m 或 2h 的時長；留空或格式無效時使用 45m。",
+          "snapshot_refresh_jitter": "刷新抖動",
+          "snapshot_refresh_jitter_hint": "疊加在刷新間隔上的隨機抖動，例如 10m；留空或格式無效時使用 10m。",
+          "snapshot_refresh_startup_max_staleness": "啟動最大陳舊時長",
+          "snapshot_refresh_startup_max_staleness_hint": "啟動時若快照早於此時長，會立即觸發補齊刷新，例如 24h；留空或格式無效時使用 24h。"
         },
         "streaming": {
           "title": "串流傳輸設定",
@@ -2836,6 +2850,7 @@
         "non_negative_integer": "請輸入非負整數",
         "integer": "請輸入整數",
         "retention_seconds_range": "請輸入 1 到 3600 之間的整數",
+        "duration_format": "請輸入形如 45m、2h 或 30min 的時長",
         "payload_invalid_number": "請輸入有效數字",
         "payload_invalid_boolean": "請選擇 true 或 false",
         "payload_invalid_json": "請輸入有效的 JSON"

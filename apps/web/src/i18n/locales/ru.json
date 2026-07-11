@@ -2708,7 +2708,9 @@
           "disable_claude_cloak_mode_desc": "Глобально передавать system prompt Claude без маскировки Claude Code, если учётные данные не переопределяют это",
           "session_affinity": "Маршрутизация с привязкой к сессии",
           "ws_auth": "Аутентификация WebSocket",
-          "ws_auth_desc": "Включить аутентификацию WebSocket (/v1/ws)"
+          "ws_auth_desc": "Включить аутентификацию WebSocket (/v1/ws)",
+          "enable_gemini_cli_endpoint": "Включить эндпоинт Gemini CLI",
+          "enable_gemini_cli_endpoint_desc": "Разрешить внутренние эндпоинты Gemini CLI /v1internal:*. Внимание: в режиме удалённого управления home этот параметр всегда принудительно отключается, даже если включён здесь."
         },
         "quota": {
           "title": "Резерв по квоте",
@@ -2718,7 +2720,19 @@
           "switch_preview_model": "Переключить на preview-модель",
           "switch_preview_model_desc": "Переключаться на preview-версию модели при превышении квоты",
           "antigravity_credits": "Повтор Antigravity Credits",
-          "antigravity_credits_desc": "При ответе Antigravity quota_exhausted 429 повторять запрос один раз с enabledCreditTypes=[\"GOOGLE_ONE_AI\"]"
+          "antigravity_credits_desc": "При ответе Antigravity quota_exhausted 429 повторять запрос один раз с enabledCreditTypes=[\"GOOGLE_ONE_AI\"]",
+          "snapshot_refresh_title": "Обновление снимков квоты",
+          "snapshot_refresh_desc": "Управляет фоновым обновлением, которое периодически сохраняет снимки квоты",
+          "snapshot_refresh_enabled": "Включить фоновое обновление",
+          "snapshot_refresh_enabled_desc": "Периодически обновлять и сохранять снимки квоты в фоне",
+          "snapshot_refresh_startup_catch_up": "Догоняющее обновление при запуске",
+          "snapshot_refresh_startup_catch_up_desc": "Выполнить обновление при запуске, если существующий снимок устарел",
+          "snapshot_refresh_interval": "Интервал обновления",
+          "snapshot_refresh_interval_hint": "Длительность вида 45m или 2h. При пустом или неверном значении используется 45m.",
+          "snapshot_refresh_jitter": "Разброс обновления",
+          "snapshot_refresh_jitter_hint": "Случайный разброс, добавляемый к интервалу обновления, например 10m. При пустом или неверном значении используется 10m.",
+          "snapshot_refresh_startup_max_staleness": "Макс. устаревание при запуске",
+          "snapshot_refresh_startup_max_staleness_hint": "Если снимок старше этой длительности при запуске, немедленно выполняется догоняющее обновление, например 24h. При пустом или неверном значении используется 24h."
         },
         "streaming": {
           "title": "Настройки стриминга",
@@ -2836,6 +2850,7 @@
         "non_negative_integer": "Введите неотрицательное целое число",
         "integer": "Введите целое число",
         "retention_seconds_range": "Введите целое число от 1 до 3600",
+        "duration_format": "Введите длительность вида 45m, 2h или 30min",
         "payload_invalid_number": "Введите корректное число",
         "payload_invalid_boolean": "Выберите true или false",
         "payload_invalid_json": "Введите корректный JSON"

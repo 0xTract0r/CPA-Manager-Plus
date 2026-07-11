@@ -2708,7 +2708,9 @@
           "disable_claude_cloak_mode_desc": "全局原样传递 Claude system 提示词，不再伪装成 Claude Code；单个凭证仍可覆盖",
           "session_affinity": "会话粘性路由",
           "ws_auth": "WebSocket 认证",
-          "ws_auth_desc": "启用 WebSocket 连接认证 (/v1/ws)"
+          "ws_auth_desc": "启用 WebSocket 连接认证 (/v1/ws)",
+          "enable_gemini_cli_endpoint": "启用 Gemini CLI 端点",
+          "enable_gemini_cli_endpoint_desc": "放行 /v1internal:* Gemini CLI 内部端点。注意：home 远程管理模式下该开关始终被强制关闭，即使这里勾选。"
         },
         "quota": {
           "title": "配额回退",
@@ -2718,7 +2720,19 @@
           "switch_preview_model": "切换预览模型",
           "switch_preview_model_desc": "配额耗尽时切换到预览版本模型",
           "antigravity_credits": "Antigravity Credits 重试",
-          "antigravity_credits_desc": "Antigravity 返回 quota_exhausted 429 时，使用 enabledCreditTypes=[\"GOOGLE_ONE_AI\"] 重试一次"
+          "antigravity_credits_desc": "Antigravity 返回 quota_exhausted 429 时，使用 enabledCreditTypes=[\"GOOGLE_ONE_AI\"] 重试一次",
+          "snapshot_refresh_title": "配额快照刷新",
+          "snapshot_refresh_desc": "控制后台定期持久化配额快照的刷新器",
+          "snapshot_refresh_enabled": "启用后台刷新",
+          "snapshot_refresh_enabled_desc": "后台定期刷新并持久化配额快照",
+          "snapshot_refresh_startup_catch_up": "启动时补齐刷新",
+          "snapshot_refresh_startup_catch_up_desc": "启动时若已有快照过旧，立即补刷新一次",
+          "snapshot_refresh_interval": "刷新间隔",
+          "snapshot_refresh_interval_hint": "形如 45m 或 2h 的时长；留空或格式无效时使用 45m。",
+          "snapshot_refresh_jitter": "刷新抖动",
+          "snapshot_refresh_jitter_hint": "叠加在刷新间隔上的随机抖动，例如 10m；留空或格式无效时使用 10m。",
+          "snapshot_refresh_startup_max_staleness": "启动最大陈旧时长",
+          "snapshot_refresh_startup_max_staleness_hint": "启动时若快照早于该时长，会立即触发补齐刷新，例如 24h；留空或格式无效时使用 24h。"
         },
         "streaming": {
           "title": "流式传输配置",
@@ -2836,6 +2850,7 @@
         "non_negative_integer": "请输入非负整数",
         "integer": "请输入整数",
         "retention_seconds_range": "请输入 1 到 3600 之间的整数",
+        "duration_format": "请输入形如 45m、2h 或 30min 的时长",
         "payload_invalid_number": "请输入有效数字",
         "payload_invalid_boolean": "请选择 true 或 false",
         "payload_invalid_json": "请输入有效的 JSON"

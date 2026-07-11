@@ -20,13 +20,17 @@ export type VisualConfigFieldPath =
   | 'authAutoRefreshWorkers'
   | 'streaming.keepaliveSeconds'
   | 'streaming.bootstrapRetries'
-  | 'streaming.nonstreamKeepaliveInterval';
+  | 'streaming.nonstreamKeepaliveInterval'
+  | 'quotaSnapshotRefresh.interval'
+  | 'quotaSnapshotRefresh.jitter'
+  | 'quotaSnapshotRefresh.startupMaxStaleness';
 
 export type VisualConfigValidationErrorCode =
   | 'port_range'
   | 'non_negative_integer'
   | 'integer'
-  | 'retention_seconds_range';
+  | 'retention_seconds_range'
+  | 'duration_format';
 
 export type VisualConfigValidationErrors = Partial<
   Record<VisualConfigFieldPath, VisualConfigValidationErrorCode>
@@ -75,6 +79,19 @@ export interface StreamingConfig {
   nonstreamKeepaliveInterval: string;
 }
 
+/**
+ * quota-snapshot-refresh 五子字段。core 落盘为 duration 字符串
+ * （time.ParseDuration，如 "45m"/"2h"/"30min"），不是整数分钟；
+ * 前端必须保持字符串原样往返，不做分钟数拆分/合成。
+ */
+export interface QuotaSnapshotRefreshConfig {
+  enabled: boolean;
+  interval: string;
+  jitter: string;
+  startupCatchUp: boolean;
+  startupMaxStaleness: string;
+}
+
 export type PluginStoreAuthRule = {
   id: string;
   match: string;
@@ -118,6 +135,8 @@ export type VisualConfigValues = {
   redisUsageQueueRetentionSeconds: string;
   proxyUrl: string;
   forceModelPrefix: boolean;
+  /** enable-gemini-cli-endpoint（core 默认 false）。home 远程管理模式下会被强制关闭。 */
+  enableGeminiCliEndpoint: boolean;
   passthroughHeaders: boolean;
   requestRetry: string;
   maxRetryCredentials: string;
@@ -133,6 +152,7 @@ export type VisualConfigValues = {
   quotaSwitchProject: boolean;
   quotaSwitchPreviewModel: boolean;
   quotaAntigravityCredits: boolean;
+  quotaSnapshotRefresh: QuotaSnapshotRefreshConfig;
   routingStrategy: 'round-robin' | 'fill-first';
   routingSessionAffinity: boolean;
   routingSessionAffinityTTL: string;
@@ -194,6 +214,7 @@ export const DEFAULT_VISUAL_VALUES: VisualConfigValues = {
   redisUsageQueueRetentionSeconds: '',
   proxyUrl: '',
   forceModelPrefix: false,
+  enableGeminiCliEndpoint: false,
   passthroughHeaders: false,
   requestRetry: '',
   maxRetryCredentials: '',
@@ -209,6 +230,13 @@ export const DEFAULT_VISUAL_VALUES: VisualConfigValues = {
   quotaSwitchProject: false,
   quotaSwitchPreviewModel: false,
   quotaAntigravityCredits: false,
+  quotaSnapshotRefresh: {
+    enabled: true,
+    interval: '45m',
+    jitter: '10m',
+    startupCatchUp: true,
+    startupMaxStaleness: '24h',
+  },
   routingStrategy: 'round-robin',
   routingSessionAffinity: false,
   routingSessionAffinityTTL: '',

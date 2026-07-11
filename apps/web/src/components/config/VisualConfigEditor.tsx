@@ -241,6 +241,18 @@ export function VisualConfigEditor({
     t,
     validationErrors?.['streaming.nonstreamKeepaliveInterval']
   );
+  const quotaSnapshotRefreshIntervalError = getValidationMessage(
+    t,
+    validationErrors?.['quotaSnapshotRefresh.interval']
+  );
+  const quotaSnapshotRefreshJitterError = getValidationMessage(
+    t,
+    validationErrors?.['quotaSnapshotRefresh.jitter']
+  );
+  const quotaSnapshotRefreshStartupMaxStalenessError = getValidationMessage(
+    t,
+    validationErrors?.['quotaSnapshotRefresh.startupMaxStaleness']
+  );
 
   const handleApiKeysTextChange = useCallback(
     (apiKeysText: string) => onChange({ apiKeysText }),
@@ -332,7 +344,11 @@ export function VisualConfigEditor({
         title: t('config_management.visual.sections.quota.title'),
         description: t('config_management.visual.sections.quota.description'),
         icon: IconTimer,
-        errorCount: 0,
+        errorCount: countErrors([
+          'quotaSnapshotRefresh.interval',
+          'quotaSnapshotRefresh.jitter',
+          'quotaSnapshotRefresh.startupMaxStaleness',
+        ]),
       },
       {
         id: 'streaming',
@@ -1177,6 +1193,15 @@ export function VisualConfigEditor({
                   disabled={disabled}
                   onChange={(wsAuth) => onChange({ wsAuth })}
                 />
+                <ToggleRow
+                  title={t('config_management.visual.sections.network.enable_gemini_cli_endpoint')}
+                  description={t(
+                    'config_management.visual.sections.network.enable_gemini_cli_endpoint_desc'
+                  )}
+                  checked={values.enableGeminiCliEndpoint}
+                  disabled={disabled}
+                  onChange={(enableGeminiCliEndpoint) => onChange({ enableGeminiCliEndpoint })}
+                />
               </SectionGrid>
 
               <SectionSubsection
@@ -1313,6 +1338,98 @@ export function VisualConfigEditor({
                 onChange={(quotaAntigravityCredits) => onChange({ quotaAntigravityCredits })}
               />
             </SectionGrid>
+
+            <SectionSubsection
+              title={t('config_management.visual.sections.quota.snapshot_refresh_title')}
+              description={t('config_management.visual.sections.quota.snapshot_refresh_desc')}
+            >
+              <SectionStack>
+                <SectionGrid>
+                  <ToggleRow
+                    title={t('config_management.visual.sections.quota.snapshot_refresh_enabled')}
+                    description={t(
+                      'config_management.visual.sections.quota.snapshot_refresh_enabled_desc'
+                    )}
+                    checked={values.quotaSnapshotRefresh.enabled}
+                    disabled={disabled}
+                    onChange={(enabled) =>
+                      onChange({
+                        quotaSnapshotRefresh: { ...values.quotaSnapshotRefresh, enabled },
+                      })
+                    }
+                  />
+                  <ToggleRow
+                    title={t(
+                      'config_management.visual.sections.quota.snapshot_refresh_startup_catch_up'
+                    )}
+                    description={t(
+                      'config_management.visual.sections.quota.snapshot_refresh_startup_catch_up_desc'
+                    )}
+                    checked={values.quotaSnapshotRefresh.startupCatchUp}
+                    disabled={disabled}
+                    onChange={(startupCatchUp) =>
+                      onChange({
+                        quotaSnapshotRefresh: { ...values.quotaSnapshotRefresh, startupCatchUp },
+                      })
+                    }
+                  />
+                </SectionGrid>
+                <SectionGrid>
+                  <Input
+                    label={t('config_management.visual.sections.quota.snapshot_refresh_interval')}
+                    placeholder="45m"
+                    value={values.quotaSnapshotRefresh.interval}
+                    onChange={(e) =>
+                      onChange({
+                        quotaSnapshotRefresh: {
+                          ...values.quotaSnapshotRefresh,
+                          interval: e.target.value,
+                        },
+                      })
+                    }
+                    disabled={disabled}
+                    hint={t('config_management.visual.sections.quota.snapshot_refresh_interval_hint')}
+                    error={quotaSnapshotRefreshIntervalError}
+                  />
+                  <Input
+                    label={t('config_management.visual.sections.quota.snapshot_refresh_jitter')}
+                    placeholder="10m"
+                    value={values.quotaSnapshotRefresh.jitter}
+                    onChange={(e) =>
+                      onChange({
+                        quotaSnapshotRefresh: {
+                          ...values.quotaSnapshotRefresh,
+                          jitter: e.target.value,
+                        },
+                      })
+                    }
+                    disabled={disabled}
+                    hint={t('config_management.visual.sections.quota.snapshot_refresh_jitter_hint')}
+                    error={quotaSnapshotRefreshJitterError}
+                  />
+                  <Input
+                    label={t(
+                      'config_management.visual.sections.quota.snapshot_refresh_startup_max_staleness'
+                    )}
+                    placeholder="24h"
+                    value={values.quotaSnapshotRefresh.startupMaxStaleness}
+                    onChange={(e) =>
+                      onChange({
+                        quotaSnapshotRefresh: {
+                          ...values.quotaSnapshotRefresh,
+                          startupMaxStaleness: e.target.value,
+                        },
+                      })
+                    }
+                    disabled={disabled}
+                    hint={t(
+                      'config_management.visual.sections.quota.snapshot_refresh_startup_max_staleness_hint'
+                    )}
+                    error={quotaSnapshotRefreshStartupMaxStalenessError}
+                  />
+                </SectionGrid>
+              </SectionStack>
+            </SectionSubsection>
           </ConfigSection>
 
           <ConfigSection
