@@ -1262,6 +1262,24 @@
   font-variant-numeric: tabular-nums;
 }
 
+.cardMetaAction {
+  margin-left: auto;
+  min-width: 0;
+  flex: 1 1 220px;
+  display: flex;
+  justify-content: flex-end;
+  align-items: flex-start;
+}
+
+.cardMetaActionList {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px 12px;
+  min-width: 0;
+  max-width: 100%;
+}
+
 .noteText {
   font-size: 12px;
   color: var(--text-secondary);
@@ -1720,13 +1738,6 @@
   flex: 1;
 }
 
-.cardAuditPanels {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 8px;
-}
-
 .primaryActionButton:global(.btn.btn-sm) {
   min-width: 0;
   padding-inline: 10px;
@@ -1818,6 +1829,16 @@
   .statusToggle {
     width: 100%;
     justify-content: space-between;
+  }
+
+  .cardMetaAction {
+    width: 100%;
+    margin-left: 0;
+    justify-content: flex-start;
+  }
+
+  .cardMetaActionList {
+    justify-content: flex-start;
   }
 }
 

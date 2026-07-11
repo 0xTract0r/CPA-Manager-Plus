@@ -386,6 +386,14 @@ export function AuthFileCard(props: AuthFileCardProps) {
                 <span className={styles.metaValue}>{projectIdValue}</span>
               </div>
             )}
+            {!isRuntimeOnly && (
+              <div className={styles.cardMetaAction}>
+                <div className={styles.cardMetaActionList}>
+                  <AuthFilesReauthHistoryPanel file={file} reloadKey={auditReloadKey} />
+                  <AuthFilesStatusHistoryPanel file={file} reloadKey={auditReloadKey} />
+                </div>
+              </div>
+            )}
           </div>
 
           {rawStatusMessage && hasStatusWarning && (
@@ -544,12 +552,6 @@ export function AuthFileCard(props: AuthFileCardProps) {
             )}
           </div>
 
-          {!isRuntimeOnly && (
-            <div className={styles.cardAuditPanels}>
-              <AuthFilesReauthHistoryPanel authFileName={file.name} reloadKey={auditReloadKey} />
-              <AuthFilesStatusHistoryPanel authFileName={file.name} reloadKey={auditReloadKey} />
-            </div>
-          )}
         </div>
       </div>
     </div>

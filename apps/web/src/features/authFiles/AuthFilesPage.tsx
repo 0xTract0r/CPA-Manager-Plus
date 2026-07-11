@@ -42,6 +42,7 @@ import {
   getTypeColor,
   getTypeLabel,
   hasAuthFileStatusMessage,
+  hasAuthFileStatusWarning,
   isHealthyAuthFile,
   isRuntimeOnlyAuthFile,
   normalizeProviderKey,
@@ -139,6 +140,12 @@ import type { AuthJsonInputType } from '@/features/authFiles/sessionAuthConverte
 import type { AuthFileItem, ClaudeQuotaState, CodexQuotaState } from '@/types';
 import { useAuthStore, useNotificationStore, useQuotaStore, useThemeStore } from '@/stores';
 import styles from './AuthFilesPage.module.scss';
+
+// 迁移自 cpa fork：告警账号的定向静默状态刷新节奏（对照旧版 web 端）。
+// interval：常规轮询间隔；reentry cooldown：从后台/切页回来时的最短间隔，
+// 避免 visibilitychange / focus 和 interval 短时间内重复触发同一账号的刷新。
+const WARNING_AUTO_REFRESH_INTERVAL_MS = 240_000;
+const WARNING_AUTO_REFRESH_REENTRY_COOLDOWN_MS = 15_000;
 
 const hasInlineQuotaLayout = (file: AuthFileItem): boolean => {
   if (isRuntimeOnlyAuthFile(file)) return false;
@@ -277,6 +284,12 @@ export function AuthFilesPage() {
   const cooldownContextRef = useRef({ managerServiceBase, managementKey });
   const cooldownRecoveryContextRef = useRef({ managerServiceBase, managementKey });
   const headerSnapshotContextRef = useRef({ managerServiceBase, managementKey });
+  // bumpAuditReloadKey 定义在 useAuthFilesData 之后（依赖其 loadFiles 的其它 hook
+  // 也在中间声明），用 ref 打破声明顺序依赖，供下面 onStatusHistoryChanged 回调使用。
+  const bumpAuditReloadKeyRef = useRef<(fileName: string) => void>(() => {});
+  // 迁移自 cpa fork：记录每个账号最近一次告警自动刷新的时间戳，用于 interval /
+  // visibilitychange / focus 三路触发之间的去重节流。
+  const warningAutoRefreshAtRef = useRef<Record<string, number>>({});
 
   const {
     files,
@@ -289,6 +302,7 @@ export function AuthFilesPage() {
     deleting,
     deletingAll,
     statusUpdating,
+    statusRefreshing,
     batchStatusUpdating,
     batchFieldsUpdating,
     fileInputRef,
@@ -300,6 +314,7 @@ export function AuthFilesPage() {
     handleDeleteAll,
     handleDownload,
     handleStatusToggle,
+    handleStatusRefresh,
     toggleSelect,
     selectAllVisible,
     invertVisibleSelection,
@@ -308,7 +323,9 @@ export function AuthFilesPage() {
     batchSetStatus,
     batchPatchFields,
     batchDelete,
-  } = useAuthFilesData();
+  } = useAuthFilesData({
+    onStatusHistoryChanged: (fileName: string) => bumpAuditReloadKeyRef.current(fileName),
+  });
 
   const statusBarCache = useAuthFilesStatusBarCache(files);
   const uniqueAuthFileKeyByFallbackCooldownKey = useMemo(() => {
@@ -414,6 +431,7 @@ export function AuthFilesPage() {
   const bumpAuditReloadKey = useCallback((fileName: string) => {
     setAuditReloadKeys((prev) => ({ ...prev, [fileName]: (prev[fileName] ?? 0) + 1 }));
   }, []);
+  bumpAuditReloadKeyRef.current = bumpAuditReloadKey;
 
   const disableControls = connectionStatus !== 'connected';
   const normalizedFilter = normalizeProviderKey(String(filter));
@@ -677,6 +695,98 @@ export function AuthFilesPage() {
       void loadFiles().catch(() => {});
     },
     isCurrentLayer ? 240_000 : null
+  );
+
+  // 迁移自 cpa fork：对「当前处于状态告警」的账号做定向静默刷新，补充上面
+  // 每 240s 的全量粗刷——粗刷只重新拉取列表快照，不会主动触发 core 侧重新探测
+  // 该账号的最新状态；这里显式调用 refresh-status，让告警账号有机会尽快恢复。
+  const warningFilesForAutoRefresh = useMemo(
+    () =>
+      files.filter((file) => {
+        if (isRuntimeOnlyAuthFile(file) || file.disabled) return false;
+        if (!hasAuthFileStatusWarning(file)) return false;
+        if (statusRefreshing[file.name] === true) return false;
+        return true;
+      }),
+    [files, statusRefreshing]
+  );
+
+  const refreshWarningFilesSilently = useCallback(
+    (reason: 'interval' | 'layer' | 'visible' | 'focus' = 'interval') => {
+      if (warningFilesForAutoRefresh.length === 0) return;
+
+      const now = Date.now();
+      const minimumElapsed =
+        reason === 'interval'
+          ? WARNING_AUTO_REFRESH_INTERVAL_MS
+          : WARNING_AUTO_REFRESH_REENTRY_COOLDOWN_MS;
+
+      const candidates = warningFilesForAutoRefresh.filter((file) => {
+        const lastRefreshedAt = warningAutoRefreshAtRef.current[file.name] ?? 0;
+        return now - lastRefreshedAt >= minimumElapsed;
+      });
+
+      if (candidates.length === 0) return;
+
+      candidates.forEach((file) => {
+        warningAutoRefreshAtRef.current[file.name] = now;
+        void handleStatusRefresh(file, { silent: true, trigger: 'auto' });
+      });
+    },
+    [handleStatusRefresh, warningFilesForAutoRefresh]
+  );
+
+  useEffect(() => {
+    if (!isCurrentLayer || loading) return;
+    refreshWarningFilesSilently('layer');
+  }, [isCurrentLayer, loading, refreshWarningFilesSilently]);
+
+  useEffect(() => {
+    if (!isCurrentLayer) return;
+    if (typeof document === 'undefined' || typeof window === 'undefined') return;
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return;
+      refreshWarningFilesSilently('visible');
+    };
+
+    const handleWindowFocus = () => {
+      refreshWarningFilesSilently('focus');
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleWindowFocus);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleWindowFocus);
+    };
+  }, [isCurrentLayer, refreshWarningFilesSilently]);
+
+  useEffect(() => {
+    // 仅在账号真正脱离 warning 候选集时清理 cooldown。
+    // 不要因为“当前正在刷新中”就把 cooldown 删掉，否则会在 finally 后立刻再次触发 auto refresh。
+    const retainedWarningNames = new Set(
+      files
+        .filter((file) => {
+          if (isRuntimeOnlyAuthFile(file) || file.disabled) return false;
+          return hasAuthFileStatusWarning(file);
+        })
+        .map((file) => file.name)
+    );
+
+    Object.keys(warningAutoRefreshAtRef.current).forEach((name) => {
+      if (!retainedWarningNames.has(name)) {
+        delete warningAutoRefreshAtRef.current[name];
+      }
+    });
+  }, [files]);
+
+  useInterval(
+    () => {
+      refreshWarningFilesSilently('interval');
+    },
+    isCurrentLayer ? WARNING_AUTO_REFRESH_INTERVAL_MS : null
   );
 
   const loadQuotaCooldowns = useCallback(async () => {

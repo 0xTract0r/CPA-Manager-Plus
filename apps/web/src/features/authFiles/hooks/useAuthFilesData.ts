@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { authFilesApi, type AuthFileFieldsPatch } from '@/services/api';
 import { apiClient } from '@/services/api/client';
 import { useNotificationStore } from '@/stores';
-import type { AuthFileItem } from '@/types';
+import type { AuthFileItem, AuthFileStatusHistoryTrigger } from '@/types';
 import { formatFileSize } from '@/utils/format';
 import { MAX_AUTH_FILE_SIZE } from '@/utils/constants';
 import { downloadBlob } from '@/utils/download';
@@ -15,8 +15,10 @@ import {
   type AuthJsonInputType,
 } from '@/features/authFiles/sessionAuthConverter';
 import {
+  getAuthFileStatusMessage,
   getTypeLabel,
   hasAuthFileStatusMessage,
+  hasAuthFileStatusWarning,
   isHealthyAuthFile,
   isRuntimeOnlyAuthFile,
   normalizeProviderKey,
@@ -46,6 +48,18 @@ export type AuthFilesBatchPatchResult = {
   failedNames: string[];
 };
 
+// 迁移自 cpa fork：手动/自动状态刷新的调用选项。silent=true 时不弹通知，
+// 用于告警账号的静默自动刷新（不打扰用户）；trigger 落到 /auth-status-history。
+export type HandleStatusRefreshOptions = {
+  silent?: boolean;
+  trigger?: AuthFileStatusHistoryTrigger;
+};
+
+export type UseAuthFilesDataOptions = {
+  /** 状态刷新成功后触发，携带对应文件名（例如 bump 该文件的审计面板 reloadKey）。 */
+  onStatusHistoryChanged?: (fileName: string) => void;
+};
+
 export type UseAuthFilesDataResult = {
   files: AuthFileItem[];
   selectedFiles: Set<string>;
@@ -57,6 +71,7 @@ export type UseAuthFilesDataResult = {
   deleting: string | null;
   deletingAll: boolean;
   statusUpdating: Record<string, boolean>;
+  statusRefreshing: Record<string, boolean>;
   batchStatusUpdating: boolean;
   batchFieldsUpdating: boolean;
   fileInputRef: RefObject<HTMLInputElement | null>;
@@ -72,6 +87,7 @@ export type UseAuthFilesDataResult = {
   handleDeleteAll: (options: DeleteAllOptions) => void;
   handleDownload: (name: string) => Promise<void>;
   handleStatusToggle: (item: AuthFileItem, enabled: boolean) => Promise<void>;
+  handleStatusRefresh: (item: AuthFileItem, options?: HandleStatusRefreshOptions) => Promise<void>;
   toggleSelect: (key: string) => void;
   selectAllVisible: (visibleFiles: AuthFileItem[]) => void;
   invertVisibleSelection: (visibleFiles: AuthFileItem[]) => void;
@@ -166,7 +182,10 @@ export const buildPastedAuthJsonPayload = (
   };
 };
 
-export function useAuthFilesData(): UseAuthFilesDataResult {
+export function useAuthFilesData(
+  options: UseAuthFilesDataOptions = {}
+): UseAuthFilesDataResult {
+  const { onStatusHistoryChanged } = options;
   const { t } = useTranslation();
   const { showNotification, showConfirmation } = useNotificationStore();
 
@@ -179,6 +198,7 @@ export function useAuthFilesData(): UseAuthFilesDataResult {
   const [deleting, setDeleting] = useState<string | null>(null);
   const [deletingAll, setDeletingAll] = useState(false);
   const [statusUpdating, setStatusUpdating] = useState<Record<string, boolean>>({});
+  const [statusRefreshing, setStatusRefreshing] = useState<Record<string, boolean>>({});
   const [batchStatusUpdating, setBatchStatusUpdating] = useState(false);
   const [batchFieldsUpdating, setBatchFieldsUpdating] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
@@ -641,6 +661,64 @@ export function useAuthFilesData(): UseAuthFilesDataResult {
     [showNotification, t]
   );
 
+  // 迁移自 cpa fork：单个认证文件的状态刷新（手动按钮 / 告警账号静默自动刷新共用）。
+  // silent=true 时不弹通知，仅更新 files 状态供卡片和历史面板消费。
+  const handleStatusRefresh = useCallback(
+    async (item: AuthFileItem, refreshOptions: HandleStatusRefreshOptions = {}) => {
+      const name = item.name;
+      if (!name) return;
+      if (statusRefreshing[name] === true) return;
+
+      const { silent = false, trigger = 'manual' } = refreshOptions;
+
+      setStatusRefreshing((prev) => ({ ...prev, [name]: true }));
+      try {
+        const result = await authFilesApi.refreshStatus(name, { trigger });
+        if (result.file) {
+          setFiles((prev) =>
+            prev.map((file) => (file.name === name ? { ...file, ...result.file } : file))
+          );
+        }
+        onStatusHistoryChanged?.(name);
+
+        if (silent) {
+          return;
+        }
+
+        const warningMessage =
+          result.status === 'ok' && result.file && hasAuthFileStatusWarning(result.file)
+            ? getAuthFileStatusMessage(result.file)
+            : '';
+
+        if (warningMessage) {
+          showNotification(warningMessage, 'warning');
+        } else if (result.status === 'ok') {
+          showNotification(t('auth_files.status_refresh_success', { name }), 'success');
+        } else {
+          const message = result.error || t('auth_files.status_refresh_failed', { name });
+          showNotification(message, 'warning');
+        }
+      } catch (err: unknown) {
+        if (silent) {
+          return;
+        }
+        const errorMessage = err instanceof Error ? err.message : '';
+        showNotification(
+          `${t('auth_files.status_refresh_failed', { name })}: ${errorMessage}`,
+          'error'
+        );
+      } finally {
+        setStatusRefreshing((prev) => {
+          if (!prev[name]) return prev;
+          const next = { ...prev };
+          delete next[name];
+          return next;
+        });
+      }
+    },
+    [onStatusHistoryChanged, showNotification, statusRefreshing, t]
+  );
+
   const batchSetStatus = useCallback(
     async (names: string[], enabled: boolean) => {
       if (batchStatusPendingRef.current) return;
@@ -889,6 +967,7 @@ export function useAuthFilesData(): UseAuthFilesDataResult {
     deleting,
     deletingAll,
     statusUpdating,
+    statusRefreshing,
     batchStatusUpdating,
     batchFieldsUpdating,
     fileInputRef,
@@ -900,6 +979,7 @@ export function useAuthFilesData(): UseAuthFilesDataResult {
     handleDeleteAll,
     handleDownload,
     handleStatusToggle,
+    handleStatusRefresh,
     toggleSelect,
     selectAllVisible,
     invertVisibleSelection,

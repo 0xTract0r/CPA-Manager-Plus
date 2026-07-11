@@ -1,23 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { authFilesApi } from '@/services/api';
-import type { AuthFileReauthHistoryEntry } from '@/types/authFile';
-import { Card } from '@/components/ui/Card';
-import { Button } from '@/components/ui/Button';
-import { EmptyState } from '@/components/ui/EmptyState';
-import { IconChevronDown, IconChevronUp } from '@/components/ui/icons';
+import type { AuthFileItem, AuthFileReauthHistoryEntry } from '@/types';
 import { formatDateTime } from '@/utils/format';
 import styles from './AuthFilesReauthHistoryPanel.module.scss';
 
 const HISTORY_FETCH_LIMIT = 8;
 
 export type AuthFilesReauthHistoryPanelProps = {
-  /** 认证文件名，用于查询 /oauth-reauth-history。 */
-  authFileName: string;
+  /** 认证文件对象；用于查询 /oauth-reauth-history 以及首屏 reauth_history 兜底。 */
+  file: AuthFileItem;
   /** 变更时触发重新加载（例如父级重新认证成功后递增）。 */
   reloadKey?: number;
-  /** 默认是否展开，第三批集成到 AuthFileCard 时通常传 false（折叠触发）。 */
-  defaultExpanded?: boolean;
 };
 
 const formatOccurredAt = (value: string | undefined): string => {
@@ -49,18 +43,31 @@ const isSuccessEvent = (event: AuthFileReauthHistoryEntry): boolean => {
 
 /**
  * 认证文件重新认证（OAuth reauth）历史面板。
- * 数据来自 `authFilesApi.getOAuthReauthHistory`，展示最近若干次重新认证事件
- * （成功/失败、账号变化、套餐、错误信息）。
+ * 折叠态只渲染一个裸文字触发链接，不占用卡片额外空间；展开后才懒加载历史，
+ * 首屏用 file.reauth_history 兜底展示（对照旧版 web 端形态，不使用 Card 外壳）。
  */
 export function AuthFilesReauthHistoryPanel(props: AuthFilesReauthHistoryPanelProps) {
-  const { authFileName, reloadKey = 0, defaultExpanded = false } = props;
+  const { file, reloadKey = 0 } = props;
   const { t } = useTranslation();
-  const [expanded, setExpanded] = useState(defaultExpanded);
-  const [events, setEvents] = useState<AuthFileReauthHistoryEntry[]>([]);
+  const seededEvents = useMemo(
+    () => (Array.isArray(file.reauth_history) ? file.reauth_history.slice(0, HISTORY_FETCH_LIMIT) : []),
+    [file.reauth_history]
+  );
+  const [expanded, setExpanded] = useState(false);
+  const triggerLabel = expanded
+    ? t('auth_files.reauth_history_hide_button', { defaultValue: 'Hide re-auth history' })
+    : t('auth_files.reauth_history_show_button', { defaultValue: 'View re-auth history' });
+  const [events, setEvents] = useState<AuthFileReauthHistoryEntry[]>(seededEvents);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const requestIdRef = useRef(0);
   const loadedReloadKeyRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (loadedReloadKeyRef.current === null) {
+      setEvents(seededEvents);
+    }
+  }, [seededEvents]);
 
   const loadHistory = useCallback(async () => {
     const requestId = ++requestIdRef.current;
@@ -68,7 +75,7 @@ export function AuthFilesReauthHistoryPanel(props: AuthFilesReauthHistoryPanelPr
     setError('');
 
     try {
-      const nextEvents = await authFilesApi.getOAuthReauthHistory(authFileName, HISTORY_FETCH_LIMIT);
+      const nextEvents = await authFilesApi.getOAuthReauthHistory(file.name, HISTORY_FETCH_LIMIT);
       if (requestId !== requestIdRef.current) return;
       setEvents(nextEvents);
       loadedReloadKeyRef.current = reloadKey;
@@ -81,7 +88,7 @@ export function AuthFilesReauthHistoryPanel(props: AuthFilesReauthHistoryPanelPr
         setLoading(false);
       }
     }
-  }, [authFileName, reloadKey, t]);
+  }, [file.name, reloadKey, t]);
 
   useEffect(() => {
     if (!expanded) return;
@@ -90,105 +97,100 @@ export function AuthFilesReauthHistoryPanel(props: AuthFilesReauthHistoryPanelPr
   }, [expanded, loadHistory, reloadKey]);
 
   return (
-    <Card
-      className={styles.panelCard}
-      title={t('auth_files.reauth_history_title', { defaultValue: 'Re-auth history' })}
-      extra={
-        <Button
-          variant="ghost"
-          size="xs"
-          onClick={() => setExpanded((value) => !value)}
-          aria-expanded={expanded}
-        >
-          {expanded ? (
-            <>
-              {t('auth_files.reauth_history_hide_button', { defaultValue: 'Hide' })}
-              <IconChevronUp size={14} />
-            </>
-          ) : (
-            <>
-              {t('auth_files.reauth_history_show_button', { defaultValue: 'View' })}
-              <IconChevronDown size={14} />
-            </>
-          )}
-        </Button>
-      }
-    >
-      {!expanded ? null : loading ? (
-        <div className={styles.message}>{t('common.loading')}</div>
-      ) : error ? (
-        <div className={styles.errorMessage}>{error}</div>
-      ) : events.length === 0 ? (
-        <EmptyState
-          title={t('auth_files.reauth_history_empty', {
-            defaultValue: 'No re-authentication history yet.',
-          })}
-        />
-      ) : (
-        <div className={styles.list}>
-          {events.map((event, index) => {
-            const success = isSuccessEvent(event);
-            const provider = providerSummary(event);
-            const accountSummary = accountTransitionSummary(event);
-            const plan = planSummary(event);
-            const occurredAt = formatOccurredAt(event.occurred_at);
+    <div className={styles.inlineRoot}>
+      <button
+        type="button"
+        className={styles.trigger}
+        onClick={() => setExpanded((value) => !value)}
+        aria-expanded={expanded}
+        aria-label={triggerLabel}
+      >
+        {triggerLabel}
+      </button>
 
-            return (
-              <div
-                key={`${event.occurred_at || 'unknown'}-${event.event_type || 'event'}-${index}`}
-                className={`${styles.item} ${success ? styles.itemSuccess : styles.itemFailure}`}
-              >
-                <div className={styles.itemHeader}>
-                  <div className={styles.itemTitle}>
-                    {occurredAt ||
-                      t('auth_files.reauth_history_unknown_time', {
-                        defaultValue: 'Unknown time',
-                      })}
-                  </div>
-                  <span
-                    className={`${styles.statusBadge} ${success ? styles.statusSuccess : styles.statusFailure}`}
-                  >
-                    {success
-                      ? t('auth_files.reauth_history_status_success', { defaultValue: 'Success' })
-                      : t('auth_files.reauth_history_status_failure', { defaultValue: 'Failure' })}
-                  </span>
-                </div>
-
-                {provider ? <div className={styles.itemMeta}>{provider}</div> : null}
-
-                <div className={styles.detailList}>
-                  {accountSummary ? (
-                    <div className={styles.detail}>
-                      <span className={styles.detailLabel}>
-                        {t('auth_files.reauth_history_account', { defaultValue: 'Account' })}
-                      </span>
-                      <span>{accountSummary}</span>
-                    </div>
-                  ) : null}
-
-                  {plan ? (
-                    <div className={styles.detail}>
-                      <span className={styles.detailLabel}>
-                        {t('auth_files.reauth_history_plan', { defaultValue: 'Plan' })}
-                      </span>
-                      <span>{plan}</span>
-                    </div>
-                  ) : null}
-
-                  {!success && event.error?.trim() ? (
-                    <div className={styles.detail}>
-                      <span className={styles.detailLabel}>
-                        {t('auth_files.reauth_history_error', { defaultValue: 'Error' })}
-                      </span>
-                      <span>{event.error.trim()}</span>
-                    </div>
-                  ) : null}
-                </div>
+      {expanded && (
+        <div className={styles.panel}>
+          <div className={styles.content}>
+            {loading ? (
+              <div className={styles.loading}>{t('common.loading')}</div>
+            ) : error ? (
+              <div className={styles.error}>{error}</div>
+            ) : events.length === 0 ? (
+              <div className={styles.empty}>
+                {t('auth_files.reauth_history_empty', {
+                  defaultValue: 'No re-authentication history yet.',
+                })}
               </div>
-            );
-          })}
+            ) : (
+              <div className={styles.list}>
+                {events.map((event, index) => {
+                  const success = isSuccessEvent(event);
+                  const provider = providerSummary(event);
+                  const accountSummary = accountTransitionSummary(event);
+                  const plan = planSummary(event);
+                  const occurredAt = formatOccurredAt(event.occurred_at);
+
+                  return (
+                    <div
+                      key={`${event.occurred_at || 'unknown'}-${event.event_type || 'event'}-${index}`}
+                      className={`${styles.item} ${success ? styles.itemSuccess : styles.itemFailure}`}
+                    >
+                      <div className={styles.itemHeader}>
+                        <div className={styles.itemSummary}>
+                          <div className={styles.itemTitle}>
+                            {occurredAt ||
+                              t('auth_files.reauth_history_unknown_time', {
+                                defaultValue: 'Unknown time',
+                              })}
+                          </div>
+                          <div className={styles.meta}>
+                            {provider ? <span>{provider}</span> : null}
+                            <span>{file.name}</span>
+                          </div>
+                        </div>
+
+                        <span
+                          className={`${styles.status} ${success ? styles.statusSuccess : styles.statusFailure}`}
+                        >
+                          {success
+                            ? t('auth_files.reauth_history_status_success', { defaultValue: 'Success' })
+                            : t('auth_files.reauth_history_status_failure', { defaultValue: 'Failure' })}
+                        </span>
+                      </div>
+
+                      <div className={styles.detailList}>
+                        {accountSummary ? (
+                          <div className={styles.detail}>
+                            {t('auth_files.reauth_history_account', { defaultValue: 'Account' })}
+                            {': '}
+                            {accountSummary}
+                          </div>
+                        ) : null}
+
+                        {plan ? (
+                          <div className={styles.detail}>
+                            {t('auth_files.reauth_history_plan', { defaultValue: 'Plan' })}
+                            {': '}
+                            {plan}
+                          </div>
+                        ) : null}
+
+                        {!success && event.error?.trim() ? (
+                          <div className={styles.detail}>
+                            {t('auth_files.reauth_history_error', { defaultValue: 'Error' })}
+                            {': '}
+                            {event.error.trim()}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
       )}
-    </Card>
+    </div>
   );
 }
