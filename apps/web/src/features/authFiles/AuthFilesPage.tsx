@@ -303,6 +303,7 @@ export function AuthFilesPage() {
     deletingAll,
     statusUpdating,
     statusRefreshing,
+    messageTesting,
     batchStatusUpdating,
     batchFieldsUpdating,
     fileInputRef,
@@ -315,6 +316,7 @@ export function AuthFilesPage() {
     handleDownload,
     handleStatusToggle,
     handleStatusRefresh,
+    handleTestMessage,
     toggleSelect,
     selectAllVisible,
     invertVisibleSelection,
@@ -1958,6 +1960,8 @@ export function AuthFilesPage() {
                       disableControls={disableControls}
                       deleting={deleting}
                       statusUpdating={statusUpdating}
+                      statusRefreshing={statusRefreshing}
+                      messageTesting={messageTesting}
                       statusBarCache={statusBarCache}
                       codexStatusBadges={codexStatus?.badges ?? []}
                       codexNeedsReauth={codexStatus?.needsReauth ?? false}
@@ -1970,6 +1974,8 @@ export function AuthFilesPage() {
                       onReauth={(targetFile) =>
                         setCodexReauthTarget(createCodexReauthTargetFromAuthFile(targetFile))
                       }
+                      onRefreshStatus={handleStatusRefresh}
+                      onTestMessage={handleTestMessage}
                       onDownload={handleDownload}
                       onOpenPrefixProxyEditor={openPrefixProxyEditor}
                       onOpenAccountSettings={openAccountSettingsEditor}

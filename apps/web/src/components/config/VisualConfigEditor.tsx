@@ -1215,40 +1215,48 @@ export function VisualConfigEditor({
                     <SectionGrid>
                       <Input
                         label={t('config_management.visual.sections.headers.user_agent')}
+                        placeholder="claude-cli/2.1.44 (external, sdk-cli)"
                         value={values.claudeHeaderUserAgent}
                         onChange={(e) => onChange({ claudeHeaderUserAgent: e.target.value })}
                         disabled={disabled}
                       />
                       <Input
                         label={t('config_management.visual.sections.headers.package_version')}
+                        placeholder="0.74.0"
                         value={values.claudeHeaderPackageVersion}
                         onChange={(e) => onChange({ claudeHeaderPackageVersion: e.target.value })}
                         disabled={disabled}
                       />
                       <Input
                         label={t('config_management.visual.sections.headers.runtime_version')}
+                        placeholder="v24.3.0"
                         value={values.claudeHeaderRuntimeVersion}
                         onChange={(e) => onChange({ claudeHeaderRuntimeVersion: e.target.value })}
                         disabled={disabled}
                       />
                       <Input
                         label={t('config_management.visual.sections.headers.os')}
+                        placeholder="MacOS"
                         value={values.claudeHeaderOs}
                         onChange={(e) => onChange({ claudeHeaderOs: e.target.value })}
                         disabled={disabled}
                       />
                       <Input
                         label={t('config_management.visual.sections.headers.arch')}
+                        placeholder="arm64"
                         value={values.claudeHeaderArch}
                         onChange={(e) => onChange({ claudeHeaderArch: e.target.value })}
                         disabled={disabled}
                       />
                       <Input
                         label={t('config_management.visual.sections.headers.timeout')}
+                        placeholder="600"
                         value={values.claudeHeaderTimeout}
                         onChange={(e) => onChange({ claudeHeaderTimeout: e.target.value })}
                         disabled={disabled}
                       />
+                    </SectionGrid>
+                    <SectionGrid>
                       <ToggleRow
                         title={t('config_management.visual.sections.headers.stabilize_device')}
                         description={t(
@@ -1280,16 +1288,20 @@ export function VisualConfigEditor({
                     <SectionGrid>
                       <Input
                         label={t('config_management.visual.sections.headers.user_agent')}
+                        placeholder="codex_cli_rs/0.114.0 (Mac OS 14.2.0; x86_64) vscode/1.111.0"
                         value={values.codexHeaderUserAgent}
                         onChange={(e) => onChange({ codexHeaderUserAgent: e.target.value })}
                         disabled={disabled}
                       />
                       <Input
                         label={t('config_management.visual.sections.headers.beta_features')}
+                        placeholder="multi_agent"
                         value={values.codexHeaderBetaFeatures}
                         onChange={(e) => onChange({ codexHeaderBetaFeatures: e.target.value })}
                         disabled={disabled}
                       />
+                    </SectionGrid>
+                    <SectionGrid>
                       <ToggleRow
                         title={t('config_management.visual.sections.headers.identity_confuse')}
                         description={t(

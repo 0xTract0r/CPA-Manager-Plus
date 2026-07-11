@@ -253,3 +253,80 @@
   word-break: break-all;
   overflow-wrap: anywhere;
 }
+
+.accountSetupGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: $spacing-md;
+
+  @include mobile {
+    grid-template-columns: 1fr;
+  }
+}
+
+.flowSteps {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: $spacing-sm;
+
+  @include mobile {
+    grid-template-columns: 1fr;
+  }
+}
+
+.flowStep {
+  min-width: 0;
+  min-height: 40px;
+  border: 1px solid var(--border-subtle);
+  border-radius: $radius-md;
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.flowStepDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--text-tertiary);
+  flex: 0 0 auto;
+}
+
+.flowStepLabel {
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.flowStepActive {
+  border-color: $warning-color;
+  color: var(--text-primary);
+
+  .flowStepDot {
+    background: $warning-color;
+  }
+}
+
+.flowStepDone {
+  border-color: rgba($success-color, 0.45);
+  background: rgba($success-color, 0.08);
+  color: var(--text-primary);
+
+  .flowStepDot {
+    background: $success-color;
+  }
+}
+
+.successResultBox {
+  background: rgba($success-color, 0.08);
+  border: 1px solid rgba($success-color, 0.36);
+  border-radius: $radius-md;
+  padding: $spacing-md;
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+}

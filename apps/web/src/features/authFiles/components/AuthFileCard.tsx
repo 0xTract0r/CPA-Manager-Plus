@@ -4,6 +4,7 @@ import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { SelectionCheckbox } from '@/components/ui/SelectionCheckbox';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import {
+  IconBot,
   IconDownload,
   IconInfo,
   IconModelCluster,
@@ -28,6 +29,7 @@ import {
   getAuthFileStatusMessage,
   getTypeColor,
   getTypeLabel,
+  isAuthFileMissingProxyUrl,
   isRuntimeOnlyAuthFile,
   normalizeProviderKey,
   parsePriorityValue,
@@ -53,6 +55,10 @@ export type AuthFileCardProps = {
   disableControls: boolean;
   deleting: string | null;
   statusUpdating: Record<string, boolean>;
+  /** 迁移自旧版：逐账号「刷新状态」按钮的 loading 态，key 为 file.name。 */
+  statusRefreshing?: Record<string, boolean>;
+  /** 迁移自旧版：逐账号「测试消息」按钮的 loading 态，key 为 file.name。 */
+  messageTesting?: Record<string, boolean>;
   statusBarCache: Map<string, AuthFileStatusBarData>;
   codexStatusBadges?: AuthFileCodexStatusBadge[];
   codexNeedsReauth?: boolean;
@@ -64,6 +70,10 @@ export type AuthFileCardProps = {
   quotaCooldown?: QuotaCooldownInfo;
   onShowModels: (file: AuthFileItem) => void;
   onReauth?: (file: AuthFileItem) => void;
+  /** 迁移自旧版：逐账号手动触发一次状态检查刷新（core /auth-files/refresh-status）。 */
+  onRefreshStatus?: (file: AuthFileItem) => void;
+  /** 迁移自旧版：逐账号发送一次测试消息，验证账号是否能正常出请求。 */
+  onTestMessage?: (file: AuthFileItem) => void;
   onDownload: (name: string) => void;
   onOpenPrefixProxyEditor: (file: AuthFileItem) => void;
   /** 打开身份隔离账号设置弹窗（与「编辑原始 JSON」的 onOpenPrefixProxyEditor 并存，互不替代）。 */
@@ -97,6 +107,8 @@ export function AuthFileCard(props: AuthFileCardProps) {
     disableControls,
     deleting,
     statusUpdating,
+    statusRefreshing = {},
+    messageTesting = {},
     statusBarCache,
     codexStatusBadges = [],
     codexNeedsReauth = false,
@@ -107,6 +119,8 @@ export function AuthFileCard(props: AuthFileCardProps) {
     quotaCooldown,
     onShowModels,
     onReauth,
+    onRefreshStatus,
+    onTestMessage,
     onDownload,
     onOpenPrefixProxyEditor,
     onOpenAccountSettings,
@@ -152,6 +166,30 @@ export function AuthFileCard(props: AuthFileCardProps) {
   const rawStatusMessage = getAuthFileStatusMessage(file);
   const hasStatusWarning =
     Boolean(rawStatusMessage) && !HEALTHY_STATUS_MESSAGES.has(rawStatusMessage.toLowerCase());
+
+  // 缺失 proxy_url（住宅代理）告警：core#26/#27 把空 proxy_url 账号标为不可用并下发 warnings。
+  // 对照旧版卡片，用醒目橙色徽标 + tooltip 提示，避免请求直连暴露真实 IP。
+  const missingProxyUrl = isAuthFileMissingProxyUrl(file);
+  const missingProxyBadgeTitle = missingProxyUrl
+    ? t('auth_files.proxy_url_missing_marker', {
+        defaultValue:
+          'Missing proxy_url: this account is unavailable until a residential proxy is set, otherwise requests would expose your real IP.',
+      })
+    : '';
+
+  // 迁移自旧版：逐账号「刷新状态」「测试消息」按钮的可用性判定。
+  // 两者都只对非虚拟且已启用的账号开放；刷新状态额外要求当前处于告警态才展示，
+  // 避免对健康账号也铺满操作按钮。
+  const canRefreshStatus = !isRuntimeOnly && hasStatusWarning && !file.disabled && Boolean(onRefreshStatus);
+  const canTestMessage = !isRuntimeOnly && !file.disabled && Boolean(onTestMessage);
+  const isStatusRefreshing = statusRefreshing[file.name] === true;
+  const isMessageTesting = messageTesting[file.name] === true;
+  const refreshStatusButtonTitle = t('auth_files.status_refresh_button', {
+    defaultValue: 'Refresh status',
+  });
+  const testMessageButtonTitle = t('auth_files.test_message_button', {
+    defaultValue: 'Test message',
+  });
 
   const priorityValue = parsePriorityValue(file.priority ?? file['priority']);
   const projectIdValue = getProjectIdValue(file);
@@ -271,6 +309,15 @@ export function AuthFileCard(props: AuthFileCardProps) {
                   {typeLabel}
                 </span>
                 <span className={`${styles.stateBadge} ${stateBadgeClass}`}>{stateLabel}</span>
+                {missingProxyUrl && (
+                  <span
+                    className={`${styles.stateBadge} ${styles.stateBadgeWarning}`}
+                    title={missingProxyBadgeTitle}
+                  >
+                    <IconInfo className={styles.actionIcon} size={12} />
+                    {t('auth_files.proxy_url_missing_badge', { defaultValue: 'Missing proxy' })}
+                  </span>
+                )}
                 {subscriptionBadgeLabel && (
                   <span
                     className={`${styles.subscriptionBadge} ${subscriptionBadgeClass}`}
@@ -480,6 +527,40 @@ export function AuthFileCard(props: AuthFileCardProps) {
                       >
                         <IconDownload className={styles.actionIcon} size={16} />
                       </Button>
+                      {canRefreshStatus && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => onRefreshStatus?.(file)}
+                          className={styles.iconButton}
+                          title={refreshStatusButtonTitle}
+                          aria-label={refreshStatusButtonTitle}
+                          disabled={disableControls || isStatusRefreshing}
+                        >
+                          {isStatusRefreshing ? (
+                            <LoadingSpinner size={14} />
+                          ) : (
+                            <IconRefreshCw className={styles.actionIcon} size={16} />
+                          )}
+                        </Button>
+                      )}
+                      {canTestMessage && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => onTestMessage?.(file)}
+                          className={styles.iconButton}
+                          title={testMessageButtonTitle}
+                          aria-label={testMessageButtonTitle}
+                          disabled={disableControls || isMessageTesting}
+                        >
+                          {isMessageTesting ? (
+                            <LoadingSpinner size={14} />
+                          ) : (
+                            <IconBot className={styles.actionIcon} size={16} />
+                          )}
+                        </Button>
+                      )}
                       {codexNeedsReauth && onReauth ? (
                         <Button
                           variant="secondary"

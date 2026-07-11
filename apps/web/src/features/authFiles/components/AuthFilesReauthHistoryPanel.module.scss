@@ -149,3 +149,9 @@
   background: color-mix(in srgb, var(--warning-text) 8%, var(--bg-primary));
   color: var(--warning-text);
 }
+
+.footer {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1.45;
+}

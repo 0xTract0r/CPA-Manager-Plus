@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { authFilesApi } from '@/services/api';
 import type { AuthFileItem, AuthFileReauthHistoryEntry } from '@/types';
-import { formatDateTime } from '@/utils/format';
+import { formatInUtc8 } from '@/utils/format';
 import styles from './AuthFilesReauthHistoryPanel.module.scss';
 
 const HISTORY_FETCH_LIMIT = 8;
@@ -14,11 +14,18 @@ export type AuthFilesReauthHistoryPanelProps = {
   reloadKey?: number;
 };
 
-const formatOccurredAt = (value: string | undefined): string => {
+const formatOccurredAt = (value: string | undefined, locale: string): string => {
   const raw = String(value ?? '').trim();
   if (!raw) return '';
-  const formatted = formatDateTime(raw);
-  return formatted === 'Invalid Date' ? raw : formatted;
+  const parsed = Date.parse(raw);
+  if (Number.isNaN(parsed)) return raw;
+  // 展示一律 UTC+8（Asia/Shanghai），不跟随浏览器本地时区。
+  return formatInUtc8(
+    parsed,
+    { dateStyle: 'medium', timeStyle: 'short', withZoneLabel: true },
+    locale || undefined,
+    raw
+  );
 };
 
 const accountTransitionSummary = (event: AuthFileReauthHistoryEntry): string => {
@@ -48,7 +55,7 @@ const isSuccessEvent = (event: AuthFileReauthHistoryEntry): boolean => {
  */
 export function AuthFilesReauthHistoryPanel(props: AuthFilesReauthHistoryPanelProps) {
   const { file, reloadKey = 0 } = props;
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const seededEvents = useMemo(
     () => (Array.isArray(file.reauth_history) ? file.reauth_history.slice(0, HISTORY_FETCH_LIMIT) : []),
     [file.reauth_history]
@@ -128,7 +135,7 @@ export function AuthFilesReauthHistoryPanel(props: AuthFilesReauthHistoryPanelPr
                   const provider = providerSummary(event);
                   const accountSummary = accountTransitionSummary(event);
                   const plan = planSummary(event);
-                  const occurredAt = formatOccurredAt(event.occurred_at);
+                  const occurredAt = formatOccurredAt(event.occurred_at, i18n.language);
 
                   return (
                     <div
@@ -188,6 +195,13 @@ export function AuthFilesReauthHistoryPanel(props: AuthFilesReauthHistoryPanelPr
                 })}
               </div>
             )}
+
+            <div className={styles.footer}>
+              {t('auth_files.reauth_history_footer', {
+                defaultValue:
+                  'Showing the newest history entries only. The source of truth is <authDir>/.oauth-history/reauth.jsonl.',
+              })}
+            </div>
           </div>
         </div>
       )}

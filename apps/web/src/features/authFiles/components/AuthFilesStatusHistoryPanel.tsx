@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { authFilesApi } from '@/services/api';
 import type { AuthFileItem, AuthFileStatusHistoryEntry } from '@/types';
-import { formatDateTime } from '@/utils/format';
+import { formatInUtc8 } from '@/utils/format';
 import styles from './AuthFilesStatusHistoryPanel.module.scss';
 
 const HISTORY_FETCH_LIMIT = 8;
@@ -17,11 +17,18 @@ export type AuthFilesStatusHistoryPanelProps = {
 
 type StatusVariant = 'success' | 'warning' | 'failure' | 'neutral';
 
-const formatOccurredAt = (value: string | undefined): string => {
+const formatOccurredAt = (value: string | undefined, locale: string): string => {
   const raw = String(value ?? '').trim();
   if (!raw) return '';
-  const formatted = formatDateTime(raw);
-  return formatted === 'Invalid Date' ? raw : formatted;
+  const parsed = Date.parse(raw);
+  if (Number.isNaN(parsed)) return raw;
+  // 展示一律 UTC+8（Asia/Shanghai），不跟随浏览器本地时区。
+  return formatInUtc8(
+    parsed,
+    { dateStyle: 'medium', timeStyle: 'short', withZoneLabel: true },
+    locale || undefined,
+    raw
+  );
 };
 
 const resolveStatusVariant = (eventType: string): StatusVariant => {
@@ -76,7 +83,7 @@ const VARIANT_BADGE_CLASS: Record<StatusVariant, string> = {
  */
 export function AuthFilesStatusHistoryPanel(props: AuthFilesStatusHistoryPanelProps) {
   const { file, reloadKey = 0 } = props;
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const seededEvents = useMemo(
     () =>
       Array.isArray(file.status_history) ? file.status_history.slice(0, HISTORY_FETCH_LIMIT) : [],
@@ -155,7 +162,7 @@ export function AuthFilesStatusHistoryPanel(props: AuthFilesStatusHistoryPanelPr
                 {events.map((event, index) => {
                   const eventType = String(event.event_type ?? '').trim().toLowerCase();
                   const variant = resolveStatusVariant(eventType);
-                  const occurredAt = formatOccurredAt(event.occurred_at);
+                  const occurredAt = formatOccurredAt(event.occurred_at, i18n.language);
                   const triggerLabel = resolveTriggerLabel(t, event.trigger);
                   const provider = String(event.provider ?? '').trim();
                   const statusMessage = String(event.status_message ?? '').trim();
@@ -221,6 +228,13 @@ export function AuthFilesStatusHistoryPanel(props: AuthFilesStatusHistoryPanelPr
                 })}
               </div>
             )}
+
+            <div className={styles.footer}>
+              {t('auth_files.status_history_footer', {
+                defaultValue:
+                  'Showing the newest history entries only. The source of truth is <authDir>/.auth-status-history/status.jsonl.',
+              })}
+            </div>
           </div>
         </div>
       )}

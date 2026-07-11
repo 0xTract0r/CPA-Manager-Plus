@@ -8,9 +8,13 @@ import { useAuthStore, useNotificationStore, useThemeStore } from '@/stores';
 import {
   oauthApi,
   pluginsApi,
+  isOAuthCancelSuccessful,
   type BuiltInOAuthProvider,
   type OAuthProvider,
+  type OAuthStatusResponse,
 } from '@/services/api';
+import { authFilesApi } from '@/services/api/authFiles';
+import type { AuthFileItem } from '@/types/authFile';
 import { vertexApi, type VertexImportResponse } from '@/services/api/vertex';
 import { copyToClipboard } from '@/utils/clipboard';
 import type { PluginListEntry } from '@/types';
@@ -29,12 +33,23 @@ import iconVertex from '@/assets/icons/vertex.svg';
 import iconGrok from '@/assets/icons/grok.svg';
 import iconGrokDark from '@/assets/icons/grok-dark.svg';
 
+type OAuthFlowStep = 'generate_link' | 'wait_callback' | 'submit_callback' | 'exchange_token' | 'saved';
+
+interface OAuthSuccessResult {
+  authFile?: string;
+  account?: string;
+  note?: string;
+  proxyUrl?: string;
+}
+
 interface ProviderState {
   url?: string;
   state?: string;
-  status?: 'idle' | 'waiting' | 'success' | 'error';
+  status?: 'idle' | 'starting' | 'waiting' | 'success' | 'cancelled' | 'error';
   error?: string;
   polling?: boolean;
+  cancelling?: boolean;
+  accountNote?: string;
   proxyUrl?: string;
   proxyUrlError?: string;
   savedProxyUrl?: string;
@@ -42,6 +57,8 @@ interface ProviderState {
   callbackSubmitting?: boolean;
   callbackStatus?: 'success' | 'error';
   callbackError?: string;
+  authFilesBeforeStart?: string[];
+  successResult?: OAuthSuccessResult;
 }
 
 interface VertexImportResult {
@@ -140,7 +157,6 @@ const CALLBACK_SUPPORTED = new Set<string>([
   'xai',
 ]);
 const XAI_CALLBACK_URL = 'http://127.0.0.1:56121/callback';
-const SUCCESS_RESET_DELAY_MS = 5000;
 const getProviderI18nPrefix = (provider: BuiltInOAuthProvider) => provider.replace('-', '_');
 const getAuthKey = (provider: BuiltInOAuthProvider, suffix: string) =>
   `auth_login.${getProviderI18nPrefix(provider)}_${suffix}`;
@@ -163,6 +179,27 @@ const validateProxyUrl = (value: string, requiredMessage: string, invalidMessage
   } catch {
     return invalidMessage;
   }
+};
+
+const OAUTH_FLOW_STEPS: OAuthFlowStep[] = [
+  'generate_link',
+  'wait_callback',
+  'submit_callback',
+  'exchange_token',
+  'saved',
+];
+
+const getOAuthFlowStep = (state: ProviderState, supportsCallback: boolean): OAuthFlowStep => {
+  if (state.status === 'success') return 'saved';
+  if (!supportsCallback) {
+    // 无回调提交步骤的 provider（例如插件 OAuth）跳过 submit_callback / exchange_token 展示。
+    if (state.status === 'waiting') return 'wait_callback';
+    return 'generate_link';
+  }
+  if (state.callbackStatus === 'success' && state.status === 'waiting') return 'exchange_token';
+  if (state.callbackSubmitting) return 'submit_callback';
+  if (state.status === 'waiting') return 'wait_callback';
+  return 'generate_link';
 };
 
 const isAbsoluteUrl = (value: string): boolean => {
@@ -236,6 +273,86 @@ const resolveCallbackUrl = (
   return buildXaiCallbackUrl(input, state);
 };
 
+// 迁移自旧版 apps/web OAuthPage：按 provider 匹配认证文件，用于成功后展示落地文件与账号信息。
+const PROVIDER_MATCHERS: Record<string, string[]> = {
+  codex: ['codex', 'openai'],
+  anthropic: ['anthropic', 'claude'],
+  antigravity: ['antigravity'],
+  kimi: ['kimi'],
+  xai: ['xai', 'grok'],
+};
+
+const normalizeComparable = (value: string) => value.trim().toLowerCase().replace(/[_\s]/g, '-');
+
+const readStringField = (record: Record<string, unknown>, keys: string[]) => {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  }
+  return undefined;
+};
+
+const getAuthFileModifiedMs = (entry: AuthFileItem) => {
+  const record = entry as Record<string, unknown>;
+  const raw = record.modified ?? record.modtime ?? record.updated_at ?? record.created_at;
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+  if (typeof raw === 'string') {
+    const parsed = Date.parse(raw);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+};
+
+const matchesAuthFileProvider = (entry: AuthFileItem, provider: OAuthProvider) => {
+  const matchers = PROVIDER_MATCHERS[provider];
+  if (!matchers) return false;
+  const record = entry as Record<string, unknown>;
+  const haystack = [
+    entry.provider,
+    entry.type,
+    readStringField(record, ['account_type', 'oauth_provider']),
+    entry.name,
+  ]
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .map(normalizeComparable);
+  const needles = matchers.map(normalizeComparable);
+  return needles.some((needle) => haystack.some((value) => value.includes(needle)));
+};
+
+const getAuthFileAccount = (entry?: AuthFileItem) => {
+  if (!entry) return undefined;
+  const record = entry as Record<string, unknown>;
+  return readStringField(record, [
+    'email',
+    'account',
+    'account_email',
+    'user_email',
+    'username',
+    'login',
+    'project_id',
+    'chatgpt_account_id',
+    'account_id',
+  ]);
+};
+
+const findSavedAuthFile = (
+  provider: OAuthProvider,
+  authFileName: string | undefined,
+  beforeNames: string[] | undefined,
+  files: AuthFileItem[]
+): AuthFileItem | undefined => {
+  if (authFileName) {
+    const exact = files.find((entry) => entry.name === authFileName);
+    if (exact) return exact;
+  }
+  const before = new Set(beforeNames ?? []);
+  const candidates = files
+    .filter((entry) => matchesAuthFileProvider(entry, provider))
+    .sort((left, right) => getAuthFileModifiedMs(right) - getAuthFileModifiedMs(left));
+  return candidates.find((entry) => !before.has(entry.name)) ?? candidates[0];
+};
+
 export function OAuthPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -253,8 +370,12 @@ export function OAuthPage() {
     loading: false,
   });
   const pollingTimers = useRef<Partial<Record<string, number>>>({});
-  const successResetTimers = useRef<Partial<Record<string, number>>>({});
+  const statesRef = useRef(states);
   const vertexFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    statesRef.current = states;
+  }, [states]);
 
   const providers = useMemo<OAuthProviderDefinition[]>(() => {
     const builtIn = BUILT_IN_PROVIDERS.map((provider) => ({
@@ -290,11 +411,7 @@ export function OAuthPage() {
     Object.values(pollingTimers.current).forEach((timer) => {
       if (timer !== undefined) window.clearInterval(timer);
     });
-    Object.values(successResetTimers.current).forEach((timer) => {
-      if (timer !== undefined) window.clearTimeout(timer);
-    });
     pollingTimers.current = {};
-    successResetTimers.current = {};
   }, []);
 
   useEffect(() => {
@@ -356,54 +473,66 @@ export function OAuthPage() {
     }
   };
 
-  const clearSuccessResetTimer = (provider: OAuthProvider) => {
-    const timer = successResetTimers.current[provider];
-    if (timer !== undefined) {
-      window.clearTimeout(timer);
-      delete successResetTimers.current[provider];
-    }
-  };
-
-  const clearProviderTimers = (provider: OAuthProvider) => {
-    clearPollingTimer(provider);
-    clearSuccessResetTimer(provider);
-  };
-
   const resetProviderAttempt = (provider: OAuthProvider) => {
-    clearProviderTimers(provider);
-    setStates((prev) => {
-      return {
-        ...prev,
-        [provider]: {},
-      };
-    });
+    clearPollingTimer(provider);
+    setStates((prev) => ({
+      ...prev,
+      [provider]: {},
+    }));
   };
 
-  const completeProviderAuth = (provider: OAuthProvider) => {
+  const resolveOAuthSuccessResult = async (
+    provider: OAuthProvider,
+    current: ProviderState,
+    response: OAuthStatusResponse
+  ): Promise<OAuthSuccessResult> => {
+    const authFileFromStatus = response.auth_name || response.saved_path;
+    let matchedFile: AuthFileItem | undefined;
+    try {
+      const filesResponse = await authFilesApi.list();
+      matchedFile = findSavedAuthFile(
+        provider,
+        authFileFromStatus,
+        current.authFilesBeforeStart,
+        filesResponse.files || []
+      );
+    } catch {
+      matchedFile = undefined;
+    }
+
+    return {
+      authFile: authFileFromStatus || matchedFile?.name,
+      account: getAuthFileAccount(matchedFile),
+      note: response.note || (current.accountNote || '').trim() || undefined,
+      proxyUrl: response.proxy_url || (current.proxyUrl || '').trim() || undefined,
+    };
+  };
+
+  const completeProviderAuth = async (provider: OAuthProvider, response: OAuthStatusResponse) => {
     clearPollingTimer(provider);
-    clearSuccessResetTimer(provider);
+    const current = statesRef.current[provider] ?? {};
+    const successResult = await resolveOAuthSuccessResult(provider, current, response);
     setStates((prev) => {
-      const current = prev[provider] ?? {};
+      const latest = prev[provider] ?? {};
       return {
         ...prev,
         [provider]: {
-          ...current,
+          ...latest,
           url: undefined,
           state: undefined,
           status: 'success',
           error: undefined,
           polling: false,
-          savedProxyUrl: (current.proxyUrl || '').trim() || undefined,
+          cancelling: false,
+          savedProxyUrl: successResult.proxyUrl,
           callbackUrl: '',
           callbackSubmitting: false,
           callbackStatus: undefined,
           callbackError: undefined,
+          successResult,
         },
       };
     });
-    successResetTimers.current[provider] = window.setTimeout(() => {
-      resetProviderAttempt(provider);
-    }, SUCCESS_RESET_DELAY_MS);
   };
 
   const startPolling = (provider: OAuthProvider, state: string) => {
@@ -412,10 +541,29 @@ export function OAuthPage() {
       try {
         const res = await oauthApi.getAuthStatus(state);
         if (res.status === 'ok') {
-          completeProviderAuth(provider);
+          window.clearInterval(timer);
+          delete pollingTimers.current[provider];
+          await completeProviderAuth(provider, res);
           showNotification(getProviderActionText(provider, 'oauth_status_success'), 'success');
+        } else if (res.status === 'cancelled') {
+          const cancelledMessage =
+            res.error?.trim() ||
+            t('auth_login.oauth_status_cancelled', {
+              defaultValue: '认证已取消，可重新开始。',
+            });
+          updateProviderState(provider, {
+            status: 'cancelled',
+            error: cancelledMessage,
+            polling: false,
+            cancelling: false,
+            url: undefined,
+            state: undefined,
+          });
+          showNotification(cancelledMessage, 'info');
+          window.clearInterval(timer);
+          delete pollingTimers.current[provider];
         } else if (res.status === 'error') {
-          updateProviderState(provider, { status: 'error', error: res.error, polling: false });
+          updateProviderState(provider, { status: 'error', error: res.error, polling: false, cancelling: false });
           showNotification(
             `${getProviderActionText(provider, 'oauth_status_error')} ${res.error || ''}`,
             'error'
@@ -428,6 +576,7 @@ export function OAuthPage() {
           status: 'error',
           error: getErrorMessage(err),
           polling: false,
+          cancelling: false,
         });
         window.clearInterval(timer);
         delete pollingTimers.current[provider];
@@ -437,7 +586,8 @@ export function OAuthPage() {
   };
 
   const startAuth = async (provider: OAuthProvider) => {
-    const proxyUrl = (states[provider]?.proxyUrl || '').trim();
+    const current = states[provider] || {};
+    const proxyUrl = (current.proxyUrl || '').trim();
     const proxyUrlError = validateProxyUrl(
       proxyUrl,
       t('auth_login.account_proxy_required'),
@@ -448,21 +598,35 @@ export function OAuthPage() {
       showNotification(proxyUrlError, 'warning');
       return;
     }
-    clearProviderTimers(provider);
+    clearPollingTimer(provider);
     updateProviderState(provider, {
       url: undefined,
       state: undefined,
-      status: 'waiting',
+      status: 'starting',
       polling: true,
+      cancelling: false,
       error: undefined,
       proxyUrlError: undefined,
       savedProxyUrl: undefined,
       callbackStatus: undefined,
       callbackError: undefined,
       callbackUrl: '',
+      authFilesBeforeStart: undefined,
+      successResult: undefined,
     });
     try {
-      const res = await oauthApi.startAuth(provider, { proxyUrl: proxyUrl || undefined });
+      let authFilesBeforeStart: string[] | undefined;
+      try {
+        const filesResponse = await authFilesApi.list();
+        authFilesBeforeStart = (filesResponse.files || []).map((file) => file.name);
+        updateProviderState(provider, { authFilesBeforeStart });
+      } catch {
+        authFilesBeforeStart = undefined;
+      }
+      const res = await oauthApi.startAuth(provider, {
+        note: (current.accountNote || '').trim() || undefined,
+        proxyUrl: proxyUrl || undefined,
+      });
       if (!res.state) {
         const message = t('auth_login.missing_state');
         updateProviderState(provider, {
@@ -487,6 +651,46 @@ export function OAuthPage() {
       updateProviderState(provider, { status: 'error', error: message, polling: false });
       showNotification(
         `${getProviderActionText(provider, 'oauth_start_error')}${message ? ` ${message}` : ''}`,
+        'error'
+      );
+    }
+  };
+
+  const cancelAuth = async (provider: OAuthProvider) => {
+    const state = states[provider]?.state;
+    if (!state) {
+      resetProviderAttempt(provider);
+      return;
+    }
+    updateProviderState(provider, { cancelling: true });
+    try {
+      const res = await oauthApi.cancelAuth(state);
+      clearPollingTimer(provider);
+      if (isOAuthCancelSuccessful(res)) {
+        updateProviderState(provider, {
+          status: 'cancelled',
+          error: t('auth_login.oauth_status_cancelled', {
+            defaultValue: '认证已取消，可重新开始。',
+          }),
+          polling: false,
+          cancelling: false,
+          url: undefined,
+          state: undefined,
+        });
+      } else {
+        updateProviderState(provider, {
+          cancelling: false,
+          error: res.error || t('auth_login.oauth_cancel_error', { defaultValue: '取消登录失败' }),
+        });
+        showNotification(
+          res.error || t('auth_login.oauth_cancel_error', { defaultValue: '取消登录失败' }),
+          'error'
+        );
+      }
+    } catch (err: unknown) {
+      updateProviderState(provider, { cancelling: false });
+      showNotification(
+        getErrorMessage(err) || t('auth_login.oauth_cancel_error', { defaultValue: '取消登录失败' }),
         'error'
       );
     }
@@ -617,7 +821,8 @@ export function OAuthPage() {
       <div className={styles.content}>
         {providers.map((provider) => {
           const state = states[provider.id] || {};
-          const canSubmitCallback = provider.supportsCallback && Boolean(state.url);
+          const canSubmitCallback =
+            provider.supportsCallback && Boolean(state.url) && state.status !== 'cancelled';
           const loginButtonLabel =
             state.status === 'success'
               ? t('auth_login.login_another_account')
@@ -629,6 +834,11 @@ export function OAuthPage() {
           ]
             .filter(Boolean)
             .join(' ');
+          const flowStep = getOAuthFlowStep(state, provider.supportsCallback);
+          const flowStepIndex = OAUTH_FLOW_STEPS.indexOf(flowStep);
+          const showFlowSteps = Boolean(state.status) && state.status !== 'idle' && state.status !== 'cancelled';
+          const canCancel =
+            (state.status === 'starting' || state.status === 'waiting') && Boolean(state.state);
           return (
             <div key={provider.id}>
               <Card
@@ -656,20 +866,50 @@ export function OAuthPage() {
               >
                 <div className={styles.cardContent}>
                   <div className={styles.cardHint}>{provider.hint}</div>
-                  <Input
-                    label={t('auth_login.account_proxy_label')}
-                    hint={t('auth_login.account_proxy_hint')}
-                    value={state.proxyUrl || ''}
-                    error={state.proxyUrlError}
-                    disabled={Boolean(state.polling)}
-                    onChange={(e) =>
-                      updateProviderState(provider.id, {
-                        proxyUrl: e.target.value,
-                        proxyUrlError: undefined,
-                      })
-                    }
-                    placeholder={t('auth_login.account_proxy_placeholder')}
-                  />
+                  <div className={styles.accountSetupGrid}>
+                    <Input
+                      label={t('auth_login.account_note_label')}
+                      value={state.accountNote || ''}
+                      disabled={Boolean(state.polling)}
+                      onChange={(e) =>
+                        updateProviderState(provider.id, { accountNote: e.target.value })
+                      }
+                      placeholder={t('auth_login.account_note_placeholder')}
+                    />
+                    <Input
+                      label={t('auth_login.account_proxy_label')}
+                      hint={t('auth_login.account_proxy_hint')}
+                      value={state.proxyUrl || ''}
+                      error={state.proxyUrlError}
+                      disabled={Boolean(state.polling)}
+                      onChange={(e) =>
+                        updateProviderState(provider.id, {
+                          proxyUrl: e.target.value,
+                          proxyUrlError: undefined,
+                        })
+                      }
+                      placeholder={t('auth_login.account_proxy_placeholder')}
+                    />
+                  </div>
+                  {showFlowSteps && (
+                    <div className={styles.flowSteps}>
+                      {OAUTH_FLOW_STEPS.map((step, index) => {
+                        const isDone = state.status === 'success' || index < flowStepIndex;
+                        const isActive = index === flowStepIndex && state.status !== 'success';
+                        return (
+                          <div
+                            key={step}
+                            className={`${styles.flowStep} ${isDone ? styles.flowStepDone : ''} ${isActive ? styles.flowStepActive : ''}`.trim()}
+                          >
+                            <span className={styles.flowStepDot} />
+                            <span className={styles.flowStepLabel}>
+                              {t(`auth_login.oauth_flow_${step}`)}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                   {state.url && (
                     <div className={styles.authUrlBox}>
                       <div className={styles.authUrlLabel}>{provider.urlLabel}</div>
@@ -685,6 +925,16 @@ export function OAuthPage() {
                         >
                           {getProviderActionText(provider.id, 'open_link')}
                         </Button>
+                        {canCancel && (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => cancelAuth(provider.id)}
+                            loading={state.cancelling}
+                          >
+                            {t('auth_login.oauth_cancel_button', { defaultValue: '取消本次登录' })}
+                          </Button>
+                        )}
                       </div>
                     </div>
                   )}
@@ -741,28 +991,80 @@ export function OAuthPage() {
                     <div className={statusBadgeClassName}>
                       {state.status === 'success'
                         ? getProviderActionText(provider.id, 'oauth_status_success')
-                        : state.status === 'error'
-                          ? `${getProviderActionText(provider.id, 'oauth_status_error')} ${state.error || ''}`
-                          : getProviderActionText(provider.id, 'oauth_status_waiting')}
+                        : state.status === 'cancelled'
+                          ? state.error ||
+                            t('auth_login.oauth_status_cancelled', {
+                              defaultValue: '认证已取消，可重新开始。',
+                            })
+                          : state.status === 'error'
+                            ? `${getProviderActionText(provider.id, 'oauth_status_error')} ${state.error || ''}`
+                            : state.status === 'starting'
+                              ? t('auth_login.oauth_status_starting', { defaultValue: '正在准备授权链接...' })
+                              : getProviderActionText(provider.id, 'oauth_status_waiting')}
                     </div>
                   )}
-                  {state.status === 'success' && state.savedProxyUrl && (
-                    <div className={styles.connectionBox}>
+                  {state.status === 'success' && state.successResult && (
+                    <div className={styles.successResultBox}>
+                      <div className={styles.connectionLabel}>
+                        {t('auth_login.oauth_saved_result_title', { defaultValue: '登录成功' })}
+                      </div>
                       <div className={styles.keyValueList}>
                         <div className={styles.keyValueItem}>
                           <span className={styles.keyValueKey}>
-                            {t('auth_login.oauth_saved_proxy')}
+                            {t('auth_login.oauth_saved_auth_file', { defaultValue: '认证文件' })}
                           </span>
-                          <span className={styles.keyValueValue}>{state.savedProxyUrl}</span>
+                          <span className={styles.keyValueValue}>
+                            {state.successResult.authFile ||
+                              t('auth_login.oauth_saved_auth_file_unknown', { defaultValue: '未知' })}
+                          </span>
                         </div>
+                        {state.successResult.account && (
+                          <div className={styles.keyValueItem}>
+                            <span className={styles.keyValueKey}>
+                              {t('auth_login.oauth_saved_account', { defaultValue: '账号' })}
+                            </span>
+                            <span className={styles.keyValueValue}>{state.successResult.account}</span>
+                          </div>
+                        )}
+                        {state.successResult.note && (
+                          <div className={styles.keyValueItem}>
+                            <span className={styles.keyValueKey}>
+                              {t('auth_login.oauth_saved_note', { defaultValue: '备注' })}
+                            </span>
+                            <span className={styles.keyValueValue}>{state.successResult.note}</span>
+                          </div>
+                        )}
+                        {state.successResult.proxyUrl && (
+                          <div className={styles.keyValueItem}>
+                            <span className={styles.keyValueKey}>
+                              {t('auth_login.oauth_saved_proxy')}
+                            </span>
+                            <span className={styles.keyValueValue}>
+                              {state.successResult.proxyUrl}
+                            </span>
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  )}
-                  {state.status === 'success' && (
-                    <div className={styles.successActions}>
-                      <Button variant="secondary" size="sm" onClick={() => navigate('/auth-files')}>
-                        {t('auth_login.view_auth_files')}
-                      </Button>
+                      <div className={styles.successActions}>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() =>
+                            navigate('/auth-files', {
+                              state: { highlightAuthFile: state.successResult?.authFile },
+                            })
+                          }
+                        >
+                          {t('auth_login.oauth_view_auth_file', { defaultValue: '查看认证文件' })}
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => resetProviderAttempt(provider.id)}
+                        >
+                          {t('auth_login.oauth_add_another', { defaultValue: '继续添加下一个账号' })}
+                        </Button>
+                      </div>
                     </div>
                   )}
                 </div>
