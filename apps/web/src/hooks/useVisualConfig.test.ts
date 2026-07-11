@@ -381,6 +381,62 @@ describe('useVisualConfig', () => {
     harness.unmount();
   });
 
+  it('uses the CPA default for absent managed-header-profile.online-update and does not materialize it', () => {
+    const harness = mountUseVisualConfig();
+    const yaml = ['host: 127.0.0.1', ''].join('\n');
+
+    act(() => {
+      expect(harness.getCurrent().loadVisualValuesFromYaml(yaml).ok).toBe(true);
+    });
+
+    expect(harness.getCurrent().visualValues.managedHeaderOnlineUpdate).toBe(true);
+
+    const parsed = parseYaml(harness.getCurrent().applyVisualChangesToYaml(yaml)) as Record<
+      string,
+      unknown
+    >;
+    expect(parsed['managed-header-profile']).toBeUndefined();
+
+    harness.unmount();
+  });
+
+  it('writes managed-header-profile.online-update false when the user explicitly disables it', () => {
+    const harness = mountUseVisualConfig();
+    const yaml = ['host: 127.0.0.1', ''].join('\n');
+
+    act(() => {
+      expect(harness.getCurrent().loadVisualValuesFromYaml(yaml).ok).toBe(true);
+      harness.getCurrent().setVisualValues({ managedHeaderOnlineUpdate: false });
+    });
+
+    const parsed = parseYaml(harness.getCurrent().applyVisualChangesToYaml(yaml)) as {
+      'managed-header-profile'?: Record<string, unknown>;
+    };
+    expect(parsed['managed-header-profile']).toEqual({ 'online-update': false });
+
+    harness.unmount();
+  });
+
+  it('round-trips an existing managed-header-profile.online-update: false without dirtying it', () => {
+    const harness = mountUseVisualConfig();
+    const yaml = ['host: 127.0.0.1', 'managed-header-profile:', '  online-update: false', ''].join(
+      '\n'
+    );
+
+    act(() => {
+      expect(harness.getCurrent().loadVisualValuesFromYaml(yaml).ok).toBe(true);
+    });
+
+    expect(harness.getCurrent().visualValues.managedHeaderOnlineUpdate).toBe(false);
+
+    const parsed = parseYaml(harness.getCurrent().applyVisualChangesToYaml(yaml)) as {
+      'managed-header-profile'?: Record<string, unknown>;
+    };
+    expect(parsed['managed-header-profile']).toEqual({ 'online-update': false });
+
+    harness.unmount();
+  });
+
   it('rejects zero Redis usage retention because CPA normalizes it to 60', () => {
     const harness = mountUseVisualConfig();
 

@@ -472,6 +472,7 @@ function getNextDirtyFields(
       'claudeHeaderArch',
       'claudeHeaderTimeout',
       'claudeHeaderStabilizeDeviceProfile',
+      'managedHeaderOnlineUpdate',
       'codexHeaderUserAgent',
       'codexHeaderBetaFeatures',
       'codexIdentityConfuse',
@@ -757,6 +758,7 @@ export function useVisualConfig() {
       const claudeHeaderDefaults = asRecord(parsed['claude-header-defaults']);
       const codexHeaderDefaults = asRecord(parsed['codex-header-defaults']);
       const codex = asRecord(parsed.codex);
+      const managedHeaderProfile = asRecord(parsed['managed-header-profile']);
 
       const newValues: VisualConfigValues = {
         host: typeof parsed.host === 'string' ? parsed.host : '',
@@ -851,6 +853,7 @@ export function useVisualConfig() {
         claudeHeaderStabilizeDeviceProfile: Boolean(
           claudeHeaderDefaults?.['stabilize-device-profile']
         ),
+        managedHeaderOnlineUpdate: Boolean(managedHeaderProfile?.['online-update'] ?? true),
         codexHeaderUserAgent:
           typeof codexHeaderDefaults?.['user-agent'] === 'string'
             ? codexHeaderDefaults['user-agent']
@@ -1147,6 +1150,22 @@ export function useVisualConfig() {
             values.claudeHeaderStabilizeDeviceProfile
           );
           deleteIfMapEmpty(doc, ['claude-header-defaults']);
+        }
+
+        // managed-header-profile.online-update（全局；core 默认 true）。
+        // 默认为 true 时无需落盘；仅当配置里已有该 key、或用户显式改动过该字段时才物化，
+        // 避免无关保存把整块默认配置写进 YAML。
+        if (
+          shouldWriteManagedField(
+            doc,
+            ['managed-header-profile', 'online-update'],
+            dirtyFields,
+            'managedHeaderOnlineUpdate'
+          )
+        ) {
+          ensureMapInDoc(doc, ['managed-header-profile']);
+          doc.setIn(['managed-header-profile', 'online-update'], values.managedHeaderOnlineUpdate);
+          deleteIfMapEmpty(doc, ['managed-header-profile']);
         }
 
         if (

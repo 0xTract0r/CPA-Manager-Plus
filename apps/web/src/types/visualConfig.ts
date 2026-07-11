@@ -146,6 +146,8 @@ export type VisualConfigValues = {
   claudeHeaderArch: string;
   claudeHeaderTimeout: string;
   claudeHeaderStabilizeDeviceProfile: boolean;
+  /** managed-header-profile.online-update（全局；core 默认 true，反关联高水位在线刷新）。 */
+  managedHeaderOnlineUpdate: boolean;
   codexHeaderUserAgent: string;
   codexHeaderBetaFeatures: string;
   codexIdentityConfuse: boolean;
@@ -220,6 +222,7 @@ export const DEFAULT_VISUAL_VALUES: VisualConfigValues = {
   claudeHeaderArch: '',
   claudeHeaderTimeout: '',
   claudeHeaderStabilizeDeviceProfile: false,
+  managedHeaderOnlineUpdate: true,
   codexHeaderUserAgent: '',
   codexHeaderBetaFeatures: '',
   codexIdentityConfuse: false,

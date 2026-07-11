@@ -1235,6 +1235,17 @@ export function VisualConfigEditor({
                           onChange({ claudeHeaderStabilizeDeviceProfile })
                         }
                       />
+                      <ToggleRow
+                        title={t('config_management.visual.sections.headers.online_update')}
+                        description={t(
+                          'config_management.visual.sections.headers.online_update_desc'
+                        )}
+                        checked={values.managedHeaderOnlineUpdate}
+                        disabled={disabled}
+                        onChange={(managedHeaderOnlineUpdate) =>
+                          onChange({ managedHeaderOnlineUpdate })
+                        }
+                      />
                     </SectionGrid>
                   </SectionSubsection>
 
