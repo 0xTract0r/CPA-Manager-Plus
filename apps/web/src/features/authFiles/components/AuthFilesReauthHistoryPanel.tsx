@@ -196,7 +196,13 @@ export function AuthFilesReauthHistoryPanel(props: AuthFilesReauthHistoryPanelPr
               </div>
             )}
 
-            <div className={styles.footer}>
+            <div
+              className={styles.footer}
+              title={t('auth_files.reauth_history_footer', {
+                defaultValue:
+                  'Showing the newest history entries only. The source of truth is <authDir>/.oauth-history/reauth.jsonl.',
+              })}
+            >
               {t('auth_files.reauth_history_footer', {
                 defaultValue:
                   'Showing the newest history entries only. The source of truth is <authDir>/.oauth-history/reauth.jsonl.',

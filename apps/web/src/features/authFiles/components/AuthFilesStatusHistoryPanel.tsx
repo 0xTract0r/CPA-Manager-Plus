@@ -229,7 +229,13 @@ export function AuthFilesStatusHistoryPanel(props: AuthFilesStatusHistoryPanelPr
               </div>
             )}
 
-            <div className={styles.footer}>
+            <div
+              className={styles.footer}
+              title={t('auth_files.status_history_footer', {
+                defaultValue:
+                  'Showing the newest history entries only. The source of truth is <authDir>/.auth-status-history/status.jsonl.',
+              })}
+            >
               {t('auth_files.status_history_footer', {
                 defaultValue:
                   'Showing the newest history entries only. The source of truth is <authDir>/.auth-status-history/status.jsonl.',

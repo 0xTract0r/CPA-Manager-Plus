@@ -47,6 +47,20 @@ import styles from '@/features/authFiles/AuthFilesPage.module.scss';
 
 const HEALTHY_STATUS_MESSAGES = new Set(['ok', 'healthy', 'ready', 'success', 'available']);
 
+// 审计入口（reauth / status 历史）门槛：与旧版一致，仅 OAuth 账号显示。
+// 对照旧版 useAuthFilesReauth.AUTH_FILE_OAUTH_PROVIDER_MAP 的 provider key 集合，
+// 避免像旧版那样对所有非 runtime 卡都挂审计面板，导致同行卡片元素多寡不一、高度参差。
+const OAUTH_AUDITABLE_PROVIDER_KEYS = new Set([
+  'anthropic',
+  'claude',
+  'codex',
+  'antigravity',
+  'gemini',
+  'gemini-cli',
+  'kimi',
+  'xai',
+]);
+
 export type AuthFileCardProps = {
   file: AuthFileItem;
   compact: boolean;
@@ -138,6 +152,13 @@ export function AuthFileCard(props: AuthFileCardProps) {
   const isRuntimeOnly = isRuntimeOnlyAuthFile(file);
   const resolvedProvider = resolveAuthProvider(file);
   const providerKey = normalizeProviderKey(String(file.type ?? file.provider ?? 'unknown'));
+  // 审计入口仅 OAuth 账号显示（恢复旧版门槛），非 OAuth / runtime 卡不挂审计面板。
+  // 与旧版 resolveAuthFileOAuthProvider 一致：provider / type 任一命中 OAuth 集合即算。
+  const auditProviderKeyFromProvider = normalizeProviderKey(String(file.provider ?? ''));
+  const canViewAuditHistory =
+    !isRuntimeOnly &&
+    (OAUTH_AUDITABLE_PROVIDER_KEYS.has(providerKey) ||
+      OAUTH_AUDITABLE_PROVIDER_KEYS.has(auditProviderKeyFromProvider));
   const isAntigravity = resolvedProvider === 'antigravity';
   const isAistudio = providerKey === 'aistudio';
   const showModelsButton = !isRuntimeOnly || isAistudio;
@@ -166,6 +187,8 @@ export function AuthFileCard(props: AuthFileCardProps) {
   const rawStatusMessage = getAuthFileStatusMessage(file);
   const hasStatusWarning =
     Boolean(rawStatusMessage) && !HEALTHY_STATUS_MESSAGES.has(rawStatusMessage.toLowerCase());
+  // 无健康数据（成功/失败均为 0）时不占整块 HEALTH 面板，改成一行紧凑占位。
+  const hasStatusData = statusData.totalSuccess + statusData.totalFailure > 0;
 
   // 缺失 proxy_url（住宅代理）告警：core#26/#27 把空 proxy_url 账号标为不可用并下发 warnings。
   // 对照旧版卡片，用醒目橙色徽标 + tooltip 提示，避免请求直连暴露真实 IP。
@@ -433,7 +456,7 @@ export function AuthFileCard(props: AuthFileCardProps) {
                 <span className={styles.metaValue}>{projectIdValue}</span>
               </div>
             )}
-            {!isRuntimeOnly && (
+            {canViewAuditHistory && (
               <div className={styles.cardMetaAction}>
                 <div className={styles.cardMetaActionList}>
                   <AuthFilesReauthHistoryPanel file={file} reloadKey={auditReloadKey} />
@@ -473,12 +496,21 @@ export function AuthFileCard(props: AuthFileCardProps) {
               </div>
             </div>
 
-            <div className={`${styles.statusPanel} ${compact ? styles.statusPanelCompact : ''}`}>
-              <div className={styles.statusPanelLabel}>
-                <span>{t('auth_files.health_status_label')}</span>
+            {hasStatusData ? (
+              <div className={`${styles.statusPanel} ${compact ? styles.statusPanelCompact : ''}`}>
+                <div className={styles.statusPanelLabel}>
+                  <span>{t('auth_files.health_status_label')}</span>
+                </div>
+                <ProviderStatusBar statusData={statusData} styles={styles} />
               </div>
-              <ProviderStatusBar statusData={statusData} styles={styles} />
-            </div>
+            ) : (
+              <div className={styles.statusPanelEmpty}>
+                <span className={styles.statusPanelLabel}>
+                  {t('auth_files.health_status_label')}
+                </span>
+                <span className={styles.statusPanelEmptyValue}>--</span>
+              </div>
+            )}
 
             {showQuotaLayout && quotaType && (
               <AuthFileQuotaSection

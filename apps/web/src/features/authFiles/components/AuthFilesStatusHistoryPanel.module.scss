@@ -149,7 +149,6 @@
 }
 
 .loading,
-.empty,
 .error {
   border-radius: 12px;
   padding: 12px 14px;
@@ -157,10 +156,17 @@
   line-height: 1.5;
 }
 
-.loading,
-.empty {
+.loading {
   background: color-mix(in srgb, var(--bg-secondary) 90%, transparent);
   color: var(--text-secondary);
+}
+
+// 空态改为紧凑小字，不再用大灰圆角框占竖向空间。
+.empty {
+  padding: 2px 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-tertiary);
 }
 
 .error {
@@ -172,4 +178,7 @@
   color: var(--text-tertiary);
   font-size: 11px;
   line-height: 1.45;
+  // 长路径脚注可换行，不裸截断；配合 title 悬浮全文。
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
