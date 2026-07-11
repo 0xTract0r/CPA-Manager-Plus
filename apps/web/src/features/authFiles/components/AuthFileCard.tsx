@@ -13,7 +13,7 @@ import {
   IconTrash2,
 } from '@/components/ui/icons';
 import { ProviderStatusBar } from '@/components/providers/ProviderStatusBar';
-import type { AuthFileItem, CodexQuotaState } from '@/types';
+import type { AuthFileItem, ClaudeQuotaState, CodexQuotaState } from '@/types';
 import { resolveAuthProvider } from '@/utils/quota';
 import {
   normalizeRecentRequestAuthIndex,
@@ -57,6 +57,8 @@ export type AuthFileCardProps = {
   codexStatusBadges?: AuthFileCodexStatusBadge[];
   codexNeedsReauth?: boolean;
   codexDisplayQuota?: CodexQuotaState;
+  /** core `GET /quota/snapshots` observed 兜底状态；Claude 没有请求头 usage snapshot 源，只靠 core 快照。 */
+  claudeDisplayQuota?: ClaudeQuotaState;
   antigravitySubscription?: AntigravitySubscriptionState;
   onRefreshAntigravitySubscription?: (file: AuthFileItem) => void;
   quotaCooldown?: QuotaCooldownInfo;
@@ -99,6 +101,7 @@ export function AuthFileCard(props: AuthFileCardProps) {
     codexStatusBadges = [],
     codexNeedsReauth = false,
     codexDisplayQuota,
+    claudeDisplayQuota,
     antigravitySubscription,
     onRefreshAntigravitySubscription,
     quotaCooldown,
@@ -427,7 +430,13 @@ export function AuthFileCard(props: AuthFileCardProps) {
                 file={file}
                 quotaType={quotaType}
                 disableControls={disableControls}
-                quotaOverride={quotaType === 'codex' ? (codexDisplayQuota ?? null) : undefined}
+                quotaOverride={
+                  quotaType === 'codex'
+                    ? (codexDisplayQuota ?? null)
+                    : quotaType === 'claude'
+                      ? (claudeDisplayQuota ?? null)
+                      : undefined
+                }
               />
             )}
           </div>

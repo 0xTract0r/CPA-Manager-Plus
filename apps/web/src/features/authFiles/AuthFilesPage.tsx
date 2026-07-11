@@ -25,6 +25,7 @@ import { IconFilterAll, IconSearch } from '@/components/ui/icons';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import {
+  CLAUDE_CONFIG,
   CODEX_CONFIG,
   buildObservedCodexQuotaState,
   getQuotaStoreKey,
@@ -72,6 +73,16 @@ import {
   getHighConfidenceUsageHeaderSnapshotForAuthFile,
   isUsageHeaderQuotaSnapshotExpired,
 } from '@/utils/usageHeaderSnapshots';
+import {
+  quotaSnapshotsApi,
+  type CoreQuotaSnapshotEntry,
+} from '@/services/api/quotaSnapshots';
+import {
+  buildCoreQuotaSnapshotLookup,
+  buildObservedClaudeQuotaStateFromCoreSnapshot,
+  buildObservedCodexQuotaStateFromCoreSnapshot,
+  getHighConfidenceCoreQuotaSnapshotForAuthFile,
+} from '@/utils/quota/coreQuotaSnapshots';
 import { useAuthFilesData } from '@/features/authFiles/hooks/useAuthFilesData';
 import { useAuthFilesModels } from '@/features/authFiles/hooks/useAuthFilesModels';
 import { useAuthFilesOauth } from '@/features/authFiles/hooks/useAuthFilesOauth';
@@ -125,7 +136,7 @@ import {
   type AuthFilesSortMode,
 } from '@/features/authFiles/uiState';
 import type { AuthJsonInputType } from '@/features/authFiles/sessionAuthConverter';
-import type { AuthFileItem, CodexQuotaState } from '@/types';
+import type { AuthFileItem, ClaudeQuotaState, CodexQuotaState } from '@/types';
 import { useAuthStore, useNotificationStore, useQuotaStore, useThemeStore } from '@/stores';
 import styles from './AuthFilesPage.module.scss';
 
@@ -199,6 +210,7 @@ export function AuthFilesPage() {
   const resolvedTheme: ResolvedTheme = useThemeStore((state) => state.resolvedTheme);
   const codexQuota = useQuotaStore((state) => state.codexQuota);
   const setCodexQuota = useQuotaStore((state) => state.setCodexQuota);
+  const claudeQuota = useQuotaStore((state) => state.claudeQuota);
   const featureAvailability = usePanelFeatureAvailability();
   const managerServiceBase = featureAvailability.managerServiceBase;
   const pageTransitionLayer = usePageTransitionLayer();
@@ -237,6 +249,10 @@ export function AuthFilesPage() {
   const quotaCooldowns = quotaCooldownState.items;
   const [headerSnapshots, setHeaderSnapshots] = useState<UsageHeaderSnapshot[]>([]);
   const [headerSnapshotGeneratedAtMs, setHeaderSnapshotGeneratedAtMs] = useState(0);
+  // core `GET /quota/snapshots` 只读持久快照：core 后台调度器周期刷新写入，
+  // 前端只在挂载时拉一次作为 observed 兜底，不据此自建 provider 轮询。
+  const [coreQuotaSnapshots, setCoreQuotaSnapshots] = useState<CoreQuotaSnapshotEntry[]>([]);
+  const coreQuotaSnapshotReqId = useRef(0);
   const floatingBatchActionsRef = useRef<HTMLDivElement>(null);
   const batchActionAnimationRef = useRef<AnimationPlaybackControlsWithThen | null>(null);
   const previousSelectionCountRef = useRef(0);
@@ -722,6 +738,21 @@ export function AuthFilesPage() {
     }
   }, [managementKey, managerServiceBase]);
 
+  // core `GET /quota/snapshots` 直连 core（复用 cpamp apiClient，不经
+  // manager-server），只读持久快照；挂载拉一次即可作为 observed 兜底，周期刷新
+  // 交给 core 后台调度器，前端不建 interval。
+  const loadCoreQuotaSnapshots = useCallback(async () => {
+    const id = ++coreQuotaSnapshotReqId.current;
+    try {
+      const response = await quotaSnapshotsApi.getSnapshots();
+      if (id !== coreQuotaSnapshotReqId.current) return;
+      setCoreQuotaSnapshots(response.entries ?? []);
+    } catch {
+      // Core quota snapshots are a passive observed source; keep the page usable
+      // if core is unavailable and fall back to the existing observed sources.
+    }
+  }, []);
+
   const refreshRecoveredCodexQuotaForFile = useCallback(
     async (file: AuthFileItem) => {
       if (resolveAuthProvider(file) !== 'codex') return false;
@@ -828,6 +859,13 @@ export function AuthFilesPage() {
     void loadHeaderSnapshots();
   }, [isCurrentLayer, managerServiceBase, loadHeaderSnapshots, loadQuotaCooldowns]);
 
+  // core 快照直连 core（不依赖 managerServiceBase）：挂载/回到当前 layer 时拉一次
+  // 即可，周期刷新交由 core 后台调度器负责，这里不设 interval。
+  useEffect(() => {
+    if (!isCurrentLayer) return;
+    void loadCoreQuotaSnapshots();
+  }, [isCurrentLayer, loadCoreQuotaSnapshots]);
+
   useInterval(
     () => {
       void loadQuotaCooldowns();
@@ -901,6 +939,13 @@ export function AuthFilesPage() {
   const headerSnapshotLookup = useMemo(
     () => buildUsageHeaderSnapshotLookup(headerSnapshots),
     [headerSnapshots]
+  );
+
+  // core `GET /quota/snapshots` observed 源的多键 lookup（auth_id/auth_index/name），
+  // 避免身份隔离下同名文件串号。
+  const coreQuotaSnapshotLookup = useMemo(
+    () => buildCoreQuotaSnapshotLookup(coreQuotaSnapshots),
+    [coreQuotaSnapshots]
   );
 
   const getActiveCodexQuota = useCallback(
@@ -988,14 +1033,49 @@ export function AuthFilesPage() {
       if (resolveAuthProvider(file) !== 'codex') return undefined;
       const statusKey = getAuthFileCodexInspectionKeyForFile(file);
       const activeQuota = getActiveCodexQuota(file);
-      const observedQuota = buildObservedCodexQuotaState(
+      // 请求头 usage snapshot 是"最近一次真实请求"观测，比 core 只读持久快照更
+      // 新鲜，因此优先用它做 observed 兜底；core 快照只在没有请求头观测时兜底。
+      const headerObservedQuota = buildObservedCodexQuotaState(
         file,
         codexStatusSourcesByAuthFileKey.get(statusKey)?.headerSnapshot,
         t
       );
+      const observedQuota =
+        headerObservedQuota ??
+        buildObservedCodexQuotaStateFromCoreSnapshot(
+          file,
+          getHighConfidenceCoreQuotaSnapshotForAuthFile(coreQuotaSnapshotLookup, file),
+          t
+        );
       return resolveQuotaDisplayState(activeQuota, observedQuota);
     },
-    [codexStatusSourcesByAuthFileKey, getActiveCodexQuota, t]
+    [codexStatusSourcesByAuthFileKey, coreQuotaSnapshotLookup, getActiveCodexQuota, t]
+  );
+
+  const getActiveClaudeQuota = useCallback(
+    (file: AuthFileItem): ClaudeQuotaState | undefined => {
+      if (resolveAuthProvider(file) !== 'claude') return undefined;
+      const storeKey = getQuotaStoreKey(CLAUDE_CONFIG, file);
+      return claudeQuota[storeKey] as ClaudeQuotaState | undefined;
+    },
+    [claudeQuota]
+  );
+
+  // Claude 目前没有请求头 usage snapshot 观测源（该机制只覆盖 Codex），core 只读
+  // 持久快照是 Claude 认证文件页唯一的 observed 兜底源：挂载拉一次即可让用户不用
+  // 点进详情才看到配额，不覆盖 cooldown 恢复 / expiry 触发的真实刷新结果。
+  const getDisplayClaudeQuota = useCallback(
+    (file: AuthFileItem): ClaudeQuotaState | undefined => {
+      if (resolveAuthProvider(file) !== 'claude') return undefined;
+      const activeQuota = getActiveClaudeQuota(file);
+      const observedQuota = buildObservedClaudeQuotaStateFromCoreSnapshot(
+        file,
+        getHighConfidenceCoreQuotaSnapshotForAuthFile(coreQuotaSnapshotLookup, file),
+        t
+      );
+      return resolveQuotaDisplayState(activeQuota, observedQuota);
+    },
+    [coreQuotaSnapshotLookup, getActiveClaudeQuota, t]
   );
 
   const codexStatusByAuthFileKey = useMemo(() => {
@@ -1772,6 +1852,7 @@ export function AuthFilesPage() {
                       codexStatusBadges={codexStatus?.badges ?? []}
                       codexNeedsReauth={codexStatus?.needsReauth ?? false}
                       codexDisplayQuota={getDisplayCodexQuota(file)}
+                      claudeDisplayQuota={getDisplayClaudeQuota(file)}
                       antigravitySubscription={antigravitySubscriptions[file.name]}
                       onRefreshAntigravitySubscription={refreshSubscription}
                       quotaCooldown={getQuotaCooldownForFile(file)}
