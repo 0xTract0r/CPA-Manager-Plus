@@ -149,19 +149,19 @@ const getIcon = (icon: string | { light: string; dark: string }, theme: 'light' 
   return typeof icon === 'string' ? icon : icon[theme];
 };
 
-const validateProxyUrl = (value: string): string | undefined => {
+const validateProxyUrl = (value: string, requiredMessage: string, invalidMessage: string): string | undefined => {
   const trimmed = value.trim();
-  if (!trimmed || trimmed.toLowerCase() === 'direct' || trimmed.toLowerCase() === 'none') {
-    return undefined;
+  if (!trimmed) {
+    return requiredMessage;
   }
   try {
     const parsed = new URL(trimmed);
     if (!['http:', 'https:', 'socks5:', 'socks5h:'].includes(parsed.protocol) || !parsed.host) {
-      return 'Unsupported proxy URL. Use http://, https://, socks5://, socks5h://, direct, or leave it empty.';
+      return invalidMessage;
     }
     return undefined;
   } catch {
-    return 'Invalid proxy URL. Use http://, https://, socks5://, socks5h://, direct, or leave it empty.';
+    return invalidMessage;
   }
 };
 
@@ -438,7 +438,11 @@ export function OAuthPage() {
 
   const startAuth = async (provider: OAuthProvider) => {
     const proxyUrl = (states[provider]?.proxyUrl || '').trim();
-    const proxyUrlError = validateProxyUrl(proxyUrl);
+    const proxyUrlError = validateProxyUrl(
+      proxyUrl,
+      t('auth_login.account_proxy_required'),
+      t('auth_login.account_proxy_invalid')
+    );
     if (proxyUrlError) {
       updateProviderState(provider, { proxyUrlError });
       showNotification(proxyUrlError, 'warning');
