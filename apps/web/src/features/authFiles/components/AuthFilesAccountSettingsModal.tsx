@@ -38,24 +38,40 @@ import type {
   AuthFileManagedHeaderHistoryEntry,
 } from '@/types/authFile';
 import { useThemeStore } from '@/stores';
+import { formatInUtc8 } from '@/utils/format';
 import styles from './AuthFilesAccountSettingsModal.module.scss';
 
 /**
  * 审计时间戳 `recorded_at` 是后端原样 UTC 串（带 T/Z）。展示时统一转换为
  * `Asia/Shanghai`（UTC+8）；无法解析时回退原串，空值显示 '-'。
- * 内联在本文件内，cpamp 当前尚无共享 `utils/datetime.ts`，不越权新增/改动共享工具。
+ * 复用共享 `utils/format` 的 `formatInUtc8`，与旧版 `utils/datetime` 口径一致，
+ * 不再在本文件内维护私有格式化逻辑。
  */
 function formatAuditRecordedAt(value: string | undefined): string {
   const raw = String(value ?? '').trim();
   if (!raw) return '-';
-  const date = new Date(raw);
-  if (Number.isNaN(date.getTime())) return raw;
-  const formatted = new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'medium',
-    timeZone: 'Asia/Shanghai',
-  }).format(date);
-  return `${formatted} UTC+8`;
+  return formatInUtc8(
+    raw,
+    { dateStyle: 'medium', timeStyle: 'medium', withZoneLabel: true },
+    undefined,
+    raw
+  );
+}
+
+/**
+ * 客户端版本观测的 `last_seen_at` / `first_seen_at` 是后端原样 UTC 串（带 T/Z）。
+ * 与审计区、账号 modtime 保持同一 UTC+8 展示口径，避免同弹窗内出现裸 UTC 串与
+ * UTC+8 混排；无法解析时回退原串，空值显示 '-'。
+ */
+function formatObservationSeenAt(value: string | undefined): string {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '-';
+  return formatInUtc8(
+    raw,
+    { dateStyle: 'medium', timeStyle: 'medium', withZoneLabel: true },
+    undefined,
+    raw
+  );
 }
 
 export type AuthFilesAccountSettingsModalProps = {
@@ -506,7 +522,9 @@ function ClaudeClientVersionObservationsPanel({
                       className={styles.managedHeaderValue}
                       title={observation.last_seen_at || observation.first_seen_at}
                     >
-                      {observation.last_seen_at || observation.first_seen_at || '-'}
+                      {formatObservationSeenAt(
+                        observation.last_seen_at || observation.first_seen_at
+                      )}
                     </code>
                   </td>
                   <td

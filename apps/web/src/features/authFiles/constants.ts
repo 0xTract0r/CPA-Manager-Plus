@@ -12,6 +12,7 @@ import iconQwen from '@/assets/icons/qwen.svg';
 import iconVertex from '@/assets/icons/vertex.svg';
 import type { AuthFileItem } from '@/types';
 import { parseTimestamp } from '@/utils/timestamp';
+import { formatInUtc8 } from '@/utils/format';
 
 export type ThemeColors = { bg: string; text: string; border?: string };
 export type TypeColorSet = { light: ThemeColors; dark?: ThemeColors };
@@ -364,7 +365,15 @@ export const formatModified = (item: AuthFileItem): string => {
     Number.isFinite(asNumber) && !Number.isNaN(asNumber)
       ? new Date(asNumber < 1e12 ? asNumber * 1000 : asNumber)
       : parseTimestamp(raw) ?? new Date(String(raw));
-  return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString();
+  // 与旧版一致：强制 UTC+8（Asia/Shanghai）展示，不跟随浏览器本地时区。
+  return Number.isNaN(date.getTime())
+    ? '-'
+    : formatInUtc8(
+        date,
+        { dateStyle: 'medium', timeStyle: 'medium', withZoneLabel: true },
+        undefined,
+        '-'
+      );
 };
 
 // 检查模型是否被 OAuth 排除

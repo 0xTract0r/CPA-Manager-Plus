@@ -23,6 +23,7 @@ import {
   normalizeProviderKey,
   parsePriorityValue,
 } from '@/features/authFiles/constants';
+import { formatInUtc8 } from '@/utils/format';
 
 export const easePower3Out = (progress: number) => 1 - (1 - progress) ** 4;
 export const easePower2In = (progress: number) => progress ** 3;
@@ -150,7 +151,14 @@ const formatObservedRecoverLabel = (value: number | null) => {
   if (!value) return null;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
-  return date.toLocaleString();
+  // 与全站一致：强制 UTC+8（Asia/Shanghai）展示，不跟随浏览器本地时区。
+  // 上面已保证 date 可解析，fallback 不会触发。
+  return formatInUtc8(
+    date,
+    { dateStyle: 'medium', timeStyle: 'medium', withZoneLabel: true },
+    undefined,
+    ''
+  );
 };
 
 const isObservedAuthError = (kind: string, code: string) => {
