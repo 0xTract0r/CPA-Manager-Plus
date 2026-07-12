@@ -20,7 +20,7 @@ type PanelVerifier interface {
 func AuthorizeAdmin(w http.ResponseWriter, r *http.Request, verifier AdminVerifier) bool {
 	ok, err := verifier.VerifyHeader(r.Context(), r.Header.Get("Authorization"))
 	if err != nil {
-		response.Error(w, http.StatusInternalServerError, err)
+		response.Error(w, authErrorStatus(err), err)
 		return false
 	}
 	if ok {
@@ -33,7 +33,7 @@ func AuthorizeAdmin(w http.ResponseWriter, r *http.Request, verifier AdminVerifi
 func AuthorizePanel(w http.ResponseWriter, r *http.Request, verifier PanelVerifier) bool {
 	ok, err := verifier.VerifyPanelHeader(r.Context(), r.Header.Get("Authorization"))
 	if err != nil {
-		response.Error(w, http.StatusInternalServerError, err)
+		response.Error(w, authErrorStatus(err), err)
 		return false
 	}
 	if ok {
@@ -41,7 +41,7 @@ func AuthorizePanel(w http.ResponseWriter, r *http.Request, verifier PanelVerifi
 	}
 	external, err := verifier.PanelUsesExternalManagementKey(r.Context())
 	if err != nil {
-		response.Error(w, http.StatusInternalServerError, err)
+		response.Error(w, authErrorStatus(err), err)
 		return false
 	}
 	if external {
@@ -50,4 +50,15 @@ func AuthorizePanel(w http.ResponseWriter, r *http.Request, verifier PanelVerifi
 	}
 	response.Error(w, http.StatusUnauthorized, errors.New("invalid admin key"))
 	return false
+}
+
+// authErrorStatus maps an auth-lookup error to an HTTP status. If the
+// request context was canceled or timed out (client/proxy gave up while the
+// admin credential lookup was still running), that is not a server failure
+// and must not be reported as a generic 500.
+func authErrorStatus(err error) int {
+	if status := response.ContextErrorStatus(err); status != 0 {
+		return status
+	}
+	return http.StatusInternalServerError
 }

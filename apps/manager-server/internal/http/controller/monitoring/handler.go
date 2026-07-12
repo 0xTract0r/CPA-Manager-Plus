@@ -52,10 +52,24 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.App.MonitoringService.Analytics(r.Context(), req)
 	if err != nil {
-		response.Error(w, http.StatusInternalServerError, err)
+		response.Error(w, analyticsErrorStatus(err), err)
 		return
 	}
 	response.JSON(w, http.StatusOK, result)
+}
+
+// analyticsErrorStatus maps an Analytics/AccountHistory/HeaderSnapshots error
+// to an HTTP status. A wide time range (e.g. the "all time" monitoring view)
+// can legitimately take longer than a reverse proxy or browser fetch
+// timeout to aggregate; when that happens the request context is canceled
+// mid-query and the underlying error is context.Canceled/DeadlineExceeded,
+// not a server crash. Reporting that as 500 hides the real cause from
+// operators and callers, so it is mapped to 499/504 instead.
+func analyticsErrorStatus(err error) int {
+	if status := response.ContextErrorStatus(err); status != 0 {
+		return status
+	}
+	return http.StatusInternalServerError
 }
 
 func (h *Handler) handleAccountHistory(w http.ResponseWriter, r *http.Request) {
@@ -76,7 +90,7 @@ func (h *Handler) handleAccountHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := h.App.MonitoringService.AccountHistory(r.Context(), req)
 	if err != nil {
-		response.Error(w, http.StatusInternalServerError, err)
+		response.Error(w, analyticsErrorStatus(err), err)
 		return
 	}
 	response.JSON(w, http.StatusOK, result)
@@ -103,7 +117,7 @@ func (h *Handler) handleHeaderSnapshots(w http.ResponseWriter, r *http.Request) 
 		Limit: limit,
 	})
 	if err != nil {
-		response.Error(w, http.StatusInternalServerError, err)
+		response.Error(w, analyticsErrorStatus(err), err)
 		return
 	}
 	response.JSON(w, http.StatusOK, result)

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/service/pricing"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/store"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/usage"
@@ -663,95 +665,239 @@ func (s *Service) Analytics(ctx context.Context, req Request) (Response, error) 
 		}
 	}
 
-	if req.Include.Summary {
-		agg, err := s.store.AggregateWithFilter(ctx, filter)
-		if err != nil {
-			return Response{}, err
-		}
-		latencySummary, err := s.store.LatencySummaryWithFilter(ctx, filter)
-		if err != nil {
-			return Response{}, err
-		}
-		rollingFilter := filter
-		rollingFilter.FromMS = nowMS - recentWindowMS
-		rollingFilter.ToMS = nowMS
-		rollingAgg, err := s.store.AggregateWithFilter(ctx, rollingFilter)
-		if err != nil {
-			return Response{}, err
-		}
-		activeDays, err := s.store.ActiveDaysWithFilter(ctx, filter, location)
-		if err != nil {
-			return Response{}, err
-		}
-		zeroTokenModels, err := s.store.ZeroTokenModelsWithFilter(ctx, filter)
-		if err != nil {
-			return Response{}, err
-		}
-		response.Summary = buildSummary(agg, latencySummary, rollingAgg, activeDays, modelStats, taskBuckets, prices, zeroTokenModels)
-		summaryTotalCalls = agg.TotalCalls
-		summaryComputed = true
+	// The blocks below are independent read-only aggregation queries over the
+	// same (or a trivially derived) filter: none of them read a value written
+	// by another block in this group, so they are safe to run concurrently.
+	// This matters most for wide time ranges (e.g. the "all time" monitoring
+	// view, from_ms=1): sequentially this request issues ~20 full-range
+	// aggregation queries against SQLite, which can take tens of seconds on a
+	// large usage_events table and comfortably exceed typical reverse-proxy or
+	// browser fetch timeouts (a still-running, non-failed query then looks
+	// like a request the caller "gave up on", see Analytics doc comment).
+	// bounded to leave headroom in the shared sqlite connection pool
+	// (see internal/repository/sqlite/options.go defaultMaxOpenConns) for
+	// other concurrent requests and the background ingestion/rollup workers.
+	const analyticsConcurrency = 3
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(analyticsConcurrency)
 
-		// Period-over-period comparison reuses the same filter over the
-		// immediately preceding window [FromMS-window, FromMS). Gated behind an
-		// explicit flag so other analytics consumers avoid the extra queries.
-		if req.Include.SummaryComparison {
-			windowMS := req.ToMS - req.FromMS
-			if prevFrom := req.FromMS - windowMS; prevFrom > 0 {
-				prevFilter := filter
-				prevFilter.FromMS = prevFrom
-				prevFilter.ToMS = req.FromMS
-				prevAgg, err := s.store.AggregateWithFilter(ctx, prevFilter)
-				if err != nil {
-					return Response{}, err
-				}
-				prevModelStats, err := s.store.ModelStatsWithFilter(ctx, prevFilter, 0)
-				if err != nil {
-					return Response{}, err
-				}
-				response.SummaryComparison = &SummaryComparison{
-					FromMS:       prevFrom,
-					ToMS:         req.FromMS,
-					TotalCalls:   prevAgg.TotalCalls,
-					SuccessCalls: prevAgg.SuccessCalls,
-					FailureCalls: prevAgg.FailureCalls,
-					SuccessRate:  ratio(prevAgg.SuccessCalls, prevAgg.TotalCalls),
-					TotalTokens:  prevAgg.TotalTokens,
-					TotalCost:    sumCost(prevModelStats, prices),
+	var (
+		summary           *Summary
+		summaryComparison *SummaryComparison
+		timeline          []TimelinePoint
+		anomalyPoints     []AnomalyPoint
+		hourly            []HourlyPoint
+		heatmap           []HeatmapPoint
+		channelShare      []ChannelShareRow
+		failureSources    []FailureSourceRow
+		accountStats      []AccountStatRow
+		credentialStats   []CredentialStatRow
+		credentialTL      []CredentialTimelinePoint
+		apiKeyStats       []APIKeyStatRow
+		filterOptionsOut  *FilterOptions
+	)
+
+	if req.Include.Summary {
+		group.Go(func() error {
+			agg, err := s.store.AggregateWithFilter(groupCtx, filter)
+			if err != nil {
+				return err
+			}
+			latencySummary, err := s.store.LatencySummaryWithFilter(groupCtx, filter)
+			if err != nil {
+				return err
+			}
+			rollingFilter := filter
+			rollingFilter.FromMS = nowMS - recentWindowMS
+			rollingFilter.ToMS = nowMS
+			rollingAgg, err := s.store.AggregateWithFilter(groupCtx, rollingFilter)
+			if err != nil {
+				return err
+			}
+			activeDays, err := s.store.ActiveDaysWithFilter(groupCtx, filter, location)
+			if err != nil {
+				return err
+			}
+			zeroTokenModels, err := s.store.ZeroTokenModelsWithFilter(groupCtx, filter)
+			if err != nil {
+				return err
+			}
+			summary = buildSummary(agg, latencySummary, rollingAgg, activeDays, modelStats, taskBuckets, prices, zeroTokenModels)
+			summaryTotalCalls = agg.TotalCalls
+			summaryComputed = true
+
+			// Period-over-period comparison reuses the same filter over the
+			// immediately preceding window [FromMS-window, FromMS). Gated behind
+			// an explicit flag so other analytics consumers avoid the extra
+			// queries.
+			if req.Include.SummaryComparison {
+				windowMS := req.ToMS - req.FromMS
+				if prevFrom := req.FromMS - windowMS; prevFrom > 0 {
+					prevFilter := filter
+					prevFilter.FromMS = prevFrom
+					prevFilter.ToMS = req.FromMS
+					prevAgg, err := s.store.AggregateWithFilter(groupCtx, prevFilter)
+					if err != nil {
+						return err
+					}
+					prevModelStats, err := s.store.ModelStatsWithFilter(groupCtx, prevFilter, 0)
+					if err != nil {
+						return err
+					}
+					summaryComparison = &SummaryComparison{
+						FromMS:       prevFrom,
+						ToMS:         req.FromMS,
+						TotalCalls:   prevAgg.TotalCalls,
+						SuccessCalls: prevAgg.SuccessCalls,
+						FailureCalls: prevAgg.FailureCalls,
+						SuccessRate:  ratio(prevAgg.SuccessCalls, prevAgg.TotalCalls),
+						TotalTokens:  prevAgg.TotalTokens,
+						TotalCost:    sumCost(prevModelStats, prices),
+					}
 				}
 			}
-		}
+			return nil
+		})
 	}
-	var timeline []TimelinePoint
 	if req.Include.Timeline || req.Include.AnomalyPoints {
-		points, err := s.store.TimelineWithFilter(ctx, filter, granularity, location)
-		if err != nil {
-			return Response{}, err
-		}
-		percentiles, err := s.store.LatencyPercentilesWithFilter(ctx, filter, granularity, location)
-		if err != nil {
-			return Response{}, err
-		}
-		timeline = buildTimeline(points, percentiles, granularity, location, prices)
-		if req.Include.Timeline {
-			response.Timeline = timeline
-		}
-		if req.Include.AnomalyPoints {
-			response.AnomalyPoints = buildAnomalyPoints(timeline, granularity)
-		}
+		group.Go(func() error {
+			points, err := s.store.TimelineWithFilter(groupCtx, filter, granularity, location)
+			if err != nil {
+				return err
+			}
+			percentiles, err := s.store.LatencyPercentilesWithFilter(groupCtx, filter, granularity, location)
+			if err != nil {
+				return err
+			}
+			built := buildTimeline(points, percentiles, granularity, location, prices)
+			if req.Include.Timeline {
+				timeline = built
+			}
+			if req.Include.AnomalyPoints {
+				anomalyPoints = buildAnomalyPoints(built, granularity)
+			}
+			return nil
+		})
 	}
 	if req.Include.HourlyDistribution {
-		points, err := s.store.HourlyDistributionWithFilter(ctx, filter, location)
-		if err != nil {
-			return Response{}, err
-		}
-		response.HourlyDistribution = buildHourly(points)
+		group.Go(func() error {
+			points, err := s.store.HourlyDistributionWithFilter(groupCtx, filter, location)
+			if err != nil {
+				return err
+			}
+			hourly = buildHourly(points)
+			return nil
+		})
 	}
 	if req.Include.Heatmap {
-		points, err := s.store.HeatmapWithFilter(ctx, filter, location)
-		if err != nil {
-			return Response{}, err
-		}
-		response.Heatmap = buildHeatmap(points, prices)
+		group.Go(func() error {
+			points, err := s.store.HeatmapWithFilter(groupCtx, filter, location)
+			if err != nil {
+				return err
+			}
+			heatmap = buildHeatmap(points, prices)
+			return nil
+		})
+	}
+	if req.Include.ChannelShare {
+		group.Go(func() error {
+			stats, err := s.store.ChannelModelStatsWithFilter(groupCtx, filter)
+			if err != nil {
+				return err
+			}
+			channelShare = buildChannelShare(stats, prices)
+			return nil
+		})
+	}
+	if req.Include.FailureSources {
+		group.Go(func() error {
+			stats, err := s.store.FailureSourcesWithFilter(groupCtx, filter)
+			if err != nil {
+				return err
+			}
+			failureSources = buildFailureSources(stats)
+			return nil
+		})
+	}
+	if req.Include.AccountStats {
+		group.Go(func() error {
+			stats, err := s.store.AccountModelStatsWithFilter(groupCtx, filter)
+			if err != nil {
+				return err
+			}
+			accountStats = buildAccountStats(stats, prices)
+			return nil
+		})
+	}
+	if req.Include.CredentialStats {
+		group.Go(func() error {
+			stats, err := s.store.CredentialModelStatsWithFilter(groupCtx, filter)
+			if err != nil {
+				return err
+			}
+			credentialStats = buildCredentialStats(stats, prices)
+			return nil
+		})
+	}
+	if req.Include.CredentialTimeline {
+		group.Go(func() error {
+			points, err := s.store.CredentialTimelineWithFilter(groupCtx, filter, granularity, location)
+			if err != nil {
+				return err
+			}
+			credentialTL = buildCredentialTimeline(points, granularity, location, prices)
+			return nil
+		})
+	}
+	if req.Include.APIKeyStats {
+		group.Go(func() error {
+			stats, err := s.store.APIKeyModelStatsWithFilter(groupCtx, filter)
+			if err != nil {
+				return err
+			}
+			apiKeyStats = buildAPIKeyStats(stats, prices)
+			return nil
+		})
+	}
+	if req.Include.FilterSelectors {
+		group.Go(func() error {
+			selectors, err := s.filterSelectors(groupCtx, filter)
+			if err != nil {
+				return err
+			}
+			filterOptionsOut = selectors
+			return nil
+		})
+	} else if req.Include.FilterOptions {
+		group.Go(func() error {
+			options, err := s.filterOptions(groupCtx, filter, prices)
+			if err != nil {
+				return err
+			}
+			filterOptionsOut = options
+			return nil
+		})
+	}
+
+	if err := group.Wait(); err != nil {
+		return Response{}, err
+	}
+
+	if req.Include.Summary {
+		response.Summary = summary
+		response.SummaryComparison = summaryComparison
+	}
+	if req.Include.Timeline {
+		response.Timeline = timeline
+	}
+	if req.Include.AnomalyPoints {
+		response.AnomalyPoints = anomalyPoints
+	}
+	if req.Include.HourlyDistribution {
+		response.HourlyDistribution = hourly
+	}
+	if req.Include.Heatmap {
+		response.Heatmap = heatmap
 	}
 	if req.Include.ModelShare {
 		response.ModelShare = buildModelShare(modelStats, prices)
@@ -760,59 +906,25 @@ func (s *Service) Analytics(ctx context.Context, req Request) (Response, error) 
 		response.ModelStats = buildModelStats(modelStats, prices)
 	}
 	if req.Include.ChannelShare {
-		stats, err := s.store.ChannelModelStatsWithFilter(ctx, filter)
-		if err != nil {
-			return Response{}, err
-		}
-		response.ChannelShare = buildChannelShare(stats, prices)
+		response.ChannelShare = channelShare
 	}
 	if req.Include.FailureSources {
-		stats, err := s.store.FailureSourcesWithFilter(ctx, filter)
-		if err != nil {
-			return Response{}, err
-		}
-		response.FailureSources = buildFailureSources(stats)
+		response.FailureSources = failureSources
 	}
 	if req.Include.AccountStats {
-		stats, err := s.store.AccountModelStatsWithFilter(ctx, filter)
-		if err != nil {
-			return Response{}, err
-		}
-		response.AccountStats = buildAccountStats(stats, prices)
+		response.AccountStats = accountStats
 	}
 	if req.Include.CredentialStats {
-		stats, err := s.store.CredentialModelStatsWithFilter(ctx, filter)
-		if err != nil {
-			return Response{}, err
-		}
-		response.CredentialStats = buildCredentialStats(stats, prices)
+		response.CredentialStats = credentialStats
 	}
 	if req.Include.CredentialTimeline {
-		points, err := s.store.CredentialTimelineWithFilter(ctx, filter, granularity, location)
-		if err != nil {
-			return Response{}, err
-		}
-		response.CredentialTimeline = buildCredentialTimeline(points, granularity, location, prices)
+		response.CredentialTimeline = credentialTL
 	}
 	if req.Include.APIKeyStats {
-		stats, err := s.store.APIKeyModelStatsWithFilter(ctx, filter)
-		if err != nil {
-			return Response{}, err
-		}
-		response.APIKeyStats = buildAPIKeyStats(stats, prices)
+		response.APIKeyStats = apiKeyStats
 	}
-	if req.Include.FilterSelectors {
-		selectors, err := s.filterSelectors(ctx, filter)
-		if err != nil {
-			return Response{}, err
-		}
-		response.FilterOptions = selectors
-	} else if req.Include.FilterOptions {
-		options, err := s.filterOptions(ctx, filter, prices)
-		if err != nil {
-			return Response{}, err
-		}
-		response.FilterOptions = options
+	if req.Include.FilterSelectors || req.Include.FilterOptions {
+		response.FilterOptions = filterOptionsOut
 	}
 	if req.Include.TaskBuckets {
 		response.TaskBuckets = buildTaskBuckets(taskBuckets)

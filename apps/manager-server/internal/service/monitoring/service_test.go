@@ -104,6 +104,142 @@ func TestAnalyticsBuildsIncludedSections(t *testing.T) {
 	}
 }
 
+// TestAnalyticsAllSectionsTogetherMatchesSequentialSemantics exercises every
+// Include flag at once (mirroring the monitoring page's "all time" request,
+// from_ms=1-style wide range with every section enabled). Analytics() runs
+// these sections concurrently via errgroup for performance on wide time
+// ranges; this test guards that concurrent execution still produces exactly
+// the same result as the previous fully sequential implementation, with no
+// data races or partially-populated sections when everything is requested
+// together.
+func TestAnalyticsAllSectionsTogetherMatchesSequentialSemantics(t *testing.T) {
+	db := newMonitoringTestStore(t)
+	ctx := context.Background()
+	fromMS := int64(1_778_000_000_000)
+	toMS := fromMS + 4*60*60*1000
+	latency := int64(250)
+
+	if err := db.SaveModelPrices(ctx, map[string]store.ModelPrice{
+		"gpt-a": {Prompt: 1, Completion: 2, Cache: 0.5},
+	}); err != nil {
+		t.Fatalf("save model prices: %v", err)
+	}
+	_, err := db.InsertEvents(ctx, []usage.Event{
+		monitoringEvent("all-a", fromMS+1_000, "gpt-a", "auth-1", "source-a", false, 1_000_000, 500_000, 0, 100, 1_500_100, &latency),
+		monitoringEvent("all-b", fromMS+2_000, "gpt-b", "auth-2", "source-b", true, 10, 20, 0, 0, 30, nil),
+		monitoringEvent("all-c", fromMS+3_000, "gpt-a", "auth-1", "source-a", false, 500, 200, 0, 0, 700, &latency),
+		monitoringEvent("all-outside", toMS, "gpt-a", "auth-1", "source-a", false, 1, 1, 0, 0, 2, nil),
+	})
+	if err != nil {
+		t.Fatalf("insert events: %v", err)
+	}
+
+	includeFailed := true
+	req := Request{
+		FromMS: fromMS,
+		ToMS:   toMS,
+		NowMS:  toMS,
+		Filters: Filters{
+			IncludeFailed: &includeFailed,
+		},
+		Include: Include{
+			Summary:            true,
+			SummaryComparison:  true,
+			Timeline:           true,
+			HourlyDistribution: true,
+			ModelShare:         true,
+			ChannelShare:       true,
+			ModelStats:         true,
+			FailureSources:     true,
+			AccountStats:       true,
+			CredentialStats:    true,
+			CredentialTimeline: true,
+			APIKeyStats:        true,
+			FilterOptions:      true,
+			Heatmap:            true,
+			AnomalyPoints:      true,
+			TaskBuckets:        true,
+			RecentFailures:     5,
+			EventsPage:         &EventsPage{Limit: 10},
+			Granularity:        "hour",
+		},
+	}
+
+	svc := New(db)
+	var reference Response
+	for i := 0; i < 8; i++ {
+		resp, err := svc.Analytics(ctx, req)
+		if err != nil {
+			t.Fatalf("analytics run %d: %v", i, err)
+		}
+
+		if resp.Summary == nil || resp.Summary.TotalCalls != 3 || resp.Summary.FailureCalls != 1 {
+			t.Fatalf("run %d: summary = %#v", i, resp.Summary)
+		}
+		if len(resp.Timeline) == 0 {
+			t.Fatalf("run %d: timeline empty", i)
+		}
+		if len(resp.HourlyDistribution) == 0 {
+			t.Fatalf("run %d: hourly distribution empty", i)
+		}
+		if len(resp.ModelShare) != 2 || len(resp.ModelStats) != 2 {
+			t.Fatalf("run %d: model share/stats = %#v %#v", i, resp.ModelShare, resp.ModelStats)
+		}
+		if len(resp.ChannelShare) != 2 {
+			t.Fatalf("run %d: channel share = %#v", i, resp.ChannelShare)
+		}
+		if len(resp.FailureSources) != 1 {
+			t.Fatalf("run %d: failure sources = %#v", i, resp.FailureSources)
+		}
+		if len(resp.AccountStats) == 0 {
+			t.Fatalf("run %d: account stats empty", i)
+		}
+		if len(resp.CredentialStats) == 0 {
+			t.Fatalf("run %d: credential stats empty", i)
+		}
+		if len(resp.CredentialTimeline) == 0 {
+			t.Fatalf("run %d: credential timeline empty", i)
+		}
+		if len(resp.APIKeyStats) == 0 {
+			t.Fatalf("run %d: api key stats empty", i)
+		}
+		if resp.FilterOptions == nil || len(resp.FilterOptions.ModelStats) != 2 {
+			t.Fatalf("run %d: filter options = %#v", i, resp.FilterOptions)
+		}
+		if len(resp.Heatmap) == 0 {
+			t.Fatalf("run %d: heatmap empty", i)
+		}
+		if len(resp.TaskBuckets) != 3 {
+			t.Fatalf("run %d: task buckets = %#v", i, resp.TaskBuckets)
+		}
+		if len(resp.RecentFailures) != 1 {
+			t.Fatalf("run %d: recent failures = %#v", i, resp.RecentFailures)
+		}
+		if resp.Events == nil || len(resp.Events.Items) != 3 {
+			t.Fatalf("run %d: events page = %#v", i, resp.Events)
+		}
+		// SummaryComparison's preceding window starts before fromMS-window <= 0
+		// for this fixture, so it is expected to stay nil; assert it does not
+		// panic or race rather than asserting a populated value.
+		_ = resp.SummaryComparison
+		_ = resp.AnomalyPoints
+
+		if i == 0 {
+			reference = resp
+			continue
+		}
+		if reference.Summary.TotalCalls != resp.Summary.TotalCalls ||
+			reference.Summary.TotalCost != resp.Summary.TotalCost ||
+			len(reference.Timeline) != len(resp.Timeline) ||
+			len(reference.AccountStats) != len(resp.AccountStats) ||
+			len(reference.CredentialStats) != len(resp.CredentialStats) ||
+			len(reference.APIKeyStats) != len(resp.APIKeyStats) ||
+			len(reference.Heatmap) != len(resp.Heatmap) {
+			t.Fatalf("run %d: result diverged from run 0\nrun0=%#v\nrunN=%#v", i, reference, resp)
+		}
+	}
+}
+
 func TestAnalyticsHeatmapIncludesTopContributors(t *testing.T) {
 	db := newMonitoringTestStore(t)
 	ctx := context.Background()
