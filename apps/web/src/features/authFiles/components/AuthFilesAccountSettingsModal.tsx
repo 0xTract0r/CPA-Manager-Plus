@@ -276,7 +276,11 @@ function ManagedHeadersPanel({ entries, t }: { entries: [string, string][]; t: T
                   <th scope="row" className={styles.managedHeaderKey}>
                     {name}
                   </th>
-                  <td>
+                  <td
+                    data-label={t('auth_files.account_settings_managed_headers_table_value', {
+                      defaultValue: 'Runtime value',
+                    })}
+                  >
                     <code className={styles.managedHeaderValue} title={value}>
                       {value}
                     </code>
@@ -355,7 +359,11 @@ function ClaudeHeaderStrategyPanel({ t }: { t: TranslateFn }) {
                 <th scope="row" className={styles.managedHeaderKey}>
                   {name}
                 </th>
-                <td>
+                <td
+                  data-label={t('auth_files.account_settings_claude_header_strategy_source', {
+                    defaultValue: 'Source',
+                  })}
+                >
                   <span className={styles.managedHeaderValue}>
                     {t(sourceKey, {
                       defaultValue:
@@ -464,7 +472,11 @@ function ClaudeClientVersionObservationsPanel({
                         .join(' · ') || '-'}
                     </span>
                   </th>
-                  <td>
+                  <td
+                    data-label={t('auth_files.account_settings_claude_client_user_agent', {
+                      defaultValue: 'User-Agent',
+                    })}
+                  >
                     <code
                       className={`${styles.managedHeaderValue} ${styles.clientObservationUserAgent}`}
                       data-testid="account-settings-claude-client-user-agent"
@@ -485,7 +497,11 @@ function ClaudeClientVersionObservationsPanel({
                         .join(' · ') || '-'}
                     </span>
                   </td>
-                  <td>
+                  <td
+                    data-label={t('auth_files.account_settings_claude_client_last_seen', {
+                      defaultValue: 'Last seen',
+                    })}
+                  >
                     <code
                       className={styles.managedHeaderValue}
                       title={observation.last_seen_at || observation.first_seen_at}
@@ -493,7 +509,11 @@ function ClaudeClientVersionObservationsPanel({
                       {observation.last_seen_at || observation.first_seen_at || '-'}
                     </code>
                   </td>
-                  <td>
+                  <td
+                    data-label={t('auth_files.account_settings_claude_client_requests', {
+                      defaultValue: 'Requests',
+                    })}
+                  >
                     <code className={styles.managedHeaderValue}>
                       {String(observation.request_count || 0)}
                     </code>
@@ -1240,7 +1260,11 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
       open={Boolean(editor)}
       onClose={onClose}
       closeDisabled={editor?.saving === true}
-      width={840}
+      // 加宽桌面态弹窗（P1）：身份模型 / TLS / 审计三区信息密集，840px 过窄会把
+      // 关键区挤到折叠线以下并触发超长内部滚动。用 min(1080px, 96vw) 让桌面更宽、
+      // 窄屏仍受 96vw + Modal 自带 maxWidth:100% 约束不溢出。
+      width="min(1080px, 96vw)"
+      className={styles.accountSettingsModal}
       title={
         editor?.fileName
           ? t('auth_files.account_settings_modal_title', {

@@ -3,12 +3,18 @@
 // （原文件按选择器名与本文件保持一致，避免迁移 JSX 时改动 className）。
 @use '../../../styles/variables' as *;
 
+// 弹窗根容器 hook：仅用于账号设置弹窗，不影响其它 Modal 调用。
+.accountSettingsModal {
+  width: 100%;
+}
+
 .accountSettingsEditor {
   display: flex;
   flex-direction: column;
   gap: $spacing-md;
-  max-height: 60vh;
-  overflow: auto;
+  // P1：不再在此再套一层 max-height/overflow。此前它与全局 `.modal-body`
+  //（max-height:65vh; overflow:auto）形成嵌套双滚动，导致正文被压进一条超长
+  // 内部滚动条、关键区落到折叠线下。改为让 `.modal-body` 作为唯一滚动容器。
 }
 
 .accountSettingsLoading {
@@ -999,8 +1005,65 @@
 }
 
 @media (max-width: $breakpoint-mobile) {
+  // P2：窄屏只读表格改为堆叠式（parity 旧版 AuthFilesPage.module.scss 的
+  // `@include mobile` 处理，迁移到 cpamp 时丢失）。表头隐藏、每格竖排为整行，
+  // 并用 ::before 注入列名标签，Source / Last seen 等值不再被 ellipsis 硬截断。
   .managedHeaderTable {
     font-size: 11px;
+    table-layout: auto;
+
+    thead {
+      display: none;
+    }
+
+    tbody,
+    tr,
+    th,
+    td {
+      display: block;
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    tbody tr {
+      border-bottom: 1px solid color-mix(in srgb, var(--border-color) 62%, transparent);
+
+      &:last-child {
+        border-bottom: 0;
+      }
+    }
+
+    tbody th {
+      border-right: 0;
+      border-bottom: 0;
+      background-color: color-mix(in srgb, var(--bg-tertiary) 60%, transparent);
+    }
+
+    tbody td {
+      border-bottom: 0;
+      padding-top: 2px;
+    }
+
+    // 堆叠态下用 data-label 注入列名，避免隐藏 thead 后失去列语义。
+    tbody td[data-label]::before {
+      content: attr(data-label);
+      display: block;
+      margin-bottom: 2px;
+      color: var(--text-secondary);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+  }
+
+  // 堆叠态下值单元格全宽换行，不再 nowrap + ellipsis 截断关键值。
+  .managedHeaderValue {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 
   .managedHeaderPolicyGrid {
@@ -1018,6 +1081,14 @@
   .managedHeaderHistoryDetailGrid,
   .managedHeaderHistoryDiffTable {
     grid-template-columns: 1fr;
+  }
+
+  .managedHeaderHistoryDiffRow > code {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 
   .toggleGrid {
