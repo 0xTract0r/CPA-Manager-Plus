@@ -1271,7 +1271,10 @@
 
 .cardMetaAction {
   min-width: 0;
-  flex: 0 0 auto;
+  // 审计历史展开面板必须严格贴合卡片内容宽度：占满整行（flex-basis 100%），
+  // 否则该块按折叠态触发链接的内容宽度收缩，展开后 420px 面板会戳出卡片。
+  flex: 1 1 100%;
+  width: 100%;
   display: flex;
   justify-content: flex-start;
   align-items: flex-start;
@@ -1279,10 +1282,12 @@
 
 .cardMetaActionList {
   display: flex;
-  flex-wrap: wrap;
+  // 两个审计面板纵向堆叠，展开时各自占满卡片内容宽度，不再横向并排戳出卡片。
+  flex-direction: column;
   justify-content: flex-start;
-  gap: 8px 12px;
+  gap: 8px;
   min-width: 0;
+  width: 100%;
   max-width: 100%;
 }
 

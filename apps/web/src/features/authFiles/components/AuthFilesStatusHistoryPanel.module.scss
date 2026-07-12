@@ -1,10 +1,13 @@
 .inlineRoot {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: stretch;
   gap: 8px;
   min-width: 0;
-  width: min(100%, 420px);
+  // 严格贴合父容器（卡片内容宽度），不再用 420px 硬上限撑出卡片边界。
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .trigger {

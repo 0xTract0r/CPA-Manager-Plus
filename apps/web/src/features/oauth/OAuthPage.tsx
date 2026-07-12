@@ -423,6 +423,8 @@ export function OAuthPage() {
   const supportsPlugin = useAuthStore((state) => state.supportsPlugin);
   const pluginOAuthAvailable = connectionStatus === 'connected' && supportsPlugin;
   const [states, setStates] = useState<Record<string, ProviderState>>({});
+  // 选中的登录选项卡：provider id 或 'vertex'（一次只显示/登录一个）。
+  const [activeTab, setActiveTab] = useState<string>('codex');
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [pluginOAuthPlugins, setPluginOAuthPlugins] = useState<PluginListEntry[]>([]);
   const [vertexState, setVertexState] = useState<VertexImportState>({
@@ -467,6 +469,15 @@ export function OAuthPage() {
       : [];
     return [...builtIn, ...pluginProviders];
   }, [apiBase, pluginOAuthAvailable, pluginOAuthPlugins, t]);
+
+  // 选项卡有效性守卫在渲染期解析：若当前选中的 provider tab 因插件列表变化而消失，
+  // 直接回退到第一个内建 provider（不写 state，避免 effect 级联渲染）。
+  const activeProvider =
+    activeTab === 'vertex'
+      ? undefined
+      : (providers.find((provider) => provider.id === activeTab) ?? providers[0]);
+  // 高亮判定：vertex 精确匹配；provider tab 命中当前有效 provider（含回退后的默认项）。
+  const resolvedTabId = activeTab === 'vertex' ? 'vertex' : activeProvider?.id;
 
   const clearTimers = useCallback(() => {
     Object.values(pollingTimers.current).forEach((timer) => {
@@ -895,10 +906,7 @@ export function OAuthPage() {
     }
   };
 
-  return (
-    <div className={styles.container}>
-      <div className={styles.content}>
-        {providers.map((provider) => {
+  const renderProviderCard = (provider: OAuthProviderDefinition) => {
           const state = states[provider.id] || {};
           const canSubmitCallback =
             provider.supportsCallback && Boolean(state.url) && state.status !== 'cancelled';
@@ -919,8 +927,8 @@ export function OAuthPage() {
           const canCancel =
             (state.status === 'starting' || state.status === 'waiting') && Boolean(state.state);
           return (
-            <div key={provider.id}>
               <Card
+                key={provider.id}
                 title={
                   <span className={styles.cardTitle}>
                     {provider.icon ? (
@@ -1191,11 +1199,10 @@ export function OAuthPage() {
                   )}
                 </div>
               </Card>
-            </div>
           );
-        })}
+  };
 
-        {/* Vertex JSON 登录 */}
+  const renderVertexCard = () => (
         <Card
           title={
             <span className={styles.cardTitle}>
@@ -1284,6 +1291,80 @@ export function OAuthPage() {
             )}
           </div>
         </Card>
+  );
+
+  return (
+    <div className={styles.container}>
+      <div className={styles.content}>
+        <div className={styles.tabHeader}>
+          <div className={styles.tabHeaderText}>
+            <div className={styles.sectionTitle}>
+              {t('auth_login.add_account_title', { defaultValue: '添加登录账号' })}
+            </div>
+            <div className={styles.cardHint}>
+              {t('auth_login.add_account_hint', {
+                defaultValue: '选择一个 provider，绑定账号备注和代理后，在同一流程内完成 OAuth。',
+              })}
+            </div>
+          </div>
+        </div>
+
+        <div
+          className={styles.providerTabs}
+          role="tablist"
+          aria-label={t('nav.oauth', { defaultValue: 'OAuth' })}
+        >
+          {providers.map((provider) => {
+            const state = states[provider.id] || {};
+            const selected = resolvedTabId === provider.id;
+            return (
+              <button
+                key={provider.id}
+                type="button"
+                role="tab"
+                aria-selected={selected}
+                className={`${styles.providerTab} ${selected ? styles.providerTabActive : ''}`.trim()}
+                onClick={() => setActiveTab(provider.id)}
+                data-testid={`oauth-provider-tab-${provider.id}`}
+              >
+                {provider.icon ? (
+                  <img
+                    src={getIcon(provider.icon, resolvedTheme)}
+                    alt=""
+                    className={styles.providerTabIcon}
+                  />
+                ) : (
+                  <span className={styles.providerTabIconFallback} aria-hidden="true">
+                    {provider.title.slice(0, 1).toUpperCase()}
+                  </span>
+                )}
+                <span className={styles.providerTabLabel}>{provider.title}</span>
+                {state.status && state.status !== 'idle' && (
+                  <span
+                    className={`${styles.providerTabStatus} ${styles[`providerStatus${state.status}`] || ''}`.trim()}
+                  />
+                )}
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'vertex'}
+            className={`${styles.providerTab} ${activeTab === 'vertex' ? styles.providerTabActive : ''}`.trim()}
+            onClick={() => setActiveTab('vertex')}
+            data-testid="oauth-provider-tab-vertex"
+          >
+            <img src={iconVertex} alt="" className={styles.providerTabIcon} />
+            <span className={styles.providerTabLabel}>{t('vertex_import.title')}</span>
+          </button>
+        </div>
+
+        {activeTab === 'vertex'
+          ? renderVertexCard()
+          : activeProvider
+            ? renderProviderCard(activeProvider)
+            : null}
       </div>
     </div>
   );
