@@ -1271,8 +1271,8 @@
 
 .cardMetaAction {
   min-width: 0;
-  // 审计历史展开面板必须严格贴合卡片内容宽度：占满整行（flex-basis 100%），
-  // 否则该块按折叠态触发链接的内容宽度收缩，展开后 420px 面板会戳出卡片。
+  // 审计入口现在是两个紧凑 chip，点击后在右侧抽屉（Drawer, portal）里展示历史，
+  // 卡片本体不再因展开变长，因此这里占满整行只是为了让两个 chip 独占一行、不与上方 meta 挤在一起。
   flex: 1 1 100%;
   width: 100%;
   display: flex;
@@ -1282,8 +1282,10 @@
 
 .cardMetaActionList {
   display: flex;
-  // 两个审计面板纵向堆叠，展开时各自占满卡片内容宽度，不再横向并排戳出卡片。
-  flex-direction: column;
+  // 两个审计入口 chip 并排放在同一行；窄卡时允许换行兜底，不横向溢出。
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
   justify-content: flex-start;
   gap: 8px;
   min-width: 0;

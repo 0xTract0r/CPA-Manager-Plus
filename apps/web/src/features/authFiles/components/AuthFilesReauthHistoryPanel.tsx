@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Drawer } from '@/components/ui/Drawer';
+import { IconScrollText } from '@/components/ui/icons';
 import { authFilesApi } from '@/services/api';
 import type { AuthFileItem, AuthFileReauthHistoryEntry } from '@/types';
 import { formatInUtc8 } from '@/utils/format';
@@ -50,8 +52,9 @@ const isSuccessEvent = (event: AuthFileReauthHistoryEntry): boolean => {
 
 /**
  * 认证文件重新认证（OAuth reauth）历史面板。
- * 折叠态只渲染一个裸文字触发链接，不占用卡片额外空间；展开后才懒加载历史，
- * 首屏用 file.reauth_history 兜底展示（对照旧版 web 端形态，不使用 Card 外壳）。
+ * 折叠态只渲染一个紧凑的操作 chip（图标 + 短标签），不占用卡片额外空间、也不再内联撑高卡片；
+ * 点击后在右侧抽屉（Drawer，portal 渲染于 body、内容自带滚动）里懒加载并展示历史，
+ * 首屏用 file.reauth_history 兜底展示。
  */
 export function AuthFilesReauthHistoryPanel(props: AuthFilesReauthHistoryPanelProps) {
   const { file, reloadKey = 0 } = props;
@@ -60,10 +63,12 @@ export function AuthFilesReauthHistoryPanel(props: AuthFilesReauthHistoryPanelPr
     () => (Array.isArray(file.reauth_history) ? file.reauth_history.slice(0, HISTORY_FETCH_LIMIT) : []),
     [file.reauth_history]
   );
-  const [expanded, setExpanded] = useState(false);
-  const triggerLabel = expanded
-    ? t('auth_files.reauth_history_hide_button', { defaultValue: 'Hide re-auth history' })
-    : t('auth_files.reauth_history_show_button', { defaultValue: 'View re-auth history' });
+  const [open, setOpen] = useState(false);
+  const chipLabel = t('auth_files.reauth_history_open_label', { defaultValue: 'Re-auth' });
+  const triggerAriaLabel = t('auth_files.reauth_history_show_button', {
+    defaultValue: 'View re-auth history',
+  });
+  const drawerTitle = t('auth_files.reauth_history_title', { defaultValue: 'Re-auth history' });
   const [events, setEvents] = useState<AuthFileReauthHistoryEntry[]>(seededEvents);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -98,26 +103,34 @@ export function AuthFilesReauthHistoryPanel(props: AuthFilesReauthHistoryPanelPr
   }, [file.name, reloadKey, t]);
 
   useEffect(() => {
-    if (!expanded) return;
+    if (!open) return;
     if (loadedReloadKeyRef.current === reloadKey) return;
     void loadHistory();
-  }, [expanded, loadHistory, reloadKey]);
+  }, [open, loadHistory, reloadKey]);
+
+  const footerText = t('auth_files.reauth_history_footer', {
+    defaultValue:
+      'Showing the newest history entries only. The source of truth is <authDir>/.oauth-history/reauth.jsonl.',
+  });
 
   return (
-    <div className={styles.inlineRoot}>
+    <>
       <button
         type="button"
         className={styles.trigger}
-        onClick={() => setExpanded((value) => !value)}
-        aria-expanded={expanded}
-        aria-label={triggerLabel}
+        onClick={() => setOpen(true)}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-label={triggerAriaLabel}
+        title={triggerAriaLabel}
       >
-        {triggerLabel}
+        <IconScrollText className={styles.triggerIcon} size={14} />
+        <span className={styles.triggerLabel}>{chipLabel}</span>
       </button>
 
-      {expanded && (
-        <div className={styles.panel}>
-          <div className={styles.content}>
+      <Drawer open={open} onClose={() => setOpen(false)} title={drawerTitle} width={440}>
+        <div className={styles.content}>
+          <div className={styles.contentBody}>
             {loading ? (
               <div className={styles.loading}>{t('common.loading')}</div>
             ) : error ? (
@@ -195,22 +208,13 @@ export function AuthFilesReauthHistoryPanel(props: AuthFilesReauthHistoryPanelPr
                 })}
               </div>
             )}
+          </div>
 
-            <div
-              className={styles.footer}
-              title={t('auth_files.reauth_history_footer', {
-                defaultValue:
-                  'Showing the newest history entries only. The source of truth is <authDir>/.oauth-history/reauth.jsonl.',
-              })}
-            >
-              {t('auth_files.reauth_history_footer', {
-                defaultValue:
-                  'Showing the newest history entries only. The source of truth is <authDir>/.oauth-history/reauth.jsonl.',
-              })}
-            </div>
+          <div className={styles.footer} title={footerText}>
+            {footerText}
           </div>
         </div>
-      )}
-    </div>
+      </Drawer>
+    </>
   );
 }

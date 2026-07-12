@@ -1,50 +1,56 @@
-.inlineRoot {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 8px;
-  min-width: 0;
-  // 严格贴合父容器（卡片内容宽度），不再用 420px 硬上限撑出卡片边界。
-  width: 100%;
-  max-width: 100%;
-  box-sizing: border-box;
-}
-
+// 折叠态触发器：紧凑操作 chip（图标 + 短标签），是明确的操作控件而非裸文本链接。
+// 不再用整行 flex 容器纵向堆叠，改由卡片侧的 .cardMetaActionList 把两个 chip 排在同一行。
 .trigger {
   appearance: none;
-  border: none;
-  background: none;
-  padding: 0;
-  color: var(--primary-color);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  box-sizing: border-box;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 78%, transparent);
+  background: color-mix(in srgb, var(--bg-secondary) 78%, transparent);
+  color: var(--text-secondary);
   font: inherit;
   font-size: 12px;
   font-weight: 600;
   line-height: 1.4;
+  white-space: nowrap;
   cursor: pointer;
-  align-self: flex-start;
-  transition: color 0.18s ease;
+  transition:
+    color 0.16s ease,
+    border-color 0.16s ease,
+    background 0.16s ease;
 
   &:hover {
-    color: var(--primary-hover);
-    text-decoration: underline;
+    color: var(--primary-color);
+    border-color: color-mix(in srgb, var(--primary-color) 55%, transparent);
+    background: color-mix(in srgb, var(--primary-color) 12%, transparent);
   }
 
   &:focus-visible {
-    outline: none;
-    text-decoration: underline;
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
   }
 }
 
-.panel {
-  width: 100%;
-  box-sizing: border-box;
-  border-radius: 12px;
-  border: 1px solid color-mix(in srgb, var(--border-color) 70%, transparent);
-  background: color-mix(in srgb, var(--bg-secondary) 72%, transparent);
-  padding: 12px 14px;
+.triggerIcon {
+  flex-shrink: 0;
+  color: currentColor;
 }
 
+.triggerLabel {
+  min-width: 0;
+}
+
+// Drawer body 内容容器：撑满抽屉正文，历史列表由 Drawer 自带 body 滚动承载。
 .content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.contentBody {
   display: flex;
   flex-direction: column;
   gap: 10px;
