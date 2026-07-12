@@ -41,14 +41,41 @@ func (e *ImportPersistenceError) Unwrap() error {
 // connection (base URL + management key) is available to pull an export from.
 var ErrCoreConnectionNotConfigured = errors.New("CPA core connection is not configured")
 
-// SyncFromCoreResult reports the outcome of pulling a usage export snapshot
-// from CPA core and importing it into the manager-server's own store.
+// defaultSyncBatchLimit is the default per-model request-detail page size
+// requested from core's windowed /usage/export when the caller does not
+// specify one. At ~1-2MB per 5000 details this comfortably fits within the
+// 60s FetchUsageExport client timeout.
+const defaultSyncBatchLimit = 5000
+
+// SyncOptions windows a single SyncFromCore call to one page of core's usage
+// export history, mirroring core's /usage/export since/limit pagination.
+type SyncOptions struct {
+	// Since is the pagination cursor to resume from (a previous
+	// SyncFromCoreResult.NextSince), or empty to start from the beginning.
+	Since string
+	// Limit caps the number of request details pulled per model in this
+	// call. Defaults to defaultSyncBatchLimit when <= 0.
+	Limit int
+}
+
+// SyncFromCoreResult reports the outcome of pulling a single page of a usage
+// export snapshot from CPA core and importing it into the manager-server's
+// own store.
 type SyncFromCoreResult struct {
 	ImportResult
 	// NoHistoricalData is true when the core export request succeeded but the
 	// export payload had no per-request usage detail (for example, core has
 	// UsageStatisticsEnabled=false and therefore does not retain history).
 	NoHistoricalData bool `json:"noHistoricalData"`
+	// HasMore is true when core's export was windowed and truncated: more
+	// request details remain beyond NextSince. Callers that want the full
+	// history must keep calling SyncFromCore with Since=NextSince until
+	// HasMore is false.
+	HasMore bool `json:"hasMore"`
+	// NextSince is the cursor to pass as SyncOptions.Since on the next call
+	// to continue pulling remaining details in stable, gap-free order. Empty
+	// when HasMore is false.
+	NextSince string `json:"nextSince"`
 }
 
 type Service struct {
@@ -126,12 +153,20 @@ func (s *Service) Counts(ctx context.Context) (events int64, deadLetters int64, 
 	return s.store.Counts(ctx)
 }
 
-// SyncFromCore pulls the legacy usage statistics export snapshot from the
-// configured CPA core instance and imports it into the manager-server's own
-// usage_events store. It reuses the same event-hash based dedup as manual
-// import/export and the 60s queue-based collector, so it is safe to run
-// repeatedly and alongside the collector.
-func (s *Service) SyncFromCore(ctx context.Context) (SyncFromCoreResult, error) {
+// SyncFromCore pulls a single page of the usage statistics export snapshot
+// from the configured CPA core instance and imports it into the
+// manager-server's own usage_events store. It reuses the same event-hash
+// based dedup as manual import/export and the 60s queue-based collector, so
+// it is safe to run repeatedly and alongside the collector.
+//
+// Unlike the previous full-history behavior, SyncFromCore now pulls at most
+// one windowed page (opts.Limit request details per model, default
+// defaultSyncBatchLimit) starting at opts.Since. Callers that need the
+// complete history must keep calling SyncFromCore with
+// Since=result.NextSince until result.HasMore is false. A call with a
+// zero-value SyncOptions{} (no Since) pulls the first page from the
+// beginning -- it does NOT return the full history in one call anymore.
+func (s *Service) SyncFromCore(ctx context.Context, opts SyncOptions) (SyncFromCoreResult, error) {
 	if s.managerConfigService == nil {
 		return SyncFromCoreResult{}, ErrCoreConnectionNotConfigured
 	}
@@ -143,12 +178,20 @@ func (s *Service) SyncFromCore(ctx context.Context) (SyncFromCoreResult, error) 
 		return SyncFromCoreResult{}, ErrCoreConnectionNotConfigured
 	}
 
-	data, err := cpa.FetchUsageExport(ctx, setup.CPAUpstreamURL, setup.ManagementKey)
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = defaultSyncBatchLimit
+	}
+
+	page, err := cpa.FetchUsageExportPage(ctx, setup.CPAUpstreamURL, setup.ManagementKey, cpa.UsageExportPageOptions{
+		Since: opts.Since,
+		Limit: limit,
+	})
 	if err != nil {
 		return SyncFromCoreResult{}, fmt.Errorf("fetch core usage export: %w", err)
 	}
 
-	result, _, err := s.Import(ctx, bytes.NewReader(data))
+	result, _, err := s.Import(ctx, bytes.NewReader(page.Body))
 	if err != nil {
 		// A legacy export with no per-request detail (core usage-statistics
 		// disabled, or no history yet) is not a fatal error: surface it as a
@@ -158,5 +201,9 @@ func (s *Service) SyncFromCore(ctx context.Context) (SyncFromCoreResult, error) 
 		}
 		return SyncFromCoreResult{ImportResult: result}, err
 	}
-	return SyncFromCoreResult{ImportResult: result}, nil
+	return SyncFromCoreResult{
+		ImportResult: result,
+		HasMore:      page.HasMore,
+		NextSince:    page.NextSince,
+	}, nil
 }

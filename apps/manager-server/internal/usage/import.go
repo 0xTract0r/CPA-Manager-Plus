@@ -479,10 +479,8 @@ func eventsFromLegacyUsage(usageRecord map[string]any, format string) (ImportPar
 		},
 	}
 	now := time.Now().UnixMilli()
-	endpointIndex := 0
 	for _, endpoint := range sortedKeys(apisRaw) {
 		apiRaw := apisRaw[endpoint]
-		endpointIndex++
 		apiEntry, ok := apiRaw.(map[string]any)
 		if !ok {
 			result.Failed++
@@ -495,10 +493,8 @@ func eventsFromLegacyUsage(usageRecord map[string]any, format string) (ImportPar
 		}
 
 		method, path := parseEndpoint(endpoint)
-		modelIndex := 0
 		for _, model := range sortedKeys(modelsRaw) {
 			modelRaw := modelsRaw[model]
-			modelIndex++
 			modelEntry, ok := modelRaw.(map[string]any)
 			if !ok {
 				result.Failed++
@@ -509,23 +505,13 @@ func eventsFromLegacyUsage(usageRecord map[string]any, format string) (ImportPar
 				result.Unsupported++
 				continue
 			}
-			for detailIndex, detailRaw := range detailsRaw {
+			for _, detailRaw := range detailsRaw {
 				detail, ok := detailRaw.(map[string]any)
 				if !ok {
 					result.Failed++
 					continue
 				}
-				event, err := eventFromLegacyDetail(
-					endpoint,
-					method,
-					path,
-					model,
-					detail,
-					endpointIndex,
-					modelIndex,
-					detailIndex,
-					now,
-				)
+				event, err := eventFromLegacyDetail(endpoint, method, path, model, detail, now)
 				if err != nil {
 					result.Failed++
 					continue
@@ -547,9 +533,6 @@ func eventFromLegacyDetail(
 	path string,
 	model string,
 	detail map[string]any,
-	endpointIndex int,
-	modelIndex int,
-	detailIndex int,
 	now int64,
 ) (Event, error) {
 	timestamp := readString(detail, "timestamp", "time", "created_at", "createdAt")
@@ -574,10 +557,17 @@ func eventFromLegacyDetail(
 	apiKey := readString(detail, "api_key", "apiKey", "key")
 	authIndex := readString(detail, "auth_index", "authIndex", "AuthIndex")
 	rawJSON := legacyRawJSON(endpoint, model, detail)
+	// requestID prefers the real per-request correlation id (present once core
+	// exposes request_id on /usage/export details). When it is absent (older
+	// core versions, or synthetic/imported records), fall back to a content
+	// digest built purely from the event's own fields below -- never from the
+	// detail's position within the endpoint/model/details traversal. A
+	// position-derived id previously double-counted every event ingested both
+	// through the redis-queue collector (which has the real request_id) and
+	// through a later legacy export import (which had no request_id and
+	// synthesized a different id per traversal position), because the two
+	// paths produced different event hashes for the same underlying request.
 	requestID := readString(detail, "request_id", "requestId", "id")
-	if requestID == "" {
-		requestID = legacyRequestID(endpoint, model, normalizedTimestamp, rawJSON, endpointIndex, modelIndex, detailIndex)
-	}
 
 	event := Event{
 		RequestID:             requestID,
@@ -626,8 +616,48 @@ func eventFromLegacyDetail(
 		event.Endpoint = "-"
 	}
 	AttachResponseHeaderMetadata(&event, ResponseHeaderMetadataFromRecord(detail, time.UnixMilli(timestampMS)))
+	if event.RequestID == "" {
+		event.RequestID = legacyContentRequestID(event)
+	}
 	event.EventHash = buildEventHash(event)
 	return event, nil
+}
+
+// legacyContentRequestID synthesizes a stable request id for legacy usage
+// export details that carry no request_id (older core versions). It is built
+// purely from the event's own content -- timestamp, endpoint/model routing,
+// auth/source identity and token counts -- so the same underlying request
+// always yields the same id regardless of map iteration order, dataset size,
+// or where the detail happens to land within the endpoint/model/details
+// traversal. This intentionally excludes any positional index.
+func legacyContentRequestID(event Event) string {
+	raw := strings.Join([]string{
+		"legacy-content",
+		event.Timestamp,
+		event.Endpoint,
+		event.Method,
+		event.Path,
+		event.Model,
+		event.AuthIndex,
+		event.SourceHash,
+		event.APIKeyHash,
+		strconv.FormatInt(event.InputTokens, 10),
+		strconv.FormatInt(event.OutputTokens, 10),
+		strconv.FormatInt(event.ReasoningTokens, 10),
+		strconv.FormatInt(event.CachedTokens, 10),
+		strconv.FormatInt(event.CacheTokens, 10),
+		strconv.FormatInt(event.CacheReadTokens, 10),
+		strconv.FormatInt(event.CacheCreationTokens, 10),
+		strconv.FormatInt(event.TotalTokens, 10),
+		strconv.FormatBool(event.Failed),
+		strconv.Itoa(event.FailStatusCode),
+		event.FailSummary,
+	}, "|")
+	hash := hashString(raw)
+	if len(hash) > 16 {
+		hash = hash[:16]
+	}
+	return "legacy:" + hash
 }
 
 func legacyRawJSON(endpoint string, model string, detail map[string]any) string {
@@ -639,24 +669,6 @@ func legacyRawJSON(endpoint string, model string, detail map[string]any) string 
 	}
 	raw, _ := json.Marshal(record)
 	return string(raw)
-}
-
-func legacyRequestID(endpoint string, model string, timestamp string, rawJSON string, endpointIndex int, modelIndex int, detailIndex int) string {
-	raw := strings.Join([]string{
-		"legacy",
-		strconv.Itoa(endpointIndex),
-		strconv.Itoa(modelIndex),
-		strconv.Itoa(detailIndex),
-		endpoint,
-		model,
-		timestamp,
-		rawJSON,
-	}, "|")
-	hash := hashString(raw)
-	if len(hash) > 16 {
-		hash = hash[:16]
-	}
-	return "legacy:" + hash
 }
 
 func parseEndpoint(endpoint string) (method string, path string) {

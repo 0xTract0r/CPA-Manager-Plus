@@ -632,3 +632,144 @@ func TestBuildPayloadExposesResolvedModelOnDetails(t *testing.T) {
 		t.Fatalf("detail resolved_model = %#v", modelEntry.Details)
 	}
 }
+
+// legacyDetailWithoutRequestID is a fixture detail with no request_id, used
+// to exercise the content-based synthetic id fallback.
+func legacyDetailWithoutRequestID() map[string]any {
+	return map[string]any{
+		"timestamp":     "2026-01-02T03:04:05Z",
+		"source":        "alice@example.com",
+		"auth_index":    "auth-1",
+		"input_tokens":  float64(10),
+		"output_tokens": float64(20),
+		"failed":        false,
+	}
+}
+
+// TestEventFromLegacyDetailSyntheticRequestIDIsStableRegardlessOfPosition
+// verifies that when a legacy export detail has no request_id, the
+// synthesized fallback id (and therefore the resulting EventHash) depends
+// only on the event's own content, not on where the detail happened to fall
+// within the endpoint/model/details traversal. Before the fix, the id was
+// built from (endpointIndex, modelIndex, detailIndex), so the same logical
+// event produced different ids/hashes if the surrounding dataset's key
+// ordering or size changed (e.g. more endpoints/models present, or map
+// iteration boundaries shifting due to Go's sorted-key traversal).
+func TestEventFromLegacyDetailSyntheticRequestIDIsStableRegardlessOfPosition(t *testing.T) {
+	detail := legacyDetailWithoutRequestID()
+
+	// Simulate the same detail appearing at different traversal positions
+	// (e.g. because unrelated endpoints/models were also present in the
+	// dataset, shifting sortedKeys() order/indices).
+	first, err := eventFromLegacyDetail("POST /v1/chat/completions", "POST", "/v1/chat/completions", "gpt-4o", detail, 1000)
+	if err != nil {
+		t.Fatalf("eventFromLegacyDetail (first): %v", err)
+	}
+	second, err := eventFromLegacyDetail("POST /v1/chat/completions", "POST", "/v1/chat/completions", "gpt-4o", detail, 2000)
+	if err != nil {
+		t.Fatalf("eventFromLegacyDetail (second): %v", err)
+	}
+
+	if first.RequestID == "" {
+		t.Fatalf("expected a synthesized request id, got empty")
+	}
+	if first.RequestID != second.RequestID {
+		t.Fatalf("synthetic request id changed across calls: first=%q second=%q", first.RequestID, second.RequestID)
+	}
+	if first.EventHash != second.EventHash {
+		t.Fatalf("event hash changed across calls: first=%q second=%q", first.EventHash, second.EventHash)
+	}
+}
+
+// TestEventFromLegacyDetailSyntheticRequestIDDiffersForDifferentContent
+// ensures the content digest is not degenerate (distinct events still get
+// distinct synthetic ids).
+func TestEventFromLegacyDetailSyntheticRequestIDDiffersForDifferentContent(t *testing.T) {
+	detail := legacyDetailWithoutRequestID()
+	base, err := eventFromLegacyDetail("POST /v1/chat/completions", "POST", "/v1/chat/completions", "gpt-4o", detail, 0)
+	if err != nil {
+		t.Fatalf("eventFromLegacyDetail (base): %v", err)
+	}
+
+	otherDetail := legacyDetailWithoutRequestID()
+	otherDetail["output_tokens"] = float64(99)
+	other, err := eventFromLegacyDetail("POST /v1/chat/completions", "POST", "/v1/chat/completions", "gpt-4o", otherDetail, 0)
+	if err != nil {
+		t.Fatalf("eventFromLegacyDetail (other): %v", err)
+	}
+
+	if base.RequestID == other.RequestID {
+		t.Fatalf("expected different synthetic request ids for different content, both = %q", base.RequestID)
+	}
+	if base.EventHash == other.EventHash {
+		t.Fatalf("expected different event hashes for different content, both = %q", base.EventHash)
+	}
+}
+
+// TestEventFromLegacyDetailUsesRealRequestIDWhenPresent verifies that a
+// request_id present on the legacy detail (core's newer /usage/export
+// includes it) is used as-is instead of the content-digest fallback.
+func TestEventFromLegacyDetailUsesRealRequestIDWhenPresent(t *testing.T) {
+	detail := legacyDetailWithoutRequestID()
+	detail["request_id"] = "real-request-id-123"
+	event, err := eventFromLegacyDetail("POST /v1/chat/completions", "POST", "/v1/chat/completions", "gpt-4o", detail, 0)
+	if err != nil {
+		t.Fatalf("eventFromLegacyDetail: %v", err)
+	}
+	if event.RequestID != "real-request-id-123" {
+		t.Fatalf("request id = %q, want real-request-id-123", event.RequestID)
+	}
+}
+
+// TestCrossPathEventHashMatchesWhenRequestIDPresent is the key regression
+// test for the double-counting bug: the same underlying request, once
+// ingested through the redis-queue collector (NormalizeRaw) and once through
+// a legacy /usage/export import (eventFromLegacyDetail), must produce the
+// same EventHash when both carry the same real request_id -- otherwise the
+// two paths insert two separate rows for one request.
+func TestCrossPathEventHashMatchesWhenRequestIDPresent(t *testing.T) {
+	queuePayload := []byte(`{
+		"provider": "anthropic",
+		"executor_type": "claude",
+		"model": "gpt-test",
+		"alias": "gpt-test",
+		"endpoint": "POST /v1/chat/completions",
+		"auth_type": "oauth",
+		"api_key": "key-abc",
+		"request_id": "req-123",
+		"timestamp": "2026-01-01T00:00:00Z",
+		"auth_index": "0",
+		"source": "user@example.com",
+		"tokens": {"input_tokens": 10, "output_tokens": 5},
+		"failed": false
+	}`)
+	queueEvent, err := NormalizeRaw(queuePayload)
+	if err != nil {
+		t.Fatalf("NormalizeRaw: %v", err)
+	}
+
+	legacyDetail := map[string]any{
+		"timestamp":     "2026-01-01T00:00:00Z",
+		"input_tokens":  float64(10),
+		"output_tokens": float64(5),
+		"request_id":    "req-123",
+		"auth_index":    "0",
+		"source":        "user@example.com",
+		"api_key":       "key-abc",
+		"auth_type":     "oauth",
+	}
+	legacyEvent, err := eventFromLegacyDetail("POST /v1/chat/completions", "POST", "/v1/chat/completions", "gpt-test", legacyDetail, 0)
+	if err != nil {
+		t.Fatalf("eventFromLegacyDetail: %v", err)
+	}
+
+	if queueEvent.RequestID != legacyEvent.RequestID {
+		t.Fatalf("request id mismatch: queue=%q legacy=%q", queueEvent.RequestID, legacyEvent.RequestID)
+	}
+	if queueEvent.EventHash != legacyEvent.EventHash {
+		t.Fatalf(
+			"event hash mismatch across paths (double-counting regression): queue=%q legacy=%q queueEvent=%+v legacyEvent=%+v",
+			queueEvent.EventHash, legacyEvent.EventHash, queueEvent, legacyEvent,
+		)
+	}
+}

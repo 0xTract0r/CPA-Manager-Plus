@@ -1,10 +1,14 @@
 package usage
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/app"
@@ -114,13 +118,69 @@ func (h *Handler) Import(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, http.StatusOK, result)
 }
 
-// Sync pulls a usage export snapshot from the configured CPA core instance and
-// imports it into the manager-server's own usage_events store.
+// syncRequestBody is the optional JSON body accepted by Sync to resume a
+// windowed sync from a previous page's cursor. Both fields are also accepted
+// as query parameters (?since=...&limit=...) for simple/manual triggering;
+// the JSON body takes precedence when both are present.
+type syncRequestBody struct {
+	Since string `json:"since"`
+	Limit int    `json:"limit"`
+}
+
+// Sync pulls a single page of the usage export snapshot from the configured
+// CPA core instance and imports it into the manager-server's own
+// usage_events store. Without since/limit it pulls the first page (not the
+// full history); callers that need the complete history must keep calling
+// Sync with since=<previous response's nextSince> until hasMore is false.
 func (h *Handler) Sync(w http.ResponseWriter, r *http.Request) {
-	result, err := h.App.UsageService.SyncFromCore(r.Context())
+	opts, err := parseSyncOptions(w, r)
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	result, err := h.App.UsageService.SyncFromCore(r.Context(), opts)
 	if err != nil {
 		response.Error(w, response.UsageSyncErrorStatus(err), err)
 		return
 	}
 	response.JSON(w, http.StatusOK, result)
+}
+
+func parseSyncOptions(w http.ResponseWriter, r *http.Request) (usagesvc.SyncOptions, error) {
+	opts := usagesvc.SyncOptions{
+		Since: strings.TrimSpace(r.URL.Query().Get("since")),
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		limit, err := strconv.Atoi(raw)
+		if err != nil || limit < 0 {
+			return opts, errors.New("limit must be a non-negative integer")
+		}
+		opts.Limit = limit
+	}
+
+	// A JSON body is optional: manual/no-arg triggers (existing frontend
+	// behavior, curl, etc.) send no body at all. Only override query params
+	// when a body is actually present and non-empty.
+	if r.ContentLength > 0 {
+		body := http.MaxBytesReader(w, r.Body, 64*1024)
+		defer body.Close()
+		data, err := io.ReadAll(body)
+		if err != nil {
+			return opts, err
+		}
+		data = bytes.TrimSpace(data)
+		if len(data) > 0 {
+			var parsed syncRequestBody
+			if err := json.Unmarshal(data, &parsed); err != nil {
+				return opts, fmt.Errorf("invalid sync request body: %w", err)
+			}
+			if since := strings.TrimSpace(parsed.Since); since != "" {
+				opts.Since = since
+			}
+			if parsed.Limit > 0 {
+				opts.Limit = parsed.Limit
+			}
+		}
+	}
+	return opts, nil
 }
