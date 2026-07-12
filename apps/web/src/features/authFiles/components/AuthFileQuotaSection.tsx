@@ -11,7 +11,13 @@ import {
 } from '@/components/quota';
 import { useNotificationStore, useQuotaStore } from '@/stores';
 import type { AuthFileItem } from '@/types';
-import { getStatusFromError } from '@/utils/quota';
+import { createStatusError, getStatusFromError } from '@/utils/quota';
+import {
+  buildCoreQuotaSnapshotLookup,
+  buildObservedClaudeQuotaStateFromCoreSnapshot,
+  getCoreQuotaSnapshotForAuthFile
+} from '@/utils/quota/coreQuotaSnapshots';
+import { quotaSnapshotsApi } from '@/services/api/quotaSnapshots';
 import {
   isRuntimeOnlyAuthFile,
   resolveQuotaErrorMessage,
@@ -19,6 +25,40 @@ import {
 } from '@/features/authFiles/constants';
 import { QuotaProgressBar } from '@/features/authFiles/components/QuotaProgressBar';
 import styles from '@/features/authFiles/AuthFilesPage.module.scss';
+
+/**
+ * Claude 配额卡片手动刷新：只读 core `/quota/refresh` + `/quota/snapshots`，
+ * 不再直打上游 CLAUDE_USAGE_URL（避免上游限流触发 503，也让手动刷新复用 core
+ * 的持久快照体系而不是绕开它）。
+ */
+const refreshClaudeQuotaFromCoreSnapshot = async (
+  file: AuthFileItem,
+  t: TFunction
+): Promise<unknown> => {
+  const authId =
+    typeof file['auth_id'] === 'string' && file['auth_id'].trim() ? file['auth_id'] : undefined;
+  const name = typeof file.name === 'string' && file.name.trim() ? file.name : undefined;
+
+  const response = await quotaSnapshotsApi.refresh({
+    auth_id: authId,
+    name,
+    provider: 'claude'
+  });
+  const lookup = buildCoreQuotaSnapshotLookup(response.entries ?? []);
+  const entry = getCoreQuotaSnapshotForAuthFile(lookup, file);
+  if (!entry) {
+    throw createStatusError(t('claude_quota.empty_windows'));
+  }
+  if (entry.status === 'error') {
+    throw createStatusError(entry.error || t('claude_quota.empty_windows'), 502);
+  }
+
+  const state = buildObservedClaudeQuotaStateFromCoreSnapshot(file, entry, t);
+  if (!state) {
+    throw createStatusError(entry.error || t('claude_quota.empty_windows'));
+  }
+  return state;
+};
 
 type QuotaState = { status?: string; error?: string; errorStatus?: number } | undefined;
 type InlineQuotaConfig = {
@@ -93,7 +133,12 @@ export function AuthFileQuotaSection(props: AuthFileQuotaSectionProps) {
     }));
 
     try {
-      const data = await config.fetchQuota(file, t);
+      // Claude 卡片手动刷新只读 core 配额快照体系（先请求 core 侧刷新再重读快照），
+      // 不经浏览器直打上游 CLAUDE_USAGE_URL；其余 provider 暂维持既有 fetchQuota 路径。
+      const data =
+        quotaType === 'claude'
+          ? await refreshClaudeQuotaFromCoreSnapshot(file, t)
+          : await config.fetchQuota(file, t);
       updateQuotaState((prev: Record<string, unknown>) => ({
         ...prev,
         [storeKey]: config.buildSuccessState(data, file)
@@ -110,7 +155,7 @@ export function AuthFileQuotaSection(props: AuthFileQuotaSectionProps) {
       }));
       showNotification(t('auth_files.quota_refresh_failed', { name: file.name, message }), 'error');
     }
-  }, [config, disableControls, file, quota, showNotification, storeKey, t, updateQuotaState]);
+  }, [config, disableControls, file, quota, quotaType, showNotification, storeKey, t, updateQuotaState]);
 
   const displayQuota = quotaOverride === undefined ? quota : (quotaOverride ?? undefined);
   const quotaStatus = displayQuota?.status ?? 'idle';
