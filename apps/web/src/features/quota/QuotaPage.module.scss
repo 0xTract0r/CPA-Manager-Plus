@@ -61,6 +61,140 @@
   font-size: 14px;
 }
 
+// 核心定时刷新配额状态面板（从旧版 apps/web QuotaPage 移植，配色/间距对齐 cpamp 现有 .toolbar 玻璃态 token）
+.autoRefreshPanel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-md;
+  padding: 12px;
+  border: 1px solid var(--glass-border);
+  border-radius: $radius-lg;
+  background: var(--glass-bg);
+
+  @include mobile {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+.autoRefreshText {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.autoRefreshTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.autoRefreshStatus {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.autoRefreshMetaGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px 12px;
+  margin-top: 8px;
+}
+
+.autoRefreshMetaItem {
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 72%, transparent);
+  border-radius: $radius-md;
+  background: var(--surface-subtle);
+}
+
+.autoRefreshMetaLabel,
+.autoRefreshMetaValue {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.autoRefreshMetaLabel {
+  margin-bottom: 2px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.autoRefreshMetaValue {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.autoRefreshControls {
+  display: flex;
+  align-items: center;
+  gap: $spacing-sm;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+
+  @include mobile {
+    justify-content: stretch;
+  }
+}
+
+.autoRefreshButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 34px;
+  min-height: 34px;
+  padding-inline: 14px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--primary-color) 12%, var(--surface-subtle));
+  border-color: color-mix(in srgb, var(--primary-color) 22%, var(--border-color));
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  box-sizing: border-box;
+
+  // Link 渲染为 <a>，无 .btn 基础样式，需补边框；Button 组件自带 .btn.btn-sm 由下方组合选择器接管。
+  border: 1px solid color-mix(in srgb, var(--primary-color) 22%, var(--border-color));
+
+  &:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--primary-color) 18%, var(--surface-subtle));
+    border-color: color-mix(in srgb, var(--primary-color) 36%, var(--border-color));
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.65;
+  }
+
+  @include mobile {
+    flex: 1 1 auto;
+  }
+}
+
+.autoRefreshButton:global(.btn.btn-sm) {
+  border: 1px solid color-mix(in srgb, var(--primary-color) 22%, var(--border-color));
+
+  > span {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+  }
+}
+
+:global([data-theme='dark']) .autoRefreshButton {
+  background: color-mix(in srgb, var(--primary-color) 18%, var(--surface-subtle));
+  border-color: color-mix(in srgb, var(--primary-color) 32%, var(--border-color));
+}
+
 .toolbar {
   display: grid;
   grid-template-columns: minmax(260px, 1fr) minmax(190px, 260px);
