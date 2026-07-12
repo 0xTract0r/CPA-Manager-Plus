@@ -1275,16 +1275,85 @@
 @include summaryTable.styles;
 @include accountOverview.styles;
 .realtimeTable {
-  --realtime-col-source: 18%;
-  --realtime-col-model: 15%;
-  // 13 列(含"缓存命中率")的实时表设固定基线宽度；超过容器宽度时由 .tableWrapper 的
-  // overflow-x:auto 横向滚动兜底，绝不溢出到 .dataPanel(overflow:hidden)外部。
-  min-width: 1360px;
+  // 13 列(含"缓存命中率")实时表：table-layout:fixed + 百分比列宽，使表格 width:100% 铺满
+  // 容器并把 13 列全部放平在同一平面，主内容区(~1152px 可用宽)下零横滚、花费列完整可见。
+  // 各列百分比之和=100%；窄屏(<1200px)由下方 @container 兜底 min-width + tableWrapper 横滚。
+  --realtime-col-source: 14%; // 来源 / API KEY（省略号截断，title 悬浮看全）
+  --realtime-col-model: 12%; // 模型（省略号截断）
+  --realtime-col-effort: 6%; // 强度
+  --realtime-col-recent: 6%; // 近况（状态点阵）
+  --realtime-col-status: 7%; // 请求状态
+  --realtime-col-success: 6%; // 成功率
+  --realtime-col-calls: 6%; // 调用
+  --realtime-col-tps: 5%; // TPS
+  --realtime-col-latency: 10%; // 首字 ｜ 耗时
+  --realtime-col-time: 8%; // 时间（两行）
+  --realtime-col-usage: 8%; // 本次用量
+  --realtime-col-cache: 6%; // 缓存命中率
+  --realtime-col-cost: 6%; // 花费
+
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+}
+
+.realtimeTable col:nth-child(1) {
+  width: var(--realtime-col-source);
+}
+.realtimeTable col:nth-child(2) {
+  width: var(--realtime-col-model);
+}
+.realtimeTable col:nth-child(3) {
+  width: var(--realtime-col-effort);
+}
+.realtimeTable col:nth-child(4) {
+  width: var(--realtime-col-recent);
+}
+.realtimeTable col:nth-child(5) {
+  width: var(--realtime-col-status);
+}
+.realtimeTable col:nth-child(6) {
+  width: var(--realtime-col-success);
+}
+.realtimeTable col:nth-child(7) {
+  width: var(--realtime-col-calls);
+}
+.realtimeTable col:nth-child(8) {
+  width: var(--realtime-col-tps);
+}
+.realtimeTable col:nth-child(9) {
+  width: var(--realtime-col-latency);
+}
+.realtimeTable col:nth-child(10) {
+  width: var(--realtime-col-time);
+}
+.realtimeTable col:nth-child(11) {
+  width: var(--realtime-col-usage);
+}
+.realtimeTable col:nth-child(12) {
+  width: var(--realtime-col-cache);
+}
+.realtimeTable col:nth-child(13) {
+  width: var(--realtime-col-cost);
+}
+
+// table-layout:fixed 下表头默认收敛，禁止把列撑爆（td 保留 overflow:visible 供内容层
+// 各自的 primaryCell / 省略号处理，见下方 .realtimeModelText 等）。
+.realtimeTable th {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .realtimeTable .logTypeCell .primaryCell > span {
-  display: inline-block;
-  max-width: min(240px, 100%);
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+// API KEY 行同样收敛到列宽内，超出用省略号（title 悬浮看全）。
+.realtimeTable .realtimeApiKeyLine {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1336,11 +1405,11 @@
 }
 
 .realtimeLatencyHeader {
-  display: inline-grid;
-  grid-template-columns: minmax(42px, 1fr) 10px minmax(42px, 1fr);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 8px minmax(0, 1fr);
   align-items: center;
   justify-content: center;
-  width: 118px;
+  width: 100%;
   font-size: 12px;
   line-height: 1.25;
   text-transform: none;
@@ -1348,12 +1417,12 @@
 }
 
 .realtimeMetricCell {
-  display: inline-grid;
-  grid-template-columns: minmax(48px, 1fr) 10px minmax(48px, 1fr);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 8px minmax(0, 1fr);
   align-items: center;
   justify-content: center;
-  width: 118px;
-  min-width: 118px;
+  width: 100%;
+  min-width: 0;
   font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
@@ -1365,17 +1434,20 @@
 
 .realtimeTpsCell {
   display: inline-block;
-  min-width: 48px;
+  min-width: 0;
   font-variant-numeric: tabular-nums;
 }
 
 .realtimeTimeCell {
-  min-width: 94px;
+  min-width: 0;
 }
 
 .realtimeTimeLine {
-  width: 92px;
-  font-size: 12px;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   line-height: 1.3;
@@ -1691,6 +1763,14 @@
 }
 
 @container monitoring-page (max-width: 1024px) {
+  // 窄屏(容器 <=1024px)兜底：实时表恢复固定基线宽度，由 .tableWrapper 的 overflow-x:auto
+  // 横向滚动兜底，避免 13 列在过窄容器里被压到无法阅读。>=1360px 视口(容器 ~1152px)
+  // 不触发此断点，仍保持零横滚全列同屏。
+  .realtimeTable {
+    min-width: 1120px;
+    table-layout: auto;
+  }
+
   .panelHeader {
     flex-direction: column;
     align-items: stretch;
