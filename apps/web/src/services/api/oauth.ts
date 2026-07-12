@@ -15,7 +15,8 @@ export type OAuthProvider = BuiltInOAuthProvider | (string & {});
 export interface OAuthStartResponse {
   url: string;
   state?: string;
-  // 后端当前 -auth-url 系列接口未返回过期时间字段；预留字段供未来后端支持后直接生效。
+  // core -auth-url 系列接口返回授权链接过期时间：expires_in_seconds（如 900）与 ISO8601 的 expires_at。
+  // 前端据此渲染倒计时；两者任一存在即可，优先用 expires_at 的绝对时间。
   expires_in_seconds?: number;
   expires_at?: string;
 }

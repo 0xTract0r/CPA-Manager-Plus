@@ -53,6 +53,8 @@ interface ProviderState {
   proxyUrl?: string;
   proxyUrlError?: string;
   savedProxyUrl?: string;
+  expiresAtMs?: number;
+  expiresInSeconds?: number;
   callbackUrl?: string;
   callbackSubmitting?: boolean;
   callbackStatus?: 'success' | 'error';
@@ -163,6 +165,64 @@ const getAuthKey = (provider: BuiltInOAuthProvider, suffix: string) =>
 
 const getIcon = (icon: string | { light: string; dark: string }, theme: 'light' | 'dark') => {
   return typeof icon === 'string' ? icon : icon[theme];
+};
+
+interface FingerprintPreset {
+  profile: string;
+  tls: string;
+  headers: string;
+}
+
+// 登录前请求身份预览：仅 core 里真实存在的三个原生指纹预设为“UI 快照”。
+// 其余 provider（含 antigravity/kimi/xai 及插件 provider）后端不存在硬编码指纹，
+// 统一显示 provider-default，避免展示杜撰值。真实身份是 per-account、账号创建后由 core 生成。
+const FINGERPRINT_PRESETS: Record<string, FingerprintPreset> = {
+  codex: {
+    profile: 'codex_rustls_native_v1',
+    tls: 'codex_rustls_native_v1',
+    headers: 'Codex CLI native request identity',
+  },
+  anthropic: {
+    profile: 'claude_cli_clienthello_v1',
+    tls: 'claude_cli_clienthello_v1',
+    headers: 'Claude Code managed headers',
+  },
+  'gemini-cli': {
+    profile: 'gemini_cli_native_v1',
+    tls: 'gemini_cli_native_v1',
+    headers: 'Gemini CLI native request identity',
+  },
+};
+
+const PROVIDER_DEFAULT_FINGERPRINT: FingerprintPreset = {
+  profile: 'provider-default',
+  tls: 'provider-default',
+  headers: 'Provider OAuth defaults with account proxy isolation',
+};
+
+const getFingerprintPreset = (provider: OAuthProvider): FingerprintPreset =>
+  FINGERPRINT_PRESETS[provider] ?? PROVIDER_DEFAULT_FINGERPRINT;
+
+const formatDuration = (seconds: number) => {
+  const safe = Math.max(0, Math.floor(seconds));
+  const mins = Math.floor(safe / 60);
+  const secs = safe % 60;
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+};
+
+// 从 core 返回的过期字段推导授权链接的绝对到期时间戳（ms）。
+// 优先用 expires_at 的绝对时间；否则用 expires_in_seconds 相对当前时间换算。
+// 放在组件外的纯模块函数里，避免在组件渲染作用域内直接调用 Date.now()。
+const resolveExpiresAtMs = (
+  expiresAt?: string,
+  expiresInSeconds?: number
+): number | undefined => {
+  const parsedExpiresAt = expiresAt ? Date.parse(expiresAt) : NaN;
+  if (Number.isFinite(parsedExpiresAt)) return parsedExpiresAt;
+  if (expiresInSeconds && Number.isFinite(expiresInSeconds)) {
+    return Date.now() + expiresInSeconds * 1000;
+  }
+  return undefined;
 };
 
 const validateProxyUrl = (value: string, requiredMessage: string, invalidMessage: string): string | undefined => {
@@ -363,6 +423,7 @@ export function OAuthPage() {
   const supportsPlugin = useAuthStore((state) => state.supportsPlugin);
   const pluginOAuthAvailable = connectionStatus === 'connected' && supportsPlugin;
   const [states, setStates] = useState<Record<string, ProviderState>>({});
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const [pluginOAuthPlugins, setPluginOAuthPlugins] = useState<PluginListEntry[]>([]);
   const [vertexState, setVertexState] = useState<VertexImportState>({
     fileName: '',
@@ -419,6 +480,16 @@ export function OAuthPage() {
       clearTimers();
     };
   }, [clearTimers]);
+
+  // 授权链接倒计时：仅当存在等待中的、带过期时间的授权链接时才每秒 tick。
+  useEffect(() => {
+    const hasActiveCountdown = Object.values(states).some(
+      (state) => state.url && state.status === 'waiting' && state.expiresAtMs
+    );
+    if (!hasActiveCountdown) return;
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [states]);
 
   useEffect(() => {
     if (!pluginOAuthAvailable) return;
@@ -608,6 +679,8 @@ export function OAuthPage() {
       error: undefined,
       proxyUrlError: undefined,
       savedProxyUrl: undefined,
+      expiresAtMs: undefined,
+      expiresInSeconds: undefined,
       callbackStatus: undefined,
       callbackError: undefined,
       callbackUrl: '',
@@ -639,11 +712,17 @@ export function OAuthPage() {
         showNotification(message, 'error');
         return;
       }
+      const expiresInSeconds = Number.isFinite(res.expires_in_seconds)
+        ? Number(res.expires_in_seconds)
+        : undefined;
+      const expiresAtMs = resolveExpiresAtMs(res.expires_at, expiresInSeconds);
       updateProviderState(provider, {
         url: res.url,
         state: res.state,
         status: 'waiting',
         polling: true,
+        expiresAtMs,
+        expiresInSeconds,
       });
       startPolling(provider, res.state);
     } catch (err: unknown) {
@@ -891,6 +970,39 @@ export function OAuthPage() {
                       placeholder={t('auth_login.account_proxy_placeholder')}
                     />
                   </div>
+                  {(() => {
+                    const fingerprint = getFingerprintPreset(provider.id);
+                    return (
+                      <div className={styles.fingerprintBox}>
+                        <div className={styles.connectionLabel}>
+                          {t('auth_login.fingerprint_snapshot_title')}
+                        </div>
+                        <div className={styles.keyValueList}>
+                          <div className={styles.keyValueItem}>
+                            <span className={styles.keyValueKey}>
+                              {t('auth_login.fingerprint_profile')}
+                            </span>
+                            <span className={styles.keyValueValue}>{fingerprint.profile}</span>
+                          </div>
+                          <div className={styles.keyValueItem}>
+                            <span className={styles.keyValueKey}>
+                              {t('auth_login.fingerprint_tls')}
+                            </span>
+                            <span className={styles.keyValueValue}>{fingerprint.tls}</span>
+                          </div>
+                          <div className={styles.keyValueItem}>
+                            <span className={styles.keyValueKey}>
+                              {t('auth_login.fingerprint_headers')}
+                            </span>
+                            <span className={styles.keyValueValue}>{fingerprint.headers}</span>
+                          </div>
+                        </div>
+                        <div className={styles.cardHintSecondary}>
+                          {t('auth_login.fingerprint_snapshot_note')}
+                        </div>
+                      </div>
+                    );
+                  })()}
                   {showFlowSteps && (
                     <div className={styles.flowSteps}>
                       {OAUTH_FLOW_STEPS.map((step, index) => {
@@ -913,7 +1025,17 @@ export function OAuthPage() {
                   {state.url && (
                     <div className={styles.authUrlBox}>
                       <div className={styles.authUrlLabel}>{provider.urlLabel}</div>
+                      {state.expiresAtMs && state.status === 'waiting' && (
+                        <div className={styles.countdownBadge}>
+                          {t('auth_login.oauth_countdown', {
+                            time: formatDuration((state.expiresAtMs - nowMs) / 1000),
+                          })}
+                        </div>
+                      )}
                       <div className={styles.authUrlValue}>{state.url}</div>
+                      <div className={styles.cardHintSecondary}>
+                        {t('auth_login.oauth_link_ready_hint')}
+                      </div>
                       <div className={styles.authUrlActions}>
                         <Button variant="secondary" size="sm" onClick={() => copyLink(state.url!)}>
                           {getProviderActionText(provider.id, 'copy_link')}
