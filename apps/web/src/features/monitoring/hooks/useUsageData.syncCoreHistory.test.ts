@@ -264,6 +264,38 @@ describe('runSyncCoreHistoryCursorLoop', () => {
     });
   });
 
+  it('范围=全部历史（since 未传）时首批即取消，nextSince 合法地为 undefined（=从头续传，而非"无可续传"）', async () => {
+    const abortController = new AbortController();
+
+    const sync = vi.fn<SyncFn>().mockImplementationOnce((_params, signal) => {
+      return new Promise<UsageSyncCoreHistoryResponse>((_resolve, reject) => {
+        signal?.addEventListener('abort', () => {
+          const abortError = new Error('canceled') as Error & { code?: string };
+          abortError.name = 'CanceledError';
+          abortError.code = 'ERR_CANCELED';
+          reject(abortError);
+        });
+      });
+    });
+
+    const outcomePromise = runSyncCoreHistoryCursorLoop(sync, {
+      // since 未传 = 全部历史，与"最近 30 天"等具体 since 的区别就在这里。
+      signal: abortController.signal,
+    });
+
+    await vi.waitFor(() => expect(sync).toHaveBeenCalledTimes(1));
+    abortController.abort();
+
+    const outcome = await outcomePromise;
+
+    expect(outcome.status).toBe('cancelled');
+    // 首批在途取消，nextSince 回退到本批起点，即调用方传入的 since（此处为 undefined）。
+    // 调用方（页面层）不能用 `nextSince !== undefined` 判断是否可续传，
+    // 必须用独立的 status === 'cancelled' | 'failed' 标志区分"可续传"与"续传起点值"。
+    expect(outcome.nextSince).toBeUndefined();
+    expect(outcome.batchCount).toBe(0);
+  });
+
   it('传入 limit 时每批请求都带上该 limit', async () => {
     const sync = vi.fn<SyncFn>().mockResolvedValueOnce({
       added: 1,

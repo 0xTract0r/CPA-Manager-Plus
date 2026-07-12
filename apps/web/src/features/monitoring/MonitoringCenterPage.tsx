@@ -249,6 +249,9 @@ export function MonitoringCenterPage() {
   const usageSyncCancelRef = useRef(false);
   const usageSyncAbortControllerRef = useRef<AbortController | null>(null);
   const usageSyncResumeSinceRef = useRef<string | undefined>(undefined);
+  // 续传起点 undefined 合法地表示"从全部历史开头续传"，不能用它判断是否可续传；
+  // 必须用独立标志区分"是否存在可续传的同步"与"续传起点值"。
+  const [usageSyncResumable, setUsageSyncResumable] = useState(false);
   const [accountQuotaStates, setAccountQuotaStates] = useState<Record<string, AccountQuotaState>>(
     {}
   );
@@ -1286,12 +1289,14 @@ export function MonitoringCenterPage() {
 
         if (outcome.status === 'no_data') {
           usageSyncResumeSinceRef.current = undefined;
+          setUsageSyncResumable(false);
           showNotification(t('usage_stats.sync_core_history_no_data'), 'warning');
           return;
         }
 
         if (outcome.status === 'cancelled') {
           usageSyncResumeSinceRef.current = outcome.nextSince;
+          setUsageSyncResumable(true);
           showNotification(
             t('usage_stats.sync_core_history_cancelled', {
               batches: outcome.batchCount,
@@ -1305,6 +1310,7 @@ export function MonitoringCenterPage() {
 
         if (outcome.status === 'failed') {
           usageSyncResumeSinceRef.current = outcome.nextSince;
+          setUsageSyncResumable(true);
           const code = getUsageServiceErrorCode(outcome.error);
           const message =
             code === 'cpa_core_connection_not_configured'
@@ -1332,6 +1338,7 @@ export function MonitoringCenterPage() {
 
         // completed
         usageSyncResumeSinceRef.current = undefined;
+        setUsageSyncResumable(false);
         showNotification(
           t('usage_stats.sync_core_history_success', {
             added: outcome.added,
@@ -1477,7 +1484,7 @@ export function MonitoringCenterPage() {
         usageSyncingFromCore={usageSyncingFromCore}
         usageSyncCancelling={usageSyncCancelling}
         usageSyncProgress={usageSyncProgress}
-        hasResumableCoreHistorySync={usageSyncResumeSinceRef.current !== undefined}
+        hasResumableCoreHistorySync={usageSyncResumable}
         loggingToFile={isFileLogsAvailable(config)}
         modelPricesAvailable={requestMonitoringAvailability.modelPricesAvailable}
         usageImportInputRef={usageImportInputRef}
