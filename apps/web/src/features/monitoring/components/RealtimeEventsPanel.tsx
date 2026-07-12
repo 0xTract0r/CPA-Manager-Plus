@@ -51,6 +51,7 @@ type RealtimeEventsPanelProps = {
   pageSize: number;
   scopedFailureCount: number;
   failedOnlyActive: boolean;
+  lowCacheHitRateOnly: boolean;
   eventsHasMore: boolean;
   eventsLoadingMore: boolean;
   eventsRetentionLimited: boolean;
@@ -63,6 +64,7 @@ type RealtimeEventsPanelProps = {
   emptyState: ReactNode;
   t: TFunction;
   onToggleFailedOnly: () => void;
+  onToggleLowCacheHitRateOnly: () => void;
   onAccountDisplayModeChange: (mode: AccountDisplayMode) => void;
   onPageChange: (page: number) => void;
   onPageSizeChange: (pageSize: number) => void;
@@ -73,13 +75,12 @@ export type RealtimeEventsPanelActionsProps = {
   rowCount: number;
   scopedFailureCount: number;
   failedOnlyActive: boolean;
+  lowCacheHitRateOnly: boolean;
   accountDisplayMode: AccountDisplayMode;
   t: TFunction;
   onToggleFailedOnly: () => void;
+  onToggleLowCacheHitRateOnly: () => void;
   onAccountDisplayModeChange: (mode: AccountDisplayMode) => void;
-  // 可选的追加操作项（例如"仅显示低命中率"筛选 chip），渲染在同一个 inlineMetrics 行内，
-  // 供仅在表格自身渲染时才可用的本地过滤状态使用；masthead 处调用不传时行为不变。
-  extraActions?: ReactNode;
 };
 
 const REALTIME_PAGE_SIZE_OPTIONS = [10, 50, 100, 150, 300] as const;
@@ -639,11 +640,12 @@ export function RealtimeEventsPanelActions({
   rowCount,
   scopedFailureCount,
   failedOnlyActive,
+  lowCacheHitRateOnly,
   accountDisplayMode,
   t,
   onToggleFailedOnly,
+  onToggleLowCacheHitRateOnly,
   onAccountDisplayModeChange,
-  extraActions,
 }: RealtimeEventsPanelActionsProps) {
   const nextAccountDisplayMode: AccountDisplayMode =
     accountDisplayMode === 'masked' ? 'full' : 'masked';
@@ -658,6 +660,11 @@ export function RealtimeEventsPanelActions({
     t,
     'monitoring.filter_status_failed_short',
     'monitoring.filter_status_failed'
+  );
+  const lowCacheHitRateLabel = shortLabel(
+    t,
+    'monitoring.filter_low_cache_hit_rate_short',
+    'monitoring.filter_low_cache_hit_rate'
   );
   const accountDisplayHint = t(
     accountDisplayMode === 'masked'
@@ -703,7 +710,22 @@ export function RealtimeEventsPanelActions({
         <IconFilter size={14} aria-hidden="true" />
         {failedOnlyLabel}
       </button>
-      {extraActions}
+      {/* "仅显示低命中率" chip 与 "仅显示失败" chip 并排在同一 inlineMetrics 行内。
+          筛选状态提升到页面级(MonitoringCenterPage)统一持有，两处 chip 共享同一状态。 */}
+      <button
+        type="button"
+        className={[
+          styles.filterToggleChip,
+          lowCacheHitRateOnly ? styles.filterToggleChipActive : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
+        onClick={onToggleLowCacheHitRateOnly}
+        title={t('monitoring.filter_low_cache_hit_rate_hint')}
+      >
+        <IconFilter size={14} aria-hidden="true" />
+        {lowCacheHitRateLabel}
+      </button>
     </div>
   );
 }
@@ -715,6 +737,7 @@ export function RealtimeEventsPanel({
   pageSize,
   scopedFailureCount,
   failedOnlyActive,
+  lowCacheHitRateOnly,
   eventsHasMore,
   eventsLoadingMore,
   eventsRetentionLimited,
@@ -727,6 +750,7 @@ export function RealtimeEventsPanel({
   emptyState,
   t,
   onToggleFailedOnly,
+  onToggleLowCacheHitRateOnly,
   onAccountDisplayModeChange,
   onPageChange,
   onPageSizeChange,
@@ -776,11 +800,6 @@ export function RealtimeEventsPanel({
     'monitoring.column_cache_hit_rate_short',
     'monitoring.column_cache_hit_rate'
   );
-  const lowCacheHitRateLabel = shortLabel(
-    t,
-    'monitoring.filter_low_cache_hit_rate_short',
-    'monitoring.filter_low_cache_hit_rate'
-  );
   const handleCopyFailureDetails = async (text: string) => {
     const copied = await copyToClipboard(text);
     showNotification(
@@ -788,50 +807,34 @@ export function RealtimeEventsPanel({
       copied ? 'success' : 'error'
     );
   };
-  // 定位低命中率：仿"仅显示失败"chip 的交互模式，加"仅显示低命中率(<30%)"筛选，
-  // 只作用于当前已加载并分页展示的行，纯前端本地过滤，不影响上层分页/加载更多状态。
-  const [lowCacheHitRateOnly, setLowCacheHitRateOnly] = useState(false);
+  // "仅显示低命中率(<30%)" 筛选状态由页面级(MonitoringCenterPage)统一持有，经 props 传入，
+  // 与 "仅显示失败" chip 并排在同一行的 masthead 工具条；此处只按状态做纯前端本地过滤，
+  // 只作用于当前已加载并分页展示的行，不影响上层分页/加载更多状态。
   const displayedRows = lowCacheHitRateOnly
     ? pagination.pageItems.filter((row) => {
         const rate = computeCacheHitRate(row);
         return rate !== null && rate < REALTIME_LOW_CACHE_HIT_RATE_THRESHOLD;
       })
     : pagination.pageItems;
-  const lowCacheHitRateChip = (
-    <button
-      type="button"
-      className={[styles.filterToggleChip, lowCacheHitRateOnly ? styles.filterToggleChipActive : '']
-        .filter(Boolean)
-        .join(' ')}
-      onClick={() => setLowCacheHitRateOnly((current) => !current)}
-      title={t('monitoring.filter_low_cache_hit_rate_hint')}
-    >
-      <IconFilter size={14} aria-hidden="true" />
-      {lowCacheHitRateLabel}
-    </button>
-  );
   const actions = (
     <RealtimeEventsPanelActions
       rowCount={rows.length}
       scopedFailureCount={scopedFailureCount}
       failedOnlyActive={failedOnlyActive}
+      lowCacheHitRateOnly={lowCacheHitRateOnly}
       accountDisplayMode={accountDisplayMode}
       t={t}
       onToggleFailedOnly={onToggleFailedOnly}
+      onToggleLowCacheHitRateOnly={onToggleLowCacheHitRateOnly}
       onAccountDisplayModeChange={onAccountDisplayModeChange}
     />
   );
   const content = (
     <>
-      {/* 低命中率筛选 chip 渲染在表格上方的本地工具条：无论 embedded 与否都要可见。
-          真实页面(MonitoringCenterPage)始终以 embedded 模式渲染本组件，页面级 masthead
-          另有一份独立的 RealtimeEventsPanelActions 工具条，不经过这里的 `actions`；
-          如果把 chip 塞进 `actions`/extraActions，embedded 模式下会被直接丢弃、
-          非 embedded 模式下则会与 masthead 工具条重复渲染。放在 content 内部的本地
-          工具条可以让两种渲染路径都拿到同一个自包含状态，且不产生重复 UI。 */}
-      <div className={`${styles.inlineMetrics} ${styles.realtimeHeaderActions}`}>
-        {lowCacheHitRateChip}
-      </div>
+      {/* 筛选 chip("仅显示失败" + "仅显示低命中率")统一由 masthead 工具条承载：
+          embedded 模式下 MonitoringCenterPage 在页面级 masthead 渲染 RealtimeEventsPanelActions；
+          非 embedded 模式(下方 MonitoringPanel)通过 `extra={actions}` 渲染同一份工具条。
+          content 内不再单独放工具条，避免与 masthead 重复。 */}
       <div className={styles.tableWrapper}>
         <table className={`${styles.table} ${styles.realtimeTable}`}>
           <colgroup>
@@ -877,13 +880,14 @@ export function RealtimeEventsPanel({
               <th>
                 <TableHeaderInfo label={usageLabel} info={t('monitoring.realtime_usage_hint')} />
               </th>
-              <th>{costLabel}</th>
+              {/* 缓存命中率紧跟"本次用量"列：命中率由该列 token 派生，相邻语义最贴近。 */}
               <th>
                 <TableHeaderInfo
                   label={cacheHitRateLabel}
                   info={t('monitoring.realtime_cache_hit_rate_hint')}
                 />
               </th>
+              <th>{costLabel}</th>
             </tr>
           </thead>
           <tbody>
@@ -1038,10 +1042,10 @@ export function RealtimeEventsPanel({
                       <small>{buildRealtimeTokenSummary(row, t)}</small>
                     </div>
                   </td>
-                  <td>{hasPrices ? formatUsd(row.totalCost) : '--'}</td>
                   <td className={cacheHitRateToneClass}>
                     {cacheHitRate === null ? '--' : formatPercent(cacheHitRate)}
                   </td>
+                  <td>{hasPrices ? formatUsd(row.totalCost) : '--'}</td>
                 </tr>
               );
             })}

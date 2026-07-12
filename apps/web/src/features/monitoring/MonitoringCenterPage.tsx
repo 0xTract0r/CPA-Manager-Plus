@@ -283,6 +283,9 @@ export function MonitoringCenterPage() {
   const [realtimePageSize, setRealtimePageSize] = useState(
     initialMonitoringCenterUiState.current.realtimePageSize
   );
+  // "仅显示低命中率" 筛选状态提升到页面级：masthead 工具条 chip 与实时表过滤共享同一状态，
+  // 保证它与 "仅显示失败" chip 在同一行、embedded 与非 embedded 两条渲染路径都可达。
+  const [realtimeLowCacheHitRateOnly, setRealtimeLowCacheHitRateOnly] = useState(false);
   const focusSnapshotRef = useRef<FocusSnapshot | null>(null);
   const previousAccountPageResetStateRef = useRef<AccountOverviewPageResetState | null>(null);
   const accountQuotaStatesRef = useRef<Record<string, AccountQuotaState>>({});
@@ -944,6 +947,10 @@ export function MonitoringCenterPage() {
     setSelectedStatus((previous) => (previous === 'failed' ? 'all' : 'failed'));
   }, []);
 
+  const toggleRealtimeLowCacheHitRateOnly = useCallback(() => {
+    setRealtimeLowCacheHitRateOnly((previous) => !previous);
+  }, []);
+
   const toggleApiKeyExpanded = useCallback((apiKeyId: string) => {
     setExpandedApiKeys((previous) => ({
       ...previous,
@@ -1204,9 +1211,11 @@ export function MonitoringCenterPage() {
         rowCount={realtimeLogRows.length}
         scopedFailureCount={scopedFailureCount}
         failedOnlyActive={failedOnlyActive}
+        lowCacheHitRateOnly={realtimeLowCacheHitRateOnly}
         accountDisplayMode={accountDisplayMode}
         t={t}
         onToggleFailedOnly={toggleFailedOnly}
+        onToggleLowCacheHitRateOnly={toggleRealtimeLowCacheHitRateOnly}
         onAccountDisplayModeChange={setAccountDisplayMode}
       />
     );
@@ -1221,11 +1230,13 @@ export function MonitoringCenterPage() {
     handleAccountSortKeyChange,
     overallLoading,
     realtimeLogRows.length,
+    realtimeLowCacheHitRateOnly,
     refreshAll,
     scopedFailureCount,
     searchInput,
     t,
     toggleFailedOnly,
+    toggleRealtimeLowCacheHitRateOnly,
   ]);
 
   const handleAccountPageChange = useCallback(
@@ -1623,6 +1634,7 @@ export function MonitoringCenterPage() {
               pageSize={realtimePageSize}
               scopedFailureCount={scopedFailureCount}
               failedOnlyActive={failedOnlyActive}
+              lowCacheHitRateOnly={realtimeLowCacheHitRateOnly}
               eventsHasMore={eventsHasMore}
               eventsLoadingMore={eventsLoadingMore}
               eventsRetentionLimited={eventsRetentionLimited}
@@ -1635,6 +1647,7 @@ export function MonitoringCenterPage() {
               emptyState={renderMonitoringEmptyState()}
               t={t}
               onToggleFailedOnly={toggleFailedOnly}
+              onToggleLowCacheHitRateOnly={toggleRealtimeLowCacheHitRateOnly}
               onAccountDisplayModeChange={setAccountDisplayMode}
               onPageChange={setRealtimePage}
               onPageSizeChange={handleRealtimePageSizeChange}

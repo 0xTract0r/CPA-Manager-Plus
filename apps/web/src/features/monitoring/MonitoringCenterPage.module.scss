@@ -1277,6 +1277,9 @@
 .realtimeTable {
   --realtime-col-source: 18%;
   --realtime-col-model: 15%;
+  // 13 列(含"缓存命中率")的实时表设固定基线宽度；超过容器宽度时由 .tableWrapper 的
+  // overflow-x:auto 横向滚动兜底，绝不溢出到 .dataPanel(overflow:hidden)外部。
+  min-width: 1360px;
 }
 
 .realtimeTable .logTypeCell .primaryCell > span {
@@ -1988,11 +1991,6 @@
 
   .apiKeySummaryTable {
     min-width: 980px;
-  }
-
-  .realtimeTable {
-    // +1 列（缓存命中率）：随 tableWrapper 的横向滚动策略，加宽 min-width 保证新列不挤压既有列。
-    min-width: 1360px;
   }
 }
 

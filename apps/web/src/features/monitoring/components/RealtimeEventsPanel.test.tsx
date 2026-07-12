@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AccountDisplayMode } from '@/features/monitoring/accountOverviewState';
 import type { MonitoringEventRow } from '@/features/monitoring/hooks/useMonitoringData';
 import styles from '../MonitoringCenterPage.module.scss';
-import { RealtimeEventsPanel } from './RealtimeEventsPanel';
+import { RealtimeEventsPanel, RealtimeEventsPanelActions } from './RealtimeEventsPanel';
 
 const t = ((key: string, options?: Record<string, unknown>) => {
   const messages: Record<string, string> = {
@@ -87,6 +87,7 @@ type PanelOverrides = {
   eventsRetentionLimited?: boolean;
   eventsTotalCount?: number;
   eventsLoadedCount?: number;
+  lowCacheHitRateOnly?: boolean;
 };
 
 const baseRow = (overrides: Partial<PanelRow> = {}): PanelRow => ({
@@ -154,6 +155,7 @@ const renderPanel = (row: PanelRow, overrides: PanelOverrides = {}) =>
       pageSize={10}
       scopedFailureCount={row.failed ? 1 : 0}
       failedOnlyActive={false}
+      lowCacheHitRateOnly={overrides.lowCacheHitRateOnly ?? false}
       eventsHasMore={overrides.eventsHasMore ?? false}
       eventsLoadingMore={overrides.eventsLoadingMore ?? false}
       eventsRetentionLimited={overrides.eventsRetentionLimited ?? false}
@@ -166,10 +168,26 @@ const renderPanel = (row: PanelRow, overrides: PanelOverrides = {}) =>
       emptyState={<span>empty</span>}
       t={t}
       onToggleFailedOnly={noop}
+      onToggleLowCacheHitRateOnly={noop}
       onAccountDisplayModeChange={noop}
       onPageChange={noop}
       onPageSizeChange={noop}
       onLoadMoreEvents={noop}
+    />
+  );
+
+const renderActions = () =>
+  renderToStaticMarkup(
+    <RealtimeEventsPanelActions
+      rowCount={1}
+      scopedFailureCount={0}
+      failedOnlyActive={false}
+      lowCacheHitRateOnly={false}
+      accountDisplayMode="masked"
+      t={t}
+      onToggleFailedOnly={noop}
+      onToggleLowCacheHitRateOnly={noop}
+      onAccountDisplayModeChange={noop}
     />
   );
 
@@ -416,7 +434,7 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).toContain('Load more');
   });
 
-  it('renders the cache hit rate column with header tooltips and the low-hit-rate filter chip', () => {
+  it('renders the cache hit rate column with header tooltips right after the usage column', () => {
     const markup = renderPanel(
       baseRow({
         inputTokens: 10,
@@ -438,7 +456,41 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).toContain(
       'title="(cachedTokens + cacheReadTokens) / (max(inputTokens, cachedTokens) + cacheReadTokens + cacheCreationTokens) for this single request. Shows “--” when there is no input-side token data."'
     );
-    expect(markup).toContain('Low Cache Hit');
+    // 列顺序：本次用量(Usage) -> 缓存命中率(Cache Hit) -> 花费(Cost)。
+    const usageIdx = markup.indexOf('Usage');
+    const cacheHitHeaderIdx = markup.indexOf('Cache Hit');
+    const costIdx = markup.indexOf('>Cost<');
+    expect(usageIdx).toBeGreaterThanOrEqual(0);
+    expect(cacheHitHeaderIdx).toBeGreaterThan(usageIdx);
+    expect(costIdx).toBeGreaterThan(cacheHitHeaderIdx);
+  });
+
+  it('renders both filter chips side by side in the masthead actions toolbar', () => {
+    const markup = renderActions();
+
+    // "仅显示失败" 与 "仅显示低命中率" chip 在同一行工具条内并排渲染。
+    const failedIdx = markup.indexOf('Failed only');
+    const lowCacheIdx = markup.indexOf('Low Cache Hit');
+    expect(failedIdx).toBeGreaterThanOrEqual(0);
+    expect(lowCacheIdx).toBeGreaterThan(failedIdx);
+  });
+
+  it('filters displayed rows to low cache hit rate when the chip is active', () => {
+    const highHitRow = baseRow({
+      id: 'high',
+      inputTokens: 10,
+      cachedTokens: 10,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+    });
+
+    const activeMarkup = renderPanel(highHitRow, { lowCacheHitRateOnly: true });
+    const inactiveMarkup = renderPanel(highHitRow, { lowCacheHitRateOnly: false });
+
+    // 100% 命中率的行在开启低命中率过滤后应被隐藏（fallback 到空态），关闭时正常展示。
+    expect(inactiveMarkup).toContain('100.0%');
+    expect(activeMarkup).not.toContain('100.0%');
+    expect(activeMarkup).toContain('empty');
   });
 
   it('shows "--" for cache hit rate when there is no input-side token data', () => {
