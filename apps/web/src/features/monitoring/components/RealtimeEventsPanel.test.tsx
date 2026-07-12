@@ -14,8 +14,11 @@ const t = ((key: string, options?: Record<string, unknown>) => {
     'monitoring.account_overview_account_display_full': 'Full',
     'monitoring.account_overview_show_full_accounts_hint': 'Show full accounts',
     'monitoring.account_overview_show_masked_accounts_hint': 'Show masked accounts',
+    'monitoring.cached_tokens_short': 'Cached',
     'monitoring.cache_creation_tokens_short': 'Create',
     'monitoring.cache_read_tokens_short': 'Read',
+    'monitoring.column_cache_hit_rate': 'Cache Hit Rate',
+    'monitoring.column_cache_hit_rate_short': 'Cache Hit',
     'monitoring.column_latency': 'Latency',
     'monitoring.column_model': 'Model',
     'monitoring.column_output_tps': 'TPS',
@@ -23,6 +26,9 @@ const t = ((key: string, options?: Record<string, unknown>) => {
     'monitoring.column_success_rate': 'Success',
     'monitoring.column_time': 'Time',
     'monitoring.column_type': 'Type',
+    'monitoring.filter_low_cache_hit_rate': 'Low Cache Hit Only',
+    'monitoring.filter_low_cache_hit_rate_short': 'Low Cache Hit',
+    'monitoring.filter_low_cache_hit_rate_hint': 'Show only rows with a cache hit rate below 30%.',
     'monitoring.elapsed_short': 'Elapsed',
     'monitoring.executor_type_short': 'Executor',
     'monitoring.fail_status_code_short': 'HTTP',
@@ -42,6 +48,12 @@ const t = ((key: string, options?: Record<string, unknown>) => {
     'monitoring.realtime_api_key_hash': 'API Key hash',
     'monitoring.realtime_api_key_label': 'API Key',
     'monitoring.realtime_api_key_masked': 'Masked key',
+    'monitoring.realtime_cache_hit_rate_hint':
+      '(cachedTokens + cacheReadTokens) / (max(inputTokens, cachedTokens) + cacheReadTokens + cacheCreationTokens) for this single request. Shows “--” when there is no input-side token data.',
+    'monitoring.realtime_success_rate_hint':
+      'Rolling success rate for this account + provider + model + channel combination, not the result of this single request.',
+    'monitoring.realtime_usage_hint':
+      'I = input tokens, O = output tokens, R = reasoning tokens; also shows cache read/write tokens when present.',
     'monitoring.request_status': 'Status',
     'monitoring.result_failed': 'Failed',
     'monitoring.result_success': 'Success',
@@ -206,7 +218,7 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).toContain('Elapsed');
     expect(markup).toContain('1.5 s');
     expect(markup).toContain('20');
-    expect(markup).toContain('I 10 · O 20 · R 3 · C 5 · Create 1 · Read 4');
+    expect(markup).toContain('I 10 · O 20 · R 3 · Create 1 · Read 4');
     expect(markup).toContain('role="tooltip"');
     expect(markup).toContain(styles.realtimeFailureTooltip);
     expect(markup).toContain(styles.realtimeFailureTooltipBelow);
@@ -221,7 +233,7 @@ describe('RealtimeEventsPanel', () => {
     const markup = renderPanel(baseRow({ reasoningTokens: 0 }));
 
     expect(markup).toContain('<colgroup>');
-    expect(markup.match(/<col\b/g)).toHaveLength(12);
+    expect(markup.match(/<col\b/g)).toHaveLength(13);
     expect(markup).not.toContain('Effort -');
     expect(markup).toContain('<th>Effort</th>');
     expect(markup).toContain('>TPS</th>');
@@ -229,7 +241,9 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).toMatch(/TTFT<\/span><span class="[^"]+">｜<\/span><span class="[^"]+">Elapsed/);
     expect(markup).toContain(expectedDate);
     expect(markup).toContain(expectedTime);
-    expect(markup).toContain('I 10 · O 20 · C 5');
+    // 细分缓存字段(cacheReadTokens/cacheCreationTokens)全为 0 但 legacy cachedTokens=5 时，
+    // 用 "Cached 5" 兜底展示，不再输出语义空洞的裸 "C 5"。
+    expect(markup).toContain('I 10 · O 20 · Cached 5');
     expect(markup).not.toContain('R 0');
     expect(markup).not.toContain('Read 0');
     expect(markup).not.toContain('Create 0');
@@ -341,7 +355,7 @@ describe('RealtimeEventsPanel', () => {
     );
   });
 
-  it('renders residual cached tokens even when they equal cache read tokens', () => {
+  it('omits the semantically empty legacy "C" token once cache read/creation are broken out', () => {
     const markup = renderPanel(
       baseRow({
         cachedTokens: 4,
@@ -350,7 +364,8 @@ describe('RealtimeEventsPanel', () => {
       })
     );
 
-    expect(markup).toContain('C 4');
+    expect(markup).not.toContain('C 4');
+    expect(markup).not.toContain('Cached 4');
     expect(markup).toContain('Read 4');
     expect(markup).toContain('Create 1');
   });
@@ -399,5 +414,59 @@ describe('RealtimeEventsPanel', () => {
 
     expect(markup).toContain('Loaded 500 of 500 events');
     expect(markup).toContain('Load more');
+  });
+
+  it('renders the cache hit rate column with header tooltips and the low-hit-rate filter chip', () => {
+    const markup = renderPanel(
+      baseRow({
+        inputTokens: 10,
+        cachedTokens: 5,
+        cacheReadTokens: 3,
+        cacheCreationTokens: 2,
+      })
+    );
+
+    // (5 + 3) / (max(10, 5) + 3 + 2) = 8 / 15 ≈ 53.3%
+    expect(markup).toContain('Cache Hit');
+    expect(markup).toContain('53.3%');
+    expect(markup).toContain(
+      'title="Rolling success rate for this account + provider + model + channel combination, not the result of this single request."'
+    );
+    expect(markup).toContain(
+      'title="I = input tokens, O = output tokens, R = reasoning tokens; also shows cache read/write tokens when present."'
+    );
+    expect(markup).toContain(
+      'title="(cachedTokens + cacheReadTokens) / (max(inputTokens, cachedTokens) + cacheReadTokens + cacheCreationTokens) for this single request. Shows “--” when there is no input-side token data."'
+    );
+    expect(markup).toContain('Low Cache Hit');
+  });
+
+  it('shows "--" for cache hit rate when there is no input-side token data', () => {
+    const markup = renderPanel(
+      baseRow({
+        inputTokens: 0,
+        cachedTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+      })
+    );
+
+    expect(markup).toContain('--');
+  });
+
+  it('colors the cache hit rate cell using the low/mid/high thresholds independent of success rate', () => {
+    const goodMarkup = renderPanel(
+      baseRow({ inputTokens: 10, cachedTokens: 10, cacheReadTokens: 0, cacheCreationTokens: 0 })
+    );
+    const warnMarkup = renderPanel(
+      baseRow({ inputTokens: 10, cachedTokens: 4, cacheReadTokens: 0, cacheCreationTokens: 0 })
+    );
+    const badMarkup = renderPanel(
+      baseRow({ inputTokens: 10, cachedTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 })
+    );
+
+    expect(goodMarkup).toMatch(/class="[^"]*goodText[^"]*">100\.0%/);
+    expect(warnMarkup).toMatch(/class="[^"]*warnText[^"]*">40\.0%/);
+    expect(badMarkup).toMatch(/class="[^"]*badText[^"]*">10\.0%/);
   });
 });

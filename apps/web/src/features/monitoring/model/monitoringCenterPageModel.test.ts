@@ -22,6 +22,7 @@ import {
   buildMonitoringInitialStateFromQuery,
   buildModelOptionsFromValues,
   buildProviderOptionsFromValues,
+  computeCacheHitRate,
   mergeObservedAccountQuotaEntry,
   mergeObservedAccountQuotaState,
   requestAccountQuota,
@@ -1013,5 +1014,42 @@ describe('monitoringCenterPageModel account quota', () => {
         },
       ],
     });
+  });
+});
+
+describe('computeCacheHitRate', () => {
+  it('returns null when the denominator is zero', () => {
+    expect(
+      computeCacheHitRate({
+        inputTokens: 0,
+        cachedTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+      })
+    ).toBeNull();
+  });
+
+  it('computes the hit rate using max(input, cached) plus read/creation tokens', () => {
+    const rate = computeCacheHitRate({
+      inputTokens: 10,
+      cachedTokens: 5,
+      cacheReadTokens: 3,
+      cacheCreationTokens: 2,
+    });
+
+    // (5 + 3) / (max(10, 5) + 3 + 2) = 8 / 15
+    expect(rate).toBeCloseTo(8 / 15);
+  });
+
+  it('counts legacy cachedTokens toward both hit tokens and the input-side denominator', () => {
+    const rate = computeCacheHitRate({
+      inputTokens: 0,
+      cachedTokens: 6,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+    });
+
+    // (6 + 0) / (max(0, 6) + 0 + 0) = 1
+    expect(rate).toBe(1);
   });
 });

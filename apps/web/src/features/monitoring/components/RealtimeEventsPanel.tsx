@@ -12,13 +12,14 @@ import {
 import { createPortal } from 'react-dom';
 import type { TFunction } from 'i18next';
 import { Button } from '@/components/ui/Button';
-import { IconCopy, IconEye, IconEyeOff, IconFilter } from '@/components/ui/icons';
+import { IconCopy, IconEye, IconEyeOff, IconFilter, IconInfo } from '@/components/ui/icons';
 import {
   PaginationControls,
   RecentPattern,
 } from '@/features/monitoring/components/MonitoringShared';
 import { MonitoringPanel } from '@/features/monitoring/components/MonitoringPanel';
 import { formatPercent } from '@/features/monitoring/components/accountOverviewPresentation';
+import { computeCacheHitRate } from '@/features/monitoring/model/monitoringCenterPageModel';
 import { buildRealtimeSourceDisplay } from '@/features/monitoring/realtimeSourceDisplay';
 import type { MonitoringEventRow } from '@/features/monitoring/hooks/useMonitoringData';
 import type { AccountDisplayMode } from '@/features/monitoring/accountOverviewState';
@@ -76,6 +77,9 @@ export type RealtimeEventsPanelActionsProps = {
   t: TFunction;
   onToggleFailedOnly: () => void;
   onAccountDisplayModeChange: (mode: AccountDisplayMode) => void;
+  // 可选的追加操作项（例如"仅显示低命中率"筛选 chip），渲染在同一个 inlineMetrics 行内，
+  // 供仅在表格自身渲染时才可用的本地过滤状态使用；masthead 处调用不传时行为不变。
+  extraActions?: ReactNode;
 };
 
 const REALTIME_PAGE_SIZE_OPTIONS = [10, 50, 100, 150, 300] as const;
@@ -117,6 +121,19 @@ const formatShortHash = (value: string | null | undefined) => {
   const trimmed = formatReadableText(value);
   return trimmed ? `#${trimmed.slice(0, 8)}` : '';
 };
+
+// 表头悬浮说明：复用现有 tableHeaderWithInfo/tableHeaderInfoIcon 样式（见 AccountOverviewPanel），
+// 用 title 承载说明文字，不引入新的 Tooltip 组件。
+function TableHeaderInfo({ label, info }: { label: ReactNode; info: string }) {
+  return (
+    <span className={styles.tableHeaderWithInfo}>
+      <span>{label}</span>
+      <span title={info}>
+        <IconInfo size={13} className={styles.tableHeaderInfoIcon} aria-label={info} />
+      </span>
+    </span>
+  );
+}
 
 const clampNumber = (value: number, min: number, max: number) =>
   Math.min(Math.max(value, min), max);
@@ -583,7 +600,14 @@ const buildRealtimeTokenSummary = (row: MonitoringEventRow, t: TFunction) => {
   if (row.reasoningTokens > 0) {
     parts.push(`R ${formatCompactNumber(row.reasoningTokens)}`);
   }
-  parts.push(`C ${formatCompactNumber(row.cachedTokens)}`);
+  // 细分缓存字段（读/写）齐全时，裸 "C"（legacy CompatibleCachedTokens）语义空洞且常为 0，不再展示；
+  // 只有细分字段全为 0 而 legacy cachedTokens > 0（旧数据未拆分）时才用 "缓存 X" 兜底，避免信息丢失。
+  const hasCacheBreakdown = row.cacheCreationTokens > 0 || row.cacheReadTokens > 0;
+  if (!hasCacheBreakdown && row.cachedTokens > 0) {
+    parts.push(
+      `${shortLabel(t, 'monitoring.cached_tokens_short', 'monitoring.cached_tokens', 'Cached')} ${formatCompactNumber(row.cachedTokens)}`
+    );
+  }
   if (row.cacheCreationTokens > 0) {
     parts.push(
       `${shortLabel(t, 'monitoring.cache_creation_tokens_short', 'monitoring.cache_creation_tokens', 'Create')} ${formatCompactNumber(row.cacheCreationTokens)}`
@@ -597,6 +621,20 @@ const buildRealtimeTokenSummary = (row: MonitoringEventRow, t: TFunction) => {
   return parts.join(' · ');
 };
 
+// 单请求缓存命中率染色阈值：与成功率三档样式复用同一套 goodText/warnText/badText，
+// 但阈值口径独立（缓存命中率天然低于成功率，不能共用 95%/85% 判定）。
+const REALTIME_CACHE_HIT_RATE_GOOD_THRESHOLD = 0.6;
+const REALTIME_CACHE_HIT_RATE_WARN_THRESHOLD = 0.3;
+// "仅显示低命中率" 筛选 chip 的判定阈值，与染色的黄/红分界保持一致。
+const REALTIME_LOW_CACHE_HIT_RATE_THRESHOLD = REALTIME_CACHE_HIT_RATE_WARN_THRESHOLD;
+
+const getRealtimeCacheHitRateToneClass = (rate: number | null) => {
+  if (rate === null) return undefined;
+  if (rate >= REALTIME_CACHE_HIT_RATE_GOOD_THRESHOLD) return styles.goodText;
+  if (rate >= REALTIME_CACHE_HIT_RATE_WARN_THRESHOLD) return styles.warnText;
+  return styles.badText;
+};
+
 export function RealtimeEventsPanelActions({
   rowCount,
   scopedFailureCount,
@@ -605,6 +643,7 @@ export function RealtimeEventsPanelActions({
   t,
   onToggleFailedOnly,
   onAccountDisplayModeChange,
+  extraActions,
 }: RealtimeEventsPanelActionsProps) {
   const nextAccountDisplayMode: AccountDisplayMode =
     accountDisplayMode === 'masked' ? 'full' : 'masked';
@@ -664,6 +703,7 @@ export function RealtimeEventsPanelActions({
         <IconFilter size={14} aria-hidden="true" />
         {failedOnlyLabel}
       </button>
+      {extraActions}
     </div>
   );
 }
@@ -731,6 +771,16 @@ export function RealtimeEventsPanel({
     'monitoring.this_call_usage'
   );
   const costLabel = shortLabel(t, 'monitoring.this_call_cost_short', 'monitoring.this_call_cost');
+  const cacheHitRateLabel = shortLabel(
+    t,
+    'monitoring.column_cache_hit_rate_short',
+    'monitoring.column_cache_hit_rate'
+  );
+  const lowCacheHitRateLabel = shortLabel(
+    t,
+    'monitoring.filter_low_cache_hit_rate_short',
+    'monitoring.filter_low_cache_hit_rate'
+  );
   const handleCopyFailureDetails = async (text: string) => {
     const copied = await copyToClipboard(text);
     showNotification(
@@ -738,6 +788,28 @@ export function RealtimeEventsPanel({
       copied ? 'success' : 'error'
     );
   };
+  // 定位低命中率：仿"仅显示失败"chip 的交互模式，加"仅显示低命中率(<30%)"筛选，
+  // 只作用于当前已加载并分页展示的行，纯前端本地过滤，不影响上层分页/加载更多状态。
+  const [lowCacheHitRateOnly, setLowCacheHitRateOnly] = useState(false);
+  const displayedRows = lowCacheHitRateOnly
+    ? pagination.pageItems.filter((row) => {
+        const rate = computeCacheHitRate(row);
+        return rate !== null && rate < REALTIME_LOW_CACHE_HIT_RATE_THRESHOLD;
+      })
+    : pagination.pageItems;
+  const lowCacheHitRateChip = (
+    <button
+      type="button"
+      className={[styles.filterToggleChip, lowCacheHitRateOnly ? styles.filterToggleChipActive : '']
+        .filter(Boolean)
+        .join(' ')}
+      onClick={() => setLowCacheHitRateOnly((current) => !current)}
+      title={t('monitoring.filter_low_cache_hit_rate_hint')}
+    >
+      <IconFilter size={14} aria-hidden="true" />
+      {lowCacheHitRateLabel}
+    </button>
+  );
   const actions = (
     <RealtimeEventsPanelActions
       rowCount={rows.length}
@@ -751,9 +823,19 @@ export function RealtimeEventsPanel({
   );
   const content = (
     <>
+      {/* 低命中率筛选 chip 渲染在表格上方的本地工具条：无论 embedded 与否都要可见。
+          真实页面(MonitoringCenterPage)始终以 embedded 模式渲染本组件，页面级 masthead
+          另有一份独立的 RealtimeEventsPanelActions 工具条，不经过这里的 `actions`；
+          如果把 chip 塞进 `actions`/extraActions，embedded 模式下会被直接丢弃、
+          非 embedded 模式下则会与 masthead 工具条重复渲染。放在 content 内部的本地
+          工具条可以让两种渲染路径都拿到同一个自包含状态，且不产生重复 UI。 */}
+      <div className={`${styles.inlineMetrics} ${styles.realtimeHeaderActions}`}>
+        {lowCacheHitRateChip}
+      </div>
       <div className={styles.tableWrapper}>
         <table className={`${styles.table} ${styles.realtimeTable}`}>
           <colgroup>
+            <col />
             <col />
             <col />
             <col />
@@ -774,7 +856,12 @@ export function RealtimeEventsPanel({
               <th>{reasoningEffortLabel}</th>
               <th>{recentStatusLabel}</th>
               <th>{requestStatusLabel}</th>
-              <th>{successRateLabel}</th>
+              <th>
+                <TableHeaderInfo
+                  label={successRateLabel}
+                  info={t('monitoring.realtime_success_rate_hint')}
+                />
+              </th>
               <th>{totalCallsLabel}</th>
               <th className={styles.realtimeTpsColumn}>{t('monitoring.column_output_tps')}</th>
               <th className={styles.realtimeLatencyColumn}>
@@ -787,12 +874,20 @@ export function RealtimeEventsPanel({
                 </span>
               </th>
               <th>{t('monitoring.column_time')}</th>
-              <th>{usageLabel}</th>
+              <th>
+                <TableHeaderInfo label={usageLabel} info={t('monitoring.realtime_usage_hint')} />
+              </th>
               <th>{costLabel}</th>
+              <th>
+                <TableHeaderInfo
+                  label={cacheHitRateLabel}
+                  info={t('monitoring.realtime_cache_hit_rate_hint')}
+                />
+              </th>
             </tr>
           </thead>
           <tbody>
-            {pagination.pageItems.map((row) => {
+            {displayedRows.map((row) => {
               const sourceDisplay = buildRealtimeSourceDisplay(row, t, accountDisplayMode);
               const apiKeyDisplay = buildRealtimeApiKeyDisplay(row, t);
               const showResolvedModel =
@@ -809,6 +904,8 @@ export function RealtimeEventsPanel({
               const hasTtftMs = row.ttftMs !== null && row.ttftMs !== undefined;
               const ttftToneClass = getRealtimeDurationToneClass(row.ttftMs);
               const latencyToneClass = getRealtimeDurationToneClass(row.latencyMs);
+              const cacheHitRate = computeCacheHitRate(row);
+              const cacheHitRateToneClass = getRealtimeCacheHitRateToneClass(cacheHitRate);
               return (
                 <tr key={row.id} className={row.failed ? styles.logRowFailed : undefined}>
                   <td>
@@ -942,12 +1039,20 @@ export function RealtimeEventsPanel({
                     </div>
                   </td>
                   <td>{hasPrices ? formatUsd(row.totalCost) : '--'}</td>
+                  <td className={cacheHitRateToneClass}>
+                    {cacheHitRate === null ? '--' : formatPercent(cacheHitRate)}
+                  </td>
                 </tr>
               );
             })}
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={12}>{emptyState}</td>
+                <td colSpan={13}>{emptyState}</td>
+              </tr>
+            ) : null}
+            {rows.length > 0 && displayedRows.length === 0 ? (
+              <tr>
+                <td colSpan={13}>{emptyState}</td>
               </tr>
             ) : null}
           </tbody>

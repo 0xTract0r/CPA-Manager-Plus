@@ -629,6 +629,23 @@ export const buildPrimarySummaryCards = ({
   },
 ];
 
+// 缓存命中率口径（单行/汇总共用）：
+// (cachedTokens + cacheReadTokens) / (max(inputTokens, cachedTokens) + cacheReadTokens + cacheCreationTokens)
+// 分母为 0 时返回 null，由调用方决定展示 "--"。
+export const computeCacheHitRate = (tokens: {
+  inputTokens: number;
+  cachedTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+}): number | null => {
+  const cacheHitTokens = tokens.cachedTokens + tokens.cacheReadTokens;
+  const inputSideTokens =
+    Math.max(tokens.inputTokens, tokens.cachedTokens) +
+    tokens.cacheReadTokens +
+    tokens.cacheCreationTokens;
+  return inputSideTokens > 0 ? cacheHitTokens / inputSideTokens : null;
+};
+
 export const buildSecondarySummaryCards = (
   summary: MonitoringSummary,
   locale: string,
@@ -636,12 +653,7 @@ export const buildSecondarySummaryCards = (
 ): SummaryCardProps[] => {
   const totalCacheTokens =
     summary.cachedTokens + summary.cacheCreationTokens + summary.cacheReadTokens;
-  const cacheHitTokens = summary.cachedTokens + summary.cacheReadTokens;
-  const inputSideTokens =
-    Math.max(summary.inputTokens, summary.cachedTokens) +
-    summary.cacheReadTokens +
-    summary.cacheCreationTokens;
-  const cacheHitRate = inputSideTokens > 0 ? cacheHitTokens / inputSideTokens : 0;
+  const cacheHitRate = computeCacheHitRate(summary) ?? 0;
 
   return [
     {
