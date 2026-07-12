@@ -1,3 +1,4 @@
+import axios from 'axios';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePanelFeatureAvailability } from '@/hooks/usePanelFeatureAvailability';
 import {
@@ -37,7 +38,8 @@ export interface UseUsageDataReturn {
   exportUsage: () => Promise<UsageExportResponse>;
   importUsage: (file: File) => Promise<UsageImportResponse>;
   syncCoreHistory: (
-    params?: UsageSyncCoreHistoryParams
+    params?: UsageSyncCoreHistoryParams,
+    signal?: AbortSignal
   ) => Promise<UsageSyncCoreHistoryResponse>;
   loadUsage: () => Promise<void>;
 }
@@ -61,6 +63,16 @@ export interface SyncCoreHistoryCursorOutcome extends SyncCoreHistoryCursorProgr
   error?: unknown;
 }
 
+/** 识别底层 sync() 因用户取消（AbortSignal）而抛出的错误，而非真实失败。 */
+function isSyncCancelError(error: unknown, signal?: AbortSignal): boolean {
+  if (signal?.aborted) return true;
+  if (axios.isCancel(error)) return true;
+  if (error && typeof error === 'object' && 'code' in error) {
+    return (error as { code?: unknown }).code === 'ERR_CANCELED';
+  }
+  return false;
+}
+
 export interface RunSyncCoreHistoryCursorLoopOptions {
   /** 首批起点；留空 = 全部历史（服务端首批语义）。 */
   since?: string;
@@ -68,17 +80,26 @@ export interface RunSyncCoreHistoryCursorLoopOptions {
   onProgress?: (progress: SyncCoreHistoryCursorProgress) => void;
   /** 每批之间检查一次；返回 true 表示用户已请求取消。 */
   isCancelled?: () => boolean;
+  /**
+   * 用于中断在途请求的信号。取消发生在某一批请求进行中时，该批视为未完成，
+   * 续传游标停在该批的起点（不是服务端未返回的 nextSince）。
+   */
+  signal?: AbortSignal;
 }
 
 /**
  * 按后端新分页协议（hasMore/nextSince）循环拉取 Core 历史用量，直到 hasMore=false、
  * 取消或失败。失败时保留已完成批次的累计结果与失败前的 nextSince，供断点续传重试。
+ * 取消时若正好中断了某一批在途请求，该批未完成，续传游标回退到该批的起点。
  */
 export async function runSyncCoreHistoryCursorLoop(
-  sync: (params?: UsageSyncCoreHistoryParams) => Promise<UsageSyncCoreHistoryResponse>,
+  sync: (
+    params?: UsageSyncCoreHistoryParams,
+    signal?: AbortSignal
+  ) => Promise<UsageSyncCoreHistoryResponse>,
   options: RunSyncCoreHistoryCursorLoopOptions = {}
 ): Promise<SyncCoreHistoryCursorOutcome> {
-  const { since, limit, onProgress, isCancelled } = options;
+  const { since, limit, onProgress, isCancelled, signal } = options;
 
   let cursor = since;
   let batchCount = 0;
@@ -86,16 +107,30 @@ export async function runSyncCoreHistoryCursorLoop(
   let skipped = 0;
 
   for (;;) {
-    if (isCancelled?.()) {
+    if (isCancelled?.() || signal?.aborted) {
       return { status: 'cancelled', batchCount, added, skipped, nextSince: cursor };
     }
 
+    // 本批起点：若该批请求被取消中断，续传游标必须回退到这里，不能用未返回的 nextSince。
+    const batchStartCursor = cursor;
+
+    const syncParams = cursor || limit !== undefined ? { since: cursor, limit } : undefined;
+    // 说明：cursor 或 limit 任一存在时才传 params；首批且未指定 limit 时传 undefined，
+    // 交给服务端使用默认 limit（5000）与首批语义。仅在调用方提供 signal 时才传第二个参数，
+    // 避免无取消场景下改变 sync() 的调用签名（影响既有单测对调用参数的断言）。
     let result: UsageSyncCoreHistoryResponse;
     try {
-      result = await sync(cursor || limit !== undefined ? { since: cursor, limit } : undefined);
-      // 说明：cursor 或 limit 任一存在时才传 params；首批且未指定 limit 时传 undefined，
-      // 交给服务端使用默认 limit（5000）与首批语义。
+      result = signal ? await sync(syncParams, signal) : await sync(syncParams);
     } catch (error) {
+      if (isSyncCancelError(error, signal)) {
+        return {
+          status: 'cancelled',
+          batchCount,
+          added,
+          skipped,
+          nextSince: batchStartCursor,
+        };
+      }
       return { status: 'failed', batchCount, added, skipped, nextSince: cursor, error };
     }
 
@@ -190,11 +225,14 @@ export function useUsageData({
   );
 
   const syncCoreHistoryFromApi = useCallback(
-    async (params?: UsageSyncCoreHistoryParams): Promise<UsageSyncCoreHistoryResponse> => {
+    async (
+      params?: UsageSyncCoreHistoryParams,
+      signal?: AbortSignal
+    ): Promise<UsageSyncCoreHistoryResponse> => {
       if (!usageEventsServiceBase) {
         throw new Error('usage_import_export_requires_usage_service');
       }
-      return usageServiceApi.syncCoreHistory(usageEventsServiceBase, managementKey, params);
+      return usageServiceApi.syncCoreHistory(usageEventsServiceBase, managementKey, params, signal);
     },
     [managementKey, usageEventsServiceBase]
   );

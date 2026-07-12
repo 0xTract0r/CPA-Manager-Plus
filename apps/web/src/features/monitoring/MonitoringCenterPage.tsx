@@ -242,10 +242,12 @@ export function MonitoringCenterPage() {
   const [usageExporting, setUsageExporting] = useState(false);
   const [usageImporting, setUsageImporting] = useState(false);
   const [usageSyncingFromCore, setUsageSyncingFromCore] = useState(false);
+  const [usageSyncCancelling, setUsageSyncCancelling] = useState(false);
   const [usageSyncProgress, setUsageSyncProgress] = useState<SyncCoreHistoryCursorProgress | null>(
     null
   );
   const usageSyncCancelRef = useRef(false);
+  const usageSyncAbortControllerRef = useRef<AbortController | null>(null);
   const usageSyncResumeSinceRef = useRef<string | undefined>(undefined);
   const [accountQuotaStates, setAccountQuotaStates] = useState<Record<string, AccountQuotaState>>(
     {}
@@ -1269,6 +1271,9 @@ export function MonitoringCenterPage() {
   const runSyncCoreHistory = useCallback(
     async (since: string | undefined) => {
       usageSyncCancelRef.current = false;
+      setUsageSyncCancelling(false);
+      const abortController = new AbortController();
+      usageSyncAbortControllerRef.current = abortController;
       setUsageSyncingFromCore(true);
       setUsageSyncProgress({ batchCount: 0, added: 0, skipped: 0 });
       try {
@@ -1276,6 +1281,7 @@ export function MonitoringCenterPage() {
           since,
           onProgress: (progress) => setUsageSyncProgress(progress),
           isCancelled: () => usageSyncCancelRef.current,
+          signal: abortController.signal,
         });
 
         if (outcome.status === 'no_data') {
@@ -1336,7 +1342,9 @@ export function MonitoringCenterPage() {
         );
         await refreshAll();
       } finally {
+        usageSyncAbortControllerRef.current = null;
         setUsageSyncingFromCore(false);
+        setUsageSyncCancelling(false);
         setUsageSyncProgress(null);
       }
     },
@@ -1357,6 +1365,10 @@ export function MonitoringCenterPage() {
 
   const handleSyncCoreHistoryCancel = useCallback(() => {
     usageSyncCancelRef.current = true;
+    setUsageSyncCancelling(true);
+    // 立即中断在途请求，而不是等到下一批开始前才检查取消标志；
+    // 否则单批耗时较长时点击取消不会有任何效果，请求会一直跑到完成。
+    usageSyncAbortControllerRef.current?.abort();
   }, []);
 
   const importUsageFile = useCallback(
@@ -1463,6 +1475,7 @@ export function MonitoringCenterPage() {
         usageExporting={usageExporting}
         usageImporting={usageImporting}
         usageSyncingFromCore={usageSyncingFromCore}
+        usageSyncCancelling={usageSyncCancelling}
         usageSyncProgress={usageSyncProgress}
         hasResumableCoreHistorySync={usageSyncResumeSinceRef.current !== undefined}
         loggingToFile={isFileLogsAvailable(config)}

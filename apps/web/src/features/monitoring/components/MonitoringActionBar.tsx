@@ -19,6 +19,7 @@ type MonitoringActionBarProps = {
   usageExporting: boolean;
   usageImporting: boolean;
   usageSyncingFromCore: boolean;
+  usageSyncCancelling: boolean;
   usageSyncProgress: SyncCoreHistoryCursorProgress | null;
   hasResumableCoreHistorySync: boolean;
   loggingToFile: boolean;
@@ -47,6 +48,7 @@ export function MonitoringActionBar({
   usageExporting,
   usageImporting,
   usageSyncingFromCore,
+  usageSyncCancelling,
   usageSyncProgress,
   hasResumableCoreHistorySync,
   loggingToFile,
@@ -91,10 +93,12 @@ export function MonitoringActionBar({
     },
   ];
 
+  // 展示"当前正在同步的批次序号"，而非"已完成批数"：首批长跑时已完成批数恒为 0，
+  // 显示"第 0 批"会让用户误以为卡死；+1 后展示当前批次，取消中则不再递增。
   const syncProgressLabel = usageSyncProgress
     ? t('usage_stats.sync_core_history_progress', {
         added: usageSyncProgress.added,
-        batch: usageSyncProgress.batchCount,
+        batch: usageSyncCancelling ? usageSyncProgress.batchCount : usageSyncProgress.batchCount + 1,
       })
     : '';
 
@@ -133,14 +137,25 @@ export function MonitoringActionBar({
           <div className={styles.syncProgressGroup}>
             <span className={`${styles.actionButton} ${styles.syncProgressButton}`} aria-live="polite">
               <IconRefreshCw size={16} className={styles.syncProgressSpinner} />
-              <span>{syncProgressLabel}</span>
+              <span>
+                {usageSyncCancelling ? t('usage_stats.sync_core_history_cancelling') : syncProgressLabel}
+              </span>
             </span>
             <button
               type="button"
               className={styles.syncCancelButton}
               onClick={onSyncCoreHistoryCancel}
-              title={t('common.cancel')}
-              aria-label={t('usage_stats.sync_core_history_cancel')}
+              disabled={usageSyncCancelling}
+              title={
+                usageSyncCancelling
+                  ? t('usage_stats.sync_core_history_cancelling')
+                  : t('common.cancel')
+              }
+              aria-label={
+                usageSyncCancelling
+                  ? t('usage_stats.sync_core_history_cancelling')
+                  : t('usage_stats.sync_core_history_cancel')
+              }
             >
               <IconX size={14} />
             </button>

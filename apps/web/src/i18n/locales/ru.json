@@ -1695,6 +1695,7 @@
     "sync_core_history_range_all": "Вся история",
     "sync_core_history_progress": "Синхронизация: добавлено {{added}} (пакет {{batch}})",
     "sync_core_history_cancel": "Отменить синхронизацию",
+    "sync_core_history_cancelling": "Отмена…",
     "sync_core_history_cancelled": "Синхронизация отменена: уже импортировано {{batches}} пакет(ов), добавлено {{added}}. Можно продолжить с места остановки.",
     "sync_core_history_partial_failed": "Синхронизировано {{batches}} пакет(ов) (добавлено {{added}}), пакет {{nextBatch}} завершился ошибкой: {{message}}. Уже импортированные пакеты сохранены, можно повторить с места остановки.",
     "sync_core_history_resume": "Продолжить синхронизацию",

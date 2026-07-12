@@ -2038,7 +2038,8 @@ export const usageServiceApi = {
   syncCoreHistory: async (
     base: string,
     managementKey?: string,
-    params?: UsageSyncCoreHistoryParams
+    params?: UsageSyncCoreHistoryParams,
+    signal?: AbortSignal
   ): Promise<UsageSyncCoreHistoryResponse> => {
     if (__DEMO_SITE__ && isDemoMode()) {
       return {
@@ -2063,6 +2064,7 @@ export const usageServiceApi = {
         {
           timeout: USAGE_SERVICE_TRANSFER_TIMEOUT_MS,
           headers: authHeaders(managementKey),
+          signal,
         }
       );
       return response.data;

@@ -1695,6 +1695,7 @@
     "sync_core_history_range_all": "全部歷史",
     "sync_core_history_progress": "同步中，已匯入 {{added}} 筆（第 {{batch}} 批）",
     "sync_core_history_cancel": "取消同步",
+    "sync_core_history_cancelling": "正在取消…",
     "sync_core_history_cancelled": "已取消同步：已匯入 {{batches}} 批（{{added}} 筆），可從中斷處繼續同步。",
     "sync_core_history_partial_failed": "已同步 {{batches}} 批（{{added}} 筆），第 {{nextBatch}} 批失敗：{{message}}。已匯入的批次已保留，可從中斷處重試。",
     "sync_core_history_resume": "繼續同步",

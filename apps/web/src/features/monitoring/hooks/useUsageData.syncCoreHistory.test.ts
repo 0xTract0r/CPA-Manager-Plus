@@ -5,7 +5,10 @@ import type {
   UsageSyncCoreHistoryResponse,
 } from '@/services/api/usageService';
 
-type SyncFn = (params?: UsageSyncCoreHistoryParams) => Promise<UsageSyncCoreHistoryResponse>;
+type SyncFn = (
+  params?: UsageSyncCoreHistoryParams,
+  signal?: AbortSignal
+) => Promise<UsageSyncCoreHistoryResponse>;
 
 describe('runSyncCoreHistoryCursorLoop', () => {
   it('聚合多批结果，直到 hasMore=false 才结束', async () => {
@@ -157,6 +160,89 @@ describe('runSyncCoreHistoryCursorLoop', () => {
       batchCount: 1,
       added: 100,
       skipped: 0,
+      nextSince: '2026-01-01T00:00:00Z',
+    });
+  });
+
+  it('取消会中断在途请求（通过 AbortSignal），而不是等到该批返回后才生效', async () => {
+    const abortController = new AbortController();
+    let observedSignal: AbortSignal | undefined;
+    let rejectInFlight: ((error: unknown) => void) | undefined;
+
+    const sync = vi.fn<SyncFn>().mockImplementationOnce((_params, signal) => {
+      observedSignal = signal;
+      return new Promise<UsageSyncCoreHistoryResponse>((_resolve, reject) => {
+        rejectInFlight = reject;
+        // 模拟真实 axios 行为：signal abort 后请求被中断并抛出 ERR_CANCELED。
+        signal?.addEventListener('abort', () => {
+          const abortError = new Error('canceled') as Error & { code?: string };
+          abortError.name = 'CanceledError';
+          abortError.code = 'ERR_CANCELED';
+          reject(abortError);
+        });
+      });
+    });
+
+    const outcomePromise = runSyncCoreHistoryCursorLoop(sync, {
+      signal: abortController.signal,
+    });
+
+    // 请求已经发起（在途），此时点击取消。
+    expect(sync).toHaveBeenCalledTimes(1);
+    expect(observedSignal).toBe(abortController.signal);
+    abortController.abort();
+
+    const outcome = await outcomePromise;
+
+    expect(outcome.status).toBe('cancelled');
+    // 该批被中断，未完成，不计入 batchCount / added。
+    expect(outcome.batchCount).toBe(0);
+    expect(outcome.added).toBe(0);
+    // 避免未处理的 rejection 警告（该 reject 已经在 abort 监听器里触发过一次）。
+    void rejectInFlight;
+  });
+
+  it('取消发生在批中时，游标停在该批的起点，不使用未返回的 nextSince', async () => {
+    const abortController = new AbortController();
+
+    const sync = vi
+      .fn<SyncFn>()
+      .mockResolvedValueOnce({
+        added: 100,
+        skipped: 0,
+        total: 100,
+        failed: 0,
+        hasMore: true,
+        nextSince: '2026-01-01T00:00:00Z',
+      })
+      .mockImplementationOnce((_params, signal) => {
+        return new Promise<UsageSyncCoreHistoryResponse>((_resolve, reject) => {
+          signal?.addEventListener('abort', () => {
+            const abortError = new Error('canceled') as Error & { code?: string };
+            abortError.name = 'CanceledError';
+            abortError.code = 'ERR_CANCELED';
+            reject(abortError);
+          });
+        });
+      });
+
+    const outcomePromise = runSyncCoreHistoryCursorLoop(sync, {
+      signal: abortController.signal,
+    });
+
+    // 等待第一批完成、第二批发起后再取消。
+    await vi.waitFor(() => expect(sync).toHaveBeenCalledTimes(2));
+    abortController.abort();
+
+    const outcome = await outcomePromise;
+
+    expect(outcome).toEqual({
+      status: 'cancelled',
+      // 第一批已完成，计入累计结果。
+      batchCount: 1,
+      added: 100,
+      skipped: 0,
+      // 第二批起点是第一批返回的 nextSince，不是第二批未返回的 nextSince。
       nextSince: '2026-01-01T00:00:00Z',
     });
   });

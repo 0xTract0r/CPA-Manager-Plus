@@ -1695,6 +1695,7 @@
     "sync_core_history_range_all": "All history",
     "sync_core_history_progress": "Syncing, imported {{added}} (batch {{batch}})",
     "sync_core_history_cancel": "Cancel sync",
+    "sync_core_history_cancelling": "Cancelling…",
     "sync_core_history_cancelled": "Sync cancelled: {{batches}} batch(es) already imported, added {{added}}. You can resume from where it stopped.",
     "sync_core_history_partial_failed": "Synced {{batches}} batch(es) (added {{added}}), batch {{nextBatch}} failed: {{message}}. Already-imported batches were kept; you can resume from where it stopped.",
     "sync_core_history_resume": "Resume sync",
