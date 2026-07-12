@@ -417,6 +417,17 @@ export interface UsageSyncCoreHistoryResponse {
   unsupported?: number;
   warnings?: string[];
   noHistoricalData?: boolean;
+  /** True when more batches remain; caller should re-request with `nextSince`. */
+  hasMore?: boolean;
+  /** Cursor to pass as `since` on the next batch request when `hasMore` is true. */
+  nextSince?: string;
+}
+
+export interface UsageSyncCoreHistoryParams {
+  /** RFC3339 timestamp cursor; omit for the first batch (server default = earliest). */
+  since?: string;
+  /** Batch size; server defaults to 5000 when omitted. */
+  limit?: number;
 }
 
 export interface DashboardSummaryWindow {
@@ -2026,16 +2037,29 @@ export const usageServiceApi = {
 
   syncCoreHistory: async (
     base: string,
-    managementKey?: string
+    managementKey?: string,
+    params?: UsageSyncCoreHistoryParams
   ): Promise<UsageSyncCoreHistoryResponse> => {
     if (__DEMO_SITE__ && isDemoMode()) {
-      return { format: 'legacy_usage_export', added: 0, skipped: 0, total: 0, failed: 0 };
+      return {
+        format: 'legacy_usage_export',
+        added: 0,
+        skipped: 0,
+        total: 0,
+        failed: 0,
+        hasMore: false,
+      };
     }
 
     return withUsageServiceError(async () => {
+      // 后端新契约：body 优先于 query；无参 = 首批（不再是全量）。
+      const body: UsageSyncCoreHistoryParams = {};
+      if (params?.since) body.since = params.since;
+      if (params?.limit !== undefined) body.limit = params.limit;
+
       const response = await axios.post<UsageSyncCoreHistoryResponse>(
         buildUrl(base, '/v0/management/usage/sync'),
-        undefined,
+        body,
         {
           timeout: USAGE_SERVICE_TRANSFER_TIMEOUT_MS,
           headers: authHeaders(managementKey),

@@ -287,6 +287,49 @@
   transform: none;
 }
 
+.syncProgressGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.syncProgressButton {
+  cursor: default;
+  color: var(--monitor-muted);
+}
+
+.syncProgressSpinner {
+  flex-shrink: 0;
+  transform-origin: center;
+  animation: monitor-spin 0.9s linear infinite;
+}
+
+.syncCancelButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--monitor-line);
+  border-radius: 999px;
+  background: var(--monitor-surface-elevated);
+  color: var(--monitor-muted);
+  cursor: pointer;
+  transition:
+    border-color 0.18s ease,
+    background-color 0.18s ease,
+    color 0.18s ease;
+}
+
+.syncCancelButton:hover {
+  border-color: color-mix(in srgb, var(--monitor-red) 45%, var(--monitor-line-strong));
+  background: var(--monitor-surface-hover);
+  color: var(--monitor-red);
+}
+
 .segmentButton {
   position: relative;
   display: inline-flex;
@@ -1948,7 +1991,8 @@
   }
 
   .realtimeTable {
-    min-width: 1260px;
+    // +1 列（缓存命中率）：随 tableWrapper 的横向滚动策略，加宽 min-width 保证新列不挤压既有列。
+    min-width: 1360px;
   }
 }
 

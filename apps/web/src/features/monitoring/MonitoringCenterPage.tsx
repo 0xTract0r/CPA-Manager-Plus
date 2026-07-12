@@ -96,7 +96,11 @@ import {
   type FocusSnapshot,
   type StatusFilter,
 } from '@/features/monitoring/model/monitoringCenterPageModel';
-import { useUsageData } from '@/features/monitoring/hooks/useUsageData';
+import {
+  runSyncCoreHistoryCursorLoop,
+  useUsageData,
+  type SyncCoreHistoryCursorProgress,
+} from '@/features/monitoring/hooks/useUsageData';
 import {
   getUsageServiceErrorCode,
   monitoringAnalyticsApi,
@@ -238,6 +242,11 @@ export function MonitoringCenterPage() {
   const [usageExporting, setUsageExporting] = useState(false);
   const [usageImporting, setUsageImporting] = useState(false);
   const [usageSyncingFromCore, setUsageSyncingFromCore] = useState(false);
+  const [usageSyncProgress, setUsageSyncProgress] = useState<SyncCoreHistoryCursorProgress | null>(
+    null
+  );
+  const usageSyncCancelRef = useRef(false);
+  const usageSyncResumeSinceRef = useRef<string | undefined>(undefined);
   const [accountQuotaStates, setAccountQuotaStates] = useState<Record<string, AccountQuotaState>>(
     {}
   );
@@ -1257,42 +1266,98 @@ export function MonitoringCenterPage() {
     }
   }, [exportUsage, resolveUsageTransferError, showNotification, t]);
 
-  const handleSyncCoreHistory = useCallback(async () => {
-    setUsageSyncingFromCore(true);
-    try {
-      const result = await syncCoreHistory();
-      if (result.noHistoricalData) {
-        showNotification(t('usage_stats.sync_core_history_no_data'), 'warning');
-        return;
+  const runSyncCoreHistory = useCallback(
+    async (since: string | undefined) => {
+      usageSyncCancelRef.current = false;
+      setUsageSyncingFromCore(true);
+      setUsageSyncProgress({ batchCount: 0, added: 0, skipped: 0 });
+      try {
+        const outcome = await runSyncCoreHistoryCursorLoop(syncCoreHistory, {
+          since,
+          onProgress: (progress) => setUsageSyncProgress(progress),
+          isCancelled: () => usageSyncCancelRef.current,
+        });
+
+        if (outcome.status === 'no_data') {
+          usageSyncResumeSinceRef.current = undefined;
+          showNotification(t('usage_stats.sync_core_history_no_data'), 'warning');
+          return;
+        }
+
+        if (outcome.status === 'cancelled') {
+          usageSyncResumeSinceRef.current = outcome.nextSince;
+          showNotification(
+            t('usage_stats.sync_core_history_cancelled', {
+              batches: outcome.batchCount,
+              added: outcome.added,
+            }),
+            'warning'
+          );
+          if (outcome.batchCount > 0) await refreshAll();
+          return;
+        }
+
+        if (outcome.status === 'failed') {
+          usageSyncResumeSinceRef.current = outcome.nextSince;
+          const code = getUsageServiceErrorCode(outcome.error);
+          const message =
+            code === 'cpa_core_connection_not_configured'
+              ? t('usage_stats.sync_core_history_not_configured')
+              : resolveUsageTransferError(outcome.error);
+          if (outcome.batchCount > 0) {
+            showNotification(
+              t('usage_stats.sync_core_history_partial_failed', {
+                batches: outcome.batchCount,
+                added: outcome.added,
+                nextBatch: outcome.batchCount + 1,
+                message,
+              }),
+              'error'
+            );
+            await refreshAll();
+          } else {
+            showNotification(
+              `${t('usage_stats.sync_core_history_failed')}${message ? `: ${message}` : ''}`,
+              'error'
+            );
+          }
+          return;
+        }
+
+        // completed
+        usageSyncResumeSinceRef.current = undefined;
+        showNotification(
+          t('usage_stats.sync_core_history_success', {
+            added: outcome.added,
+            skipped: outcome.skipped,
+            batches: outcome.batchCount,
+          }),
+          'success'
+        );
+        await refreshAll();
+      } finally {
+        setUsageSyncingFromCore(false);
+        setUsageSyncProgress(null);
       }
-      const unsupported = result.unsupported ?? 0;
-      showNotification(
-        `${t('usage_stats.sync_core_history_success', {
-          added: result.added ?? 0,
-          skipped: result.skipped ?? 0,
-          total: result.total ?? 0,
-          failed: result.failed ?? 0,
-        })}${unsupported > 0 ? `, ${t('usage_stats.import_unsupported', { count: unsupported })}` : ''}`,
-        (result.failed ?? 0) > 0 || unsupported > 0 ? 'warning' : 'success'
-      );
-      if ((result.warnings ?? []).length > 0) {
-        showNotification(t('usage_stats.import_legacy_warning'), 'warning');
-      }
-      await refreshAll();
-    } catch (error: unknown) {
-      const code = getUsageServiceErrorCode(error);
-      const message =
-        code === 'cpa_core_connection_not_configured'
-          ? t('usage_stats.sync_core_history_not_configured')
-          : resolveUsageTransferError(error);
-      showNotification(
-        `${t('usage_stats.sync_core_history_failed')}${message ? `: ${message}` : ''}`,
-        'error'
-      );
-    } finally {
-      setUsageSyncingFromCore(false);
-    }
-  }, [refreshAll, resolveUsageTransferError, showNotification, syncCoreHistory, t]);
+    },
+    [refreshAll, resolveUsageTransferError, showNotification, syncCoreHistory, t]
+  );
+
+  const handleSyncCoreHistoryRangeSelect = useCallback(
+    (sinceMs: number | null) => {
+      const since = sinceMs === null ? undefined : new Date(sinceMs).toISOString();
+      void runSyncCoreHistory(since);
+    },
+    [runSyncCoreHistory]
+  );
+
+  const handleSyncCoreHistoryRetry = useCallback(() => {
+    void runSyncCoreHistory(usageSyncResumeSinceRef.current);
+  }, [runSyncCoreHistory]);
+
+  const handleSyncCoreHistoryCancel = useCallback(() => {
+    usageSyncCancelRef.current = true;
+  }, []);
 
   const importUsageFile = useCallback(
     async (file: File) => {
@@ -1398,6 +1463,8 @@ export function MonitoringCenterPage() {
         usageExporting={usageExporting}
         usageImporting={usageImporting}
         usageSyncingFromCore={usageSyncingFromCore}
+        usageSyncProgress={usageSyncProgress}
+        hasResumableCoreHistorySync={usageSyncResumeSinceRef.current !== undefined}
         loggingToFile={isFileLogsAvailable(config)}
         modelPricesAvailable={requestMonitoringAvailability.modelPricesAvailable}
         usageImportInputRef={usageImportInputRef}
@@ -1405,7 +1472,9 @@ export function MonitoringCenterPage() {
         onUsageExport={handleUsageExport}
         onUsageImportClick={handleUsageImportClick}
         onUsageImportChange={handleUsageImportChange}
-        onSyncCoreHistory={handleSyncCoreHistory}
+        onSyncCoreHistoryRangeSelect={handleSyncCoreHistoryRangeSelect}
+        onSyncCoreHistoryRetry={handleSyncCoreHistoryRetry}
+        onSyncCoreHistoryCancel={handleSyncCoreHistoryCancel}
         statusSummary={
           <MonitoringStatusSummary
             connectionTone={connectionTone}

@@ -1,6 +1,7 @@
 import type { ChangeEvent, ReactNode, RefObject } from 'react';
 import { Link } from 'react-router-dom';
 import type { TFunction } from 'i18next';
+import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/DropdownMenu';
 import {
   IconDownload,
   IconExternalLink,
@@ -8,7 +9,9 @@ import {
   IconInbox,
   IconRefreshCw,
   IconSettings,
+  IconX,
 } from '@/components/ui/icons';
+import type { SyncCoreHistoryCursorProgress } from '@/features/monitoring/hooks/useUsageData';
 import styles from '../MonitoringCenterPage.module.scss';
 
 type MonitoringActionBarProps = {
@@ -16,6 +19,8 @@ type MonitoringActionBarProps = {
   usageExporting: boolean;
   usageImporting: boolean;
   usageSyncingFromCore: boolean;
+  usageSyncProgress: SyncCoreHistoryCursorProgress | null;
+  hasResumableCoreHistorySync: boolean;
   loggingToFile: boolean;
   modelPricesAvailable: boolean;
   usageImportInputRef: RefObject<HTMLInputElement | null>;
@@ -23,9 +28,13 @@ type MonitoringActionBarProps = {
   onUsageExport: () => void | Promise<void>;
   onUsageImportClick: () => void;
   onUsageImportChange: (event: ChangeEvent<HTMLInputElement>) => void;
-  onSyncCoreHistory: () => void | Promise<void>;
+  onSyncCoreHistoryRangeSelect: (sinceMs: number | null) => void;
+  onSyncCoreHistoryRetry: () => void;
+  onSyncCoreHistoryCancel: () => void;
   statusSummary: ReactNode;
 };
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const shortLabel = (t: TFunction, shortKey: string, fallbackKey: string) => {
   const fallback = t(fallbackKey);
@@ -38,6 +47,8 @@ export function MonitoringActionBar({
   usageExporting,
   usageImporting,
   usageSyncingFromCore,
+  usageSyncProgress,
+  hasResumableCoreHistorySync,
   loggingToFile,
   modelPricesAvailable,
   usageImportInputRef,
@@ -45,7 +56,9 @@ export function MonitoringActionBar({
   onUsageExport,
   onUsageImportClick,
   onUsageImportChange,
-  onSyncCoreHistory,
+  onSyncCoreHistoryRangeSelect,
+  onSyncCoreHistoryRetry,
+  onSyncCoreHistoryCancel,
   statusSummary,
 }: MonitoringActionBarProps) {
   const modelPriceSettingsLabel = shortLabel(
@@ -54,6 +67,36 @@ export function MonitoringActionBar({
     'usage_stats.model_price_settings'
   );
   const accountActionsLabel = shortLabel(t, 'nav.account_actions_short', 'nav.account_actions');
+
+  const syncDisabledBase = !usageTransferAvailable || usageExporting || usageImporting;
+  const syncTitle = usageTransferAvailable
+    ? t('usage_stats.sync_core_history')
+    : t('usage_stats.import_export_requires_usage_service');
+
+  const syncRangeMenuItems: DropdownMenuItem[] = [
+    {
+      key: 'sync-range-7d',
+      label: t('usage_stats.sync_core_history_range_7d'),
+      onClick: () => onSyncCoreHistoryRangeSelect(Date.now() - 7 * DAY_MS),
+    },
+    {
+      key: 'sync-range-30d',
+      label: t('usage_stats.sync_core_history_range_30d'),
+      onClick: () => onSyncCoreHistoryRangeSelect(Date.now() - 30 * DAY_MS),
+    },
+    {
+      key: 'sync-range-all',
+      label: t('usage_stats.sync_core_history_range_all'),
+      onClick: () => onSyncCoreHistoryRangeSelect(null),
+    },
+  ];
+
+  const syncProgressLabel = usageSyncProgress
+    ? t('usage_stats.sync_core_history_progress', {
+        added: usageSyncProgress.added,
+        batch: usageSyncProgress.batchCount,
+      })
+    : '';
 
   return (
     <section className={styles.actionBar} aria-label={t('common.action')}>
@@ -86,22 +129,44 @@ export function MonitoringActionBar({
           <IconFileText size={16} />
           <span>{usageImporting ? t('common.loading') : t('usage_stats.import')}</span>
         </button>
-        <button
-          type="button"
-          className={styles.actionButton}
-          onClick={() => void onSyncCoreHistory()}
-          disabled={!usageTransferAvailable || usageExporting || usageImporting || usageSyncingFromCore}
-          title={
-            usageTransferAvailable
-              ? t('usage_stats.sync_core_history')
-              : t('usage_stats.import_export_requires_usage_service')
-          }
-        >
-          <IconRefreshCw size={16} />
-          <span>
-            {usageSyncingFromCore ? t('common.loading') : t('usage_stats.sync_core_history')}
-          </span>
-        </button>
+        {usageSyncingFromCore ? (
+          <div className={styles.syncProgressGroup}>
+            <span className={`${styles.actionButton} ${styles.syncProgressButton}`} aria-live="polite">
+              <IconRefreshCw size={16} className={styles.syncProgressSpinner} />
+              <span>{syncProgressLabel}</span>
+            </span>
+            <button
+              type="button"
+              className={styles.syncCancelButton}
+              onClick={onSyncCoreHistoryCancel}
+              title={t('common.cancel')}
+              aria-label={t('usage_stats.sync_core_history_cancel')}
+            >
+              <IconX size={14} />
+            </button>
+          </div>
+        ) : hasResumableCoreHistorySync ? (
+          <button
+            type="button"
+            className={styles.actionButton}
+            onClick={onSyncCoreHistoryRetry}
+            disabled={syncDisabledBase}
+            title={syncTitle}
+          >
+            <IconRefreshCw size={16} />
+            <span>{t('usage_stats.sync_core_history_resume')}</span>
+          </button>
+        ) : (
+          <DropdownMenu
+            ariaLabel={t('usage_stats.sync_core_history_range_menu_label')}
+            triggerClassName={styles.actionButton}
+            triggerIcon={<IconRefreshCw size={16} />}
+            triggerLabel={<span>{t('usage_stats.sync_core_history')}</span>}
+            items={syncRangeMenuItems}
+            disabled={syncDisabledBase}
+            align="start"
+          />
+        )}
         {modelPricesAvailable ? (
           <Link
             to="/model-prices"
