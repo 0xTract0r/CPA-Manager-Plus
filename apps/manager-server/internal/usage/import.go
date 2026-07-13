@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -616,48 +615,17 @@ func eventFromLegacyDetail(
 		event.Endpoint = "-"
 	}
 	AttachResponseHeaderMetadata(&event, ResponseHeaderMetadataFromRecord(detail, time.UnixMilli(timestampMS)))
-	if event.RequestID == "" {
-		event.RequestID = legacyContentRequestID(event)
-	}
+	// Do NOT synthesize a request id when the legacy detail carries none. The
+	// realtime redis-queue collector (NormalizeRaw) leaves RequestID empty for
+	// request_id-less events and feeds that empty first field straight into
+	// buildEventHash. If the import path instead synthesized a non-empty id
+	// here, the same underlying request would hash differently on the two
+	// ingest paths, bypass the event_hash unique constraint, and be double
+	// counted. Keeping RequestID empty makes the import path byte-for-byte
+	// identical to the collector for the empty-id case. request_id-present
+	// events are untouched, so their historical hashes are unchanged.
 	event.EventHash = buildEventHash(event)
 	return event, nil
-}
-
-// legacyContentRequestID synthesizes a stable request id for legacy usage
-// export details that carry no request_id (older core versions). It is built
-// purely from the event's own content -- timestamp, endpoint/model routing,
-// auth/source identity and token counts -- so the same underlying request
-// always yields the same id regardless of map iteration order, dataset size,
-// or where the detail happens to land within the endpoint/model/details
-// traversal. This intentionally excludes any positional index.
-func legacyContentRequestID(event Event) string {
-	raw := strings.Join([]string{
-		"legacy-content",
-		event.Timestamp,
-		event.Endpoint,
-		event.Method,
-		event.Path,
-		event.Model,
-		event.AuthIndex,
-		event.SourceHash,
-		event.APIKeyHash,
-		strconv.FormatInt(event.InputTokens, 10),
-		strconv.FormatInt(event.OutputTokens, 10),
-		strconv.FormatInt(event.ReasoningTokens, 10),
-		strconv.FormatInt(event.CachedTokens, 10),
-		strconv.FormatInt(event.CacheTokens, 10),
-		strconv.FormatInt(event.CacheReadTokens, 10),
-		strconv.FormatInt(event.CacheCreationTokens, 10),
-		strconv.FormatInt(event.TotalTokens, 10),
-		strconv.FormatBool(event.Failed),
-		strconv.Itoa(event.FailStatusCode),
-		event.FailSummary,
-	}, "|")
-	hash := hashString(raw)
-	if len(hash) > 16 {
-		hash = hash[:16]
-	}
-	return "legacy:" + hash
 }
 
 func legacyRawJSON(endpoint string, model string, detail map[string]any) string {
