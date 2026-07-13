@@ -2035,6 +2035,7 @@
     "account_overview_success_rate_hint": "当前筛选范围内成功调用数占总调用数的比例。",
     "account_overview_scope_current_filters": "统计范围：当前筛选条件",
     "account_overview_scope_range": "统计范围：{{range}}",
+    "summary_scope_current": "当前统计范围：{{range}}",
     "account_overview_tokens_title": "Tokens 使用",
     "account_overview_token_structure": "Token 结构",
     "account_overview_models_top": "模型使用 Top {{count}}",

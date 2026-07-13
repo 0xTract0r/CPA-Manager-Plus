@@ -164,6 +164,26 @@ describe('MonitoringCenterPage summary cards', () => {
     expect(html).not.toContain('Read 444.4M');
   });
 
+  it('renders a scope caption stating the current stats window when scopeText is provided', () => {
+    const html = renderToStaticMarkup(
+      <MonitoringSummarySection
+        primaryCards={[]}
+        secondaryCards={[]}
+        scopeText="Current stats window: Today"
+      />
+    );
+
+    expect(html).toContain('Current stats window: Today');
+  });
+
+  it('omits the scope caption when scopeText is not provided', () => {
+    const html = renderToStaticMarkup(
+      <MonitoringSummarySection primaryCards={[]} secondaryCards={[]} />
+    );
+
+    expect(html).not.toContain('Current stats window');
+  });
+
   it('shows legacy cache hit rate against input tokens', () => {
     const secondaryCards = buildSecondarySummaryCards(
       {

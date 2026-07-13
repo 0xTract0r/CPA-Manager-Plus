@@ -2035,6 +2035,7 @@
     "account_overview_success_rate_hint": "Successful calls divided by total calls in the current filter scope.",
     "account_overview_scope_current_filters": "Scope: current filters",
     "account_overview_scope_range": "Scope: {{range}}",
+    "summary_scope_current": "Current stats window: {{range}}",
     "account_overview_tokens_title": "Tokens Usage",
     "account_overview_token_structure": "Token Structure",
     "account_overview_models_top": "Model Usage Top {{count}}",

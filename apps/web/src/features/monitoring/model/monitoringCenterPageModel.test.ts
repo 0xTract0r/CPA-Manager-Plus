@@ -7,6 +7,7 @@ import {
   fetchKimiQuota,
   fetchXaiQuota,
 } from '@/utils/quota';
+import en from '@/i18n/locales/en.json';
 import zhCN from '@/i18n/locales/zh-CN.json';
 import zhTW from '@/i18n/locales/zh-TW.json';
 import type { MonitoringAccountQuotaTarget } from '@/features/monitoring/accountOverviewQuotaTargets';
@@ -23,6 +24,7 @@ import {
   buildModelOptionsFromValues,
   buildProviderOptionsFromValues,
   computeCacheHitRate,
+  formatMonitoringSummaryScopeText,
   mergeObservedAccountQuotaEntry,
   mergeObservedAccountQuotaState,
   requestAccountQuota,
@@ -239,6 +241,44 @@ describe('monitoringCenterPageModel filter options', () => {
         t
       ).map((item) => item.value)
     ).toEqual(['all', 'auth:openai-auth']);
+  });
+});
+
+describe('formatMonitoringSummaryScopeText', () => {
+  const buildLocaleT = (locale: Record<string, string>) =>
+    ((key: string, options?: Record<string, unknown>) => {
+      const rawKey = key.startsWith('monitoring.') ? key.slice('monitoring.'.length) : key;
+      let value = locale[rawKey] ?? key;
+      Object.entries(options ?? {}).forEach(([name, replacement]) => {
+        value = value.replace(`{{${name}}}`, String(replacement));
+      });
+      return value;
+    }) as TFunction;
+
+  it('states the currently selected time window unambiguously so "today" is never mistaken for a longer range', () => {
+    expect(formatMonitoringSummaryScopeText('today', buildLocaleT(en.monitoring))).toBe(
+      'Current stats window: Today'
+    );
+    expect(formatMonitoringSummaryScopeText('7d', buildLocaleT(en.monitoring))).toBe(
+      'Current stats window: 7d'
+    );
+    expect(formatMonitoringSummaryScopeText('today', buildLocaleT(zhCN.monitoring))).toBe(
+      '当前统计范围：今天'
+    );
+    expect(formatMonitoringSummaryScopeText('7d', buildLocaleT(zhCN.monitoring))).toBe(
+      '当前统计范围：7 天'
+    );
+    expect(formatMonitoringSummaryScopeText('today', buildLocaleT(zhTW.monitoring))).toBe(
+      '目前統計範圍：今天'
+    );
+  });
+
+  it('reflects every supported time range option', () => {
+    const localeT = buildLocaleT(zhCN.monitoring);
+    expect(formatMonitoringSummaryScopeText('14d', localeT)).toBe('当前统计范围：14 天');
+    expect(formatMonitoringSummaryScopeText('30d', localeT)).toBe('当前统计范围：30 天');
+    expect(formatMonitoringSummaryScopeText('all', localeT)).toBe('当前统计范围：全部');
+    expect(formatMonitoringSummaryScopeText('custom', localeT)).toBe('当前统计范围：自定义');
   });
 });
 

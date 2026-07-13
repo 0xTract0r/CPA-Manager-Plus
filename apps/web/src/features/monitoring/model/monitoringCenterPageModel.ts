@@ -13,6 +13,7 @@ import type {
   MonitoringApiKeyRow,
   MonitoringEventRow,
   MonitoringSummary,
+  MonitoringTimeRange,
 } from '@/features/monitoring/hooks/useMonitoringData';
 import {
   resolveAccountDisplayText,
@@ -1428,3 +1429,19 @@ export const formatAccountOverviewScopeText = (
 
   return t('monitoring.account_overview_scope_range', { range: rangeLabel });
 };
+
+// 默认时间窗是 "today"，用户容易把"今天"数据误当成更长参考窗口(如 7 天)导致数字对不上。
+// 在总计卡片区域标注当前生效的时间窗简称(与 chip 上文案一致，如"今天"/"7 天"），消除歧义。
+const MONITORING_SUMMARY_RANGE_LABEL_KEYS: Record<MonitoringTimeRange, string> = {
+  today: 'monitoring.range_today',
+  '7d': 'monitoring.range_7d',
+  '14d': 'monitoring.range_14d',
+  '30d': 'monitoring.range_30d',
+  all: 'monitoring.range_all',
+  custom: 'monitoring.range_custom',
+};
+
+export const formatMonitoringSummaryScopeText = (
+  timeRange: MonitoringTimeRange,
+  t: TFunction
+): string => t('monitoring.summary_scope_current', { range: t(MONITORING_SUMMARY_RANGE_LABEL_KEYS[timeRange]) });

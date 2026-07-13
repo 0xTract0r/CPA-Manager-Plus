@@ -2035,6 +2035,7 @@
     "account_overview_success_rate_hint": "目前篩選範圍內成功呼叫數占總呼叫數的比例。",
     "account_overview_scope_current_filters": "統計範圍：目前篩選條件",
     "account_overview_scope_range": "統計範圍：{{range}}",
+    "summary_scope_current": "目前統計範圍：{{range}}",
     "account_overview_tokens_title": "Tokens 使用",
     "account_overview_token_structure": "Token 結構",
     "account_overview_models_top": "模型使用 Top {{count}}",

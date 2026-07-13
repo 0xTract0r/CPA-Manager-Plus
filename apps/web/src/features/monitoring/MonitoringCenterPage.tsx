@@ -87,6 +87,7 @@ import {
   buildSecondarySummaryCards,
   buildStatusOptions,
   formatAccountOverviewScopeText,
+  formatMonitoringSummaryScopeText,
   getCurrentInputValue,
   getTodayStartInputValue,
   isUsageImportFile,
@@ -628,6 +629,10 @@ export function MonitoringCenterPage() {
   const accountOverviewScopeText = useMemo(
     () => formatAccountOverviewScopeText(accountStatusBounds, i18n.language, t),
     [accountStatusBounds, i18n.language, t]
+  );
+  const monitoringSummaryScopeText = useMemo(
+    () => formatMonitoringSummaryScopeText(timeRange, t),
+    [t, timeRange]
   );
 
   const scopedSummary = monitoringSummary;
@@ -1567,6 +1572,7 @@ export function MonitoringCenterPage() {
       <MonitoringSummarySection
         primaryCards={primarySummaryCards}
         secondaryCards={secondarySummaryCards}
+        scopeText={monitoringSummaryScopeText}
       />
 
       <MonitoringDataPanel

@@ -2026,6 +2026,7 @@
     "account_overview_success_rate_hint": "Доля успешных вызовов среди всех вызовов в текущей области фильтра.",
     "account_overview_scope_current_filters": "Область: текущие фильтры",
     "account_overview_scope_range": "Область: {{range}}",
+    "summary_scope_current": "Текущее окно статистики: {{range}}",
     "account_overview_tokens_title": "Использование Tokens",
     "account_overview_token_structure": "Структура Token",
     "account_overview_models_top": "Топ моделей {{count}}",
