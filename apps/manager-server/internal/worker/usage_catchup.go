@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/model"
 	usagesvc "github.com/seakee/cpa-manager-plus/apps/manager-server/internal/service/usage"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/store"
 )
@@ -55,6 +56,14 @@ type UsageCatchUpWorker struct {
 	lookback          time.Duration
 	maxPages          int
 	nowFunc           func() time.Time
+
+	// wokenSinceLastRun is set by Wake() and cleared at the start of each
+	// catchUp() run; it records whether this run was triggered by a
+	// collector reconnect rather than the periodic timer, purely for the
+	// Trigger field on UsageCatchUpRunStatus (best-effort/informational --
+	// racing Wake() calls around a run boundary may attribute a run to the
+	// "wrong" trigger, which is acceptable for a status label).
+	wokenSinceLastRun int32
 }
 
 // NewUsageCatchUpWorker constructs a worker with the given poll interval.
@@ -93,6 +102,7 @@ func (w *UsageCatchUpWorker) Wake() {
 	if w == nil {
 		return
 	}
+	atomic.StoreInt32(&w.wokenSinceLastRun, 1)
 	select {
 	case w.wake <- struct{}{}:
 	default:
@@ -118,10 +128,20 @@ func (w *UsageCatchUpWorker) catchUp(ctx context.Context) bool {
 	}
 	defer atomic.StoreInt32(&w.running, 0)
 
+	trigger := model.UsageCatchUpTriggerTimer
+	if atomic.SwapInt32(&w.wokenSinceLastRun, 0) == 1 {
+		trigger = model.UsageCatchUpTriggerReconnect
+	}
+
 	since := w.resumeCursor(ctx)
 	pending := false
+	added := 0
 	for page := 0; page < w.maxPages; page++ {
 		if ctx.Err() != nil {
+			// Context cancellation (e.g. shutdown) is not a run outcome
+			// worth persisting as ok/error/skipped -- there is no
+			// meaningful status to report, and doing so would overwrite a
+			// prior good status with a misleading one on every shutdown.
 			return false
 		}
 		result, err := w.syncer.SyncFromCore(ctx, usagesvc.SyncOptions{Since: since})
@@ -129,14 +149,18 @@ func (w *UsageCatchUpWorker) catchUp(ctx context.Context) bool {
 			if errors.Is(err, usagesvc.ErrCoreConnectionNotConfigured) {
 				// Not an error worth logging repeatedly: core connection
 				// simply isn't set up yet (e.g. during initial setup).
+				w.recordStatus(ctx, model.UsageCatchUpStatusSkipped, added, "", trigger)
 				return false
 			}
 			log.Printf("[usage-catchup] sync from core failed: %v", err)
+			w.recordStatus(ctx, model.UsageCatchUpStatusError, added, err.Error(), trigger)
 			return false
 		}
 		if result.NoHistoricalData {
+			w.recordStatus(ctx, model.UsageCatchUpStatusNoData, added, "", trigger)
 			return false
 		}
+		added += result.Added
 		if result.HasMore && result.NextSince != "" {
 			since = result.NextSince
 			w.saveCursor(ctx, since)
@@ -148,8 +172,10 @@ func (w *UsageCatchUpWorker) catchUp(ctx context.Context) bool {
 		// of re-scanning the whole history every cycle.
 		since = w.nowFunc().UTC().Format(time.RFC3339Nano)
 		w.saveCursor(ctx, since)
+		w.recordStatus(ctx, model.UsageCatchUpStatusOK, added, "", trigger)
 		return false
 	}
+	w.recordStatus(ctx, model.UsageCatchUpStatusOK, added, "", trigger)
 	return pending
 }
 
@@ -171,4 +197,39 @@ func (w *UsageCatchUpWorker) saveCursor(ctx context.Context, since string) {
 	}); err != nil {
 		log.Printf("[usage-catchup] save cursor: %v", err)
 	}
+}
+
+// recordStatus persists the outcome of one catchUp() run so the admin panel
+// can show something more useful than silence. It is best-effort: a failure
+// to read/write this status must not itself fail or retry the run, since the
+// run's own outcome (ok/error/skipped/nodata) has already been decided.
+func (w *UsageCatchUpWorker) recordStatus(ctx context.Context, status string, added int, errMsg string, trigger string) {
+	previous, _, err := w.store.LoadUsageCatchUpStatus(ctx)
+	if err != nil {
+		log.Printf("[usage-catchup] load status: %v", err)
+	}
+	totalAdded := previous.TotalAdded + int64(added)
+	if err := w.store.SaveUsageCatchUpStatus(ctx, store.UsageCatchUpRunStatus{
+		LastRunAtMS: w.nowFunc().UnixMilli(),
+		LastAdded:   added,
+		LastStatus:  status,
+		LastError:   truncateStatusError(errMsg),
+		TotalAdded:  totalAdded,
+		Trigger:     trigger,
+	}); err != nil {
+		log.Printf("[usage-catchup] save status: %v", err)
+	}
+}
+
+// maxStatusErrorLen bounds LastError so a verbose wrapped error (e.g. from an
+// HTTP client) does not bloat the persisted status or the admin panel's
+// display; the full error is still available in the server log via
+// log.Printf above.
+const maxStatusErrorLen = 200
+
+func truncateStatusError(errMsg string) string {
+	if len(errMsg) <= maxStatusErrorLen {
+		return errMsg
+	}
+	return errMsg[:maxStatusErrorLen] + "..."
 }

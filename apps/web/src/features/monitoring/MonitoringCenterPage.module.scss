@@ -74,6 +74,21 @@
   background: color-mix(in srgb, var(--monitor-red) 10%, var(--monitor-surface)) !important;
 }
 
+.usageCatchUpToneGood {
+  color: var(--monitor-green) !important;
+  background: color-mix(in srgb, var(--monitor-green) 10%, var(--monitor-surface)) !important;
+}
+
+.usageCatchUpToneWarn {
+  color: var(--monitor-muted) !important;
+  background: var(--monitor-surface-muted) !important;
+}
+
+.usageCatchUpToneBad {
+  color: var(--monitor-red) !important;
+  background: color-mix(in srgb, var(--monitor-red) 10%, var(--monitor-surface)) !important;
+}
+
 .loadingOverlay {
   position: fixed;
   inset: 0;
@@ -1669,6 +1684,10 @@
   .statusBar,
   .statusMeta {
     justify-content: flex-end;
+    // 加入"自动补齐"徽章后状态条从 3 chip 增至 4 chip；960-1240px 区间基础规则仍是
+    // flex-wrap:nowrap，会在这个中间宽度横向溢出容器。改为 wrap 让第 4 个 chip
+    // 换行，不影响其余三个 chip 的样式与顺序。
+    flex-wrap: wrap;
   }
 
   .actionBarMeta {

@@ -230,6 +230,58 @@ func TestSyncRejectsInvalidLimitQueryParam(t *testing.T) {
 	}
 }
 
+// TestCatchUpStatusReturnsNotFoundWhenNoRunYet verifies the endpoint reports
+// found=false (not an error) when the background catch-up worker has not
+// completed a run yet, e.g. right after a fresh install.
+func TestCatchUpStatusReturnsNotFoundWhenNoRunYet(t *testing.T) {
+	st := testutil.NewStore(t, testutil.NewConfig(t))
+	handler := &Handler{App: &app.Context{Store: st, UsageService: usagesvc.New(st)}}
+
+	req := httptest.NewRequest(http.MethodGet, "/v0/management/usage/catchup-status", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.CatchUpStatus(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"found":false`) {
+		t.Fatalf("body = %s, want found=false", recorder.Body.String())
+	}
+}
+
+// TestCatchUpStatusReturnsPersistedStatus verifies the endpoint surfaces a
+// previously persisted worker run status.
+func TestCatchUpStatusReturnsPersistedStatus(t *testing.T) {
+	st := testutil.NewStore(t, testutil.NewConfig(t))
+	if err := st.SaveUsageCatchUpStatus(context.Background(), store.UsageCatchUpRunStatus{
+		LastRunAtMS: 1_800_000_000_000,
+		LastAdded:   7,
+		LastStatus:  "ok",
+		TotalAdded:  42,
+		Trigger:     "timer",
+	}); err != nil {
+		t.Fatalf("save status: %v", err)
+	}
+	handler := &Handler{App: &app.Context{Store: st, UsageService: usagesvc.New(st)}}
+
+	req := httptest.NewRequest(http.MethodGet, "/v0/management/usage/catchup-status", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.CatchUpStatus(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	body := recorder.Body.String()
+	if !strings.Contains(body, `"found":true`) {
+		t.Fatalf("body = %s, want found=true", body)
+	}
+	if !strings.Contains(body, `"lastAdded":7`) || !strings.Contains(body, `"totalAdded":42`) {
+		t.Fatalf("body = %s, want lastAdded=7 and totalAdded=42", body)
+	}
+}
+
 // TestSyncResponseIncludesHasMoreAndNextSinceCursor verifies the HTTP
 // response surfaces core's pagination cursors so the frontend can drive a
 // resumable sync loop.

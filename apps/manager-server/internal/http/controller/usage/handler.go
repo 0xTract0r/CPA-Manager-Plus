@@ -33,6 +33,10 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 			h.Export(w, r)
 			return
 		}
+		if strings.HasSuffix(r.URL.Path, "/catchup-status") {
+			h.CatchUpStatus(w, r)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		writer := &countingWriter{writer: w}
 		err := h.App.UsageService.WriteCompatibleUsage(r.Context(), writer, h.App.Config.QueryLimit)
@@ -71,6 +75,23 @@ func (h *Handler) Export(w http.ResponseWriter, r *http.Request) {
 			log.Printf("usage export stream failed after %d bytes: %v", writer.written, err)
 		}
 	}
+}
+
+// CatchUpStatus reports the outcome of the most recent background usage
+// catch-up worker run (see internal/worker.UsageCatchUpWorker), so the admin
+// panel can show something more useful than silence when it succeeds, fails,
+// or finds nothing to do. Returns a zero-value status with found=false when
+// the worker has not completed a run yet (e.g. just started, or disabled).
+func (h *Handler) CatchUpStatus(w http.ResponseWriter, r *http.Request) {
+	status, found, err := h.App.Store.LoadUsageCatchUpStatus(r.Context())
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	response.JSON(w, http.StatusOK, map[string]any{
+		"found":  found,
+		"status": status,
+	})
 }
 
 type countingWriter struct {

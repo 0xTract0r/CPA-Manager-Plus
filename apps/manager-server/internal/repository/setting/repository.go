@@ -16,6 +16,7 @@ const automationSettingsKey = "automation_settings_v1"
 const adminCredentialKey = "admin_credential_v1"
 const bootstrapStateKey = "bootstrap_state_v1"
 const usageCatchUpCursorKey = "usage_catchup_cursor_v1"
+const usageCatchUpStatusKey = "usage_catchup_status_v1"
 
 type Repository interface {
 	SaveManagerConfig(ctx context.Context, cfg model.ManagerConfig) error
@@ -31,6 +32,8 @@ type Repository interface {
 	HasHistoricalData(ctx context.Context) (bool, error)
 	SaveUsageCatchUpCursor(ctx context.Context, cursor model.UsageCatchUpCursor) error
 	LoadUsageCatchUpCursor(ctx context.Context) (model.UsageCatchUpCursor, bool, error)
+	SaveUsageCatchUpStatus(ctx context.Context, status model.UsageCatchUpRunStatus) error
+	LoadUsageCatchUpStatus(ctx context.Context) (model.UsageCatchUpRunStatus, bool, error)
 }
 
 type repository struct {
@@ -272,6 +275,42 @@ func (r *repository) LoadUsageCatchUpCursor(ctx context.Context) (model.UsageCat
 		return model.UsageCatchUpCursor{}, false, err
 	}
 	return cursor, true, nil
+}
+
+func (r *repository) SaveUsageCatchUpStatus(ctx context.Context, status model.UsageCatchUpRunStatus) error {
+	if status.LastRunAtMS == 0 {
+		status.LastRunAtMS = time.Now().UnixMilli()
+	}
+	data, err := json.Marshal(status)
+	if err != nil {
+		return err
+	}
+	_, err = r.db.ExecContext(
+		ctx,
+		`insert into settings(key, value, updated_at_ms)
+		 values(?, ?, ?)
+		 on conflict(key) do update set value = excluded.value, updated_at_ms = excluded.updated_at_ms`,
+		usageCatchUpStatusKey,
+		string(data),
+		status.LastRunAtMS,
+	)
+	return err
+}
+
+func (r *repository) LoadUsageCatchUpStatus(ctx context.Context) (model.UsageCatchUpRunStatus, bool, error) {
+	var raw string
+	err := r.db.QueryRowContext(ctx, `select value from settings where key = ?`, usageCatchUpStatusKey).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.UsageCatchUpRunStatus{}, false, nil
+	}
+	if err != nil {
+		return model.UsageCatchUpRunStatus{}, false, err
+	}
+	var status model.UsageCatchUpRunStatus
+	if err := json.Unmarshal([]byte(raw), &status); err != nil {
+		return model.UsageCatchUpRunStatus{}, false, err
+	}
+	return status, true, nil
 }
 
 func (r *repository) HasHistoricalData(ctx context.Context) (bool, error) {

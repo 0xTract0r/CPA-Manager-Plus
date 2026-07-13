@@ -2,12 +2,14 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/model"
 	usagesvc "github.com/seakee/cpa-manager-plus/apps/manager-server/internal/service/usage"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/store"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/usage"
@@ -323,4 +325,204 @@ func (b *blockingSyncer) SyncFromCore(ctx context.Context, opts usagesvc.SyncOpt
 		b.before()
 	}
 	return usagesvc.SyncFromCoreResult{NoHistoricalData: true}, nil
+}
+
+// TestUsageCatchUpWorkerRecordsOKStatusWithTimerTrigger verifies a
+// successful run persists a UsageCatchUpRunStatus with lastStatus="ok",
+// the correct lastAdded/totalAdded counts, and trigger="timer" for a
+// non-Wake()-triggered run.
+func TestUsageCatchUpWorkerRecordsOKStatusWithTimerTrigger(t *testing.T) {
+	db := newCatchUpTestStore(t)
+	syncer := &fakeCatchUpSyncer{
+		store: db,
+		pages: []fakeCatchUpPage{
+			{events: []usage.Event{testCatchUpEvent("catchup-status-ok-1", 1_800_000_000_000)}},
+		},
+	}
+	worker := NewUsageCatchUpWorker(db, syncer, time.Hour)
+	ctx := context.Background()
+
+	if pending := worker.catchUp(ctx); pending {
+		t.Fatal("catchUp() = true, want false")
+	}
+
+	status, ok, err := db.LoadUsageCatchUpStatus(ctx)
+	if err != nil {
+		t.Fatalf("load status: %v", err)
+	}
+	if !ok {
+		t.Fatal("status not found after successful run")
+	}
+	if status.LastStatus != model.UsageCatchUpStatusOK {
+		t.Fatalf("lastStatus = %q, want %q", status.LastStatus, model.UsageCatchUpStatusOK)
+	}
+	if status.LastAdded != 1 {
+		t.Fatalf("lastAdded = %d, want 1", status.LastAdded)
+	}
+	if status.TotalAdded != 1 {
+		t.Fatalf("totalAdded = %d, want 1", status.TotalAdded)
+	}
+	if status.Trigger != model.UsageCatchUpTriggerTimer {
+		t.Fatalf("trigger = %q, want %q", status.Trigger, model.UsageCatchUpTriggerTimer)
+	}
+	if status.LastRunAtMS == 0 {
+		t.Fatal("lastRunAtMs = 0, want nonzero")
+	}
+}
+
+// TestUsageCatchUpWorkerRecordsReconnectTrigger verifies a run triggered via
+// Wake() (simulating a collector reconnect) is recorded with
+// trigger="reconnect" instead of "timer".
+func TestUsageCatchUpWorkerRecordsReconnectTrigger(t *testing.T) {
+	db := newCatchUpTestStore(t)
+	syncer := &fakeCatchUpSyncer{
+		store: db,
+		pages: []fakeCatchUpPage{
+			{events: []usage.Event{testCatchUpEvent("catchup-status-reconnect-1", 1_800_000_000_000)}},
+		},
+	}
+	worker := NewUsageCatchUpWorker(db, syncer, time.Hour)
+	ctx := context.Background()
+
+	worker.Wake()
+	if pending := worker.catchUp(ctx); pending {
+		t.Fatal("catchUp() = true, want false")
+	}
+
+	status, ok, err := db.LoadUsageCatchUpStatus(ctx)
+	if err != nil {
+		t.Fatalf("load status: %v", err)
+	}
+	if !ok {
+		t.Fatal("status not found after successful run")
+	}
+	if status.Trigger != model.UsageCatchUpTriggerReconnect {
+		t.Fatalf("trigger = %q, want %q", status.Trigger, model.UsageCatchUpTriggerReconnect)
+	}
+}
+
+// TestUsageCatchUpWorkerRecordsErrorStatus verifies a sync failure (other
+// than ErrCoreConnectionNotConfigured) is recorded as lastStatus="error"
+// with a non-empty lastError, and does not advance totalAdded.
+func TestUsageCatchUpWorkerRecordsErrorStatus(t *testing.T) {
+	db := newCatchUpTestStore(t)
+	syncer := &fakeCatchUpSyncer{
+		store: db,
+		pages: []fakeCatchUpPage{
+			{err: errors.New("boom: core unreachable")},
+		},
+	}
+	worker := NewUsageCatchUpWorker(db, syncer, time.Hour)
+	ctx := context.Background()
+
+	if pending := worker.catchUp(ctx); pending {
+		t.Fatal("catchUp() = true, want false")
+	}
+
+	status, ok, err := db.LoadUsageCatchUpStatus(ctx)
+	if err != nil {
+		t.Fatalf("load status: %v", err)
+	}
+	if !ok {
+		t.Fatal("status not found after failed run")
+	}
+	if status.LastStatus != model.UsageCatchUpStatusError {
+		t.Fatalf("lastStatus = %q, want %q", status.LastStatus, model.UsageCatchUpStatusError)
+	}
+	if status.LastError == "" {
+		t.Fatal("lastError = \"\", want non-empty error message")
+	}
+	if status.TotalAdded != 0 {
+		t.Fatalf("totalAdded = %d, want 0", status.TotalAdded)
+	}
+}
+
+// TestUsageCatchUpWorkerRecordsSkippedStatusWhenCoreNotConfigured verifies
+// ErrCoreConnectionNotConfigured (an expected, non-noisy condition during
+// initial setup) is recorded as lastStatus="skipped" rather than "error".
+func TestUsageCatchUpWorkerRecordsSkippedStatusWhenCoreNotConfigured(t *testing.T) {
+	db := newCatchUpTestStore(t)
+	syncer := &fakeCatchUpSyncer{
+		store: db,
+		pages: []fakeCatchUpPage{
+			{err: usagesvc.ErrCoreConnectionNotConfigured},
+		},
+	}
+	worker := NewUsageCatchUpWorker(db, syncer, time.Hour)
+	ctx := context.Background()
+
+	if pending := worker.catchUp(ctx); pending {
+		t.Fatal("catchUp() = true, want false")
+	}
+
+	status, ok, err := db.LoadUsageCatchUpStatus(ctx)
+	if err != nil {
+		t.Fatalf("load status: %v", err)
+	}
+	if !ok {
+		t.Fatal("status not found after skipped run")
+	}
+	if status.LastStatus != model.UsageCatchUpStatusSkipped {
+		t.Fatalf("lastStatus = %q, want %q", status.LastStatus, model.UsageCatchUpStatusSkipped)
+	}
+}
+
+// TestUsageCatchUpWorkerRecordsNoDataStatus verifies core reporting no
+// historical data (e.g. UsageStatisticsEnabled=false on core) is recorded as
+// lastStatus="nodata".
+func TestUsageCatchUpWorkerRecordsNoDataStatus(t *testing.T) {
+	db := newCatchUpTestStore(t)
+	syncer := &fakeCatchUpSyncer{store: db, pages: []fakeCatchUpPage{}}
+	worker := NewUsageCatchUpWorker(db, syncer, time.Hour)
+	ctx := context.Background()
+
+	if pending := worker.catchUp(ctx); pending {
+		t.Fatal("catchUp() = true, want false")
+	}
+
+	status, ok, err := db.LoadUsageCatchUpStatus(ctx)
+	if err != nil {
+		t.Fatalf("load status: %v", err)
+	}
+	if !ok {
+		t.Fatal("status not found after nodata run")
+	}
+	if status.LastStatus != model.UsageCatchUpStatusNoData {
+		t.Fatalf("lastStatus = %q, want %q", status.LastStatus, model.UsageCatchUpStatusNoData)
+	}
+}
+
+// TestUsageCatchUpWorkerAccumulatesTotalAddedAcrossRuns verifies
+// TotalAdded is cumulative across multiple successful runs rather than being
+// reset to the latest run's LastAdded.
+func TestUsageCatchUpWorkerAccumulatesTotalAddedAcrossRuns(t *testing.T) {
+	db := newCatchUpTestStore(t)
+	syncer := &fakeCatchUpSyncer{
+		store: db,
+		pages: []fakeCatchUpPage{
+			{events: []usage.Event{testCatchUpEvent("catchup-total-1", 1_800_000_000_000)}, hasMore: true, nextSince: "2026-01-01T00:00:00Z"},
+			{events: []usage.Event{testCatchUpEvent("catchup-total-2", 1_800_000_001_000)}},
+		},
+	}
+	worker := NewUsageCatchUpWorker(db, syncer, time.Hour)
+	worker.maxPages = 1
+	ctx := context.Background()
+
+	if pending := worker.catchUp(ctx); !pending {
+		t.Fatal("catchUp() = false, want true after first page (HasMore=true)")
+	}
+	if pending := worker.catchUp(ctx); pending {
+		t.Fatal("catchUp() = true, want false after second page")
+	}
+
+	status, ok, err := db.LoadUsageCatchUpStatus(ctx)
+	if err != nil {
+		t.Fatalf("load status: %v", err)
+	}
+	if !ok {
+		t.Fatal("status not found")
+	}
+	if status.TotalAdded != 2 {
+		t.Fatalf("totalAdded = %d, want 2 (1 from each page/run)", status.TotalAdded)
+	}
 }

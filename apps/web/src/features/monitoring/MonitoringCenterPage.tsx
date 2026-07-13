@@ -101,6 +101,8 @@ import {
   useUsageData,
   type SyncCoreHistoryCursorProgress,
 } from '@/features/monitoring/hooks/useUsageData';
+import { useUsageCatchUpStatus } from '@/features/monitoring/hooks/useUsageCatchUpStatus';
+import { presentUsageCatchUpStatus } from '@/features/monitoring/model/usageCatchUpPresentation';
 import {
   getUsageServiceErrorCode,
   monitoringAnalyticsApi,
@@ -157,6 +159,10 @@ export function MonitoringCenterPage() {
   const requestMonitoringAvailability = useRequestMonitoringAvailability();
   const pageTransitionLayer = usePageTransitionLayer();
   const isCurrentLayer = pageTransitionLayer ? pageTransitionLayer.status === 'current' : true;
+  const usageCatchUpStatusQuery = useUsageCatchUpStatus({
+    serviceBase: requestMonitoringAvailability.serviceBase,
+    enabled: isCurrentLayer && requestMonitoringAvailability.available,
+  });
   const initialAccountOverviewUiState = useRef(readAccountOverviewUiState());
   const initialMonitoringCenterUiState = useRef(
     buildMonitoringInitialStateFromQuery(location.search, readMonitoringCenterUiState())
@@ -496,6 +502,12 @@ export function MonitoringCenterPage() {
     ? monitoringError
     : [usageError, monitoringError].filter(Boolean).join('；');
   const hasPrices = Object.keys(modelPrices).length > 0;
+  const usageCatchUpStatusPresentation = presentUsageCatchUpStatus(
+    usageCatchUpStatusQuery.found,
+    usageCatchUpStatusQuery.status,
+    i18n.language,
+    t
+  );
 
   useEffect(() => {
     accountQuotaStatesRef.current = accountQuotaStates;
@@ -744,8 +756,7 @@ export function MonitoringCenterPage() {
             )
           )
           .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
-        const nextState =
-          mergeObservedAccountQuotaState(state, targets, observedEntries) ?? state;
+        const nextState = mergeObservedAccountQuotaState(state, targets, observedEntries) ?? state;
         changed = changed || nextState !== state;
         return [account, nextState] as const;
       })
@@ -1515,6 +1526,7 @@ export function MonitoringCenterPage() {
             scopedFailureCount={scopedFailureCount}
             totalCalls={scopedSummary.totalCalls}
             t={t}
+            usageCatchUpStatus={usageCatchUpStatusPresentation}
           />
         }
       />

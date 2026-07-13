@@ -430,6 +430,23 @@ export interface UsageSyncCoreHistoryParams {
   limit?: number;
 }
 
+export type UsageCatchUpStatusValue = 'ok' | 'error' | 'skipped' | 'nodata' | string;
+export type UsageCatchUpTrigger = 'timer' | 'reconnect' | string;
+
+export interface UsageCatchUpRunStatus {
+  lastRunAtMs: number;
+  lastAdded: number;
+  lastStatus: UsageCatchUpStatusValue;
+  lastError?: string;
+  totalAdded: number;
+  trigger: UsageCatchUpTrigger;
+}
+
+export interface UsageCatchUpStatusResponse {
+  found: boolean;
+  status: UsageCatchUpRunStatus;
+}
+
 export interface DashboardSummaryWindow {
   today_start_ms: number;
   now_ms: number;
@@ -2065,6 +2082,35 @@ export const usageServiceApi = {
           timeout: USAGE_SERVICE_TRANSFER_TIMEOUT_MS,
           headers: authHeaders(managementKey),
           signal,
+        }
+      );
+      return response.data;
+    });
+  },
+
+  getCatchUpStatus: async (
+    base: string,
+    managementKey?: string
+  ): Promise<UsageCatchUpStatusResponse> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return {
+        found: true,
+        status: {
+          lastRunAtMs: Date.now() - 4 * 60 * 1000,
+          lastAdded: 12,
+          lastStatus: 'ok',
+          totalAdded: 4821,
+          trigger: 'timer',
+        },
+      };
+    }
+
+    return withUsageServiceError(async () => {
+      const response = await axios.get<UsageCatchUpStatusResponse>(
+        buildUrl(base, '/v0/management/usage/catchup-status'),
+        {
+          timeout: USAGE_SERVICE_TIMEOUT_MS,
+          headers: authHeaders(managementKey),
         }
       );
       return response.data;
