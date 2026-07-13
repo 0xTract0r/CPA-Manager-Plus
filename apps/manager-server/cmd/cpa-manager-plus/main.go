@@ -117,6 +117,12 @@ func runServer() {
 		dashboardHourlyRollupWorker,
 	))
 
+	if cfg.UsageCatchUpEnabled {
+		usageCatchUpWorker := worker.NewUsageCatchUpWorker(db, serverApp.AppContext().UsageService, cfg.UsageCatchUpInterval)
+		usageCatchUpWorker.Start(ctx)
+		manager.SetReconnectHandler(usageCatchUpWorker.Wake)
+	}
+
 	collectorWorker.Start(ctx)
 
 	codexInspectionWorker := worker.NewCodexInspectionWorker(serverApp.AppContext().Store, serverApp.AppContext().CodexInspectionService)

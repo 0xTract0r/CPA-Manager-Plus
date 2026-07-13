@@ -15,6 +15,7 @@ const managerConfigKey = "manager_config_v1"
 const automationSettingsKey = "automation_settings_v1"
 const adminCredentialKey = "admin_credential_v1"
 const bootstrapStateKey = "bootstrap_state_v1"
+const usageCatchUpCursorKey = "usage_catchup_cursor_v1"
 
 type Repository interface {
 	SaveManagerConfig(ctx context.Context, cfg model.ManagerConfig) error
@@ -28,6 +29,8 @@ type Repository interface {
 	SaveBootstrapState(ctx context.Context, state model.BootstrapState) error
 	LoadBootstrapState(ctx context.Context) (model.BootstrapState, bool, error)
 	HasHistoricalData(ctx context.Context) (bool, error)
+	SaveUsageCatchUpCursor(ctx context.Context, cursor model.UsageCatchUpCursor) error
+	LoadUsageCatchUpCursor(ctx context.Context) (model.UsageCatchUpCursor, bool, error)
 }
 
 type repository struct {
@@ -233,6 +236,42 @@ func (r *repository) LoadBootstrapState(ctx context.Context) (model.BootstrapSta
 		return model.BootstrapState{}, false, err
 	}
 	return state, true, nil
+}
+
+func (r *repository) SaveUsageCatchUpCursor(ctx context.Context, cursor model.UsageCatchUpCursor) error {
+	if cursor.UpdatedAtMS == 0 {
+		cursor.UpdatedAtMS = time.Now().UnixMilli()
+	}
+	data, err := json.Marshal(cursor)
+	if err != nil {
+		return err
+	}
+	_, err = r.db.ExecContext(
+		ctx,
+		`insert into settings(key, value, updated_at_ms)
+		 values(?, ?, ?)
+		 on conflict(key) do update set value = excluded.value, updated_at_ms = excluded.updated_at_ms`,
+		usageCatchUpCursorKey,
+		string(data),
+		cursor.UpdatedAtMS,
+	)
+	return err
+}
+
+func (r *repository) LoadUsageCatchUpCursor(ctx context.Context) (model.UsageCatchUpCursor, bool, error) {
+	var raw string
+	err := r.db.QueryRowContext(ctx, `select value from settings where key = ?`, usageCatchUpCursorKey).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.UsageCatchUpCursor{}, false, nil
+	}
+	if err != nil {
+		return model.UsageCatchUpCursor{}, false, err
+	}
+	var cursor model.UsageCatchUpCursor
+	if err := json.Unmarshal([]byte(raw), &cursor); err != nil {
+		return model.UsageCatchUpCursor{}, false, err
+	}
+	return cursor, true, nil
 }
 
 func (r *repository) HasHistoricalData(ctx context.Context) (bool, error) {
