@@ -1082,6 +1082,7 @@ describe('cache hit rate', () => {
         cacheReadTokens: 300,
         cacheCreationTokens: 50,
         cachedTokens: 0,
+        model: 'claude-3-5-sonnet-20241022',
       })
     ).toBeCloseTo(300 / 450, 6);
   });
@@ -1115,6 +1116,41 @@ describe('cache hit rate', () => {
       })
     ).toBe(1);
   });
+
+  it('does not double count cacheRead for non-Anthropic models like gpt-5.6-sol (regression)', () => {
+    // 真实案例：input=55406/cacheRead=54784 应 ≈98.9%；旧公式无条件把 cacheRead 加进
+    // 分母会腰斩成 ~49.7%（55406+54784=110190 作分母）。
+    expect(
+      computeCacheHitRate({
+        inputTokens: 55406,
+        cacheReadTokens: 54784,
+        cacheCreationTokens: 0,
+        cachedTokens: 0,
+        model: 'gpt-5.6-sol',
+      })
+    ).toBeCloseTo(0.989, 3);
+  });
+
+  it('strips the provider/ prefix before matching Anthropic model slugs, aligned with the backend', () => {
+    // 后端 isAnthropicModelSlug 用 strings.LastIndex(slug, '/') 剥前缀；前端要与之一致，
+    // 否则 'openrouter/claude-3-5-sonnet' 这类带前缀的 model 会被误判成非 Anthropic。
+    const prefixed = computeCacheHitRate({
+      inputTokens: 100,
+      cacheReadTokens: 300,
+      cacheCreationTokens: 50,
+      cachedTokens: 0,
+      model: 'openrouter/claude-3-5-sonnet',
+    });
+    const bare = computeCacheHitRate({
+      inputTokens: 100,
+      cacheReadTokens: 300,
+      cacheCreationTokens: 50,
+      cachedTokens: 0,
+      model: 'claude-3-5-sonnet',
+    });
+    expect(prefixed).toBeCloseTo(bare, 6);
+    expect(prefixed).toBeCloseTo(300 / 450, 6);
+  });
 });
 
 describe('model rank derivations', () => {
@@ -1144,10 +1180,22 @@ describe('model rank derivations', () => {
       cacheReadTokens: 300,
       cacheCreationTokens: 50,
       estimatedCost: 10,
+      model: 'claude-3-5-sonnet',
     });
     expect(computeRowCacheHitRate(row)).toBeCloseTo(300 / 450, 6);
     expect(computeRowAverageCostPerCall(row)).toBeCloseTo(0.2, 6);
     expect(computeRowAverageCostPerCall(rankRow({ estimatedCost: 10 }))).toBe(0);
+  });
+
+  it('derives per-row cache hit rate for non-Anthropic models without double counting cacheRead', () => {
+    const row = rankRow({
+      requestCount: 1,
+      inputTokens: 55406,
+      cacheReadTokens: 54784,
+      cacheCreationTokens: 0,
+      model: 'gpt-5.6-sol',
+    });
+    expect(computeRowCacheHitRate(row)).toBeCloseTo(0.989, 3);
   });
 
   it('builds the reverse key distribution for a model from API key breakdowns', () => {

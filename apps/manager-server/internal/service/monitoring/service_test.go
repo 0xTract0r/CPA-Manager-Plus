@@ -424,14 +424,17 @@ func TestAnalyticsSummaryComparisonReturnsPreviousPeriod(t *testing.T) {
 }
 
 func TestCacheHitRateMatchesWebClient(t *testing.T) {
-	// Anthropic-style: InputTokens excludes cache, so denominator = input + cacheRead + cacheCreation.
-	anthropic := cacheHitRate(TimelinePoint{
+	// TimelinePoint aggregates tokens across all models in a bucket (no single
+	// Model field), so cacheHitRate(point) always uses the OpenAI/default-style
+	// denominator (max(input, hit) + cacheCreation, cacheRead NOT added again).
+	openaiStyle := cacheHitRate(TimelinePoint{
 		InputTokens:         100,
 		CacheReadTokens:     300,
 		CacheCreationTokens: 50,
 	})
-	if math.Abs(anthropic-300.0/450.0) > 1e-9 {
-		t.Fatalf("anthropic cache hit rate = %v, want %v", anthropic, 300.0/450.0)
+	wantOpenAIStyle := 300.0 / (300.0 + 50.0) // max(100,300)+50 = 350
+	if math.Abs(openaiStyle-wantOpenAIStyle) > 1e-9 {
+		t.Fatalf("openai-style cache hit rate = %v, want %v", openaiStyle, wantOpenAIStyle)
 	}
 	// OpenAI-style: InputTokens already includes cache; cacheRead falls back to cachedTokens.
 	openai := cacheHitRate(TimelinePoint{
@@ -447,6 +450,32 @@ func TestCacheHitRateMatchesWebClient(t *testing.T) {
 	}
 	if r := cacheHitRate(TimelinePoint{InputTokens: 10, CachedTokens: 1000}); r != 1 {
 		t.Fatalf("clamped cache hit rate = %v, want 1", r)
+	}
+}
+
+// TestCacheHitRateForTokensProviderAware covers the real regression: OpenAI-style
+// models (e.g. gpt-5.6-sol) report input_tokens as a superset that already
+// includes cache_read, so cache_read must NOT be added again to the
+// denominator. Anthropic/Claude-style models report input_tokens excluding
+// cache, so cache_read/cache_creation are additive.
+func TestCacheHitRateForTokensProviderAware(t *testing.T) {
+	// Real regression case: single event with input=55406, cache_read=54784,
+	// cached=0, cache_creation=0. The pre-fix formula (adding cacheReadTokens
+	// again into the denominator) produced ~0.4972 instead of the correct ~0.9888.
+	openaiRate := cacheHitRateForTokens("gpt-5.6-sol", 55406, 0, 54784, 0)
+	wantOpenAIRate := 54784.0 / 55406.0
+	if math.Abs(openaiRate-wantOpenAIRate) > 1e-4 {
+		t.Fatalf("gpt-5.6-sol cache hit rate = %v, want %v", openaiRate, wantOpenAIRate)
+	}
+	if openaiRate <= 0.90 {
+		t.Fatalf("gpt-5.6-sol cache hit rate = %v, want > 0.90 (regression for the halved 0.497 bug)", openaiRate)
+	}
+
+	// Anthropic-style: input excludes cache, so cacheRead/cacheCreation add on top.
+	anthropicRate := cacheHitRateForTokens("claude-opus-4-6", 1000, 0, 5000, 200)
+	wantAnthropicRate := 5000.0 / (1000.0 + 5000.0 + 200.0)
+	if math.Abs(anthropicRate-wantAnthropicRate) > 1e-4 {
+		t.Fatalf("claude cache hit rate = %v, want %v", anthropicRate, wantAnthropicRate)
 	}
 }
 

@@ -2739,24 +2739,70 @@ func averageTokensPerRequest(point TimelinePoint) float64 {
 	return float64(point.TotalTokens) / float64(point.Calls)
 }
 
-func cacheHitRate(point TimelinePoint) float64 {
-	// Mirror computeCacheHitRate on the web client: cache-read tokens over total
-	// input. cacheRead falls back to cachedTokens for OpenAI-style usage (input
-	// already includes cache); totalInput adds cacheRead/cacheCreation back for
-	// Anthropic-style usage where InputTokens excludes them.
-	cacheRead := point.CacheReadTokens
-	if cacheRead == 0 {
-		cacheRead = point.CachedTokens
+// isAnthropicModelSlug mirrors pricing.isAnthropicModel (unexported there, so
+// duplicated here): Anthropic/Claude usage reports cache_read/cache_creation as
+// buckets independent of (not contained in) input_tokens, while OpenAI-style
+// models (the default, including gpt-5.6-*) report input_tokens as a superset
+// that already includes cache_read.
+func isAnthropicModelSlug(modelName string) bool {
+	slug := strings.ToLower(strings.TrimSpace(modelName))
+	if index := strings.LastIndex(slug, "/"); index >= 0 {
+		slug = slug[index+1:]
 	}
-	totalInput := point.InputTokens + point.CacheReadTokens + point.CacheCreationTokens
+	return strings.HasPrefix(slug, "claude") || strings.HasPrefix(slug, "anthropic")
+}
+
+// cacheHitRateForTokens computes the cache hit rate with a provider-aware
+// denominator. Numerator prefers cacheReadTokens over cachedTokens (avoids
+// double counting when a Claude-style parser mirrors cache_read into
+// cachedTokens for legacy consumers). Denominator differs by provider:
+//   - Anthropic-style (input excludes cache): inputTokens + cacheReadTokens + cacheCreationTokens
+//   - OpenAI/default-style (input includes cache): max(inputTokens, hitTokens) + cacheCreationTokens
+//     (cacheReadTokens must NOT be added again here — it's already inside inputTokens).
+//
+// Real regression this fixes: gpt-5.6-sol with input=55406/cache_read=54784 was
+// previously computed as ~49.7% (cache_read double-counted into the
+// denominator) instead of the correct ~98.9%.
+func cacheHitRateForTokens(modelName string, inputTokens, cachedTokens, cacheReadTokens, cacheCreationTokens int64) float64 {
+	hitTokens := cacheReadTokens
+	if hitTokens == 0 {
+		hitTokens = cachedTokens
+	}
+
+	var totalInput int64
+	if isAnthropicModelSlug(modelName) {
+		totalInput = inputTokens + cacheReadTokens + cacheCreationTokens
+	} else {
+		totalInput = inputTokens
+		if hitTokens > totalInput {
+			totalInput = hitTokens
+		}
+		totalInput += cacheCreationTokens
+	}
+
 	if totalInput <= 0 {
 		return 0
 	}
-	rate := float64(cacheRead) / float64(totalInput)
+	rate := float64(hitTokens) / float64(totalInput)
 	if rate > 1 {
 		return 1
 	}
 	return rate
+}
+
+// cacheHitRate computes the cache hit rate for a timeline bucket. TimelinePoint
+// aggregates tokens across all models in the bucket (no single Model field), so
+// this defaults to the OpenAI/default-style denominator, matching prior
+// behavior for this call site. Per-model callers should use
+// cacheHitRateForTokens directly with the row's model name.
+func cacheHitRate(point TimelinePoint) float64 {
+	return cacheHitRateForTokens(
+		"",
+		point.InputTokens,
+		point.CachedTokens,
+		point.CacheReadTokens,
+		point.CacheCreationTokens,
+	)
 }
 
 func floatValueOrZero(value *float64) float64 {

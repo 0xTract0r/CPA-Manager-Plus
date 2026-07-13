@@ -159,7 +159,7 @@ describe('MonitoringCenterPage summary cards', () => {
     expect(html).toContain('Reasoning 5.0M');
     expect(html).toContain('Share 99.6%');
     expect(html).toContain('Share 0.4%');
-    expect(html).toContain('Hit rate 80.3%');
+    expect(html).toContain('Hit rate 13.3%');
     expect(html).not.toContain('Create 555.5M');
     expect(html).not.toContain('Read 444.4M');
   });
@@ -229,7 +229,7 @@ describe('MonitoringCenterPage summary cards', () => {
     );
     const cachedCard = secondaryCards.find((card) => card.label === 'Cached Tokens');
 
-    expect(cachedCard?.meta).toBe('Hit rate 35.7%');
+    expect(cachedCard?.meta).toBe('Hit rate 27.3%');
   });
 });
 

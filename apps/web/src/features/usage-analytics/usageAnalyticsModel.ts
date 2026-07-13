@@ -790,20 +790,41 @@ export const buildUsageSummary = (
 const getBucketSizeMs = (granularity: UsageAnalyticsResolvedGranularity) =>
   granularity === 'day' ? DAY_MS : HOUR_MS;
 
-// Cache hit rate = cache-read tokens / total input tokens, unified across providers.
-// Anthropic reports input_tokens excluding cache, so total input = input + cacheRead + cacheCreation
-// (the three are mutually exclusive). OpenAI's input_tokens already includes cached tokens (reported
-// as cachedTokens, with cacheRead/cacheCreation = 0), so it falls back to cached / input.
+// Anthropic/Claude 系上报的 input_tokens 不含缓存，cache_read/cache_creation 是独立叠加的
+// bucket；OpenAI 系（含 gpt-5.6-* 等）上报的 input_tokens 本身已经是包含缓存命中的超集，
+// cache_read 只是重复披露同一批已在 input 里的 token，不能再叠加进分母，否则会把命中率
+// 腰斩（真实案例：gpt-5.6-sol 单条 input=55406/cache_read=54784 应≈98.9%，误加 cache_read
+// 到分母后被算成 49.7%）。判据对齐后端 pricing/cost.go 的 isAnthropicModel：先剥掉 model
+// 里的 provider/ 前缀（取最后一个 '/' 之后的部分），再判断是否以 claude/anthropic 开头，
+// 与 monitoring 侧 monitoringCenterPageModel.ts 的 isAnthropicModelSlug 保持一致。
+const isAnthropicModelSlug = (model?: string | null): boolean => {
+  if (!model) return false;
+  const trimmed = model.trim().toLowerCase();
+  const index = trimmed.lastIndexOf('/');
+  const slug = index >= 0 ? trimmed.slice(index + 1) : trimmed;
+  return slug.startsWith('claude') || slug.startsWith('anthropic');
+};
+
+// 缓存命中率口径（单行/汇总共用），按 provider 区分分母：
+// 分子：cache_read 优先，否则回退 cached（避免 Anthropic 把 cache_read 镜像进 cached 造成双计）。
+// - Anthropic 系（input 不含缓存）：分母 = inputTokens + cacheReadTokens + cacheCreationTokens
+// - OpenAI/默认系（input 含缓存）：分母 = max(inputTokens, 命中 tokens) + cacheCreationTokens
+//   （不再额外加 cache_read，因为它已经包含在 inputTokens 里）
+// model 缺省（例如跨模型聚合的 timeline/summary，没有单一 provider）时按 OpenAI/默认系口径
+// 计算，与该函数此前的行为保持一致。分母 <= 0 时返回 0（沿用既有调用方对 number 的约定）。
 export const computeCacheHitRate = (tokens: {
   inputTokens: number;
   cacheReadTokens: number;
   cacheCreationTokens: number;
   cachedTokens: number;
+  model?: string | null;
 }): number => {
-  const cacheRead = tokens.cacheReadTokens > 0 ? tokens.cacheReadTokens : tokens.cachedTokens;
-  const totalInput = tokens.inputTokens + tokens.cacheReadTokens + tokens.cacheCreationTokens;
-  if (totalInput <= 0) return 0;
-  return Math.min(1, cacheRead / totalInput);
+  const cacheHitTokens = tokens.cacheReadTokens > 0 ? tokens.cacheReadTokens : tokens.cachedTokens;
+  const inputSideTokens = isAnthropicModelSlug(tokens.model)
+    ? tokens.inputTokens + tokens.cacheReadTokens + tokens.cacheCreationTokens
+    : Math.max(tokens.inputTokens, cacheHitTokens) + tokens.cacheCreationTokens;
+  if (inputSideTokens <= 0) return 0;
+  return Math.min(1, cacheHitTokens / inputSideTokens);
 };
 
 export const buildUsageTimeline = (
@@ -1808,6 +1829,7 @@ export const computeRowCacheHitRate = (row: UsageRankRow): number =>
     cacheReadTokens: row.cacheReadTokens,
     cacheCreationTokens: row.cacheCreationTokens,
     cachedTokens: row.cachedTokens,
+    model: row.model,
   });
 
 export const computeRowAverageCostPerCall = (row: UsageRankRow): number =>

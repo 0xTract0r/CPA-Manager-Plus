@@ -629,21 +629,42 @@ export const buildPrimarySummaryCards = ({
   },
 ];
 
-// 缓存命中率口径（单行/汇总共用）：
-// (cachedTokens + cacheReadTokens) / (max(inputTokens, cachedTokens) + cacheReadTokens + cacheCreationTokens)
-// 分母为 0 时返回 null，由调用方决定展示 "--"。
+// Anthropic/Claude 系上报的 input_tokens 不含缓存，cache_read/cache_creation 是独立叠加的
+// bucket；OpenAI 系（含 gpt-5.6-* 等）上报的 input_tokens 本身已经是包含缓存命中的超集，
+// cache_read 只是重复披露同一批已在 input 里的 token，不能再叠加进分母，否则会把命中率
+// 腰斩（真实案例：gpt-5.6-sol 单条 input=55406/cache_read=54784 应≈98.9%，误加 cache_read
+// 到分母后被算成 49.7%）。判据对齐后端 pricing/cost.go 的 isAnthropicModel。
+const isAnthropicModelSlug = (model?: string | null): boolean => {
+  if (!model) return false;
+  const trimmed = model.trim().toLowerCase();
+  const index = trimmed.lastIndexOf('/');
+  const slug = index >= 0 ? trimmed.slice(index + 1) : trimmed;
+  return slug.startsWith('claude') || slug.startsWith('anthropic');
+};
+
+// 缓存命中率口径（单行/汇总共用），按 provider 区分分母：
+// 分子：cache_read 优先，否则回退 cached（避免 Anthropic 把 cache_read 镜像进 cached 造成双计）。
+// - Anthropic 系（input 不含缓存）：分母 = inputTokens + cacheReadTokens + cacheCreationTokens
+// - OpenAI/默认系（input 含缓存）：分母 = max(inputTokens, 命中 tokens) + cacheCreationTokens
+//   （不再额外加 cache_read，因为它已经包含在 inputTokens 里）
+// model 缺省（例如跨模型聚合的 MonitoringSummary，没有单一 provider）时按 OpenAI/默认系口径计算，
+// 与该函数此前的行为保持一致。分母 <= 0 时返回 null，由调用方决定展示 "--"。
 export const computeCacheHitRate = (tokens: {
   inputTokens: number;
   cachedTokens: number;
   cacheReadTokens: number;
   cacheCreationTokens: number;
+  model?: string | null;
 }): number | null => {
-  const cacheHitTokens = tokens.cachedTokens + tokens.cacheReadTokens;
-  const inputSideTokens =
-    Math.max(tokens.inputTokens, tokens.cachedTokens) +
-    tokens.cacheReadTokens +
-    tokens.cacheCreationTokens;
-  return inputSideTokens > 0 ? cacheHitTokens / inputSideTokens : null;
+  const cacheHitTokens =
+    tokens.cacheReadTokens > 0 ? tokens.cacheReadTokens : tokens.cachedTokens;
+
+  const inputSideTokens = isAnthropicModelSlug(tokens.model)
+    ? tokens.inputTokens + tokens.cacheReadTokens + tokens.cacheCreationTokens
+    : Math.max(tokens.inputTokens, cacheHitTokens) + tokens.cacheCreationTokens;
+
+  if (inputSideTokens <= 0) return null;
+  return Math.min(1, cacheHitTokens / inputSideTokens);
 };
 
 export const buildSecondarySummaryCards = (

@@ -1029,7 +1029,7 @@ describe('computeCacheHitRate', () => {
     ).toBeNull();
   });
 
-  it('computes the hit rate using max(input, cached) plus read/creation tokens', () => {
+  it('prefers cacheReadTokens over cachedTokens for the hit numerator (no double count) when no model is given', () => {
     const rate = computeCacheHitRate({
       inputTokens: 10,
       cachedTokens: 5,
@@ -1037,8 +1037,10 @@ describe('computeCacheHitRate', () => {
       cacheCreationTokens: 2,
     });
 
-    // (5 + 3) / (max(10, 5) + 3 + 2) = 8 / 15
-    expect(rate).toBeCloseTo(8 / 15);
+    // hit = cacheReadTokens (3, takes priority over cachedTokens)
+    // denom (default/OpenAI-style, no model) = max(10, 3) + 2 = 12
+    // 3 / 12 = 0.25
+    expect(rate).toBeCloseTo(0.25, 6);
   });
 
   it('counts legacy cachedTokens toward both hit tokens and the input-side denominator', () => {
@@ -1049,7 +1051,60 @@ describe('computeCacheHitRate', () => {
       cacheCreationTokens: 0,
     });
 
-    // (6 + 0) / (max(0, 6) + 0 + 0) = 1
+    // hit = cachedTokens fallback (6) since cacheReadTokens is 0
+    // denom (default/OpenAI-style) = max(0, 6) + 0 = 6
     expect(rate).toBe(1);
+  });
+
+  it('regression: OpenAI-style gpt-5.6-sol with cache_read only must not double-count cache_read into the denominator', () => {
+    // 真实回归案例：单条 input=55406/cache_read=54784，旧公式误算 0.497，正确应约 0.989。
+    const rate = computeCacheHitRate({
+      model: 'gpt-5.6-sol',
+      inputTokens: 55406,
+      cachedTokens: 0,
+      cacheReadTokens: 54784,
+      cacheCreationTokens: 0,
+    });
+
+    expect(rate).not.toBeNull();
+    expect(rate!).toBeGreaterThan(0.9);
+    expect(rate!).toBeCloseTo(0.9888, 3);
+  });
+
+  it('regression: Anthropic-style model adds cacheReadTokens/cacheCreationTokens on top of inputTokens', () => {
+    const rate = computeCacheHitRate({
+      model: 'claude-opus-4-6',
+      inputTokens: 1000,
+      cachedTokens: 0,
+      cacheReadTokens: 5000,
+      cacheCreationTokens: 200,
+    });
+
+    expect(rate).not.toBeNull();
+    expect(rate!).toBeCloseTo(0.8065, 3);
+  });
+
+  it('strips the provider/ prefix before matching Anthropic model slugs, aligned with the backend isAnthropicModel', () => {
+    // 后端 service.go 的 isAnthropicModelSlug 用 strings.LastIndex(slug, '/') 剥前缀；
+    // 前端要与之一致，否则 'openrouter/claude-...' 这类带前缀的 model 会被误判成非
+    // Anthropic，从而走错分母分支。
+    const prefixed = computeCacheHitRate({
+      model: 'openrouter/claude-opus-4-6',
+      inputTokens: 1000,
+      cachedTokens: 0,
+      cacheReadTokens: 5000,
+      cacheCreationTokens: 200,
+    });
+    const bare = computeCacheHitRate({
+      model: 'claude-opus-4-6',
+      inputTokens: 1000,
+      cachedTokens: 0,
+      cacheReadTokens: 5000,
+      cacheCreationTokens: 200,
+    });
+
+    expect(prefixed).not.toBeNull();
+    expect(prefixed).toBeCloseTo(bare!, 6);
+    expect(prefixed).toBeCloseTo(0.8065, 3);
   });
 });
