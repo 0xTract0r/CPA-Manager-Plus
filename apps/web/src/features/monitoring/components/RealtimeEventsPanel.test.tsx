@@ -236,7 +236,17 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).toContain('Elapsed');
     expect(markup).toContain('1.5 s');
     expect(markup).toContain('20');
-    expect(markup).toContain('I 10 · O 20 · R 3 · Create 1 · Read 4');
+    // 用量各段各自渲染为独立 span（防止窄列数字断行），" · " 分隔符落在段内，
+    // 因此不再断言整段连续字符串，改为逐段校验并核对 DOM 顺序。
+    expect(markup).toContain('I 10 · ');
+    expect(markup).toContain('O 20 · ');
+    expect(markup).toContain('R 3 · ');
+    expect(markup).toContain('Create 1 · ');
+    expect(markup).toContain('Read 4');
+    const usageOrder = ['I 10', 'O 20', 'R 3', 'Create 1', 'Read 4'].map((needle) =>
+      markup.indexOf(needle)
+    );
+    expect(usageOrder).toEqual([...usageOrder].sort((a, b) => a - b));
     expect(markup).toContain('role="tooltip"');
     expect(markup).toContain(styles.realtimeFailureTooltip);
     expect(markup).toContain(styles.realtimeFailureTooltipBelow);
@@ -260,8 +270,13 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).toContain(expectedDate);
     expect(markup).toContain(expectedTime);
     // 细分缓存字段(cacheReadTokens/cacheCreationTokens)全为 0 但 legacy cachedTokens=5 时，
-    // 用 "Cached 5" 兜底展示，不再输出语义空洞的裸 "C 5"。
-    expect(markup).toContain('I 10 · O 20 · Cached 5');
+    // 用 "Cached 5" 兜底展示，不再输出语义空洞的裸 "C 5"。用量各段渲染为独立 span，
+    // 因此逐段校验而非断言整段连续字符串。
+    expect(markup).toContain('I 10 · ');
+    expect(markup).toContain('O 20');
+    expect(markup).toContain('Cached 5');
+    const usageOrder = ['I 10', 'O 20', 'Cached 5'].map((needle) => markup.indexOf(needle));
+    expect(usageOrder).toEqual([...usageOrder].sort((a, b) => a - b));
     expect(markup).not.toContain('R 0');
     expect(markup).not.toContain('Read 0');
     expect(markup).not.toContain('Create 0');
@@ -444,9 +459,11 @@ describe('RealtimeEventsPanel', () => {
       })
     );
 
-    // (5 + 3) / (max(10, 5) + 3 + 2) = 8 / 15 ≈ 53.3%
+    // 新口径（非 Anthropic model）：分子取 cacheReadTokens 优先；
+    // 分母 = max(inputTokens, cacheReadTokens) + cacheCreationTokens = max(10, 3) + 2 = 12；
+    // 3 / 12 = 25.0%
     expect(markup).toContain('Cache Hit');
-    expect(markup).toContain('53.3%');
+    expect(markup).toContain('25.0%');
     expect(markup).toContain(
       'title="Rolling success rate for this account + provider + model + channel combination, not the result of this single request."'
     );

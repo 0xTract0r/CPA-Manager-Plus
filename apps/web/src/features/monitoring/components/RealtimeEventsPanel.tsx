@@ -593,7 +593,10 @@ function RealtimeFailureStatus({ details, tooltipId, t, onCopy }: RealtimeFailur
   );
 }
 
-const buildRealtimeTokenSummary = (row: MonitoringEventRow, t: TFunction) => {
+// 每个 "标签 数值" 段必须作为不可断整体渲染（见下方 realtimeUsageSegment 样式），
+// 否则窄列 + word-break:break-word 会把紧凑数字（如 "200.0K"）从中间断行。
+// 段落之间允许在 " · " 分隔符处换行，因此分隔符本身不进入 nowrap span。
+const buildRealtimeTokenSummary = (row: MonitoringEventRow, t: TFunction): ReactNode => {
   const parts = [
     `I ${formatCompactNumber(row.inputTokens)}`,
     `O ${formatCompactNumber(row.outputTokens)}`,
@@ -611,15 +614,20 @@ const buildRealtimeTokenSummary = (row: MonitoringEventRow, t: TFunction) => {
   }
   if (row.cacheCreationTokens > 0) {
     parts.push(
-      `${shortLabel(t, 'monitoring.cache_creation_tokens_short', 'monitoring.cache_creation_tokens', 'Create')} ${formatCompactNumber(row.cacheCreationTokens)}`
+      `${shortLabel(t, 'monitoring.cache_creation_tokens_short', 'monitoring.cache_creation_tokens', 'Cache create')} ${formatCompactNumber(row.cacheCreationTokens)}`
     );
   }
   if (row.cacheReadTokens > 0) {
     parts.push(
-      `${shortLabel(t, 'monitoring.cache_read_tokens_short', 'monitoring.cache_read_tokens', 'Read')} ${formatCompactNumber(row.cacheReadTokens)}`
+      `${shortLabel(t, 'monitoring.cache_read_tokens_short', 'monitoring.cache_read_tokens', 'Cache read')} ${formatCompactNumber(row.cacheReadTokens)}`
     );
   }
-  return parts.join(' · ');
+  return parts.map((part, index) => (
+    <span key={`${index}-${part}`} className={styles.realtimeUsageSegment}>
+      {part}
+      {index < parts.length - 1 ? ' · ' : ''}
+    </span>
+  ));
 };
 
 // 单请求缓存命中率染色阈值：与成功率三档样式复用同一套 goodText/warnText/badText，

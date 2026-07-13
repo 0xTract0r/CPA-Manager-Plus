@@ -1365,6 +1365,17 @@
   line-height: 1.45;
 }
 
+// "本次用量" 列每个 "标签 数值" 段（如 "缓存读取 200.0K"）必须整体不可断，
+// 只允许容器在 " · " 分隔符处换行；否则窄列 + 上面的 word-break:break-word 会把
+// 紧凑数字从中间断行（见 buildRealtimeTokenSummary 拼接逻辑）。这里用更高特异性
+// 覆盖父规则的 word-break，其余 .primaryCell small（来源 meta、API KEY、模型、
+// service tier 等自由文本）不受影响，继续沿用 break-word 兜底换行。
+.realtimeTable .primaryCell small .realtimeUsageSegment {
+  display: inline-block;
+  white-space: nowrap;
+  word-break: normal;
+}
+
 .realtimeModelCell {
   max-width: 100%;
 }
