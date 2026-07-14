@@ -1,7 +1,13 @@
 import type { TFunction } from 'i18next';
 import { Input } from '@/components/ui/Input';
 import { Select, type SelectOption } from '@/components/ui/Select';
-import { IconRefreshCw, IconSearch, IconSlidersHorizontal, IconTimer } from '@/components/ui/icons';
+import {
+  IconChevronDown,
+  IconRefreshCw,
+  IconSearch,
+  IconSlidersHorizontal,
+  IconTimer,
+} from '@/components/ui/icons';
 import { MonitoringPanel } from '@/features/monitoring/components/MonitoringPanel';
 import type { MonitoringTimeRange } from '@/features/monitoring/hooks/useMonitoringData';
 import styles from '../MonitoringCenterPage.module.scss';
@@ -45,27 +51,22 @@ type MonitoringFiltersPanelProps = {
   onClearFilters: () => void;
 };
 
-// 时间范围下拉分两组：相对滚动窗口("最近 N 小时/天"，随请求时刻滚动)与自然日锚定
-// ("今天"/"昨天"，按本地时区零点对齐)。用分组 Select 承载 10 档，避免按钮组在窄屏下
-// 溢出(已知坑)；分组标题只用于视觉分隔，不参与值匹配。
-type TimeRangeOptionGroup = 'relative' | 'calendar';
-
-const TIME_RANGE_OPTIONS: Array<{
-  value: MonitoringTimeRange;
-  labelKey: string;
-  group: TimeRangeOptionGroup;
-}> = [
-  { value: '1h', labelKey: 'monitoring.range_1h', group: 'relative' },
-  { value: '3h', labelKey: 'monitoring.range_3h', group: 'relative' },
-  { value: '24h', labelKey: 'monitoring.range_24h', group: 'relative' },
-  { value: '7d', labelKey: 'monitoring.range_7d', group: 'relative' },
-  { value: '14d', labelKey: 'monitoring.range_14d', group: 'relative' },
-  { value: '30d', labelKey: 'monitoring.range_30d', group: 'relative' },
-  { value: 'today', labelKey: 'monitoring.range_today', group: 'calendar' },
-  { value: 'yesterday', labelKey: 'monitoring.range_yesterday', group: 'calendar' },
-  { value: 'all', labelKey: 'monitoring.range_all', group: 'calendar' },
-  { value: 'custom', labelKey: 'monitoring.range_custom', group: 'calendar' },
+// 时间范围快捷按钮：一行独占、一步直选，不再需要先展开分组下拉再选择。
+// 只保留高频档位在主按钮行；14 天/全部/任意 N 小时/任意 N 天/日期范围收纳进
+// "自定义▾" 弹层，避免主按钮行超过约 7 个控件在窄屏下换行挤压搜索框。
+const QUICK_TIME_RANGE_OPTIONS: Array<{ value: MonitoringTimeRange; labelKey: string }> = [
+  { value: '1h', labelKey: 'monitoring.range_1h' },
+  { value: '3h', labelKey: 'monitoring.range_3h' },
+  { value: '24h', labelKey: 'monitoring.range_24h' },
+  { value: 'today', labelKey: 'monitoring.range_today' },
+  { value: 'yesterday', labelKey: 'monitoring.range_yesterday' },
+  { value: '7d', labelKey: 'monitoring.range_7d' },
+  { value: '30d', labelKey: 'monitoring.range_30d' },
 ];
+
+const QUICK_TIME_RANGE_VALUES = new Set<MonitoringTimeRange>(
+  QUICK_TIME_RANGE_OPTIONS.map((option) => option.value)
+);
 
 const AUTO_REFRESH_OPTIONS = [
   { value: '0', labelKey: 'monitoring.auto_refresh_off' },
@@ -125,84 +126,127 @@ export function MonitoringFiltersPanel({
     'monitoring.clear_filters_short',
     'monitoring.clear_filters'
   );
-  const timeRangeGroupLabels: Record<TimeRangeOptionGroup, string> = {
-    relative: t('monitoring.range_group_relative'),
-    calendar: t('monitoring.range_group_calendar'),
+
+  const isCustomActive = !QUICK_TIME_RANGE_VALUES.has(timeRange);
+  const activeNonQuickLabelKey: Record<string, string> = {
+    '14d': 'monitoring.range_14d',
+    all: 'monitoring.range_all',
+    custom: 'monitoring.range_custom',
   };
-  const timeRangeOptions: SelectOption[] = TIME_RANGE_OPTIONS.map((option) => ({
-    value: option.value,
-    label: t(option.labelKey),
-    groupLabel: timeRangeGroupLabels[option.group],
-  }));
+  const customTriggerLabel = isCustomActive
+    ? t(activeNonQuickLabelKey[timeRange] ?? 'monitoring.range_custom')
+    : t('monitoring.range_custom');
 
   return (
     <MonitoringPanel className={styles.toolbarPanel}>
       <div className={styles.controlBar}>
-        <Select
-          className={styles.timeRangeControl}
-          value={timeRange}
-          options={timeRangeOptions}
-          onChange={(value) => onTimeRangeChange(value as MonitoringTimeRange)}
-          ariaLabel={t('monitoring.filter_time_range')}
-          triggerClassName={styles.filterSelectTrigger}
-          fullWidth={false}
-        />
+        <div className={styles.timeRangeRow} role="group" aria-label={t('monitoring.filter_time_range')}>
+          {QUICK_TIME_RANGE_OPTIONS.map((option) => {
+            const active = timeRange === option.value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                className={`${styles.timeRangeQuickButton} ${
+                  active ? styles.timeRangeQuickButtonActive : ''
+                }`}
+                aria-pressed={active}
+                onClick={() => onTimeRangeChange(option.value)}
+              >
+                {t(option.labelKey)}
+              </button>
+            );
+          })}
 
-        <div className={styles.filterSearchInputWrap}>
-          <Input
-            value={searchInput}
-            onChange={(event) => onSearchChange(event.target.value)}
-            placeholder={t('monitoring.search_placeholder')}
-            className={styles.filterSearchInput}
-            rightElement={<IconSearch size={16} />}
-            aria-label={t('monitoring.search_placeholder')}
-          />
+          <button
+            type="button"
+            className={`${styles.timeRangeQuickButton} ${styles.timeRangeCustomTrigger} ${
+              isCustomActive ? styles.timeRangeQuickButtonActive : ''
+            }`}
+            aria-pressed={isCustomActive}
+            aria-haspopup="dialog"
+            onClick={() => onTimeRangeChange('custom')}
+          >
+            {customTriggerLabel}
+            <IconChevronDown size={14} className={styles.timeRangeCustomTriggerIcon} />
+          </button>
         </div>
 
-        <div className={styles.refreshControls}>
-          <div className={styles.autoRefreshField}>
-            <span className={styles.autoRefreshLabel} title={t('monitoring.auto_refresh')}>
-              <IconTimer size={16} />
-              {autoRefreshLabel}
-            </span>
-            <Select
-              className={styles.autoRefreshSelect}
-              triggerClassName={styles.autoRefreshSelectTrigger}
-              value={autoRefreshMs}
-              options={AUTO_REFRESH_OPTIONS.map((option) => ({
-                value: option.value,
-                label: t(option.labelKey),
-              }))}
-              onChange={onAutoRefreshChange}
-              ariaLabel={t('monitoring.auto_refresh')}
-              fullWidth={false}
+        <div className={styles.controlBarSecondaryRow}>
+          <div className={styles.filterSearchInputWrap}>
+            <Input
+              value={searchInput}
+              onChange={(event) => onSearchChange(event.target.value)}
+              placeholder={t('monitoring.search_placeholder')}
+              className={styles.filterSearchInput}
+              rightElement={<IconSearch size={16} />}
+              aria-label={t('monitoring.search_placeholder')}
             />
           </div>
 
-          <button
-            type="button"
-            className={styles.refreshButton}
-            onClick={() => void onRefreshAll()}
-            disabled={overallLoading}
-          >
-            <IconRefreshCw
-              size={16}
-              className={overallLoading ? styles.refreshIconSpinning : styles.refreshIcon}
-            />
-            <span className={styles.refreshButtonLabel}>{t('usage_stats.refresh')}</span>
-          </button>
+          <div className={styles.refreshControls}>
+            <div className={styles.autoRefreshField}>
+              <span className={styles.autoRefreshLabel} title={t('monitoring.auto_refresh')}>
+                <IconTimer size={16} />
+                {autoRefreshLabel}
+              </span>
+              <Select
+                className={styles.autoRefreshSelect}
+                triggerClassName={styles.autoRefreshSelectTrigger}
+                value={autoRefreshMs}
+                options={AUTO_REFRESH_OPTIONS.map((option) => ({
+                  value: option.value,
+                  label: t(option.labelKey),
+                }))}
+                onChange={onAutoRefreshChange}
+                ariaLabel={t('monitoring.auto_refresh')}
+                fullWidth={false}
+              />
+            </div>
 
-          <button
-            type="button"
-            className={styles.clearButton}
-            onClick={onClearFilters}
-            title={t('monitoring.clear_filters')}
-            aria-label={t('monitoring.clear_filters')}
-          >
-            <IconSlidersHorizontal size={16} />
-            <span>{clearFiltersLabel}</span>
-          </button>
+            <button
+              type="button"
+              className={styles.refreshButton}
+              onClick={() => void onRefreshAll()}
+              disabled={overallLoading}
+            >
+              <IconRefreshCw
+                size={16}
+                className={overallLoading ? styles.refreshIconSpinning : styles.refreshIcon}
+              />
+              <span className={styles.refreshButtonLabel}>{t('usage_stats.refresh')}</span>
+            </button>
+
+            <button
+              type="button"
+              className={styles.clearButton}
+              onClick={onClearFilters}
+              title={t('monitoring.clear_filters')}
+              aria-label={t('monitoring.clear_filters')}
+            >
+              <IconSlidersHorizontal size={16} />
+              <span>{clearFiltersLabel}</span>
+            </button>
+          </div>
         </div>
+      </div>
+
+      <div className={styles.statusButtonRow} role="group" aria-label={t('monitoring.filter_status')}>
+        <span className={styles.statusButtonLabel}>{t('monitoring.filter_status')}</span>
+        {statusOptions.map((option) => {
+          const active = selectedStatus === option.value;
+          return (
+            <button
+              key={option.value}
+              type="button"
+              className={`${styles.statusButtonChip} ${active ? styles.statusButtonChipActive : ''}`}
+              aria-pressed={active}
+              onClick={() => onStatusChange(option.value)}
+            >
+              {option.label}
+            </button>
+          );
+        })}
       </div>
 
       <div className={styles.filterBar}>
@@ -242,13 +286,6 @@ export function MonitoringFiltersPanel({
             options={apiKeyOptions}
             onChange={onApiKeyChange}
             ariaLabel={t('monitoring.filter_api_key')}
-            triggerClassName={styles.filterSelectTrigger}
-          />
-          <Select
-            value={selectedStatus}
-            options={statusOptions}
-            onChange={onStatusChange}
-            ariaLabel={t('monitoring.filter_status')}
             triggerClassName={styles.filterSelectTrigger}
           />
         </div>

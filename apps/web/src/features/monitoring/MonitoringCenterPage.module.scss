@@ -197,10 +197,95 @@
   display: none;
 }
 
-// 时间范围下拉(分组 Select)只需要复用 .segmentedControl 原本承担的 grid 排序/宽度行为，
-// 不需要它的按钮组视觉样式(边框/背景由 Select 自身的 trigger 承担，避免双重边框)。
-.timeRangeControl {
-  max-width: 100%;
+// 时间范围快捷按钮：独立 pill(非拼接 segment)，允许在窄屏下换行到多行而不挤压
+// 搜索框/刷新控件(根治 698132c6 之前"按钮组溢出"与本次"分组下拉太窄换行"两个问题)。
+.timeRangeQuickButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 10px;
+  background: var(--monitor-surface-elevated);
+  color: var(--monitor-ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    transform 0.18s ease,
+    border-color 0.18s ease,
+    background-color 0.18s ease,
+    color 0.18s ease;
+}
+
+.timeRangeQuickButton:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--monitor-accent) 35%, var(--monitor-line-strong));
+  background: var(--monitor-surface-hover);
+}
+
+.timeRangeQuickButtonActive,
+.timeRangeQuickButtonActive:hover {
+  border-color: color-mix(in srgb, var(--monitor-accent) 45%, var(--monitor-line-strong));
+  background: color-mix(in srgb, var(--monitor-accent) 12%, var(--monitor-surface));
+  color: var(--monitor-accent-strong);
+  transform: none;
+}
+
+.timeRangeCustomTrigger {
+  gap: 6px;
+}
+
+.timeRangeCustomTriggerIcon {
+  display: inline-flex;
+  align-items: center;
+  transition: transform 0.15s ease;
+}
+
+.timeRangeCustomTriggerIconOpen {
+  transform: rotate(180deg);
+}
+
+// Statuses chip：与时间范围按钮同族视觉，但尺寸略小以对齐次级筛选层级。
+.statusButtonChip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 10px;
+  background: var(--monitor-surface-elevated);
+  color: var(--monitor-ink);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    transform 0.18s ease,
+    border-color 0.18s ease,
+    background-color 0.18s ease,
+    color 0.18s ease;
+}
+
+.statusButtonChip:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--monitor-accent) 35%, var(--monitor-line-strong));
+  background: var(--monitor-surface-hover);
+}
+
+.statusButtonChipActive,
+.statusButtonChipActive:hover {
+  border-color: color-mix(in srgb, var(--monitor-accent) 45%, var(--monitor-line-strong));
+  background: color-mix(in srgb, var(--monitor-accent) 12%, var(--monitor-surface));
+  color: var(--monitor-accent-strong);
+  transform: none;
 }
 
 .segmentButton,
@@ -700,6 +785,104 @@
   width: 100%;
 }
 
+.customRangeQuickPresets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.customRangeQuickPresetButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 10px;
+  background: var(--monitor-surface-elevated);
+  color: var(--monitor-ink);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    transform 0.18s ease,
+    border-color 0.18s ease,
+    background-color 0.18s ease;
+}
+
+.customRangeQuickPresetButton:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--monitor-accent) 35%, var(--monitor-line-strong));
+  background: var(--monitor-surface-hover);
+}
+
+.customRangeModeTabs {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 0;
+  width: fit-content;
+  max-width: 100%;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--monitor-line) 86%, transparent);
+  background: color-mix(in srgb, var(--monitor-surface-elevated) 82%, var(--monitor-surface));
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.customRangeModeTabs::-webkit-scrollbar {
+  display: none;
+}
+
+.customRangeModeTab {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 0 14px;
+  border: 0;
+  border-left: 1px solid color-mix(in srgb, var(--monitor-line) 72%, transparent);
+  border-radius: 0;
+  background: transparent;
+  color: color-mix(in srgb, var(--monitor-muted) 84%, var(--monitor-ink));
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.customRangeModeTab:first-child {
+  border-left: 0;
+}
+
+.customRangeModeTab:hover {
+  color: var(--monitor-ink);
+  background: color-mix(in srgb, var(--monitor-accent) 5%, var(--monitor-surface));
+}
+
+.customRangeModeTabActive,
+.customRangeModeTabActive:hover {
+  background: color-mix(in srgb, var(--monitor-accent) 12%, var(--monitor-surface));
+  color: var(--monitor-accent-strong);
+  font-weight: 800;
+}
+
+.customRangeQuickForm {
+  display: grid;
+  gap: 6px;
+}
+
+.customRangeQuickForm :global(.form-group) {
+  margin-bottom: 0;
+}
+
+.customRangeQuickForm :global(label) {
+  margin-bottom: 5px;
+  color: var(--monitor-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .refreshControls {
   display: inline-flex;
   align-items: center;
@@ -1086,9 +1269,40 @@
   border-bottom: 1px solid color-mix(in srgb, var(--monitor-line) 82%, transparent);
 }
 
+// 时间范围按钮组独占一行(修复"太窄、多档换行、两步操作"的根因)：controlBar 改为
+// 两行纵向 grid——第一行只放时间范围按钮组，不与搜索框/刷新控件共享列宽；第二行才是
+// 搜索框(可伸缩) + 自动刷新/手动刷新/清除筛选。
 .controlBar {
   display: grid;
-  grid-template-columns: auto minmax(160px, 1fr) auto;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+// 时间按钮行改为强制单行 + 横向滚动兜底：加入 3h 档位后固定 7 个快捷按钮 + 1 个
+// "自定义▾"，换行会把"自定义▾"甩到第二行(与搜索框行产生视觉断层)。优先靠下方
+// ~1240px 断点收紧按钮尺寸让整行挤下；仍放不下时靠 overflow-x:auto 横向滚动，
+// 不再允许换到第二行。
+.timeRangeRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 8px;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+.timeRangeRow::-webkit-scrollbar {
+  height: 4px;
+}
+
+.controlBarSecondaryRow {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
 }
 
 .toolbarControls {
@@ -1105,9 +1319,25 @@
 
 .filterGrid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   align-items: start;
   gap: 8px;
+}
+
+// Statuses 是固定 3 项小集合，改为独占一行的按钮 chip 组，不再占 filterGrid 的一列。
+.statusButtonRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.statusButtonLabel {
+  color: var(--monitor-muted);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .filterSelectTrigger {
@@ -1687,6 +1917,18 @@
 }
 
 @container monitoring-page (max-width: 1240px) {
+  // 加入 3h 档位后主快捷行固定 7 按钮 + "自定义▾"；<=1240px 容器宽度下收紧按钮
+  // padding/font-size，让整行在不换行的前提下尽量挤下，减少触发下方横向滚动兜底。
+  .timeRangeQuickButton {
+    min-height: 30px;
+    padding: 0 10px;
+    font-size: 12px;
+  }
+
+  .timeRangeCustomTrigger {
+    gap: 4px;
+  }
+
   .statusBar,
   .statusMeta {
     justify-content: flex-end;
@@ -1753,26 +1995,16 @@
     flex-wrap: wrap;
   }
 
-  .controlBar {
-    grid-template-columns: minmax(0, 1fr) auto;
+  // controlBar 第一行(时间按钮组)本身已独占一行且强制不换行(超宽靠横向滚动)，
+  // 这里只需要让第二行(搜索框 + 刷新控件)在窄容器下换行堆叠，搜索框始终占满整行。
+  .controlBarSecondaryRow {
+    grid-template-columns: minmax(0, 1fr);
     align-items: start;
   }
 
-  .controlBar .segmentedControl,
-  .controlBar .timeRangeControl {
-    order: 1;
+  .controlBarSecondaryRow .refreshControls {
     justify-content: flex-start;
-  }
-
-  .controlBar .refreshControls {
-    order: 2;
-    justify-content: flex-end;
     flex-wrap: wrap;
-  }
-
-  .controlBar .filterSearchInputWrap {
-    order: 3;
-    grid-column: 1 / -1;
   }
 
   .filterGrid {
@@ -1918,21 +2150,20 @@
     grid-template-columns: 1fr;
   }
 
-  .controlBar .segmentedControl,
-  .controlBar .refreshControls,
-  .controlBar .filterSearchInputWrap {
-    grid-column: 1;
+  .controlBarSecondaryRow {
+    grid-template-columns: 1fr;
   }
 
-  .controlBar .filterSearchInputWrap {
+  .controlBarSecondaryRow .filterSearchInputWrap {
+    order: 1;
+  }
+
+  .controlBarSecondaryRow .refreshControls {
     order: 2;
   }
 
-  .controlBar .refreshControls {
-    order: 3;
-  }
-
   .controlBar,
+  .controlBarSecondaryRow,
   .refreshControls,
   .paginationBar,
   .paginationControls,

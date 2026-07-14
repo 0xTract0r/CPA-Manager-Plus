@@ -87,6 +87,7 @@ import {
   buildSecondarySummaryCards,
   buildStatusOptions,
   formatAccountOverviewScopeText,
+  formatDateTimeLocalValue,
   formatMonitoringSummaryScopeText,
   getCurrentInputValue,
   getTodayStartInputValue,
@@ -967,6 +968,42 @@ export function MonitoringCenterPage() {
     setIsCustomRangeModalOpen(false);
   }, [customDraftEndInput, customDraftStartInput, customDraftTimeRangeError]);
 
+  // "自定义▾" 弹层内的快捷 preset(14d/all)：直接切到对应固定档，不经过日期范围表单。
+  const applyQuickPresetTimeRange = useCallback((value: string) => {
+    if (value !== '14d' && value !== 'all') return;
+    setTimeRange(value);
+    setIsCustomRangeModalOpen(false);
+  }, []);
+
+  // 任意 N 小时/N 天：换算成 [now - N, now] 的 datetime-local 输入值，复用既有
+  // custom 日期区间提交路径(customStartInput/customEndInput + timeRange='custom')，
+  // 不新增单独的时间范围计算口径。
+  const applyHoursTimeRange = useCallback((hours: number) => {
+    const endDate = new Date();
+    const startDate = new Date(endDate.getTime() - hours * 60 * 60 * 1000);
+    const startValue = formatDateTimeLocalValue(startDate);
+    const endValue = formatDateTimeLocalValue(endDate);
+    setCustomStartInput(startValue);
+    setCustomEndInput(endValue);
+    setCustomDraftStartInput(startValue);
+    setCustomDraftEndInput(endValue);
+    setTimeRange('custom');
+    setIsCustomRangeModalOpen(false);
+  }, []);
+
+  const applyDaysTimeRange = useCallback((days: number) => {
+    const endDate = new Date();
+    const startDate = new Date(endDate.getTime() - days * 24 * 60 * 60 * 1000);
+    const startValue = formatDateTimeLocalValue(startDate);
+    const endValue = formatDateTimeLocalValue(endDate);
+    setCustomStartInput(startValue);
+    setCustomEndInput(endValue);
+    setCustomDraftStartInput(startValue);
+    setCustomDraftEndInput(endValue);
+    setTimeRange('custom');
+    setIsCustomRangeModalOpen(false);
+  }, []);
+
   const toggleFailedOnly = useCallback(() => {
     setSelectedStatus((previous) => (previous === 'failed' ? 'all' : 'failed'));
   }, []);
@@ -1694,6 +1731,13 @@ export function MonitoringCenterPage() {
         onApply={applyCustomTimeRange}
         onStartChange={handleCustomDraftStartChange}
         onEndChange={handleCustomDraftEndChange}
+        quickPresets={[
+          { value: '14d', label: t('monitoring.range_14d') },
+          { value: 'all', label: t('monitoring.range_all') },
+        ]}
+        onQuickPresetSelect={applyQuickPresetTimeRange}
+        onApplyHours={applyHoursTimeRange}
+        onApplyDays={applyDaysTimeRange}
       />
     </div>
   );
