@@ -28,7 +28,15 @@ const t = ((key: string, options?: Record<string, unknown>) => {
     'monitoring.column_type': 'Type',
     'monitoring.filter_low_cache_hit_rate': 'Low Cache Hit Only',
     'monitoring.filter_low_cache_hit_rate_short': 'Low Cache Hit',
-    'monitoring.filter_low_cache_hit_rate_hint': 'Show only rows with a cache hit rate below 30%.',
+    'monitoring.filter_low_cache_hit_rate_hint':
+      'Show only rows with a cache hit rate below {{threshold}}.',
+    'monitoring.filter_low_cache_hit_rate_threshold_menu_label': 'Change low cache hit threshold',
+    'monitoring.filter_low_cache_hit_rate_threshold_custom': 'Custom threshold',
+    'monitoring.filter_low_cache_hit_rate_threshold_custom_invalid':
+      'Enter a number between 0 and 100.',
+    'monitoring.filter_low_cache_hit_rate_scope_hint':
+      'Filters only the currently loaded rows on this page.',
+    'common.confirm': 'Confirm',
     'monitoring.elapsed_short': 'Elapsed',
     'monitoring.executor_type_short': 'Executor',
     'monitoring.fail_status_code_short': 'HTTP',
@@ -88,6 +96,7 @@ type PanelOverrides = {
   eventsTotalCount?: number;
   eventsLoadedCount?: number;
   lowCacheHitRateOnly?: boolean;
+  lowCacheHitRateThreshold?: number;
 };
 
 const baseRow = (overrides: Partial<PanelRow> = {}): PanelRow => ({
@@ -156,6 +165,7 @@ const renderPanel = (row: PanelRow, overrides: PanelOverrides = {}) =>
       scopedFailureCount={row.failed ? 1 : 0}
       failedOnlyActive={false}
       lowCacheHitRateOnly={overrides.lowCacheHitRateOnly ?? false}
+      lowCacheHitRateThreshold={overrides.lowCacheHitRateThreshold ?? 0.3}
       eventsHasMore={overrides.eventsHasMore ?? false}
       eventsLoadingMore={overrides.eventsLoadingMore ?? false}
       eventsRetentionLimited={overrides.eventsRetentionLimited ?? false}
@@ -169,6 +179,7 @@ const renderPanel = (row: PanelRow, overrides: PanelOverrides = {}) =>
       t={t}
       onToggleFailedOnly={noop}
       onToggleLowCacheHitRateOnly={noop}
+      onLowCacheHitRateThresholdChange={noop}
       onAccountDisplayModeChange={noop}
       onPageChange={noop}
       onPageSizeChange={noop}
@@ -183,10 +194,12 @@ const renderActions = () =>
       scopedFailureCount={0}
       failedOnlyActive={false}
       lowCacheHitRateOnly={false}
+      lowCacheHitRateThreshold={0.3}
       accountDisplayMode="masked"
       t={t}
       onToggleFailedOnly={noop}
       onToggleLowCacheHitRateOnly={noop}
+      onLowCacheHitRateThresholdChange={noop}
       onAccountDisplayModeChange={noop}
     />
   );
@@ -508,6 +521,36 @@ describe('RealtimeEventsPanel', () => {
     expect(inactiveMarkup).toContain('100.0%');
     expect(activeMarkup).not.toContain('100.0%');
     expect(activeMarkup).toContain('empty');
+  });
+
+  it('shows the current threshold on the chip label and lets a lower threshold pass through more rows', () => {
+    const markup = renderActions();
+    // chip 文案带当前阈值(如 "Low Cache Hit <30%")，用户无需猜测筛选口径。
+    expect(markup).toContain('Low Cache Hit &lt;30%');
+  });
+
+  it('filters displayed rows using the configured threshold, not a hardcoded 30%', () => {
+    // 命中率 40%：在默认阈值(<30%)下不算低命中率，但把阈值配置成 <50% 后应被筛出。
+    const midHitRow = baseRow({
+      id: 'mid',
+      inputTokens: 10,
+      cachedTokens: 4,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+    });
+
+    const defaultThresholdMarkup = renderPanel(midHitRow, {
+      lowCacheHitRateOnly: true,
+      lowCacheHitRateThreshold: 0.3,
+    });
+    const widerThresholdMarkup = renderPanel(midHitRow, {
+      lowCacheHitRateOnly: true,
+      lowCacheHitRateThreshold: 0.5,
+    });
+
+    expect(defaultThresholdMarkup).toContain('empty');
+    expect(widerThresholdMarkup).not.toContain('empty');
+    expect(widerThresholdMarkup).toContain('40.0%');
   });
 
   it('shows "--" for cache hit rate when there is no input-side token data', () => {

@@ -113,6 +113,7 @@ import {
   type UsageHeaderSnapshot,
 } from '@/services/api/usageService';
 import {
+  normalizeLowCacheHitRateThreshold,
   readMonitoringCenterUiState,
   writeMonitoringCenterUiState,
   type MonitoringDataTab,
@@ -301,6 +302,11 @@ export function MonitoringCenterPage() {
   // "仅显示低命中率" 筛选状态提升到页面级：masthead 工具条 chip 与实时表过滤共享同一状态，
   // 保证它与 "仅显示失败" chip 在同一行、embedded 与非 embedded 两条渲染路径都可达。
   const [realtimeLowCacheHitRateOnly, setRealtimeLowCacheHitRateOnly] = useState(false);
+  // 低命中率筛选阈值同样提升到页面级并持久化：用户可在预设档位(<50%/<30%/<10%)间切换，
+  // 或输入自定义百分比；默认沿用原先写死的 0.3，不改变既有默认体验。
+  const [realtimeLowCacheHitRateThreshold, setRealtimeLowCacheHitRateThreshold] = useState(
+    () => initialMonitoringCenterUiState.current.realtimeLowCacheHitRateThreshold
+  );
   const focusSnapshotRef = useRef<FocusSnapshot | null>(null);
   const previousAccountPageResetStateRef = useRef<AccountOverviewPageResetState | null>(null);
   const accountQuotaStatesRef = useRef<Record<string, AccountQuotaState>>({});
@@ -565,6 +571,7 @@ export function MonitoringCenterPage() {
       selectedStatus,
       apiKeyPageSize,
       realtimePageSize,
+      realtimeLowCacheHitRateThreshold,
     });
   }, [
     activeDataTab,
@@ -572,6 +579,7 @@ export function MonitoringCenterPage() {
     autoRefreshMs,
     customEndInput,
     customStartInput,
+    realtimeLowCacheHitRateThreshold,
     realtimePageSize,
     searchInput,
     selectedAccount,
@@ -1031,6 +1039,10 @@ export function MonitoringCenterPage() {
     setRealtimeLowCacheHitRateOnly((previous) => !previous);
   }, []);
 
+  const changeRealtimeLowCacheHitRateThreshold = useCallback((threshold: number) => {
+    setRealtimeLowCacheHitRateThreshold(normalizeLowCacheHitRateThreshold(threshold));
+  }, []);
+
   const toggleApiKeyExpanded = useCallback((apiKeyId: string) => {
     setExpandedApiKeys((previous) => ({
       ...previous,
@@ -1292,10 +1304,12 @@ export function MonitoringCenterPage() {
         scopedFailureCount={scopedFailureCount}
         failedOnlyActive={failedOnlyActive}
         lowCacheHitRateOnly={realtimeLowCacheHitRateOnly}
+        lowCacheHitRateThreshold={realtimeLowCacheHitRateThreshold}
         accountDisplayMode={accountDisplayMode}
         t={t}
         onToggleFailedOnly={toggleFailedOnly}
         onToggleLowCacheHitRateOnly={toggleRealtimeLowCacheHitRateOnly}
+        onLowCacheHitRateThresholdChange={changeRealtimeLowCacheHitRateThreshold}
         onAccountDisplayModeChange={setAccountDisplayMode}
       />
     );
@@ -1306,11 +1320,13 @@ export function MonitoringCenterPage() {
     accountSortOptions,
     activeDataTab,
     apiKeyRows.length,
+    changeRealtimeLowCacheHitRateThreshold,
     failedOnlyActive,
     handleAccountSortKeyChange,
     overallLoading,
     realtimeLogRows.length,
     realtimeLowCacheHitRateOnly,
+    realtimeLowCacheHitRateThreshold,
     refreshAll,
     scopedFailureCount,
     searchInput,
@@ -1719,6 +1735,7 @@ export function MonitoringCenterPage() {
               scopedFailureCount={scopedFailureCount}
               failedOnlyActive={failedOnlyActive}
               lowCacheHitRateOnly={realtimeLowCacheHitRateOnly}
+              lowCacheHitRateThreshold={realtimeLowCacheHitRateThreshold}
               eventsHasMore={eventsHasMore}
               eventsLoadingMore={eventsLoadingMore}
               eventsRetentionLimited={eventsRetentionLimited}
@@ -1732,6 +1749,7 @@ export function MonitoringCenterPage() {
               t={t}
               onToggleFailedOnly={toggleFailedOnly}
               onToggleLowCacheHitRateOnly={toggleRealtimeLowCacheHitRateOnly}
+              onLowCacheHitRateThresholdChange={changeRealtimeLowCacheHitRateThreshold}
               onAccountDisplayModeChange={setAccountDisplayMode}
               onPageChange={setRealtimePage}
               onPageSizeChange={handleRealtimePageSizeChange}

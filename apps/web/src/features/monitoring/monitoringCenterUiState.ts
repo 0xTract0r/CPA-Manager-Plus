@@ -25,6 +25,10 @@ export const DEFAULT_MONITORING_TIME_RANGE: MonitoringCenterTimeRange = '24h';
 export const DEFAULT_MONITORING_AUTO_REFRESH_MS = '30000';
 export const DEFAULT_MONITORING_TABLE_PAGE_SIZE = 12;
 export const DEFAULT_MONITORING_REALTIME_PAGE_SIZE = 10;
+// "仅显示低命中率" 筛选阈值：与染色阈值(GOOD=0.6/WARN=0.3)解耦，用户可在预设档位间切换，
+// 默认沿用原先写死的 0.3(30%)，保持既有行为不变。
+export const REALTIME_LOW_CACHE_HIT_RATE_THRESHOLD_PRESETS = [0.5, 0.3, 0.1] as const;
+export const DEFAULT_REALTIME_LOW_CACHE_HIT_RATE_THRESHOLD = 0.3;
 
 export const MONITORING_CENTER_UI_STATE_STORAGE_KEY = 'monitoring.centerUiState';
 
@@ -44,6 +48,8 @@ export type MonitoringCenterUiState = {
   selectedStatus: MonitoringCenterStatusFilter;
   apiKeyPageSize: number;
   realtimePageSize: number;
+  // 0-1 之间的小数（如 0.3 表示 30%）；预设档位之外允许用户输入自定义合法值。
+  realtimeLowCacheHitRateThreshold: number;
 };
 
 const TAB_SET = new Set<MonitoringDataTab>(MONITORING_DATA_TABS);
@@ -103,6 +109,18 @@ const normalizePageSize = (
   return typeof parsed === 'number' && options.includes(parsed) ? parsed : fallback;
 };
 
+// 阈值允许预设档位之外的自定义值，但必须是 (0, 1) 区间内的有限小数，
+// 避免持久化损坏值（NaN/负数/超过 100%）污染后续筛选逻辑。
+export const isValidLowCacheHitRateThreshold = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value) && value > 0 && value < 1;
+
+export const normalizeLowCacheHitRateThreshold = (value: unknown): number => {
+  const parsed = typeof value === 'string' ? Number(value) : value;
+  return isValidLowCacheHitRateThreshold(parsed)
+    ? parsed
+    : DEFAULT_REALTIME_LOW_CACHE_HIT_RATE_THRESHOLD;
+};
+
 export const getDefaultMonitoringCenterUiState = (): MonitoringCenterUiState => ({
   activeDataTab: DEFAULT_MONITORING_DATA_TAB,
   timeRange: DEFAULT_MONITORING_TIME_RANGE,
@@ -119,6 +137,7 @@ export const getDefaultMonitoringCenterUiState = (): MonitoringCenterUiState => 
   selectedStatus: 'all',
   apiKeyPageSize: DEFAULT_MONITORING_TABLE_PAGE_SIZE,
   realtimePageSize: DEFAULT_MONITORING_REALTIME_PAGE_SIZE,
+  realtimeLowCacheHitRateThreshold: DEFAULT_REALTIME_LOW_CACHE_HIT_RATE_THRESHOLD,
 });
 
 export const normalizeMonitoringCenterUiState = (value: unknown): MonitoringCenterUiState => {
@@ -153,6 +172,9 @@ export const normalizeMonitoringCenterUiState = (value: unknown): MonitoringCent
       record.realtimePageSize,
       REALTIME_PAGE_SIZE_OPTIONS,
       defaults.realtimePageSize
+    ),
+    realtimeLowCacheHitRateThreshold: normalizeLowCacheHitRateThreshold(
+      record.realtimeLowCacheHitRateThreshold
     ),
   };
 };

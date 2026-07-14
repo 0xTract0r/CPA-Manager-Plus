@@ -1383,6 +1383,154 @@
   opacity: 0.9;
 }
 
+// "仅显示低命中率" 筛选控件：chip 主体（开关筛选）+ 紧邻的 caret 触发器（打开阈值菜单），
+// 视觉上拼成一体，但各自独立可点击。caret 复用 .filterToggleChipActive 的选中态配色，
+// 不引入新的强调色，避免与 chip 语义脱节；菜单是绝对定位的浮层，不使用 portal（父级
+// 工具条无 overflow:hidden，无需担心裁切）。
+.lowCacheHitRateFilterControl {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.lowCacheHitRateThresholdTrigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  min-height: 34px;
+  padding: 0;
+  border: 1px solid var(--monitor-line);
+  border-radius: 12px;
+  background: var(--monitor-surface-elevated);
+  color: var(--monitor-muted);
+  cursor: pointer;
+  transition:
+    border-color 0.18s ease,
+    background-color 0.18s ease,
+    color 0.18s ease;
+}
+
+.lowCacheHitRateThresholdTrigger:hover {
+  border-color: color-mix(in srgb, var(--monitor-accent) 35%, var(--monitor-line-strong));
+  color: var(--monitor-ink);
+}
+
+.lowCacheHitRateThresholdMenu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 190px;
+  padding: 8px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 12px;
+  background: var(--monitor-surface-elevated);
+  box-shadow: var(--shadow);
+}
+
+.lowCacheHitRateThresholdMenuItem {
+  display: flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--monitor-ink);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lowCacheHitRateThresholdMenuItem:hover {
+  background: color-mix(in srgb, var(--monitor-accent) 12%, transparent);
+}
+
+.lowCacheHitRateThresholdMenuItemActive {
+  background: color-mix(in srgb, var(--monitor-accent) 18%, transparent);
+  color: var(--monitor-accent-strong);
+}
+
+.lowCacheHitRateThresholdMenuCustom {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px 2px;
+  border-top: 1px solid color-mix(in srgb, var(--monitor-line) 72%, transparent);
+
+  label {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--monitor-muted);
+  }
+}
+
+.lowCacheHitRateThresholdMenuCustomInputRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+
+  span {
+    font-size: 12px;
+    color: var(--monitor-muted);
+  }
+}
+
+.lowCacheHitRateThresholdMenuCustomInput {
+  width: 56px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 8px;
+  background: var(--monitor-surface);
+  color: var(--monitor-ink);
+  font: inherit;
+  font-size: 12px;
+}
+
+.lowCacheHitRateThresholdMenuCustomInputError {
+  border-color: var(--monitor-red);
+}
+
+.lowCacheHitRateThresholdMenuCustomApply {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--monitor-accent);
+  border-radius: 8px;
+  background: var(--monitor-accent);
+  color: #fff;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.lowCacheHitRateThresholdMenuCustomApply:hover {
+  background: var(--monitor-accent-strong);
+  border-color: var(--monitor-accent-strong);
+}
+
+.lowCacheHitRateThresholdMenuCustomError {
+  font-size: 11px;
+  color: var(--monitor-red);
+}
+
+.lowCacheHitRateThresholdMenuHint {
+  margin: 4px 0 0;
+  padding-top: 6px;
+  border-top: 1px solid color-mix(in srgb, var(--monitor-line) 72%, transparent);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--monitor-muted);
+}
+
 .errorBox,
 .callout {
   display: flex;

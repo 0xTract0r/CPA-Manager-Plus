@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   DEFAULT_MONITORING_DATA_TAB,
   DEFAULT_MONITORING_TIME_RANGE,
+  DEFAULT_REALTIME_LOW_CACHE_HIT_RATE_THRESHOLD,
   MONITORING_CENTER_UI_STATE_STORAGE_KEY,
   getDefaultMonitoringCenterUiState,
   normalizeMonitoringCenterUiState,
@@ -9,6 +10,7 @@ import {
   normalizeMonitoringDataTab,
   normalizeMonitoringStatusFilter,
   normalizeMonitoringTimeRange,
+  normalizeLowCacheHitRateThreshold,
   readMonitoringCenterUiState,
   writeMonitoringCenterUiState,
 } from './monitoringCenterUiState';
@@ -140,5 +142,34 @@ describe('monitoringCenterUiState', () => {
   it('returns defaults when stored payload is invalid JSON', () => {
     storage.setItem(MONITORING_CENTER_UI_STATE_STORAGE_KEY, '{not json');
     expect(readMonitoringCenterUiState()).toEqual(getDefaultMonitoringCenterUiState());
+  });
+
+  it('normalizes low cache hit rate threshold to a valid (0,1) value or falls back to default', () => {
+    expect(normalizeLowCacheHitRateThreshold(0.5)).toBe(0.5);
+    expect(normalizeLowCacheHitRateThreshold(0.1)).toBe(0.1);
+    expect(normalizeLowCacheHitRateThreshold(0.42)).toBe(0.42);
+    expect(normalizeLowCacheHitRateThreshold('0.2')).toBe(0.2);
+    expect(normalizeLowCacheHitRateThreshold(0)).toBe(DEFAULT_REALTIME_LOW_CACHE_HIT_RATE_THRESHOLD);
+    expect(normalizeLowCacheHitRateThreshold(1)).toBe(DEFAULT_REALTIME_LOW_CACHE_HIT_RATE_THRESHOLD);
+    expect(normalizeLowCacheHitRateThreshold(-0.1)).toBe(
+      DEFAULT_REALTIME_LOW_CACHE_HIT_RATE_THRESHOLD
+    );
+    expect(normalizeLowCacheHitRateThreshold(Number.NaN)).toBe(
+      DEFAULT_REALTIME_LOW_CACHE_HIT_RATE_THRESHOLD
+    );
+    expect(normalizeLowCacheHitRateThreshold('bad')).toBe(
+      DEFAULT_REALTIME_LOW_CACHE_HIT_RATE_THRESHOLD
+    );
+    expect(normalizeLowCacheHitRateThreshold(undefined)).toBe(
+      DEFAULT_REALTIME_LOW_CACHE_HIT_RATE_THRESHOLD
+    );
+  });
+
+  it('persists a custom low cache hit rate threshold via localStorage', () => {
+    writeMonitoringCenterUiState({ realtimeLowCacheHitRateThreshold: 0.5 });
+    expect(readMonitoringCenterUiState()).toEqual({
+      ...getDefaultMonitoringCenterUiState(),
+      realtimeLowCacheHitRateThreshold: 0.5,
+    });
   });
 });
