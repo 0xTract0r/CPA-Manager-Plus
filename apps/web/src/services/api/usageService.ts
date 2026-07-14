@@ -649,6 +649,9 @@ export interface MonitoringAnalyticsFilters {
   failed_only?: boolean;
   min_latency_ms?: number;
   cache_status?: string;
+  // G2b "低命中率全量筛":后端按此阈值(严格小于)在 SQL 层筛出低命中率事件,
+  // 覆盖当前时间范围内的全部数据而非仅已加载分页；与前端本地过滤(双保险)配合使用。
+  max_cache_hit_rate?: number;
 }
 
 export interface MonitoringAnalyticsEventsPageRequest {

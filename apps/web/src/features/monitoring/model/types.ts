@@ -363,6 +363,9 @@ export interface MonitoringScopeFilters {
   minLatencyMs?: number;
   cacheStatus?: string;
   headerTraceId?: string;
+  // G2b "低命中率全量筛" 阈值：开启后下推到后端 SQL 层做全量筛选（而非仅对已加载分页
+  // 本地过滤）。undefined/未开启时不筛选。
+  maxCacheHitRate?: number;
 }
 
 export interface UseMonitoringDataParams {

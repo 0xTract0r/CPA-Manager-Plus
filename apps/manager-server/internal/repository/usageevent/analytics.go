@@ -50,6 +50,11 @@ type AnalyticsFilter struct {
 	HeaderErrorCodes []string
 	HeaderQuotaPlans []string
 	HeaderTraceIDs   []string
+	// MaxCacheHitRate筛选"低命中率"事件(命中率 < 阈值)。用指针而非 float64
+	// 表达"未启用"与"阈值恰好为 0"的区别(0 是合法阈值,理论上排除所有命中率>=0的行)。
+	// nil = 不筛选;非 nil = 只保留命中率严格小于该阈值的行(命中率不可计算的行始终排除,
+	// 对齐前端 rate === null 时隐藏该行的语义)。
+	MaxCacheHitRate *float64
 }
 
 var analyticsSearchTextColumns = []string{
@@ -2041,6 +2046,24 @@ func analyticsWhere(filter AnalyticsFilter) (string, []any) {
 		conditions = append(conditions, "coalesce(cache_read_tokens, 0) > 0")
 	case "creation":
 		conditions = append(conditions, "coalesce(cache_creation_tokens, 0) > 0")
+	}
+
+	if filter.MaxCacheHitRate != nil {
+		// 与前端 monitoringCenterPageModel.ts:computeCacheHitRate 逐字对齐:
+		//   命中 tokens = cache_read_tokens>0 ? cache_read_tokens : cachedTokens(去重后)
+		//   Anthropic 系(model slug 以 claude/anthropic 开头): 分母 = input + cache_read + cache_creation
+		//   其余(OpenAI 系等): 分母 = max(input, 命中 tokens) + cache_creation
+		// cachedTokens 用与 EventsPageWithFilter 同源的 compatCachedExpr(events 行的
+		// CachedTokens 字段就是这个表达式的值),而非原始 cached_tokens/cache_tokens 列,
+		// 避免筛选条件与实际展示给用户、驱动前端本地过滤的数值出现口径分裂。
+		hitTokensExpr := "(case when coalesce(cache_read_tokens, 0) > 0 then cache_read_tokens else (" + compatCachedExpr + ") end)"
+		anthropicExpr := "(lower(model) like 'claude%' or lower(model) like '%/claude%' or lower(model) like 'anthropic%' or lower(model) like '%/anthropic%')"
+		denomExpr := "(case when " + anthropicExpr + " then input_tokens + coalesce(cache_read_tokens, 0) + coalesce(cache_creation_tokens, 0)" +
+			" else (case when input_tokens > " + hitTokensExpr + " then input_tokens else " + hitTokensExpr + " end) + coalesce(cache_creation_tokens, 0) end)"
+		// 整数列相除必须 *1.0 强制浮点除法;分母<=0 的行(命中率不可计算)直接排除,
+		// 对齐前端 rate === null 时该行被判定为"看不出命中率"而非"命中率为 0" 的隐藏语义。
+		conditions = append(conditions, "("+denomExpr+" > 0 and ("+hitTokensExpr+" * 1.0 / "+denomExpr+") < ?)")
+		args = append(args, *filter.MaxCacheHitRate)
 	}
 
 	return "where " + strings.Join(conditions, " and "), args

@@ -390,6 +390,9 @@ export function MonitoringCenterPage() {
       apiKeyHash: selectedApiKeyHash,
       headerTraceId: selectedHeaderTraceId,
       status: selectedStatus,
+      // G2b：仅当"仅显示低命中率" chip 开启时才下推阈值，让后端做跨全部数据的 SQL 层
+      // 全量筛选；未开启时不传，保持原有"不筛选"行为。
+      maxCacheHitRate: realtimeLowCacheHitRateOnly ? realtimeLowCacheHitRateThreshold : undefined,
     }),
     [
       drilldownAuthFile,
@@ -397,6 +400,8 @@ export function MonitoringCenterPage() {
       drilldownMinLatencyMs,
       drilldownProjectId,
       drilldownRequestType,
+      realtimeLowCacheHitRateOnly,
+      realtimeLowCacheHitRateThreshold,
       selectedAccount,
       selectedApiKeyHash,
       selectedChannel,

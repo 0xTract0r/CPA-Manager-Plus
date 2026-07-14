@@ -66,6 +66,10 @@ type Filters struct {
 	FailedOnly       bool     `json:"failed_only"`
 	MinLatencyMS     int64    `json:"min_latency_ms"`
 	CacheStatus      string   `json:"cache_status"`
+	// MaxCacheHitRate 是"低命中率全量筛"(G2b)阈值:只保留命中率严格小于该值的事件。
+	// nil = 不筛选;非 nil 时即便是 0 也生效,与 store.AnalyticsFilter.MaxCacheHitRate
+	// 的指针语义保持一致。
+	MaxCacheHitRate *float64 `json:"max_cache_hit_rate"`
 }
 
 type Include struct {
@@ -1148,6 +1152,7 @@ func buildFilter(req Request) store.AnalyticsFilter {
 		FailedOnly:       req.Filters.FailedOnly,
 		MinLatencyMS:     req.Filters.MinLatencyMS,
 		CacheStatus:      req.Filters.CacheStatus,
+		MaxCacheHitRate:  req.Filters.MaxCacheHitRate,
 	}
 }
 

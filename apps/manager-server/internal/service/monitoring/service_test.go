@@ -1191,6 +1191,120 @@ func TestAnalyticsAppliesCacheStatusFilter(t *testing.T) {
 	}
 }
 
+// TestAnalyticsAppliesMaxCacheHitRateFilter 覆盖 G2b "低命中率全量筛"的 SQL 阈值条件,
+// 与前端 monitoringCenterPageModel.ts:computeCacheHitRate 逐字对齐:
+//   - Anthropic 系(model slug 以 claude/anthropic 开头): 分母 = input + cache_read + cache_creation
+//   - 非 Anthropic 系(如 gpt-*): 分母 = max(input, 命中tokens) + cache_creation
+//   - 分母 <= 0 的行必须被排除(命中率不可计算,对齐前端 rate === null 时隐藏该行)
+//   - 命中率恰好等于阈值的行不应入选(阈值语义是严格小于)
+func TestAnalyticsAppliesMaxCacheHitRateFilter(t *testing.T) {
+	db := newMonitoringTestStore(t)
+	ctx := context.Background()
+	fromMS := int64(1_778_300_000_000)
+	toMS := fromMS + 60*60*1000
+
+	// Anthropic 系: input=100, cache_read=0 -> hit=0, denom=100+0+0=100 -> rate=0 (低命中率,应入选)
+	claudeLowHit := monitoringEvent("claude-low", fromMS+1_000, "claude-3-5-sonnet", "auth-1", "source-a", false, 100, 5, 0, 0, 105, nil)
+	// Anthropic 系: input=100, cache_read=400 -> denom=100+400+0=500, hit=400 -> rate=0.8 (高命中率,不入选于 <0.5 阈值)
+	claudeHighHit := monitoringEvent("claude-high", fromMS+2_000, "anthropic/claude-3-opus", "auth-1", "source-a", false, 100, 5, 0, 0, 105, nil)
+	claudeHighHit.CacheReadTokens = 400
+	// 非 Anthropic 系(gpt): input=100, cache_read=10 -> hit=10, denom=max(100,10)+0=100 -> rate=0.1 (低命中率,应入选)
+	gptLowHit := monitoringEvent("gpt-low", fromMS+3_000, "gpt-5.6-sol", "auth-1", "source-a", false, 100, 5, 0, 0, 105, nil)
+	gptLowHit.CacheReadTokens = 10
+	// 非 Anthropic 系: input=100, cache_read=90 -> hit=90, denom=max(100,90)+0=100 -> rate=0.9 (高命中率,不入选)
+	gptHighHit := monitoringEvent("gpt-high", fromMS+4_000, "gpt-5.6-sol", "auth-1", "source-a", false, 100, 5, 0, 0, 105, nil)
+	gptHighHit.CacheReadTokens = 90
+	// 分母为 0 的行(input=0, 无 cache_read/cache_creation, 无命中 tokens): 命中率不可计算,
+	// 任何阈值下都必须排除,对齐前端 rate === null 隐藏该行的语义。
+	zeroDenom := monitoringEvent("zero-denom", fromMS+5_000, "gpt-5.6-sol", "auth-1", "source-a", false, 0, 0, 0, 0, 0, nil)
+	// 边界: 命中率恰好等于阈值 0.5 的行(非 Anthropic: input=100, cache_read=50 -> rate=0.5),
+	// 阈值判定是严格小于,恰好相等不应入选。
+	boundaryEqual := monitoringEvent("boundary-equal", fromMS+6_000, "gpt-5.6-sol", "auth-1", "source-a", false, 100, 5, 0, 0, 105, nil)
+	boundaryEqual.CacheReadTokens = 50
+
+	if _, err := db.InsertEvents(ctx, []usage.Event{claudeLowHit, claudeHighHit, gptLowHit, gptHighHit, zeroDenom, boundaryEqual}); err != nil {
+		t.Fatalf("insert events: %v", err)
+	}
+
+	threshold := 0.5
+	resp, err := New(db).Analytics(ctx, Request{
+		FromMS:  fromMS,
+		ToMS:    toMS,
+		Filters: Filters{MaxCacheHitRate: &threshold},
+		Include: Include{Summary: true, EventsPage: &EventsPage{Limit: 50}},
+	})
+	if err != nil {
+		t.Fatalf("analytics with max cache hit rate filter: %v", err)
+	}
+	wantHashes := []string{"gpt-low", "claude-low"}
+	if resp.Summary == nil || int(resp.Summary.TotalCalls) != len(wantHashes) {
+		t.Fatalf("filtered summary = %#v", resp.Summary)
+	}
+	if resp.Events == nil || len(resp.Events.Items) != len(wantHashes) {
+		t.Fatalf("filtered events = %#v", resp.Events)
+	}
+	gotHashes := make([]string, 0, len(resp.Events.Items))
+	for _, item := range resp.Events.Items {
+		gotHashes = append(gotHashes, item.EventHash)
+	}
+	if !slices.Contains(gotHashes, "gpt-low") || !slices.Contains(gotHashes, "claude-low") {
+		t.Fatalf("expected low cache hit rate events, got %#v", gotHashes)
+	}
+	if slices.Contains(gotHashes, "zero-denom") {
+		t.Fatalf("zero-denominator event must be excluded (rate is unavailable), got %#v", gotHashes)
+	}
+	if slices.Contains(gotHashes, "boundary-equal") {
+		t.Fatalf("event with rate exactly at threshold must be excluded (strict less-than), got %#v", gotHashes)
+	}
+	if slices.Contains(gotHashes, "claude-high") || slices.Contains(gotHashes, "gpt-high") {
+		t.Fatalf("high cache hit rate events must be excluded, got %#v", gotHashes)
+	}
+}
+
+// TestAnalyticsMaxCacheHitRateEventsPageTotalCountMatchesPage 确保阈值加入 analyticsWhere 后,
+// EventsCountWithFilter 与 EventsPageWithFilter 共用同一 where 子句,total_count 与实际分页
+// 条目数保持一致(沿用 TestAnalyticsEventsPageTotalCountRespectsFilters 的验证模式)。
+func TestAnalyticsMaxCacheHitRateEventsPageTotalCountMatchesPage(t *testing.T) {
+	db := newMonitoringTestStore(t)
+	ctx := context.Background()
+	fromMS := int64(1_778_400_000_000)
+	toMS := fromMS + 60*60*1000
+
+	events := make([]usage.Event, 0, 6)
+	for i := range 4 {
+		// 低命中率: input=100, cache_read=5 -> rate=0.05
+		e := monitoringEvent(fmt.Sprintf("low-%d", i), fromMS+int64(i+1)*1_000, "gpt-5.6-sol", "auth-1", "source-a", false, 100, 5, 0, 0, 105, nil)
+		e.CacheReadTokens = 5
+		events = append(events, e)
+	}
+	for i := range 2 {
+		// 高命中率: input=100, cache_read=95 -> rate=0.95
+		e := monitoringEvent(fmt.Sprintf("high-%d", i), fromMS+int64(100+i)*1_000, "gpt-5.6-sol", "auth-1", "source-a", false, 100, 5, 0, 0, 105, nil)
+		e.CacheReadTokens = 95
+		events = append(events, e)
+	}
+	if _, err := db.InsertEvents(ctx, events); err != nil {
+		t.Fatalf("insert events: %v", err)
+	}
+
+	threshold := 0.5
+	resp, err := New(db).Analytics(ctx, Request{
+		FromMS:  fromMS,
+		ToMS:    toMS,
+		Filters: Filters{MaxCacheHitRate: &threshold},
+		Include: Include{EventsPage: &EventsPage{Limit: 2}},
+	})
+	if err != nil {
+		t.Fatalf("analytics: %v", err)
+	}
+	if resp.Events == nil || resp.Events.TotalCount != 4 {
+		t.Fatalf("total_count = %#v, want 4", resp.Events)
+	}
+	if len(resp.Events.Items) != 2 {
+		t.Fatalf("page items = %d, want 2 (limit respected while total_count reflects full match set)", len(resp.Events.Items))
+	}
+}
+
 func TestAnalyticsAppliesFailedOnlyFilter(t *testing.T) {
 	db := newMonitoringTestStore(t)
 	ctx := context.Background()
