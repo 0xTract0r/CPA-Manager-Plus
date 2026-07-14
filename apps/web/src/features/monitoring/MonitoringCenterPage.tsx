@@ -88,6 +88,7 @@ import {
   buildStatusOptions,
   formatAccountOverviewScopeText,
   formatDateTimeLocalValue,
+  formatMonitoringCustomRangeCompactLabel,
   formatMonitoringSummaryScopeText,
   getCurrentInputValue,
   getTodayStartInputValue,
@@ -96,6 +97,7 @@ import {
   parseDateTimeLocalValue,
   requestAccountQuota,
   type FocusSnapshot,
+  type MonitoringCustomRangeDescriptor,
   type StatusFilter,
 } from '@/features/monitoring/model/monitoringCenterPageModel';
 import {
@@ -247,6 +249,11 @@ export function MonitoringCenterPage() {
   const [expandedApiKeys, setExpandedApiKeys] = useState<Record<string, boolean>>({});
   const [focusedAccount, setFocusedAccount] = useState<string | null>(null);
   const [isCustomRangeModalOpen, setIsCustomRangeModalOpen] = useState(false);
+  // 记录用户在 自定义弹层 里实际选择的方式(N小时/N天/日期范围)，供"当前统计范围"caption
+  // 与时间行"自定义"段还原实际所选范围，而不是笼统展示"自定义"。刷新页面后没有描述符
+  // (旧持久化状态只存了 timeRange='custom')时，两处都回退到笼统文案，不报错、不空白。
+  const [customRangeDescriptor, setCustomRangeDescriptor] =
+    useState<MonitoringCustomRangeDescriptor | null>(null);
   const [usageExporting, setUsageExporting] = useState(false);
   const [usageImporting, setUsageImporting] = useState(false);
   const [usageSyncingFromCore, setUsageSyncingFromCore] = useState(false);
@@ -640,8 +647,17 @@ export function MonitoringCenterPage() {
     [accountStatusBounds, i18n.language, t]
   );
   const monitoringSummaryScopeText = useMemo(
-    () => formatMonitoringSummaryScopeText(timeRange, t),
-    [t, timeRange]
+    () => formatMonitoringSummaryScopeText(timeRange, t, customRangeDescriptor, i18n.language),
+    [customRangeDescriptor, i18n.language, t, timeRange]
+  );
+  // 时间行"自定义"段的紧凑标签：仅在真的处于 custom 档时用描述符还原实际选择，
+  // 其余快捷档下 timeRange !== 'custom'，回退到笼统的"自定义"文案(段本身不高亮)。
+  const customRangeCompactLabel = useMemo(
+    () =>
+      timeRange === 'custom'
+        ? formatMonitoringCustomRangeCompactLabel(customRangeDescriptor, i18n.language, t)
+        : t('monitoring.range_custom'),
+    [customRangeDescriptor, i18n.language, t, timeRange]
   );
 
   const scopedSummary = monitoringSummary;
@@ -964,13 +980,21 @@ export function MonitoringCenterPage() {
     if (customDraftTimeRangeError) return;
     setCustomStartInput(customDraftStartInput);
     setCustomEndInput(customDraftEndInput);
+    // 日期范围模式的描述符只在提交时(而不是每次草稿改动时)重新计算一次，
+    // 用最终确认的开始/结束时间还原展示，与其余 hours/days 模式一致。
+    const startMs = parseDateTimeLocalValue(customDraftStartInput);
+    const endMs = parseDateTimeLocalValue(customDraftEndInput);
+    setCustomRangeDescriptor(
+      startMs !== null && endMs !== null ? { mode: 'range', startMs, endMs } : null
+    );
     setTimeRange('custom');
     setIsCustomRangeModalOpen(false);
   }, [customDraftEndInput, customDraftStartInput, customDraftTimeRangeError]);
 
   // 任意 N 小时/N 天：换算成 [now - N, now] 的 datetime-local 输入值，复用既有
   // custom 日期区间提交路径(customStartInput/customEndInput + timeRange='custom')，
-  // 不新增单独的时间范围计算口径。
+  // 不新增单独的时间范围计算口径；额外记录 hours/days 描述符，供 caption 与时间行
+  // "自定义"段还原"最近 N 小时/N 天"这种更直观的展示，而不是退化成日期范围格式。
   const applyHoursTimeRange = useCallback((hours: number) => {
     const endDate = new Date();
     const startDate = new Date(endDate.getTime() - hours * 60 * 60 * 1000);
@@ -980,6 +1004,7 @@ export function MonitoringCenterPage() {
     setCustomEndInput(endValue);
     setCustomDraftStartInput(startValue);
     setCustomDraftEndInput(endValue);
+    setCustomRangeDescriptor({ mode: 'hours', hours });
     setTimeRange('custom');
     setIsCustomRangeModalOpen(false);
   }, []);
@@ -993,6 +1018,7 @@ export function MonitoringCenterPage() {
     setCustomEndInput(endValue);
     setCustomDraftStartInput(startValue);
     setCustomDraftEndInput(endValue);
+    setCustomRangeDescriptor({ mode: 'days', days });
     setTimeRange('custom');
     setIsCustomRangeModalOpen(false);
   }, []);
@@ -1576,6 +1602,7 @@ export function MonitoringCenterPage() {
 
       <MonitoringFiltersPanel
         timeRange={timeRange}
+        customRangeCompactLabel={customRangeCompactLabel}
         autoRefreshMs={autoRefreshMs}
         selectedAccount={selectedAccount}
         selectedProvider={selectedProvider}

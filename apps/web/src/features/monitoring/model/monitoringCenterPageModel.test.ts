@@ -24,6 +24,7 @@ import {
   buildModelOptionsFromValues,
   buildProviderOptionsFromValues,
   computeCacheHitRate,
+  formatMonitoringCustomRangeCompactLabel,
   formatMonitoringSummaryScopeText,
   mergeObservedAccountQuotaEntry,
   mergeObservedAccountQuotaState,
@@ -278,6 +279,8 @@ describe('formatMonitoringSummaryScopeText', () => {
     expect(formatMonitoringSummaryScopeText('14d', localeT)).toBe('当前统计范围：最近 14 天');
     expect(formatMonitoringSummaryScopeText('30d', localeT)).toBe('当前统计范围：最近 30 天');
     expect(formatMonitoringSummaryScopeText('all', localeT)).toBe('当前统计范围：全部');
+    // 没有描述符(如旧持久化状态只存了 timeRange='custom')时回退到笼统"自定义"文案，
+    // 保持向后兼容。
     expect(formatMonitoringSummaryScopeText('custom', localeT)).toBe('当前统计范围：自定义');
   });
 
@@ -287,6 +290,44 @@ describe('formatMonitoringSummaryScopeText', () => {
     expect(formatMonitoringSummaryScopeText('3h', localeT)).toBe('当前统计范围：最近 3 小时');
     expect(formatMonitoringSummaryScopeText('24h', localeT)).toBe('当前统计范围：最近 24 小时');
     expect(formatMonitoringSummaryScopeText('yesterday', localeT)).toBe('当前统计范围：昨天');
+  });
+
+  it('shows the actual selected custom range instead of the generic "custom" label once a descriptor is recorded', () => {
+    const localeT = buildLocaleT(zhCN.monitoring);
+    expect(
+      formatMonitoringSummaryScopeText('custom', localeT, { mode: 'days', days: 20 }, 'zh-CN')
+    ).toBe('当前统计范围：最近 20 天');
+    expect(
+      formatMonitoringSummaryScopeText('custom', localeT, { mode: 'hours', hours: 20 }, 'zh-CN')
+    ).toBe('当前统计范围：最近 20 小时');
+
+    const startMs = new Date('2026-07-01T00:00:00').getTime();
+    const endMs = new Date('2026-07-14T12:00:00').getTime();
+    expect(
+      formatMonitoringSummaryScopeText(
+        'custom',
+        localeT,
+        { mode: 'range', startMs, endMs },
+        'zh-CN'
+      )
+    ).toBe('当前统计范围：7/1 00:00 - 7/14 12:00');
+  });
+
+  it('formats a compact custom-range label for the segmented control tab, distinct from the full caption', () => {
+    const localeT = buildLocaleT(zhCN.monitoring);
+    expect(formatMonitoringCustomRangeCompactLabel(null, 'zh-CN', localeT)).toBe('自定义');
+    expect(
+      formatMonitoringCustomRangeCompactLabel({ mode: 'days', days: 20 }, 'zh-CN', localeT)
+    ).toBe('最近20天');
+    expect(
+      formatMonitoringCustomRangeCompactLabel({ mode: 'hours', hours: 20 }, 'zh-CN', localeT)
+    ).toBe('最近20小时');
+
+    const startMs = new Date('2026-07-01T00:00:00').getTime();
+    const endMs = new Date('2026-07-14T12:00:00').getTime();
+    expect(
+      formatMonitoringCustomRangeCompactLabel({ mode: 'range', startMs, endMs }, 'zh-CN', localeT)
+    ).toBe('07/01~07/14');
   });
 });
 

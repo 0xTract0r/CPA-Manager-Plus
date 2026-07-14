@@ -66,6 +66,14 @@ import {
 
 export type StatusFilter = 'all' | 'success' | 'failed';
 
+// 自定义时间范围描述符：记录用户在 自定义弹层 里实际选择的方式(N小时/N天/日期范围)，
+// 供"当前统计范围"caption 与时间行"自定义"段展示实际所选范围，而不是笼统的"自定义"文案。
+// 仅描述"如何得到这个范围"，不参与范围计算本身(计算仍由 shared/model/timeRange 负责)。
+export type MonitoringCustomRangeDescriptor =
+  | { mode: 'hours'; hours: number }
+  | { mode: 'days'; days: number }
+  | { mode: 'range'; startMs: number; endMs: number };
+
 export type FocusSnapshot = {
   searchInput: string;
   selectedAccount: string;
@@ -1445,7 +1453,55 @@ const MONITORING_SUMMARY_RANGE_LABEL_KEYS: Record<MonitoringTimeRange, string> =
   custom: 'monitoring.range_custom',
 };
 
+// custom 档的紧凑标签：优先用描述符还原用户实际选择("最近 N 天/小时"或日期范围)；
+// 没有描述符时(如首次进入、或旧持久化状态里只有 timeRange='custom' 没有描述符)回退到
+// 笼统的"自定义"文案，保持向后兼容——不能因为加了描述符就让旧状态渲染出错误/空白文案。
+export const formatMonitoringCustomRangeLabel = (
+  descriptor: MonitoringCustomRangeDescriptor | null | undefined,
+  locale: string,
+  t: TFunction
+): string => {
+  if (!descriptor) return t('monitoring.range_custom');
+  if (descriptor.mode === 'hours') {
+    return t('monitoring.custom_hours_applied', { count: descriptor.hours });
+  }
+  if (descriptor.mode === 'days') {
+    return t('monitoring.custom_days_applied', { count: descriptor.days });
+  }
+  return formatStatusWindowLabel(descriptor.startMs, descriptor.endMs, locale);
+};
+
+// 时间行"自定义"段专用的紧凑标签：与 caption 共用同一个描述符，但日期范围模式用更短的
+// 月/日格式(如"07/01~07/14")而不是 formatStatusWindowLabel 的完整"月/日 时:分"格式，
+// 避免撑破连体分段模块的单行布局。
+export const formatMonitoringCustomRangeCompactLabel = (
+  descriptor: MonitoringCustomRangeDescriptor | null | undefined,
+  locale: string,
+  t: TFunction
+): string => {
+  if (!descriptor) return t('monitoring.range_custom');
+  if (descriptor.mode === 'hours') {
+    return t('monitoring.custom_hours_compact', { count: descriptor.hours });
+  }
+  if (descriptor.mode === 'days') {
+    return t('monitoring.custom_days_compact', { count: descriptor.days });
+  }
+  const dateOptions: Intl.DateTimeFormatOptions = { month: '2-digit', day: '2-digit' };
+  const startLabel = new Date(descriptor.startMs).toLocaleDateString(locale, dateOptions);
+  const endLabel = new Date(descriptor.endMs).toLocaleDateString(locale, dateOptions);
+  return `${startLabel}~${endLabel}`;
+};
+
 export const formatMonitoringSummaryScopeText = (
   timeRange: MonitoringTimeRange,
-  t: TFunction
-): string => t('monitoring.summary_scope_current', { range: t(MONITORING_SUMMARY_RANGE_LABEL_KEYS[timeRange]) });
+  t: TFunction,
+  customDescriptor?: MonitoringCustomRangeDescriptor | null,
+  locale?: string
+): string => {
+  if (timeRange === 'custom') {
+    return t('monitoring.summary_scope_current', {
+      range: formatMonitoringCustomRangeLabel(customDescriptor, locale ?? 'zh-CN', t),
+    });
+  }
+  return t('monitoring.summary_scope_current', { range: t(MONITORING_SUMMARY_RANGE_LABEL_KEYS[timeRange]) });
+};

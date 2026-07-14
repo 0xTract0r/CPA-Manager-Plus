@@ -14,6 +14,11 @@ import styles from '../MonitoringCenterPage.module.scss';
 
 type MonitoringFiltersPanelProps = {
   timeRange: MonitoringTimeRange;
+  /**
+   * 自定义段的紧凑显示标签(如"最近20天"/"最近20小时"/"07/01~07/14")；
+   * 由调用方基于自定义描述符格式化好传入，未选过自定义或没有描述符时回退"自定义"。
+   */
+  customRangeCompactLabel: string;
   autoRefreshMs: string;
   selectedAccount: string;
   selectedProvider: string;
@@ -51,31 +56,23 @@ type MonitoringFiltersPanelProps = {
   onClearFilters: () => void;
 };
 
-// v3：短时段(1h/3h/24h)收纳进时间行最前面的下拉框，不再单独占按钮位；
-// 日级按钮只保留 今天/昨天/最近7天/最近30天，"全部"紧跟在最近30天右侧，
-// 自定义▾ 收纳任意 N 小时/任意 N 天/日期范围，不再包含"最近14天"。
-const SHORT_TIME_RANGE_OPTIONS: Array<{ value: MonitoringTimeRange; labelKey: string }> = [
-  { value: '1h', labelKey: 'monitoring.range_1h' },
-  { value: '3h', labelKey: 'monitoring.range_3h' },
+// v4：时间行改为对齐分析页(usage-analytics)的"连体分段模块"结构——单个
+// .segmentedControl 外框包 7 个 .segmentButton，无间隙、细线分隔，取代 v3 的
+// "短时段下拉 + 独立药丸按钮"两套并存的旧结构。彻底移除短时段下拉(1h/3h 收纳进
+// 自定义弹层的"N 小时"模式)。自定义(最后一段)不参与快捷档判断，用"是否命中任一
+// 快捷档"取反来判断当前是否处于自定义范围。
+const QUICK_TIME_RANGE_OPTIONS: ReadonlyArray<{ value: MonitoringTimeRange; labelKey: string }> = [
   { value: '24h', labelKey: 'monitoring.range_24h' },
-];
-
-const SHORT_TIME_RANGE_VALUES = new Set<MonitoringTimeRange>(
-  SHORT_TIME_RANGE_OPTIONS.map((option) => option.value)
-);
-
-const DAY_TIME_RANGE_OPTIONS: Array<{ value: MonitoringTimeRange; labelKey: string }> = [
   { value: 'today', labelKey: 'monitoring.range_today' },
   { value: 'yesterday', labelKey: 'monitoring.range_yesterday' },
   { value: '7d', labelKey: 'monitoring.range_7d' },
   { value: '30d', labelKey: 'monitoring.range_30d' },
+  { value: 'all', labelKey: 'monitoring.range_all' },
 ];
 
-const QUICK_TIME_RANGE_VALUES = new Set<MonitoringTimeRange>([
-  ...SHORT_TIME_RANGE_OPTIONS.map((option) => option.value),
-  ...DAY_TIME_RANGE_OPTIONS.map((option) => option.value),
-  'all',
-]);
+const QUICK_TIME_RANGE_VALUES = new Set<MonitoringTimeRange>(
+  QUICK_TIME_RANGE_OPTIONS.map((option) => option.value)
+);
 
 const AUTO_REFRESH_OPTIONS = [
   { value: '0', labelKey: 'monitoring.auto_refresh_off' },
@@ -94,6 +91,7 @@ const shortLabel = (t: TFunction, shortKey: string, fallbackKey: string) => {
 
 export function MonitoringFiltersPanel({
   timeRange,
+  customRangeCompactLabel,
   autoRefreshMs,
   selectedAccount,
   selectedProvider,
@@ -137,42 +135,22 @@ export function MonitoringFiltersPanel({
   );
 
   const isCustomActive = !QUICK_TIME_RANGE_VALUES.has(timeRange);
-  // 彻底去掉"最近14天"快捷档：自定义▾ 触发按钮只在真正的 custom 档显示专属文案，
-  // 其余非快捷档（理论上不应再出现，兜底走 range_custom）。
-  const customTriggerLabel = t('monitoring.range_custom');
-
-  const isShortRangeActive = SHORT_TIME_RANGE_VALUES.has(timeRange);
-  const shortRangeSelectValue = isShortRangeActive ? timeRange : '24h';
-  const shortRangeOptions = SHORT_TIME_RANGE_OPTIONS.map((option) => ({
-    value: option.value,
-    label: t(option.labelKey),
-  }));
 
   return (
     <MonitoringPanel className={styles.toolbarPanel}>
       <div className={styles.controlBar}>
-        <div className={styles.timeRangeRow} role="group" aria-label={t('monitoring.filter_time_range')}>
-          <Select
-            className={styles.timeRangeShortSelect}
-            triggerClassName={`${styles.timeRangeShortSelectTrigger} ${
-              isShortRangeActive ? styles.timeRangeShortSelectTriggerActive : ''
-            }`}
-            value={shortRangeSelectValue}
-            options={shortRangeOptions}
-            onChange={(value) => onTimeRangeChange(value as MonitoringTimeRange)}
-            ariaLabel={t('monitoring.filter_time_range')}
-            fullWidth={false}
-          />
-
-          {DAY_TIME_RANGE_OPTIONS.map((option) => {
+        <div
+          className={styles.segmentedControl}
+          role="group"
+          aria-label={t('monitoring.filter_time_range')}
+        >
+          {QUICK_TIME_RANGE_OPTIONS.map((option) => {
             const active = timeRange === option.value;
             return (
               <button
                 key={option.value}
                 type="button"
-                className={`${styles.timeRangeQuickButton} ${
-                  active ? styles.timeRangeQuickButtonActive : ''
-                }`}
+                className={`${styles.segmentButton} ${active ? styles.segmentButtonActive : ''}`}
                 aria-pressed={active}
                 onClick={() => onTimeRangeChange(option.value)}
               >
@@ -183,25 +161,14 @@ export function MonitoringFiltersPanel({
 
           <button
             type="button"
-            className={`${styles.timeRangeQuickButton} ${
-              timeRange === 'all' ? styles.timeRangeQuickButtonActive : ''
-            }`}
-            aria-pressed={timeRange === 'all'}
-            onClick={() => onTimeRangeChange('all')}
-          >
-            {t('monitoring.range_all')}
-          </button>
-
-          <button
-            type="button"
-            className={`${styles.timeRangeQuickButton} ${styles.timeRangeCustomTrigger} ${
-              isCustomActive ? styles.timeRangeQuickButtonActive : ''
+            className={`${styles.segmentButton} ${styles.timeRangeCustomTrigger} ${
+              isCustomActive ? styles.segmentButtonActive : ''
             }`}
             aria-pressed={isCustomActive}
             aria-haspopup="dialog"
             onClick={() => onTimeRangeChange('custom')}
           >
-            {customTriggerLabel}
+            <span className={styles.timeRangeCustomTriggerLabel}>{customRangeCompactLabel}</span>
             <IconChevronDown size={14} className={styles.timeRangeCustomTriggerIcon} />
           </button>
         </div>

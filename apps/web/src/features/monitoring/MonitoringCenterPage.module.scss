@@ -197,95 +197,25 @@
   display: none;
 }
 
-// 时间范围快捷按钮：独立 pill(非拼接 segment)，允许在窄屏下换行到多行而不挤压
-// 搜索框/刷新控件(根治 698132c6 之前"按钮组溢出"与本次"分组下拉太窄换行"两个问题)。
-.timeRangeQuickButton {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  min-height: 34px;
-  padding: 0 14px;
-  border: 1px solid var(--monitor-line);
-  border-radius: 10px;
-  background: var(--monitor-surface-elevated);
-  color: var(--monitor-ink);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 700;
-  white-space: nowrap;
-  cursor: pointer;
-  transition:
-    transform 0.18s ease,
-    border-color 0.18s ease,
-    background-color 0.18s ease,
-    color 0.18s ease;
-}
-
-.timeRangeQuickButton:hover {
-  transform: translateY(-1px);
-  border-color: color-mix(in srgb, var(--monitor-accent) 35%, var(--monitor-line-strong));
-  background: var(--monitor-surface-hover);
-}
-
-.timeRangeQuickButtonActive,
-.timeRangeQuickButtonActive:hover {
-  border-color: color-mix(in srgb, var(--monitor-accent) 45%, var(--monitor-line-strong));
-  background: color-mix(in srgb, var(--monitor-accent) 12%, var(--monitor-surface));
-  color: var(--monitor-accent-strong);
-  transform: none;
-}
-
+// 时间行"自定义▾"段：与其余 6 个 .segmentButton 共用同一套连体分段样式，只额外加
+// caret 间距 + 紧凑标签的溢出省略，避免选中较长的自定义范围(如完整日期区间)撑破
+// 连体模块的单行布局。
 .timeRangeCustomTrigger {
   gap: 6px;
 }
 
+.timeRangeCustomTriggerLabel {
+  overflow: hidden;
+  max-width: 132px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .timeRangeCustomTriggerIcon {
   display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
   transition: transform 0.15s ease;
-}
-
-.timeRangeCustomTriggerIconOpen {
-  transform: rotate(180deg);
-}
-
-// 短时段(1h/3h/24h)下拉框：v3 从按钮改为下拉，放时间行最前面。触发按钮视觉对齐
-// .timeRangeQuickButton（同一族控件），只在 1h/3h/24h 命中时给 active 态高亮，
-// 否则保持中性（不能让"没有点开下拉"看起来像"选中了 24h"）。
-.timeRangeShortSelect {
-  flex: 0 0 auto;
-}
-
-.timeRangeShortSelectTrigger {
-  min-height: 34px !important;
-  padding: 0 10px 0 14px !important;
-  border: 1px solid var(--monitor-line) !important;
-  border-radius: 10px !important;
-  background: var(--monitor-surface-elevated) !important;
-  color: var(--monitor-ink);
-  font-size: 13px;
-  font-weight: 700;
-  box-shadow: none !important;
-  transition:
-    transform 0.18s ease,
-    border-color 0.18s ease,
-    background-color 0.18s ease,
-    color 0.18s ease;
-}
-
-.timeRangeShortSelectTrigger:hover {
-  transform: translateY(-1px);
-  border-color: color-mix(in srgb, var(--monitor-accent) 35%, var(--monitor-line-strong)) !important;
-  background: var(--monitor-surface-hover) !important;
-}
-
-.timeRangeShortSelectTriggerActive,
-.timeRangeShortSelectTriggerActive:hover {
-  border-color: color-mix(in srgb, var(--monitor-accent) 45%, var(--monitor-line-strong)) !important;
-  background: color-mix(in srgb, var(--monitor-accent) 12%, var(--monitor-surface)) !important;
-  color: var(--monitor-accent-strong);
-  transform: none;
 }
 
 .segmentButton,
@@ -1278,36 +1208,9 @@
   gap: 10px;
 }
 
-// 时间按钮行改为强制单行 + 横向滚动兜底：换行会把"自定义▾"/"全部"甩到第二行
-// (与搜索框行产生视觉断层)。优先靠下方 ~1240px 断点收紧按钮尺寸让整行挤下；
-// 仍放不下时靠 overflow-x:auto 横向滚动，不再允许换到第二行。
-//
-// 预防性加固：这里之前是 overflow-y:hidden，与控件 hover 态的
-// transform:translateY(-1px) 组合是已知的裁切陷阱类型——容器纵向裁切 + 子元素
-// hover 位移，理论上可能在某些渲染/子像素场景下把 hover 态按钮的上边框/圆角
-// 裁掉一条像素，造成"控件被上层盖住一点"的视觉假象。多组独立沙盒复现测试
-// (不同窗口宽高、已展开的相邻 Select 下拉、多层级 z-index 排查)均未能确凿
-// 坐实这就是用户反馈的具体遮挡根因，本次未能 100% 复现原始 bug；但这个组合
-// 本身没有必要保留，改为 overflow-y:visible 并用 padding-block + 等量负
-// margin-block 抵消（不改变容器占位尺寸、不影响横向滚动兜底），从原理上排除
-// 这一类风险，且已验证不影响横向滚动裁切与整体布局。
-.timeRangeRow {
-  display: flex;
-  align-items: center;
-  flex-wrap: nowrap;
-  gap: 8px;
-  min-width: 0;
-  padding-block: 2px;
-  margin-block: -2px;
-  overflow-x: auto;
-  overflow-y: visible;
-  scrollbar-width: thin;
-}
-
-.timeRangeRow::-webkit-scrollbar {
-  height: 4px;
-}
-
+// v4：时间行不再是独立的 .timeRangeRow 容器 + 一组独立 pill，而是直接复用
+// masthead 已有的 .segmentedControl 连体分段模块(见文件顶部定义)，本身已内置
+// overflow-x:auto 横向滚动兜底与单行强制(nowrap)，此处无需再重复一套滚动样式。
 .controlBarSecondaryRow {
   display: grid;
   grid-template-columns: minmax(160px, 1fr) auto;
@@ -1913,9 +1816,11 @@
 }
 
 @container monitoring-page (max-width: 1240px) {
-  // 加入 3h 档位后主快捷行固定 7 按钮 + "自定义▾"；<=1240px 容器宽度下收紧按钮
-  // padding/font-size，让整行在不换行的前提下尽量挤下，减少触发下方横向滚动兜底。
-  .timeRangeQuickButton {
+  // 时间行连体分段模块固定 7 段(6 快捷档 + "自定义▾")；<=1240px 容器宽度下收紧
+  // 按钮 padding/font-size，让整行在不换行的前提下尽量挤下，减少触发横向滚动兜底。
+  // 只作用于工具条自己的 .segmentedControl，不影响账号总览/Codex 巡检等其它同名
+  // 分段控件(那些不在这个容器宽度断点的收紧范围内)。
+  .toolbarPanel .segmentedControl .segmentButton {
     min-height: 30px;
     padding: 0 10px;
     font-size: 12px;
