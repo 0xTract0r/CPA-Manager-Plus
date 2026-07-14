@@ -51,22 +51,31 @@ type MonitoringFiltersPanelProps = {
   onClearFilters: () => void;
 };
 
-// 时间范围快捷按钮：一行独占、一步直选，不再需要先展开分组下拉再选择。
-// 只保留高频档位在主按钮行；14 天/全部/任意 N 小时/任意 N 天/日期范围收纳进
-// "自定义▾" 弹层，避免主按钮行超过约 7 个控件在窄屏下换行挤压搜索框。
-const QUICK_TIME_RANGE_OPTIONS: Array<{ value: MonitoringTimeRange; labelKey: string }> = [
+// v3：短时段(1h/3h/24h)收纳进时间行最前面的下拉框，不再单独占按钮位；
+// 日级按钮只保留 今天/昨天/最近7天/最近30天，"全部"紧跟在最近30天右侧，
+// 自定义▾ 收纳任意 N 小时/任意 N 天/日期范围，不再包含"最近14天"。
+const SHORT_TIME_RANGE_OPTIONS: Array<{ value: MonitoringTimeRange; labelKey: string }> = [
   { value: '1h', labelKey: 'monitoring.range_1h' },
   { value: '3h', labelKey: 'monitoring.range_3h' },
   { value: '24h', labelKey: 'monitoring.range_24h' },
+];
+
+const SHORT_TIME_RANGE_VALUES = new Set<MonitoringTimeRange>(
+  SHORT_TIME_RANGE_OPTIONS.map((option) => option.value)
+);
+
+const DAY_TIME_RANGE_OPTIONS: Array<{ value: MonitoringTimeRange; labelKey: string }> = [
   { value: 'today', labelKey: 'monitoring.range_today' },
   { value: 'yesterday', labelKey: 'monitoring.range_yesterday' },
   { value: '7d', labelKey: 'monitoring.range_7d' },
   { value: '30d', labelKey: 'monitoring.range_30d' },
 ];
 
-const QUICK_TIME_RANGE_VALUES = new Set<MonitoringTimeRange>(
-  QUICK_TIME_RANGE_OPTIONS.map((option) => option.value)
-);
+const QUICK_TIME_RANGE_VALUES = new Set<MonitoringTimeRange>([
+  ...SHORT_TIME_RANGE_OPTIONS.map((option) => option.value),
+  ...DAY_TIME_RANGE_OPTIONS.map((option) => option.value),
+  'all',
+]);
 
 const AUTO_REFRESH_OPTIONS = [
   { value: '0', labelKey: 'monitoring.auto_refresh_off' },
@@ -128,20 +137,34 @@ export function MonitoringFiltersPanel({
   );
 
   const isCustomActive = !QUICK_TIME_RANGE_VALUES.has(timeRange);
-  const activeNonQuickLabelKey: Record<string, string> = {
-    '14d': 'monitoring.range_14d',
-    all: 'monitoring.range_all',
-    custom: 'monitoring.range_custom',
-  };
-  const customTriggerLabel = isCustomActive
-    ? t(activeNonQuickLabelKey[timeRange] ?? 'monitoring.range_custom')
-    : t('monitoring.range_custom');
+  // 彻底去掉"最近14天"快捷档：自定义▾ 触发按钮只在真正的 custom 档显示专属文案，
+  // 其余非快捷档（理论上不应再出现，兜底走 range_custom）。
+  const customTriggerLabel = t('monitoring.range_custom');
+
+  const isShortRangeActive = SHORT_TIME_RANGE_VALUES.has(timeRange);
+  const shortRangeSelectValue = isShortRangeActive ? timeRange : '24h';
+  const shortRangeOptions = SHORT_TIME_RANGE_OPTIONS.map((option) => ({
+    value: option.value,
+    label: t(option.labelKey),
+  }));
 
   return (
     <MonitoringPanel className={styles.toolbarPanel}>
       <div className={styles.controlBar}>
         <div className={styles.timeRangeRow} role="group" aria-label={t('monitoring.filter_time_range')}>
-          {QUICK_TIME_RANGE_OPTIONS.map((option) => {
+          <Select
+            className={styles.timeRangeShortSelect}
+            triggerClassName={`${styles.timeRangeShortSelectTrigger} ${
+              isShortRangeActive ? styles.timeRangeShortSelectTriggerActive : ''
+            }`}
+            value={shortRangeSelectValue}
+            options={shortRangeOptions}
+            onChange={(value) => onTimeRangeChange(value as MonitoringTimeRange)}
+            ariaLabel={t('monitoring.filter_time_range')}
+            fullWidth={false}
+          />
+
+          {DAY_TIME_RANGE_OPTIONS.map((option) => {
             const active = timeRange === option.value;
             return (
               <button
@@ -157,6 +180,17 @@ export function MonitoringFiltersPanel({
               </button>
             );
           })}
+
+          <button
+            type="button"
+            className={`${styles.timeRangeQuickButton} ${
+              timeRange === 'all' ? styles.timeRangeQuickButtonActive : ''
+            }`}
+            aria-pressed={timeRange === 'all'}
+            onClick={() => onTimeRangeChange('all')}
+          >
+            {t('monitoring.range_all')}
+          </button>
 
           <button
             type="button"
@@ -231,24 +265,6 @@ export function MonitoringFiltersPanel({
         </div>
       </div>
 
-      <div className={styles.statusButtonRow} role="group" aria-label={t('monitoring.filter_status')}>
-        <span className={styles.statusButtonLabel}>{t('monitoring.filter_status')}</span>
-        {statusOptions.map((option) => {
-          const active = selectedStatus === option.value;
-          return (
-            <button
-              key={option.value}
-              type="button"
-              className={`${styles.statusButtonChip} ${active ? styles.statusButtonChipActive : ''}`}
-              aria-pressed={active}
-              onClick={() => onStatusChange(option.value)}
-            >
-              {option.label}
-            </button>
-          );
-        })}
-      </div>
-
       <div className={styles.filterBar}>
         <div className={styles.filterGrid}>
           <div className={styles.filterAccountStack}>
@@ -286,6 +302,13 @@ export function MonitoringFiltersPanel({
             options={apiKeyOptions}
             onChange={onApiKeyChange}
             ariaLabel={t('monitoring.filter_api_key')}
+            triggerClassName={styles.filterSelectTrigger}
+          />
+          <Select
+            value={selectedStatus}
+            options={statusOptions}
+            onChange={onStatusChange}
+            ariaLabel={t('monitoring.filter_status')}
             triggerClassName={styles.filterSelectTrigger}
           />
         </div>

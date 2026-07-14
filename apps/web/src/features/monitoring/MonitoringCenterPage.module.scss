@@ -250,23 +250,23 @@
   transform: rotate(180deg);
 }
 
-// Statuses chip：与时间范围按钮同族视觉，但尺寸略小以对齐次级筛选层级。
-.statusButtonChip {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+// 短时段(1h/3h/24h)下拉框：v3 从按钮改为下拉，放时间行最前面。触发按钮视觉对齐
+// .timeRangeQuickButton（同一族控件），只在 1h/3h/24h 命中时给 active 态高亮，
+// 否则保持中性（不能让"没有点开下拉"看起来像"选中了 24h"）。
+.timeRangeShortSelect {
   flex: 0 0 auto;
-  min-height: 32px;
-  padding: 0 12px;
-  border: 1px solid var(--monitor-line);
-  border-radius: 10px;
-  background: var(--monitor-surface-elevated);
+}
+
+.timeRangeShortSelectTrigger {
+  min-height: 34px !important;
+  padding: 0 10px 0 14px !important;
+  border: 1px solid var(--monitor-line) !important;
+  border-radius: 10px !important;
+  background: var(--monitor-surface-elevated) !important;
   color: var(--monitor-ink);
-  font: inherit;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
-  white-space: nowrap;
-  cursor: pointer;
+  box-shadow: none !important;
   transition:
     transform 0.18s ease,
     border-color 0.18s ease,
@@ -274,16 +274,16 @@
     color 0.18s ease;
 }
 
-.statusButtonChip:hover {
+.timeRangeShortSelectTrigger:hover {
   transform: translateY(-1px);
-  border-color: color-mix(in srgb, var(--monitor-accent) 35%, var(--monitor-line-strong));
-  background: var(--monitor-surface-hover);
+  border-color: color-mix(in srgb, var(--monitor-accent) 35%, var(--monitor-line-strong)) !important;
+  background: var(--monitor-surface-hover) !important;
 }
 
-.statusButtonChipActive,
-.statusButtonChipActive:hover {
-  border-color: color-mix(in srgb, var(--monitor-accent) 45%, var(--monitor-line-strong));
-  background: color-mix(in srgb, var(--monitor-accent) 12%, var(--monitor-surface));
+.timeRangeShortSelectTriggerActive,
+.timeRangeShortSelectTriggerActive:hover {
+  border-color: color-mix(in srgb, var(--monitor-accent) 45%, var(--monitor-line-strong)) !important;
+  background: color-mix(in srgb, var(--monitor-accent) 12%, var(--monitor-surface)) !important;
   color: var(--monitor-accent-strong);
   transform: none;
 }
@@ -1278,18 +1278,29 @@
   gap: 10px;
 }
 
-// 时间按钮行改为强制单行 + 横向滚动兜底：加入 3h 档位后固定 7 个快捷按钮 + 1 个
-// "自定义▾"，换行会把"自定义▾"甩到第二行(与搜索框行产生视觉断层)。优先靠下方
-// ~1240px 断点收紧按钮尺寸让整行挤下；仍放不下时靠 overflow-x:auto 横向滚动，
-// 不再允许换到第二行。
+// 时间按钮行改为强制单行 + 横向滚动兜底：换行会把"自定义▾"/"全部"甩到第二行
+// (与搜索框行产生视觉断层)。优先靠下方 ~1240px 断点收紧按钮尺寸让整行挤下；
+// 仍放不下时靠 overflow-x:auto 横向滚动，不再允许换到第二行。
+//
+// 预防性加固：这里之前是 overflow-y:hidden，与控件 hover 态的
+// transform:translateY(-1px) 组合是已知的裁切陷阱类型——容器纵向裁切 + 子元素
+// hover 位移，理论上可能在某些渲染/子像素场景下把 hover 态按钮的上边框/圆角
+// 裁掉一条像素，造成"控件被上层盖住一点"的视觉假象。多组独立沙盒复现测试
+// (不同窗口宽高、已展开的相邻 Select 下拉、多层级 z-index 排查)均未能确凿
+// 坐实这就是用户反馈的具体遮挡根因，本次未能 100% 复现原始 bug；但这个组合
+// 本身没有必要保留，改为 overflow-y:visible 并用 padding-block + 等量负
+// margin-block 抵消（不改变容器占位尺寸、不影响横向滚动兜底），从原理上排除
+// 这一类风险，且已验证不影响横向滚动裁切与整体布局。
 .timeRangeRow {
   display: flex;
   align-items: center;
   flex-wrap: nowrap;
   gap: 8px;
   min-width: 0;
+  padding-block: 2px;
+  margin-block: -2px;
   overflow-x: auto;
-  overflow-y: hidden;
+  overflow-y: visible;
   scrollbar-width: thin;
 }
 
@@ -1317,27 +1328,12 @@
   min-width: 0;
 }
 
+// account/provider/model/channel/apiKey/status 共 6 个筛选 Select 同排。
 .filterGrid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   align-items: start;
   gap: 8px;
-}
-
-// Statuses 是固定 3 项小集合，改为独占一行的按钮 chip 组，不再占 filterGrid 的一列。
-.statusButtonRow {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  min-width: 0;
-}
-
-.statusButtonLabel {
-  color: var(--monitor-muted);
-  font-size: 12px;
-  font-weight: 700;
-  white-space: nowrap;
 }
 
 .filterSelectTrigger {
