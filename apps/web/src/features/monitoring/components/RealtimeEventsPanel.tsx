@@ -709,7 +709,10 @@ export function RealtimeEventsPanelActions({
       </button>
       <button
         type="button"
-        className={[styles.filterToggleChip, failedOnlyActive ? styles.filterToggleChipActive : '']
+        className={[
+          styles.filterToggleChip,
+          failedOnlyActive ? styles.filterToggleChipDangerActive : '',
+        ]
           .filter(Boolean)
           .join(' ')}
         onClick={onToggleFailedOnly}

@@ -1352,26 +1352,35 @@
   font-weight: 800;
 }
 
-.filterToggleChip {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  height: 32px;
-  min-height: 32px;
-  padding: 0 12px;
-  border: 1px solid color-mix(in srgb, var(--monitor-red) 30%, var(--monitor-line));
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--monitor-red) 8%, var(--monitor-surface));
-  color: var(--monitor-red);
-  font-size: 12px;
-  font-weight: 800;
+// 注：`.filterToggleChip` 的基础态在上方(约 L274)统一定义为中性色(与其他 actionButton
+// 一致)；此处只负责"选中态"外观，不再重复/覆盖默认态，避免默认就变成红色告警观感。
+//
+// 两个 chip("仅显示失败" / "仅显示低命中率")共用同一基础态 + hover，但选中态颜色按语义区分：
+// - 失败(danger)：选中态为红色实心，符合"异常"语义，见 .filterToggleChipDangerActive。
+// - 低命中率(accent)：选中态为主题强调色实心，明显区别于未选中，且不会被误当告警，见 .filterToggleChipActive。
+.filterToggleChipActive {
+  border-color: var(--monitor-accent);
+  background: var(--monitor-accent);
+  color: #fff;
 }
 
-.filterToggleChipActive {
-  border-color: color-mix(in srgb, var(--monitor-red) 44%, var(--monitor-line));
-  background: color-mix(in srgb, var(--monitor-red) 14%, var(--monitor-surface));
-  color: var(--monitor-red);
+.filterToggleChipActive:hover {
+  border-color: var(--monitor-accent-strong);
+  background: var(--monitor-accent-strong);
+  color: #fff;
+}
+
+.filterToggleChipDangerActive {
+  border-color: var(--monitor-red);
+  background: var(--monitor-red);
+  color: #fff;
+}
+
+.filterToggleChipDangerActive:hover {
+  border-color: var(--monitor-red);
+  background: var(--monitor-red);
+  color: #fff;
+  opacity: 0.9;
 }
 
 .errorBox,
