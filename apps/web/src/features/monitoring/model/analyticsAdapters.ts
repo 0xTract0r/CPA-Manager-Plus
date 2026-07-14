@@ -321,6 +321,11 @@ export const buildAnalyticsFilters = (
   if (isActiveFilterValue(scopeFilters.cacheStatus)) {
     filters.cache_status = scopeFilters.cacheStatus!.trim();
   }
+  // G2b：低命中率阈值下推到后端做 SQL 层全量筛选。0 是合法阈值（理论上会排除所有行），
+  // 因此用 typeof === 'number' 判断"是否启用"，不能像 minLatencyMs 那样额外要求 > 0。
+  if (typeof scopeFilters.maxCacheHitRate === 'number' && Number.isFinite(scopeFilters.maxCacheHitRate)) {
+    filters.max_cache_hit_rate = scopeFilters.maxCacheHitRate;
+  }
   if (isActiveFilterValue(scopeFilters.headerTraceId)) {
     filters.header_trace_ids = [scopeFilters.headerTraceId!.trim()];
   }

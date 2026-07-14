@@ -1,6 +1,8 @@
 package usage
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"reflect"
@@ -82,7 +84,11 @@ func TestParseImportPayloadLegacyUsageExport(t *testing.T) {
 	if first.TotalTokens != 33 || first.LatencyMS == nil || *first.LatencyMS != 123 {
 		t.Fatalf("first metrics = %#v", first)
 	}
-	if first.EventHash == "" || !strings.HasPrefix(first.RequestID, "legacy:") {
+	// The legacy detail carries no request_id. The import path must leave
+	// RequestID empty (byte-for-byte matching the realtime collector) so the
+	// same underlying request hashes identically on both ingest paths and is
+	// deduped by the event_hash unique constraint instead of double counted.
+	if first.EventHash == "" || first.RequestID != "" {
 		t.Fatalf("first ids = %#v", first)
 	}
 
@@ -630,5 +636,216 @@ func TestBuildPayloadExposesResolvedModelOnDetails(t *testing.T) {
 	}
 	if len(modelEntry.Details) != 1 || modelEntry.Details[0].ResolvedModel != "gpt-5.5" {
 		t.Fatalf("detail resolved_model = %#v", modelEntry.Details)
+	}
+}
+
+// legacyDetailWithoutRequestID is a fixture detail with no request_id, used
+// to exercise the empty-request-id boundary shared with the realtime collector.
+func legacyDetailWithoutRequestID() map[string]any {
+	return map[string]any{
+		"timestamp":     "2026-01-02T03:04:05Z",
+		"source":        "alice@example.com",
+		"auth_index":    "auth-1",
+		"input_tokens":  float64(10),
+		"output_tokens": float64(20),
+		"failed":        false,
+	}
+}
+
+// TestEventFromLegacyDetailLeavesEmptyRequestIDForImportWithoutRequestID pins
+// the fix: when a legacy export detail carries no request_id, the import path
+// must NOT synthesize any id. It leaves RequestID empty so that
+// buildEventHash's first field is "" -- byte-for-byte identical to the
+// realtime collector (NormalizeRaw), which never synthesizes an id either.
+// Any synthesized non-empty id would make the two ingest paths hash the same
+// underlying request differently and double count it.
+func TestEventFromLegacyDetailLeavesEmptyRequestIDForImportWithoutRequestID(t *testing.T) {
+	detail := legacyDetailWithoutRequestID()
+
+	// The result must not depend on the (now-removed) traversal position or
+	// on the `now` argument, both of which are excluded from the hash.
+	first, err := eventFromLegacyDetail("POST /v1/chat/completions", "POST", "/v1/chat/completions", "gpt-4o", detail, 1000)
+	if err != nil {
+		t.Fatalf("eventFromLegacyDetail (first): %v", err)
+	}
+	second, err := eventFromLegacyDetail("POST /v1/chat/completions", "POST", "/v1/chat/completions", "gpt-4o", detail, 2000)
+	if err != nil {
+		t.Fatalf("eventFromLegacyDetail (second): %v", err)
+	}
+
+	if first.RequestID != "" {
+		t.Fatalf("expected empty request id (no synthesis), got %q", first.RequestID)
+	}
+	if first.EventHash != second.EventHash {
+		t.Fatalf("event hash changed across calls: first=%q second=%q", first.EventHash, second.EventHash)
+	}
+}
+
+// TestEventFromLegacyDetailEventHashDiffersForDifferentContent ensures the
+// empty-request-id hash is not degenerate: two genuinely different empty-id
+// requests still get distinct EventHashes (they are not wrongly deduped).
+func TestEventFromLegacyDetailEventHashDiffersForDifferentContent(t *testing.T) {
+	detail := legacyDetailWithoutRequestID()
+	base, err := eventFromLegacyDetail("POST /v1/chat/completions", "POST", "/v1/chat/completions", "gpt-4o", detail, 0)
+	if err != nil {
+		t.Fatalf("eventFromLegacyDetail (base): %v", err)
+	}
+
+	otherDetail := legacyDetailWithoutRequestID()
+	otherDetail["output_tokens"] = float64(99)
+	other, err := eventFromLegacyDetail("POST /v1/chat/completions", "POST", "/v1/chat/completions", "gpt-4o", otherDetail, 0)
+	if err != nil {
+		t.Fatalf("eventFromLegacyDetail (other): %v", err)
+	}
+
+	if base.RequestID != "" || other.RequestID != "" {
+		t.Fatalf("expected empty request ids, base=%q other=%q", base.RequestID, other.RequestID)
+	}
+	if base.EventHash == other.EventHash {
+		t.Fatalf("expected different event hashes for different content, both = %q", base.EventHash)
+	}
+}
+
+// TestCrossPathEventHashMatchesWhenRequestIDEmpty is the core regression test
+// for the double-counting bug: the same underlying request WITHOUT a
+// request_id, ingested once through the realtime redis-queue collector
+// (NormalizeRaw) and once through a legacy /usage/export import
+// (eventFromLegacyDetail), must now produce the SAME EventHash. Before the
+// fix the import path synthesized a "legacy:<hash>" id while the collector
+// left it empty, so the two paths hashed differently and inserted two rows
+// for one request (the 2236x2 double-insert observed in production).
+func TestCrossPathEventHashMatchesWhenRequestIDEmpty(t *testing.T) {
+	queuePayload := []byte(`{
+		"model": "gpt-4o",
+		"endpoint": "POST /v1/chat/completions",
+		"timestamp": "2026-01-02T03:04:05Z",
+		"auth_index": "auth-1",
+		"source": "alice@example.com",
+		"tokens": {"input_tokens": 10, "output_tokens": 20},
+		"failed": false
+	}`)
+	queueEvent, err := NormalizeRaw(queuePayload)
+	if err != nil {
+		t.Fatalf("NormalizeRaw: %v", err)
+	}
+
+	legacyEvent, err := eventFromLegacyDetail("POST /v1/chat/completions", "POST", "/v1/chat/completions", "gpt-4o", legacyDetailWithoutRequestID(), 0)
+	if err != nil {
+		t.Fatalf("eventFromLegacyDetail: %v", err)
+	}
+
+	if queueEvent.RequestID != "" || legacyEvent.RequestID != "" {
+		t.Fatalf("expected empty request ids on both paths: queue=%q legacy=%q", queueEvent.RequestID, legacyEvent.RequestID)
+	}
+	if queueEvent.EventHash != legacyEvent.EventHash {
+		t.Fatalf(
+			"event hash mismatch across paths for empty request_id (double-counting regression): queue=%q legacy=%q queueEvent=%+v legacyEvent=%+v",
+			queueEvent.EventHash, legacyEvent.EventHash, queueEvent, legacyEvent,
+		)
+	}
+}
+
+// TestBuildEventHashRequestIDPresentByteStable locks the exact hash for a
+// canonical request_id-present event, guaranteeing the fix did not alter the
+// hashing of any non-empty-request-id historical row (the common case).
+func TestBuildEventHashRequestIDPresentByteStable(t *testing.T) {
+	latency := int64(123)
+	event := Event{
+		RequestID:    "req-123",
+		Timestamp:    "2026-01-01T00:00:00Z",
+		Endpoint:     "POST /v1/chat/completions",
+		Model:        "gpt-4o",
+		AuthIndex:    "0",
+		SourceHash:   "sourcehash",
+		InputTokens:  10,
+		OutputTokens: 5,
+		Failed:       false,
+		LatencyMS:    &latency,
+	}
+	got := buildEventHash(event)
+	if got == "" {
+		t.Fatal("empty hash")
+	}
+	// Golden is the sha256 of the exact frozen serialized layout. If field
+	// order, separator, or per-field formatting ever drift, this fails. Note
+	// the CachedTokens/CacheTokens field is max(0,0)=0 for this event.
+	// Layout: RequestID|Timestamp|Endpoint|Model|AuthIndex|SourceHash|
+	//         Input|Output|Reasoning|max(Cached,Cache)|Failed|Latency
+	goldenInput := strings.Join([]string{
+		"req-123", "2026-01-01T00:00:00Z", "POST /v1/chat/completions", "gpt-4o",
+		"0", "sourcehash", "10", "5", "0", "0", "false", "123",
+	}, "|")
+	sum := sha256.Sum256([]byte(goldenInput))
+	want := hex.EncodeToString(sum[:])
+	if got != want {
+		t.Fatalf("buildEventHash drifted from frozen field layout: got=%q want=%q input=%q", got, want, goldenInput)
+	}
+}
+
+// TestEventFromLegacyDetailUsesRealRequestIDWhenPresent verifies that a
+// request_id present on the legacy detail (core's newer /usage/export
+// includes it) is used as-is instead of the content-digest fallback.
+func TestEventFromLegacyDetailUsesRealRequestIDWhenPresent(t *testing.T) {
+	detail := legacyDetailWithoutRequestID()
+	detail["request_id"] = "real-request-id-123"
+	event, err := eventFromLegacyDetail("POST /v1/chat/completions", "POST", "/v1/chat/completions", "gpt-4o", detail, 0)
+	if err != nil {
+		t.Fatalf("eventFromLegacyDetail: %v", err)
+	}
+	if event.RequestID != "real-request-id-123" {
+		t.Fatalf("request id = %q, want real-request-id-123", event.RequestID)
+	}
+}
+
+// TestCrossPathEventHashMatchesWhenRequestIDPresent is the key regression
+// test for the double-counting bug: the same underlying request, once
+// ingested through the redis-queue collector (NormalizeRaw) and once through
+// a legacy /usage/export import (eventFromLegacyDetail), must produce the
+// same EventHash when both carry the same real request_id -- otherwise the
+// two paths insert two separate rows for one request.
+func TestCrossPathEventHashMatchesWhenRequestIDPresent(t *testing.T) {
+	queuePayload := []byte(`{
+		"provider": "anthropic",
+		"executor_type": "claude",
+		"model": "gpt-test",
+		"alias": "gpt-test",
+		"endpoint": "POST /v1/chat/completions",
+		"auth_type": "oauth",
+		"api_key": "key-abc",
+		"request_id": "req-123",
+		"timestamp": "2026-01-01T00:00:00Z",
+		"auth_index": "0",
+		"source": "user@example.com",
+		"tokens": {"input_tokens": 10, "output_tokens": 5},
+		"failed": false
+	}`)
+	queueEvent, err := NormalizeRaw(queuePayload)
+	if err != nil {
+		t.Fatalf("NormalizeRaw: %v", err)
+	}
+
+	legacyDetail := map[string]any{
+		"timestamp":     "2026-01-01T00:00:00Z",
+		"input_tokens":  float64(10),
+		"output_tokens": float64(5),
+		"request_id":    "req-123",
+		"auth_index":    "0",
+		"source":        "user@example.com",
+		"api_key":       "key-abc",
+		"auth_type":     "oauth",
+	}
+	legacyEvent, err := eventFromLegacyDetail("POST /v1/chat/completions", "POST", "/v1/chat/completions", "gpt-test", legacyDetail, 0)
+	if err != nil {
+		t.Fatalf("eventFromLegacyDetail: %v", err)
+	}
+
+	if queueEvent.RequestID != legacyEvent.RequestID {
+		t.Fatalf("request id mismatch: queue=%q legacy=%q", queueEvent.RequestID, legacyEvent.RequestID)
+	}
+	if queueEvent.EventHash != legacyEvent.EventHash {
+		t.Fatalf(
+			"event hash mismatch across paths (double-counting regression): queue=%q legacy=%q queueEvent=%+v legacyEvent=%+v",
+			queueEvent.EventHash, legacyEvent.EventHash, queueEvent, legacyEvent,
+		)
 	}
 }

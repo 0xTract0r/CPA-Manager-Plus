@@ -1,10 +1,37 @@
 package response
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
 )
+
+// clientClosedRequestStatus mirrors the widely used (nginx-originated) 499
+// "Client Closed Request" convention. net/http has no named constant for it.
+const clientClosedRequestStatus = 499
+
+// ContextErrorStatus maps a context cancellation/deadline error to the HTTP
+// status that actually describes what happened, instead of the generic 500
+// a naive `err != nil -> 500` mapping would produce. This matters for slow,
+// read-heavy endpoints (e.g. wide-time-range analytics aggregation) where a
+// client or reverse proxy timing out and disconnecting mid-query is an
+// expected, non-crashing outcome: canceling the request context here is not
+// a server bug, and logging/alerting on it as a 500 misleads on-call
+// debugging. Returns 0 if err is not a context cancellation/deadline error,
+// signaling the caller should fall back to its own status mapping.
+func ContextErrorStatus(err error) int {
+	switch {
+	case errors.Is(err, context.Canceled):
+		// The caller (client or an intermediate proxy) gave up and closed the
+		// connection before the query finished; nothing to write back to it.
+		return clientClosedRequestStatus
+	case errors.Is(err, context.DeadlineExceeded):
+		return http.StatusGatewayTimeout
+	default:
+		return 0
+	}
+}
 
 func Error(w http.ResponseWriter, status int, err error) {
 	JSON(w, status, map[string]any{"error": err.Error(), "code": UsageServiceErrorCode(err)})
@@ -63,7 +90,27 @@ func ModelPriceErrorStatus(err error) int {
 	return http.StatusInternalServerError
 }
 
+// UsageSyncErrorStatus maps errors from UsageService.SyncFromCore to an HTTP
+// status code for the /v0/management/usage/sync endpoint.
+func UsageSyncErrorStatus(err error) int {
+	message := err.Error()
+	switch {
+	case strings.Contains(message, "CPA core connection is not configured"):
+		return http.StatusPreconditionFailed
+	case strings.Contains(message, "fetch core usage export"):
+		return http.StatusBadGateway
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
 func UsageServiceErrorCode(err error) string {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "request_timeout"
+	case errors.Is(err, context.Canceled):
+		return "request_canceled"
+	}
 	message := err.Error()
 	switch {
 	case strings.Contains(message, "connection setup is managed by environment variables"):
@@ -86,6 +133,10 @@ func UsageServiceErrorCode(err error) string {
 		return "invalid_management_key"
 	case strings.Contains(message, "usage service is not configured"):
 		return "usage_service_not_configured"
+	case strings.Contains(message, "CPA core connection is not configured"):
+		return "cpa_core_connection_not_configured"
+	case strings.Contains(message, "fetch core usage export"):
+		return "cpa_core_usage_export_failed"
 	case strings.Contains(message, "CPA redis-usage-queue-retention-seconds must be greater than 0"):
 		return "cpa_usage_retention_invalid"
 	case strings.Contains(message, "pollIntervalMs must be less than or equal"):

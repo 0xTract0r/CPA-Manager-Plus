@@ -104,6 +104,142 @@ func TestAnalyticsBuildsIncludedSections(t *testing.T) {
 	}
 }
 
+// TestAnalyticsAllSectionsTogetherMatchesSequentialSemantics exercises every
+// Include flag at once (mirroring the monitoring page's "all time" request,
+// from_ms=1-style wide range with every section enabled). Analytics() runs
+// these sections concurrently via errgroup for performance on wide time
+// ranges; this test guards that concurrent execution still produces exactly
+// the same result as the previous fully sequential implementation, with no
+// data races or partially-populated sections when everything is requested
+// together.
+func TestAnalyticsAllSectionsTogetherMatchesSequentialSemantics(t *testing.T) {
+	db := newMonitoringTestStore(t)
+	ctx := context.Background()
+	fromMS := int64(1_778_000_000_000)
+	toMS := fromMS + 4*60*60*1000
+	latency := int64(250)
+
+	if err := db.SaveModelPrices(ctx, map[string]store.ModelPrice{
+		"gpt-a": {Prompt: 1, Completion: 2, Cache: 0.5},
+	}); err != nil {
+		t.Fatalf("save model prices: %v", err)
+	}
+	_, err := db.InsertEvents(ctx, []usage.Event{
+		monitoringEvent("all-a", fromMS+1_000, "gpt-a", "auth-1", "source-a", false, 1_000_000, 500_000, 0, 100, 1_500_100, &latency),
+		monitoringEvent("all-b", fromMS+2_000, "gpt-b", "auth-2", "source-b", true, 10, 20, 0, 0, 30, nil),
+		monitoringEvent("all-c", fromMS+3_000, "gpt-a", "auth-1", "source-a", false, 500, 200, 0, 0, 700, &latency),
+		monitoringEvent("all-outside", toMS, "gpt-a", "auth-1", "source-a", false, 1, 1, 0, 0, 2, nil),
+	})
+	if err != nil {
+		t.Fatalf("insert events: %v", err)
+	}
+
+	includeFailed := true
+	req := Request{
+		FromMS: fromMS,
+		ToMS:   toMS,
+		NowMS:  toMS,
+		Filters: Filters{
+			IncludeFailed: &includeFailed,
+		},
+		Include: Include{
+			Summary:            true,
+			SummaryComparison:  true,
+			Timeline:           true,
+			HourlyDistribution: true,
+			ModelShare:         true,
+			ChannelShare:       true,
+			ModelStats:         true,
+			FailureSources:     true,
+			AccountStats:       true,
+			CredentialStats:    true,
+			CredentialTimeline: true,
+			APIKeyStats:        true,
+			FilterOptions:      true,
+			Heatmap:            true,
+			AnomalyPoints:      true,
+			TaskBuckets:        true,
+			RecentFailures:     5,
+			EventsPage:         &EventsPage{Limit: 10},
+			Granularity:        "hour",
+		},
+	}
+
+	svc := New(db)
+	var reference Response
+	for i := 0; i < 8; i++ {
+		resp, err := svc.Analytics(ctx, req)
+		if err != nil {
+			t.Fatalf("analytics run %d: %v", i, err)
+		}
+
+		if resp.Summary == nil || resp.Summary.TotalCalls != 3 || resp.Summary.FailureCalls != 1 {
+			t.Fatalf("run %d: summary = %#v", i, resp.Summary)
+		}
+		if len(resp.Timeline) == 0 {
+			t.Fatalf("run %d: timeline empty", i)
+		}
+		if len(resp.HourlyDistribution) == 0 {
+			t.Fatalf("run %d: hourly distribution empty", i)
+		}
+		if len(resp.ModelShare) != 2 || len(resp.ModelStats) != 2 {
+			t.Fatalf("run %d: model share/stats = %#v %#v", i, resp.ModelShare, resp.ModelStats)
+		}
+		if len(resp.ChannelShare) != 2 {
+			t.Fatalf("run %d: channel share = %#v", i, resp.ChannelShare)
+		}
+		if len(resp.FailureSources) != 1 {
+			t.Fatalf("run %d: failure sources = %#v", i, resp.FailureSources)
+		}
+		if len(resp.AccountStats) == 0 {
+			t.Fatalf("run %d: account stats empty", i)
+		}
+		if len(resp.CredentialStats) == 0 {
+			t.Fatalf("run %d: credential stats empty", i)
+		}
+		if len(resp.CredentialTimeline) == 0 {
+			t.Fatalf("run %d: credential timeline empty", i)
+		}
+		if len(resp.APIKeyStats) == 0 {
+			t.Fatalf("run %d: api key stats empty", i)
+		}
+		if resp.FilterOptions == nil || len(resp.FilterOptions.ModelStats) != 2 {
+			t.Fatalf("run %d: filter options = %#v", i, resp.FilterOptions)
+		}
+		if len(resp.Heatmap) == 0 {
+			t.Fatalf("run %d: heatmap empty", i)
+		}
+		if len(resp.TaskBuckets) != 3 {
+			t.Fatalf("run %d: task buckets = %#v", i, resp.TaskBuckets)
+		}
+		if len(resp.RecentFailures) != 1 {
+			t.Fatalf("run %d: recent failures = %#v", i, resp.RecentFailures)
+		}
+		if resp.Events == nil || len(resp.Events.Items) != 3 {
+			t.Fatalf("run %d: events page = %#v", i, resp.Events)
+		}
+		// SummaryComparison's preceding window starts before fromMS-window <= 0
+		// for this fixture, so it is expected to stay nil; assert it does not
+		// panic or race rather than asserting a populated value.
+		_ = resp.SummaryComparison
+		_ = resp.AnomalyPoints
+
+		if i == 0 {
+			reference = resp
+			continue
+		}
+		if reference.Summary.TotalCalls != resp.Summary.TotalCalls ||
+			reference.Summary.TotalCost != resp.Summary.TotalCost ||
+			len(reference.Timeline) != len(resp.Timeline) ||
+			len(reference.AccountStats) != len(resp.AccountStats) ||
+			len(reference.CredentialStats) != len(resp.CredentialStats) ||
+			len(reference.APIKeyStats) != len(resp.APIKeyStats) ||
+			len(reference.Heatmap) != len(resp.Heatmap) {
+			t.Fatalf("run %d: result diverged from run 0\nrun0=%#v\nrunN=%#v", i, reference, resp)
+		}
+	}
+}
+
 func TestAnalyticsHeatmapIncludesTopContributors(t *testing.T) {
 	db := newMonitoringTestStore(t)
 	ctx := context.Background()
@@ -288,14 +424,17 @@ func TestAnalyticsSummaryComparisonReturnsPreviousPeriod(t *testing.T) {
 }
 
 func TestCacheHitRateMatchesWebClient(t *testing.T) {
-	// Anthropic-style: InputTokens excludes cache, so denominator = input + cacheRead + cacheCreation.
-	anthropic := cacheHitRate(TimelinePoint{
+	// TimelinePoint aggregates tokens across all models in a bucket (no single
+	// Model field), so cacheHitRate(point) always uses the OpenAI/default-style
+	// denominator (max(input, hit) + cacheCreation, cacheRead NOT added again).
+	openaiStyle := cacheHitRate(TimelinePoint{
 		InputTokens:         100,
 		CacheReadTokens:     300,
 		CacheCreationTokens: 50,
 	})
-	if math.Abs(anthropic-300.0/450.0) > 1e-9 {
-		t.Fatalf("anthropic cache hit rate = %v, want %v", anthropic, 300.0/450.0)
+	wantOpenAIStyle := 300.0 / (300.0 + 50.0) // max(100,300)+50 = 350
+	if math.Abs(openaiStyle-wantOpenAIStyle) > 1e-9 {
+		t.Fatalf("openai-style cache hit rate = %v, want %v", openaiStyle, wantOpenAIStyle)
 	}
 	// OpenAI-style: InputTokens already includes cache; cacheRead falls back to cachedTokens.
 	openai := cacheHitRate(TimelinePoint{
@@ -311,6 +450,32 @@ func TestCacheHitRateMatchesWebClient(t *testing.T) {
 	}
 	if r := cacheHitRate(TimelinePoint{InputTokens: 10, CachedTokens: 1000}); r != 1 {
 		t.Fatalf("clamped cache hit rate = %v, want 1", r)
+	}
+}
+
+// TestCacheHitRateForTokensProviderAware covers the real regression: OpenAI-style
+// models (e.g. gpt-5.6-sol) report input_tokens as a superset that already
+// includes cache_read, so cache_read must NOT be added again to the
+// denominator. Anthropic/Claude-style models report input_tokens excluding
+// cache, so cache_read/cache_creation are additive.
+func TestCacheHitRateForTokensProviderAware(t *testing.T) {
+	// Real regression case: single event with input=55406, cache_read=54784,
+	// cached=0, cache_creation=0. The pre-fix formula (adding cacheReadTokens
+	// again into the denominator) produced ~0.4972 instead of the correct ~0.9888.
+	openaiRate := cacheHitRateForTokens("gpt-5.6-sol", 55406, 0, 54784, 0)
+	wantOpenAIRate := 54784.0 / 55406.0
+	if math.Abs(openaiRate-wantOpenAIRate) > 1e-4 {
+		t.Fatalf("gpt-5.6-sol cache hit rate = %v, want %v", openaiRate, wantOpenAIRate)
+	}
+	if openaiRate <= 0.90 {
+		t.Fatalf("gpt-5.6-sol cache hit rate = %v, want > 0.90 (regression for the halved 0.497 bug)", openaiRate)
+	}
+
+	// Anthropic-style: input excludes cache, so cacheRead/cacheCreation add on top.
+	anthropicRate := cacheHitRateForTokens("claude-opus-4-6", 1000, 0, 5000, 200)
+	wantAnthropicRate := 5000.0 / (1000.0 + 5000.0 + 200.0)
+	if math.Abs(anthropicRate-wantAnthropicRate) > 1e-4 {
+		t.Fatalf("claude cache hit rate = %v, want %v", anthropicRate, wantAnthropicRate)
 	}
 }
 
@@ -1026,6 +1191,120 @@ func TestAnalyticsAppliesCacheStatusFilter(t *testing.T) {
 	}
 }
 
+// TestAnalyticsAppliesMaxCacheHitRateFilter 覆盖 G2b "低命中率全量筛"的 SQL 阈值条件,
+// 与前端 monitoringCenterPageModel.ts:computeCacheHitRate 逐字对齐:
+//   - Anthropic 系(model slug 以 claude/anthropic 开头): 分母 = input + cache_read + cache_creation
+//   - 非 Anthropic 系(如 gpt-*): 分母 = max(input, 命中tokens) + cache_creation
+//   - 分母 <= 0 的行必须被排除(命中率不可计算,对齐前端 rate === null 时隐藏该行)
+//   - 命中率恰好等于阈值的行不应入选(阈值语义是严格小于)
+func TestAnalyticsAppliesMaxCacheHitRateFilter(t *testing.T) {
+	db := newMonitoringTestStore(t)
+	ctx := context.Background()
+	fromMS := int64(1_778_300_000_000)
+	toMS := fromMS + 60*60*1000
+
+	// Anthropic 系: input=100, cache_read=0 -> hit=0, denom=100+0+0=100 -> rate=0 (低命中率,应入选)
+	claudeLowHit := monitoringEvent("claude-low", fromMS+1_000, "claude-3-5-sonnet", "auth-1", "source-a", false, 100, 5, 0, 0, 105, nil)
+	// Anthropic 系: input=100, cache_read=400 -> denom=100+400+0=500, hit=400 -> rate=0.8 (高命中率,不入选于 <0.5 阈值)
+	claudeHighHit := monitoringEvent("claude-high", fromMS+2_000, "anthropic/claude-3-opus", "auth-1", "source-a", false, 100, 5, 0, 0, 105, nil)
+	claudeHighHit.CacheReadTokens = 400
+	// 非 Anthropic 系(gpt): input=100, cache_read=10 -> hit=10, denom=max(100,10)+0=100 -> rate=0.1 (低命中率,应入选)
+	gptLowHit := monitoringEvent("gpt-low", fromMS+3_000, "gpt-5.6-sol", "auth-1", "source-a", false, 100, 5, 0, 0, 105, nil)
+	gptLowHit.CacheReadTokens = 10
+	// 非 Anthropic 系: input=100, cache_read=90 -> hit=90, denom=max(100,90)+0=100 -> rate=0.9 (高命中率,不入选)
+	gptHighHit := monitoringEvent("gpt-high", fromMS+4_000, "gpt-5.6-sol", "auth-1", "source-a", false, 100, 5, 0, 0, 105, nil)
+	gptHighHit.CacheReadTokens = 90
+	// 分母为 0 的行(input=0, 无 cache_read/cache_creation, 无命中 tokens): 命中率不可计算,
+	// 任何阈值下都必须排除,对齐前端 rate === null 隐藏该行的语义。
+	zeroDenom := monitoringEvent("zero-denom", fromMS+5_000, "gpt-5.6-sol", "auth-1", "source-a", false, 0, 0, 0, 0, 0, nil)
+	// 边界: 命中率恰好等于阈值 0.5 的行(非 Anthropic: input=100, cache_read=50 -> rate=0.5),
+	// 阈值判定是严格小于,恰好相等不应入选。
+	boundaryEqual := monitoringEvent("boundary-equal", fromMS+6_000, "gpt-5.6-sol", "auth-1", "source-a", false, 100, 5, 0, 0, 105, nil)
+	boundaryEqual.CacheReadTokens = 50
+
+	if _, err := db.InsertEvents(ctx, []usage.Event{claudeLowHit, claudeHighHit, gptLowHit, gptHighHit, zeroDenom, boundaryEqual}); err != nil {
+		t.Fatalf("insert events: %v", err)
+	}
+
+	threshold := 0.5
+	resp, err := New(db).Analytics(ctx, Request{
+		FromMS:  fromMS,
+		ToMS:    toMS,
+		Filters: Filters{MaxCacheHitRate: &threshold},
+		Include: Include{Summary: true, EventsPage: &EventsPage{Limit: 50}},
+	})
+	if err != nil {
+		t.Fatalf("analytics with max cache hit rate filter: %v", err)
+	}
+	wantHashes := []string{"gpt-low", "claude-low"}
+	if resp.Summary == nil || int(resp.Summary.TotalCalls) != len(wantHashes) {
+		t.Fatalf("filtered summary = %#v", resp.Summary)
+	}
+	if resp.Events == nil || len(resp.Events.Items) != len(wantHashes) {
+		t.Fatalf("filtered events = %#v", resp.Events)
+	}
+	gotHashes := make([]string, 0, len(resp.Events.Items))
+	for _, item := range resp.Events.Items {
+		gotHashes = append(gotHashes, item.EventHash)
+	}
+	if !slices.Contains(gotHashes, "gpt-low") || !slices.Contains(gotHashes, "claude-low") {
+		t.Fatalf("expected low cache hit rate events, got %#v", gotHashes)
+	}
+	if slices.Contains(gotHashes, "zero-denom") {
+		t.Fatalf("zero-denominator event must be excluded (rate is unavailable), got %#v", gotHashes)
+	}
+	if slices.Contains(gotHashes, "boundary-equal") {
+		t.Fatalf("event with rate exactly at threshold must be excluded (strict less-than), got %#v", gotHashes)
+	}
+	if slices.Contains(gotHashes, "claude-high") || slices.Contains(gotHashes, "gpt-high") {
+		t.Fatalf("high cache hit rate events must be excluded, got %#v", gotHashes)
+	}
+}
+
+// TestAnalyticsMaxCacheHitRateEventsPageTotalCountMatchesPage 确保阈值加入 analyticsWhere 后,
+// EventsCountWithFilter 与 EventsPageWithFilter 共用同一 where 子句,total_count 与实际分页
+// 条目数保持一致(沿用 TestAnalyticsEventsPageTotalCountRespectsFilters 的验证模式)。
+func TestAnalyticsMaxCacheHitRateEventsPageTotalCountMatchesPage(t *testing.T) {
+	db := newMonitoringTestStore(t)
+	ctx := context.Background()
+	fromMS := int64(1_778_400_000_000)
+	toMS := fromMS + 60*60*1000
+
+	events := make([]usage.Event, 0, 6)
+	for i := range 4 {
+		// 低命中率: input=100, cache_read=5 -> rate=0.05
+		e := monitoringEvent(fmt.Sprintf("low-%d", i), fromMS+int64(i+1)*1_000, "gpt-5.6-sol", "auth-1", "source-a", false, 100, 5, 0, 0, 105, nil)
+		e.CacheReadTokens = 5
+		events = append(events, e)
+	}
+	for i := range 2 {
+		// 高命中率: input=100, cache_read=95 -> rate=0.95
+		e := monitoringEvent(fmt.Sprintf("high-%d", i), fromMS+int64(100+i)*1_000, "gpt-5.6-sol", "auth-1", "source-a", false, 100, 5, 0, 0, 105, nil)
+		e.CacheReadTokens = 95
+		events = append(events, e)
+	}
+	if _, err := db.InsertEvents(ctx, events); err != nil {
+		t.Fatalf("insert events: %v", err)
+	}
+
+	threshold := 0.5
+	resp, err := New(db).Analytics(ctx, Request{
+		FromMS:  fromMS,
+		ToMS:    toMS,
+		Filters: Filters{MaxCacheHitRate: &threshold},
+		Include: Include{EventsPage: &EventsPage{Limit: 2}},
+	})
+	if err != nil {
+		t.Fatalf("analytics: %v", err)
+	}
+	if resp.Events == nil || resp.Events.TotalCount != 4 {
+		t.Fatalf("total_count = %#v, want 4", resp.Events)
+	}
+	if len(resp.Events.Items) != 2 {
+		t.Fatalf("page items = %d, want 2 (limit respected while total_count reflects full match set)", len(resp.Events.Items))
+	}
+}
+
 func TestAnalyticsAppliesFailedOnlyFilter(t *testing.T) {
 	db := newMonitoringTestStore(t)
 	ctx := context.Background()
@@ -1489,7 +1768,7 @@ func TestAccountHistoryReturnsRollupTotalsAndCost(t *testing.T) {
 	ctx := context.Background()
 	baseMS := int64(1_700_000_000_000)
 	if err := db.SaveModelPrices(ctx, map[string]store.ModelPrice{
-		"resolved-a": {
+		"claude-resolved-a": {
 			Prompt:        1,
 			Completion:    2,
 			Cache:         0.5,
@@ -1500,14 +1779,14 @@ func TestAccountHistoryReturnsRollupTotalsAndCost(t *testing.T) {
 		t.Fatalf("save model prices: %v", err)
 	}
 
-	first := monitoringEvent("history-a-1", baseMS+1_000, "alias-a", "auth-1", "source-a", false, 1_000_000, 500_000, 0, 100_000, 1_530_000, nil)
-	first.ResolvedModel = "resolved-a"
+	first := monitoringEvent("history-a-1", baseMS+1_000, "claude-resolved-a", "auth-1", "source-a", false, 1_000_000, 500_000, 0, 100_000, 1_530_000, nil)
+	first.ResolvedModel = "claude-resolved-a"
 	first.AccountSnapshot = "hist@example.com"
 	first.Source = "hist@example.com"
 	first.CacheReadTokens = 20_000
 	first.CacheCreationTokens = 10_000
-	second := monitoringEvent("history-a-2", baseMS+2_000, "alias-a", "auth-1", "source-a", true, 0, 0, 0, 0, 0, nil)
-	second.ResolvedModel = "resolved-a"
+	second := monitoringEvent("history-a-2", baseMS+2_000, "claude-resolved-a", "auth-1", "source-a", true, 0, 0, 0, 0, 0, nil)
+	second.ResolvedModel = "claude-resolved-a"
 	second.AccountSnapshot = "hist@example.com"
 	second.Source = "hist@example.com"
 	if _, err := db.InsertEvents(ctx, []usage.Event{first, second}); err != nil {
@@ -1541,6 +1820,17 @@ func TestAccountHistoryReturnsRollupTotalsAndCost(t *testing.T) {
 	if history.SuccessRate == nil || math.Abs(*history.SuccessRate-0.5) > 0.000001 {
 		t.Fatalf("success rate = %#v", history.SuccessRate)
 	}
+	// Anthropic/Claude semantics: input_tokens (1_000_000) does NOT contain the
+	// 20_000 cache_read + 10_000 cache_creation tokens (they are additive buckets),
+	// so input is charged in full and each cache bucket is priced once on top.
+	// The store strips the fine-grained buckets out of the legacy cached mirror,
+	// so the compat cached value is 100_000 - 20_000 - 10_000 = 70_000, and the
+	// uncached prompt is input - compat cached = 1_000_000 - 70_000 = 930_000.
+	// 0.93M*1 + 0.5M*2 + 0.07M*0.5 + 0.02M*0.25 + 0.01M*1.5
+	//   = 0.93 + 1.0 + 0.035 + 0.005 + 0.015 = 1.985.
+	// The OpenAI-style subtraction (8da50f15) wrongly also stripped cache_read +
+	// cache_creation from input, under-charging 30_000 tokens by the full prompt
+	// rate (delta 0.03) and returning 1.955.
 	if math.Abs(history.TotalCost-1.985) > 0.000001 {
 		t.Fatalf("total cost = %v", history.TotalCost)
 	}

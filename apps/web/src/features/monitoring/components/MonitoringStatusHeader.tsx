@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import type { TFunction } from 'i18next';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import type { MonitoringStatusTone } from '@/features/monitoring/hooks/useMonitoringData';
+import type { UsageCatchUpPresentation } from '@/features/monitoring/model/usageCatchUpPresentation';
 import { formatCompactNumber } from '@/utils/usage';
 import styles from '../MonitoringCenterPage.module.scss';
 
@@ -21,6 +22,8 @@ type MonitoringStatusSummaryProps = {
   scopedFailureCount: number;
   totalCalls: number;
   t: TFunction;
+  /** 8.6 用量自动补齐状态展示；为 null 时不渲染（worker 尚未产出状态）。 */
+  usageCatchUpStatus?: UsageCatchUpPresentation | null;
 };
 
 const shortLabel = (t: TFunction, shortKey: string, fallbackKey: string) => {
@@ -37,6 +40,7 @@ export function MonitoringStatusSummary({
   scopedFailureCount,
   totalCalls,
   t,
+  usageCatchUpStatus,
 }: MonitoringStatusSummaryProps) {
   const lastSyncLabel = shortLabel(t, 'monitoring.last_sync_short', 'monitoring.last_sync');
   const recentFailuresLabel = shortLabel(
@@ -54,8 +58,7 @@ export function MonitoringStatusSummary({
       </span>
       <div className={styles.statusMeta}>
         <span title={t('monitoring.last_sync')}>
-          {lastSyncLabel}:{' '}
-          {lastRefreshedAt ? lastRefreshedAt.toLocaleTimeString(locale) : '--'}
+          {lastSyncLabel}: {lastRefreshedAt ? lastRefreshedAt.toLocaleTimeString(locale) : '--'}
         </span>
         <span
           className={scopedFailureCount > 0 ? styles.statusMetaWarn : undefined}
@@ -66,9 +69,21 @@ export function MonitoringStatusSummary({
         <span title={t('monitoring.total_calls')}>
           {`${totalCallsLabel}: ${formatCompactNumber(totalCalls)}`}
         </span>
+        {usageCatchUpStatus ? (
+          <span
+            className={styles[`usageCatchUpTone${capitalize(usageCatchUpStatus.tone)}`]}
+            title={usageCatchUpStatus.title}
+          >
+            {usageCatchUpStatus.label}
+          </span>
+        ) : null}
       </div>
     </div>
   );
+}
+
+function capitalize(value: string): string {
+  return value.length ? value[0].toUpperCase() + value.slice(1) : value;
 }
 
 export function MonitoringStatusHeader({

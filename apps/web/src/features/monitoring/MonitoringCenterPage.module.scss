@@ -74,6 +74,21 @@
   background: color-mix(in srgb, var(--monitor-red) 10%, var(--monitor-surface)) !important;
 }
 
+.usageCatchUpToneGood {
+  color: var(--monitor-green) !important;
+  background: color-mix(in srgb, var(--monitor-green) 10%, var(--monitor-surface)) !important;
+}
+
+.usageCatchUpToneWarn {
+  color: var(--monitor-muted) !important;
+  background: var(--monitor-surface-muted) !important;
+}
+
+.usageCatchUpToneBad {
+  color: var(--monitor-red) !important;
+  background: color-mix(in srgb, var(--monitor-red) 10%, var(--monitor-surface)) !important;
+}
+
 .loadingOverlay {
   position: fixed;
   inset: 0;
@@ -182,6 +197,27 @@
   display: none;
 }
 
+// 时间行"自定义▾"段：与其余 6 个 .segmentButton 共用同一套连体分段样式，只额外加
+// caret 间距 + 紧凑标签的溢出省略，避免选中较长的自定义范围(如完整日期区间)撑破
+// 连体模块的单行布局。
+.timeRangeCustomTrigger {
+  gap: 6px;
+}
+
+.timeRangeCustomTriggerLabel {
+  overflow: hidden;
+  max-width: 132px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timeRangeCustomTriggerIcon {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  transition: transform 0.15s ease;
+}
+
 .segmentButton,
 .refreshButton,
 .actionButton,
@@ -285,6 +321,49 @@
   cursor: not-allowed;
   opacity: 0.55;
   transform: none;
+}
+
+.syncProgressGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.syncProgressButton {
+  cursor: default;
+  color: var(--monitor-muted);
+}
+
+.syncProgressSpinner {
+  flex-shrink: 0;
+  transform-origin: center;
+  animation: monitor-spin 0.9s linear infinite;
+}
+
+.syncCancelButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--monitor-line);
+  border-radius: 999px;
+  background: var(--monitor-surface-elevated);
+  color: var(--monitor-muted);
+  cursor: pointer;
+  transition:
+    border-color 0.18s ease,
+    background-color 0.18s ease,
+    color 0.18s ease;
+}
+
+.syncCancelButton:hover {
+  border-color: color-mix(in srgb, var(--monitor-red) 45%, var(--monitor-line-strong));
+  background: var(--monitor-surface-hover);
+  color: var(--monitor-red);
 }
 
 .segmentButton {
@@ -634,6 +713,104 @@
   justify-content: flex-end;
   gap: 8px;
   width: 100%;
+}
+
+.customRangeQuickPresets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.customRangeQuickPresetButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 10px;
+  background: var(--monitor-surface-elevated);
+  color: var(--monitor-ink);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    transform 0.18s ease,
+    border-color 0.18s ease,
+    background-color 0.18s ease;
+}
+
+.customRangeQuickPresetButton:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--monitor-accent) 35%, var(--monitor-line-strong));
+  background: var(--monitor-surface-hover);
+}
+
+.customRangeModeTabs {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 0;
+  width: fit-content;
+  max-width: 100%;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--monitor-line) 86%, transparent);
+  background: color-mix(in srgb, var(--monitor-surface-elevated) 82%, var(--monitor-surface));
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.customRangeModeTabs::-webkit-scrollbar {
+  display: none;
+}
+
+.customRangeModeTab {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 0 14px;
+  border: 0;
+  border-left: 1px solid color-mix(in srgb, var(--monitor-line) 72%, transparent);
+  border-radius: 0;
+  background: transparent;
+  color: color-mix(in srgb, var(--monitor-muted) 84%, var(--monitor-ink));
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.customRangeModeTab:first-child {
+  border-left: 0;
+}
+
+.customRangeModeTab:hover {
+  color: var(--monitor-ink);
+  background: color-mix(in srgb, var(--monitor-accent) 5%, var(--monitor-surface));
+}
+
+.customRangeModeTabActive,
+.customRangeModeTabActive:hover {
+  background: color-mix(in srgb, var(--monitor-accent) 12%, var(--monitor-surface));
+  color: var(--monitor-accent-strong);
+  font-weight: 800;
+}
+
+.customRangeQuickForm {
+  display: grid;
+  gap: 6px;
+}
+
+.customRangeQuickForm :global(.form-group) {
+  margin-bottom: 0;
+}
+
+.customRangeQuickForm :global(label) {
+  margin-bottom: 5px;
+  color: var(--monitor-muted);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .refreshControls {
@@ -1022,9 +1199,24 @@
   border-bottom: 1px solid color-mix(in srgb, var(--monitor-line) 82%, transparent);
 }
 
+// 时间范围按钮组独占一行(修复"太窄、多档换行、两步操作"的根因)：controlBar 改为
+// 两行纵向 grid——第一行只放时间范围按钮组，不与搜索框/刷新控件共享列宽；第二行才是
+// 搜索框(可伸缩) + 自动刷新/手动刷新/清除筛选。
 .controlBar {
   display: grid;
-  grid-template-columns: auto minmax(160px, 1fr) auto;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+// v4：时间行不再是独立的 .timeRangeRow 容器 + 一组独立 pill，而是直接复用
+// masthead 已有的 .segmentedControl 连体分段模块(见文件顶部定义)，本身已内置
+// overflow-x:auto 横向滚动兜底与单行强制(nowrap)，此处无需再重复一套滚动样式。
+.controlBarSecondaryRow {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
 }
 
 .toolbarControls {
@@ -1039,6 +1231,7 @@
   min-width: 0;
 }
 
+// account/provider/model/channel/apiKey/status 共 6 个筛选 Select 同排。
 .filterGrid {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -1159,26 +1352,183 @@
   font-weight: 800;
 }
 
-.filterToggleChip {
+// 注：`.filterToggleChip` 的基础态在上方(约 L274)统一定义为中性色(与其他 actionButton
+// 一致)；此处只负责"选中态"外观，不再重复/覆盖默认态，避免默认就变成红色告警观感。
+//
+// 两个 chip("仅显示失败" / "仅显示低命中率")共用同一基础态 + hover，但选中态颜色按语义区分：
+// - 失败(danger)：选中态为红色实心，符合"异常"语义，见 .filterToggleChipDangerActive。
+// - 低命中率(accent)：选中态为主题强调色实心，明显区别于未选中，且不会被误当告警，见 .filterToggleChipActive。
+.filterToggleChipActive {
+  border-color: var(--monitor-accent);
+  background: var(--monitor-accent);
+  color: #fff;
+}
+
+.filterToggleChipActive:hover {
+  border-color: var(--monitor-accent-strong);
+  background: var(--monitor-accent-strong);
+  color: #fff;
+}
+
+.filterToggleChipDangerActive {
+  border-color: var(--monitor-red);
+  background: var(--monitor-red);
+  color: #fff;
+}
+
+.filterToggleChipDangerActive:hover {
+  border-color: var(--monitor-red);
+  background: var(--monitor-red);
+  color: #fff;
+  opacity: 0.9;
+}
+
+// "仅显示低命中率" 筛选控件：chip 主体（开关筛选）+ 紧邻的 caret 触发器（打开阈值菜单），
+// 视觉上拼成一体，但各自独立可点击。caret 复用 .filterToggleChipActive 的选中态配色，
+// 不引入新的强调色，避免与 chip 语义脱节；菜单是绝对定位的浮层，不使用 portal（父级
+// 工具条无 overflow:hidden，无需担心裁切）。
+.lowCacheHitRateFilterControl {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.lowCacheHitRateThresholdTrigger {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  height: 32px;
-  min-height: 32px;
-  padding: 0 12px;
-  border: 1px solid color-mix(in srgb, var(--monitor-red) 30%, var(--monitor-line));
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--monitor-red) 8%, var(--monitor-surface));
-  color: var(--monitor-red);
-  font-size: 12px;
-  font-weight: 800;
+  width: 22px;
+  min-height: 34px;
+  padding: 0;
+  border: 1px solid var(--monitor-line);
+  border-radius: 12px;
+  background: var(--monitor-surface-elevated);
+  color: var(--monitor-muted);
+  cursor: pointer;
+  transition:
+    border-color 0.18s ease,
+    background-color 0.18s ease,
+    color 0.18s ease;
 }
 
-.filterToggleChipActive {
-  border-color: color-mix(in srgb, var(--monitor-red) 44%, var(--monitor-line));
-  background: color-mix(in srgb, var(--monitor-red) 14%, var(--monitor-surface));
+.lowCacheHitRateThresholdTrigger:hover {
+  border-color: color-mix(in srgb, var(--monitor-accent) 35%, var(--monitor-line-strong));
+  color: var(--monitor-ink);
+}
+
+.lowCacheHitRateThresholdMenu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 190px;
+  padding: 8px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 12px;
+  background: var(--monitor-surface-elevated);
+  box-shadow: var(--shadow);
+}
+
+.lowCacheHitRateThresholdMenuItem {
+  display: flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--monitor-ink);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lowCacheHitRateThresholdMenuItem:hover {
+  background: color-mix(in srgb, var(--monitor-accent) 12%, transparent);
+}
+
+.lowCacheHitRateThresholdMenuItemActive {
+  background: color-mix(in srgb, var(--monitor-accent) 18%, transparent);
+  color: var(--monitor-accent-strong);
+}
+
+.lowCacheHitRateThresholdMenuCustom {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px 2px;
+  border-top: 1px solid color-mix(in srgb, var(--monitor-line) 72%, transparent);
+
+  label {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--monitor-muted);
+  }
+}
+
+.lowCacheHitRateThresholdMenuCustomInputRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+
+  span {
+    font-size: 12px;
+    color: var(--monitor-muted);
+  }
+}
+
+.lowCacheHitRateThresholdMenuCustomInput {
+  width: 56px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 8px;
+  background: var(--monitor-surface);
+  color: var(--monitor-ink);
+  font: inherit;
+  font-size: 12px;
+}
+
+.lowCacheHitRateThresholdMenuCustomInputError {
+  border-color: var(--monitor-red);
+}
+
+.lowCacheHitRateThresholdMenuCustomApply {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--monitor-accent);
+  border-radius: 8px;
+  background: var(--monitor-accent);
+  color: #fff;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.lowCacheHitRateThresholdMenuCustomApply:hover {
+  background: var(--monitor-accent-strong);
+  border-color: var(--monitor-accent-strong);
+}
+
+.lowCacheHitRateThresholdMenuCustomError {
+  font-size: 11px;
   color: var(--monitor-red);
+}
+
+.lowCacheHitRateThresholdMenuHint {
+  margin: 4px 0 0;
+  padding-top: 6px;
+  border-top: 1px solid color-mix(in srgb, var(--monitor-line) 72%, transparent);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--monitor-muted);
 }
 
 .errorBox,
@@ -1232,13 +1582,85 @@
 @include summaryTable.styles;
 @include accountOverview.styles;
 .realtimeTable {
-  --realtime-col-source: 18%;
-  --realtime-col-model: 15%;
+  // 13 列(含"缓存命中率")实时表：table-layout:fixed + 百分比列宽，使表格 width:100% 铺满
+  // 容器并把 13 列全部放平在同一平面，主内容区(~1152px 可用宽)下零横滚、花费列完整可见。
+  // 各列百分比之和=100%；窄屏(<1200px)由下方 @container 兜底 min-width + tableWrapper 横滚。
+  --realtime-col-source: 14%; // 来源 / API KEY（省略号截断，title 悬浮看全）
+  --realtime-col-model: 12%; // 模型（省略号截断）
+  --realtime-col-effort: 6%; // 强度
+  --realtime-col-recent: 6%; // 近况（状态点阵）
+  --realtime-col-status: 7%; // 请求状态
+  --realtime-col-success: 6%; // 成功率
+  --realtime-col-calls: 6%; // 调用
+  --realtime-col-tps: 5%; // TPS
+  --realtime-col-latency: 10%; // 首字 ｜ 耗时
+  --realtime-col-time: 8%; // 时间（两行）
+  --realtime-col-usage: 8%; // 本次用量
+  --realtime-col-cache: 6%; // 缓存命中率
+  --realtime-col-cost: 6%; // 花费
+
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+}
+
+.realtimeTable col:nth-child(1) {
+  width: var(--realtime-col-source);
+}
+.realtimeTable col:nth-child(2) {
+  width: var(--realtime-col-model);
+}
+.realtimeTable col:nth-child(3) {
+  width: var(--realtime-col-effort);
+}
+.realtimeTable col:nth-child(4) {
+  width: var(--realtime-col-recent);
+}
+.realtimeTable col:nth-child(5) {
+  width: var(--realtime-col-status);
+}
+.realtimeTable col:nth-child(6) {
+  width: var(--realtime-col-success);
+}
+.realtimeTable col:nth-child(7) {
+  width: var(--realtime-col-calls);
+}
+.realtimeTable col:nth-child(8) {
+  width: var(--realtime-col-tps);
+}
+.realtimeTable col:nth-child(9) {
+  width: var(--realtime-col-latency);
+}
+.realtimeTable col:nth-child(10) {
+  width: var(--realtime-col-time);
+}
+.realtimeTable col:nth-child(11) {
+  width: var(--realtime-col-usage);
+}
+.realtimeTable col:nth-child(12) {
+  width: var(--realtime-col-cache);
+}
+.realtimeTable col:nth-child(13) {
+  width: var(--realtime-col-cost);
+}
+
+// table-layout:fixed 下表头默认收敛，禁止把列撑爆（td 保留 overflow:visible 供内容层
+// 各自的 primaryCell / 省略号处理，见下方 .realtimeModelText 等）。
+.realtimeTable th {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .realtimeTable .logTypeCell .primaryCell > span {
-  display: inline-block;
-  max-width: min(240px, 100%);
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+// API KEY 行同样收敛到列宽内，超出用省略号（title 悬浮看全）。
+.realtimeTable .realtimeApiKeyLine {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1248,6 +1670,17 @@
   white-space: normal;
   word-break: break-word;
   line-height: 1.45;
+}
+
+// "本次用量" 列每个 "标签 数值" 段（如 "缓存读取 200.0K"）必须整体不可断，
+// 只允许容器在 " · " 分隔符处换行；否则窄列 + 上面的 word-break:break-word 会把
+// 紧凑数字从中间断行（见 buildRealtimeTokenSummary 拼接逻辑）。这里用更高特异性
+// 覆盖父规则的 word-break，其余 .primaryCell small（来源 meta、API KEY、模型、
+// service tier 等自由文本）不受影响，继续沿用 break-word 兜底换行。
+.realtimeTable .primaryCell small .realtimeUsageSegment {
+  display: inline-block;
+  white-space: nowrap;
+  word-break: normal;
 }
 
 .realtimeModelCell {
@@ -1290,11 +1723,11 @@
 }
 
 .realtimeLatencyHeader {
-  display: inline-grid;
-  grid-template-columns: minmax(42px, 1fr) 10px minmax(42px, 1fr);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 8px minmax(0, 1fr);
   align-items: center;
   justify-content: center;
-  width: 118px;
+  width: 100%;
   font-size: 12px;
   line-height: 1.25;
   text-transform: none;
@@ -1302,12 +1735,12 @@
 }
 
 .realtimeMetricCell {
-  display: inline-grid;
-  grid-template-columns: minmax(48px, 1fr) 10px minmax(48px, 1fr);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 8px minmax(0, 1fr);
   align-items: center;
   justify-content: center;
-  width: 118px;
-  min-width: 118px;
+  width: 100%;
+  min-width: 0;
   font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
@@ -1319,17 +1752,20 @@
 
 .realtimeTpsCell {
   display: inline-block;
-  min-width: 48px;
+  min-width: 0;
   font-variant-numeric: tabular-nums;
 }
 
 .realtimeTimeCell {
-  min-width: 94px;
+  min-width: 0;
 }
 
 .realtimeTimeLine {
-  width: 92px;
-  font-size: 12px;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   line-height: 1.3;
@@ -1537,9 +1973,27 @@
 }
 
 @container monitoring-page (max-width: 1240px) {
+  // 时间行连体分段模块固定 7 段(6 快捷档 + "自定义▾")；<=1240px 容器宽度下收紧
+  // 按钮 padding/font-size，让整行在不换行的前提下尽量挤下，减少触发横向滚动兜底。
+  // 只作用于工具条自己的 .segmentedControl，不影响账号总览/Codex 巡检等其它同名
+  // 分段控件(那些不在这个容器宽度断点的收紧范围内)。
+  .toolbarPanel .segmentedControl .segmentButton {
+    min-height: 30px;
+    padding: 0 10px;
+    font-size: 12px;
+  }
+
+  .timeRangeCustomTrigger {
+    gap: 4px;
+  }
+
   .statusBar,
   .statusMeta {
     justify-content: flex-end;
+    // 加入"自动补齐"徽章后状态条从 3 chip 增至 4 chip；960-1240px 区间基础规则仍是
+    // flex-wrap:nowrap，会在这个中间宽度横向溢出容器。改为 wrap 让第 4 个 chip
+    // 换行，不影响其余三个 chip 的样式与顺序。
+    flex-wrap: wrap;
   }
 
   .actionBarMeta {
@@ -1599,25 +2053,16 @@
     flex-wrap: wrap;
   }
 
-  .controlBar {
-    grid-template-columns: minmax(0, 1fr) auto;
+  // controlBar 第一行(时间按钮组)本身已独占一行且强制不换行(超宽靠横向滚动)，
+  // 这里只需要让第二行(搜索框 + 刷新控件)在窄容器下换行堆叠，搜索框始终占满整行。
+  .controlBarSecondaryRow {
+    grid-template-columns: minmax(0, 1fr);
     align-items: start;
   }
 
-  .controlBar .segmentedControl {
-    order: 1;
+  .controlBarSecondaryRow .refreshControls {
     justify-content: flex-start;
-  }
-
-  .controlBar .refreshControls {
-    order: 2;
-    justify-content: flex-end;
     flex-wrap: wrap;
-  }
-
-  .controlBar .filterSearchInputWrap {
-    order: 3;
-    grid-column: 1 / -1;
   }
 
   .filterGrid {
@@ -1645,6 +2090,14 @@
 }
 
 @container monitoring-page (max-width: 1024px) {
+  // 窄屏(容器 <=1024px)兜底：实时表恢复固定基线宽度，由 .tableWrapper 的 overflow-x:auto
+  // 横向滚动兜底，避免 13 列在过窄容器里被压到无法阅读。>=1360px 视口(容器 ~1152px)
+  // 不触发此断点，仍保持零横滚全列同屏。
+  .realtimeTable {
+    min-width: 1120px;
+    table-layout: auto;
+  }
+
   .panelHeader {
     flex-direction: column;
     align-items: stretch;
@@ -1755,21 +2208,20 @@
     grid-template-columns: 1fr;
   }
 
-  .controlBar .segmentedControl,
-  .controlBar .refreshControls,
-  .controlBar .filterSearchInputWrap {
-    grid-column: 1;
+  .controlBarSecondaryRow {
+    grid-template-columns: 1fr;
   }
 
-  .controlBar .filterSearchInputWrap {
+  .controlBarSecondaryRow .filterSearchInputWrap {
+    order: 1;
+  }
+
+  .controlBarSecondaryRow .refreshControls {
     order: 2;
   }
 
-  .controlBar .refreshControls {
-    order: 3;
-  }
-
   .controlBar,
+  .controlBarSecondaryRow,
   .refreshControls,
   .paginationBar,
   .paginationControls,
@@ -1945,10 +2397,6 @@
 
   .apiKeySummaryTable {
     min-width: 980px;
-  }
-
-  .realtimeTable {
-    min-width: 1260px;
   }
 }
 

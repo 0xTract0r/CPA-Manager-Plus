@@ -26,6 +26,8 @@ export interface UseMonitoringAnalyticsParams {
   include?: MonitoringAnalyticsInclude;
   eventsPage?: MonitoringAnalyticsEventsPageRequest | null;
   throttleMs?: number;
+  /** 覆盖单次请求超时；未传时使用 usageService 的默认超时。 */
+  timeoutMs?: number;
 }
 
 export interface MonitoringAnalyticsRefreshOptions {
@@ -89,6 +91,7 @@ export function useMonitoringAnalytics({
   include,
   eventsPage,
   throttleMs = DEFAULT_REFRESH_THROTTLE_MS,
+  timeoutMs,
 }: UseMonitoringAnalyticsParams): UseMonitoringAnalyticsReturn {
   const managementKey = useAuthStore((state) => state.managementKey);
   const availability = useRequestMonitoringAvailability();
@@ -206,7 +209,8 @@ export function useMonitoringAnalytics({
           serviceBase,
           managementKey,
           request,
-          controller.signal
+          controller.signal,
+          timeoutMs
         );
         if (requestIdRef.current !== requestId) return;
         setData(response);
@@ -238,6 +242,7 @@ export function useMonitoringAnalytics({
       requestKey,
       serviceBase,
       throttleMs,
+      timeoutMs,
     ]
   );
 

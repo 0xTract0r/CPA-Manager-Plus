@@ -27,7 +27,17 @@ export type MonitoringAuthMeta = {
   updatedAt: string;
 };
 
-export type MonitoringTimeRange = 'today' | '7d' | '14d' | '30d' | 'all' | 'custom';
+export type MonitoringTimeRange =
+  | '1h'
+  | '3h'
+  | '24h'
+  | 'today'
+  | 'yesterday'
+  | '7d'
+  | '14d'
+  | '30d'
+  | 'all'
+  | 'custom';
 
 export type MonitoringCustomTimeRange = {
   startMs: number;
@@ -353,6 +363,9 @@ export interface MonitoringScopeFilters {
   minLatencyMs?: number;
   cacheStatus?: string;
   headerTraceId?: string;
+  // G2b "低命中率全量筛" 阈值：开启后下推到后端 SQL 层做全量筛选（而非仅对已加载分页
+  // 本地过滤）。undefined/未开启时不筛选。
+  maxCacheHitRate?: number;
 }
 
 export interface UseMonitoringDataParams {

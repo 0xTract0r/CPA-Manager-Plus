@@ -33,7 +33,119 @@
 .content {
   display: flex;
   flex-direction: column;
-  gap: $spacing-xl;
+  gap: $spacing-lg;
+}
+
+// provider 选项卡：顶部一排，选中才显示对应登录卡（一次只登一个）。
+.tabHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: $spacing-md;
+}
+
+.tabHeaderText {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sectionTitle {
+  color: var(--text-primary);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.providerTabs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: $spacing-sm;
+}
+
+.providerTab {
+  min-height: 44px;
+  border: 1px solid var(--border-color);
+  border-radius: $radius-md;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease;
+
+  &:hover {
+    border-color: var(--primary-color);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 1px;
+  }
+}
+
+.providerTabActive {
+  border-color: var(--primary-color);
+  background: rgba($primary-color, 0.1);
+}
+
+.providerTabIcon {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  object-fit: contain;
+}
+
+.providerTabIconFallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  border-radius: $radius-sm;
+  border: 1px solid var(--border-color);
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.providerTabLabel {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.providerTabStatus {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--text-tertiary);
+  flex: 0 0 auto;
+}
+
+.providerStatusstarting,
+.providerStatuswaiting {
+  background: $warning-color;
+}
+
+.providerStatussuccess {
+  background: $success-color;
+}
+
+.providerStatuserror,
+.providerStatuscancelled {
+  background: $error-color;
 }
 
 .cardContent {
@@ -218,6 +330,26 @@
   gap: $spacing-sm;
 }
 
+.fingerprintBox {
+  background: var(--surface-subtle);
+  border: 1px solid var(--border-subtle);
+  border-radius: $radius-md;
+  padding: $spacing-md;
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+}
+
+.countdownBadge {
+  align-self: flex-start;
+  padding: 4px 8px;
+  border-radius: $radius-sm;
+  background: rgba($warning-color, 0.12);
+  color: $warning-color;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .connectionLabel {
   margin: 0;
   font-size: 14px;
@@ -252,4 +384,81 @@
   color: var(--text-primary);
   word-break: break-all;
   overflow-wrap: anywhere;
+}
+
+.accountSetupGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: $spacing-md;
+
+  @include mobile {
+    grid-template-columns: 1fr;
+  }
+}
+
+.flowSteps {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: $spacing-sm;
+
+  @include mobile {
+    grid-template-columns: 1fr;
+  }
+}
+
+.flowStep {
+  min-width: 0;
+  min-height: 40px;
+  border: 1px solid var(--border-subtle);
+  border-radius: $radius-md;
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.flowStepDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--text-tertiary);
+  flex: 0 0 auto;
+}
+
+.flowStepLabel {
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.flowStepActive {
+  border-color: $warning-color;
+  color: var(--text-primary);
+
+  .flowStepDot {
+    background: $warning-color;
+  }
+}
+
+.flowStepDone {
+  border-color: rgba($success-color, 0.45);
+  background: rgba($success-color, 0.08);
+  color: var(--text-primary);
+
+  .flowStepDot {
+    background: $success-color;
+  }
+}
+
+.successResultBox {
+  background: rgba($success-color, 0.08);
+  border: 1px solid rgba($success-color, 0.36);
+  border-radius: $radius-md;
+  padding: $spacing-md;
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
 }

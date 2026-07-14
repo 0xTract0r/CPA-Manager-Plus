@@ -241,6 +241,14 @@
     overflow-wrap: anywhere;
   }
 
+  .summaryScopeCaption {
+    margin: 0;
+    color: var(--monitor-muted);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.35;
+  }
+
   .summaryCardChart {
     position: absolute;
     right: 8px;

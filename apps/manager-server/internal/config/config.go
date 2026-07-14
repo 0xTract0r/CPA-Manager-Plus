@@ -44,6 +44,8 @@ type Config struct {
 	QuotaCooldownEnvSet          bool
 	AccountActionsEnvSet         bool
 	AccountActionsAutoEnvSet     bool
+	UsageCatchUpEnabled          bool
+	UsageCatchUpInterval         time.Duration
 }
 
 type LoadOptions struct {
@@ -146,6 +148,8 @@ func LoadWithOptions(options LoadOptions) (Config, error) {
 		QuotaCooldownEnvSet:          hasEnv("USAGE_QUOTA_COOLDOWN_ENABLED"),
 		AccountActionsEnvSet:         hasEnv("USAGE_ACCOUNT_ACTIONS_ENABLED"),
 		AccountActionsAutoEnvSet:     hasEnv("USAGE_ACCOUNT_ACTIONS_AUTO_DISABLE"),
+		UsageCatchUpEnabled:          envBool("USAGE_CATCHUP_ENABLED", true),
+		UsageCatchUpInterval:         time.Duration(envInt("USAGE_CATCHUP_INTERVAL_SECONDS", 600)) * time.Second,
 	}, nil
 }
 

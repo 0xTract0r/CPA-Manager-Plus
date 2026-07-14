@@ -87,6 +87,9 @@ import {
   buildSecondarySummaryCards,
   buildStatusOptions,
   formatAccountOverviewScopeText,
+  formatDateTimeLocalValue,
+  formatMonitoringCustomRangeCompactLabel,
+  formatMonitoringSummaryScopeText,
   getCurrentInputValue,
   getTodayStartInputValue,
   isUsageImportFile,
@@ -94,11 +97,23 @@ import {
   parseDateTimeLocalValue,
   requestAccountQuota,
   type FocusSnapshot,
+  type MonitoringCustomRangeDescriptor,
   type StatusFilter,
 } from '@/features/monitoring/model/monitoringCenterPageModel';
-import { useUsageData } from '@/features/monitoring/hooks/useUsageData';
-import { monitoringAnalyticsApi, type UsageHeaderSnapshot } from '@/services/api/usageService';
 import {
+  runSyncCoreHistoryCursorLoop,
+  useUsageData,
+  type SyncCoreHistoryCursorProgress,
+} from '@/features/monitoring/hooks/useUsageData';
+import { useUsageCatchUpStatus } from '@/features/monitoring/hooks/useUsageCatchUpStatus';
+import { presentUsageCatchUpStatus } from '@/features/monitoring/model/usageCatchUpPresentation';
+import {
+  getUsageServiceErrorCode,
+  monitoringAnalyticsApi,
+  type UsageHeaderSnapshot,
+} from '@/services/api/usageService';
+import {
+  normalizeLowCacheHitRateThreshold,
   readMonitoringCenterUiState,
   writeMonitoringCenterUiState,
   type MonitoringDataTab,
@@ -149,6 +164,10 @@ export function MonitoringCenterPage() {
   const requestMonitoringAvailability = useRequestMonitoringAvailability();
   const pageTransitionLayer = usePageTransitionLayer();
   const isCurrentLayer = pageTransitionLayer ? pageTransitionLayer.status === 'current' : true;
+  const usageCatchUpStatusQuery = useUsageCatchUpStatus({
+    serviceBase: requestMonitoringAvailability.serviceBase,
+    enabled: isCurrentLayer && requestMonitoringAvailability.available,
+  });
   const initialAccountOverviewUiState = useRef(readAccountOverviewUiState());
   const initialMonitoringCenterUiState = useRef(
     buildMonitoringInitialStateFromQuery(location.search, readMonitoringCenterUiState())
@@ -231,8 +250,24 @@ export function MonitoringCenterPage() {
   const [expandedApiKeys, setExpandedApiKeys] = useState<Record<string, boolean>>({});
   const [focusedAccount, setFocusedAccount] = useState<string | null>(null);
   const [isCustomRangeModalOpen, setIsCustomRangeModalOpen] = useState(false);
+  // 记录用户在 自定义弹层 里实际选择的方式(N小时/N天/日期范围)，供"当前统计范围"caption
+  // 与时间行"自定义"段还原实际所选范围，而不是笼统展示"自定义"。刷新页面后没有描述符
+  // (旧持久化状态只存了 timeRange='custom')时，两处都回退到笼统文案，不报错、不空白。
+  const [customRangeDescriptor, setCustomRangeDescriptor] =
+    useState<MonitoringCustomRangeDescriptor | null>(null);
   const [usageExporting, setUsageExporting] = useState(false);
   const [usageImporting, setUsageImporting] = useState(false);
+  const [usageSyncingFromCore, setUsageSyncingFromCore] = useState(false);
+  const [usageSyncCancelling, setUsageSyncCancelling] = useState(false);
+  const [usageSyncProgress, setUsageSyncProgress] = useState<SyncCoreHistoryCursorProgress | null>(
+    null
+  );
+  const usageSyncCancelRef = useRef(false);
+  const usageSyncAbortControllerRef = useRef<AbortController | null>(null);
+  const usageSyncResumeSinceRef = useRef<string | undefined>(undefined);
+  // 续传起点 undefined 合法地表示"从全部历史开头续传"，不能用它判断是否可续传；
+  // 必须用独立标志区分"是否存在可续传的同步"与"续传起点值"。
+  const [usageSyncResumable, setUsageSyncResumable] = useState(false);
   const [accountQuotaStates, setAccountQuotaStates] = useState<Record<string, AccountQuotaState>>(
     {}
   );
@@ -263,6 +298,14 @@ export function MonitoringCenterPage() {
   const [realtimePage, setRealtimePage] = useState(1);
   const [realtimePageSize, setRealtimePageSize] = useState(
     initialMonitoringCenterUiState.current.realtimePageSize
+  );
+  // "仅显示低命中率" 筛选状态提升到页面级：masthead 工具条 chip 与实时表过滤共享同一状态，
+  // 保证它与 "仅显示失败" chip 在同一行、embedded 与非 embedded 两条渲染路径都可达。
+  const [realtimeLowCacheHitRateOnly, setRealtimeLowCacheHitRateOnly] = useState(false);
+  // 低命中率筛选阈值同样提升到页面级并持久化：用户可在预设档位(<50%/<30%/<10%)间切换，
+  // 或输入自定义百分比；默认沿用原先写死的 0.3，不改变既有默认体验。
+  const [realtimeLowCacheHitRateThreshold, setRealtimeLowCacheHitRateThreshold] = useState(
+    () => initialMonitoringCenterUiState.current.realtimeLowCacheHitRateThreshold
   );
   const focusSnapshotRef = useRef<FocusSnapshot | null>(null);
   const previousAccountPageResetStateRef = useRef<AccountOverviewPageResetState | null>(null);
@@ -330,6 +373,7 @@ export function MonitoringCenterPage() {
     loadApiKeyAliases,
     exportUsage,
     importUsage,
+    syncCoreHistory,
   } = useUsageData({ loadUsageEvents: false });
 
   const monitoringScopeFilters = useMemo(
@@ -346,6 +390,9 @@ export function MonitoringCenterPage() {
       apiKeyHash: selectedApiKeyHash,
       headerTraceId: selectedHeaderTraceId,
       status: selectedStatus,
+      // G2b：仅当"仅显示低命中率" chip 开启时才下推阈值，让后端做跨全部数据的 SQL 层
+      // 全量筛选；未开启时不传，保持原有"不筛选"行为。
+      maxCacheHitRate: realtimeLowCacheHitRateOnly ? realtimeLowCacheHitRateThreshold : undefined,
     }),
     [
       drilldownAuthFile,
@@ -353,6 +400,8 @@ export function MonitoringCenterPage() {
       drilldownMinLatencyMs,
       drilldownProjectId,
       drilldownRequestType,
+      realtimeLowCacheHitRateOnly,
+      realtimeLowCacheHitRateThreshold,
       selectedAccount,
       selectedApiKeyHash,
       selectedChannel,
@@ -472,7 +521,21 @@ export function MonitoringCenterPage() {
   const combinedError = monitoringUnavailable
     ? monitoringError
     : [usageError, monitoringError].filter(Boolean).join('；');
+  // 显式 stale-on-error 提示：请求失败/超时时，useMonitoringData 会保留上一次成功范围
+  // 的展示快照(hasPresentationSnapshot)而不是清空页面，但这必须让用户明确知道，而不是
+  // 静默地把旧数据当作最新结果展示。仅在真的还在为新 scope 转场、且已有旧快照可显示时
+  // 才提示，避免和首次加载失败(还没有任何快照)的 combinedError 重复。
+  const staleDataNotice =
+    monitoringError && monitoringScopeTransitioning && hasMonitoringPresentationSnapshot
+      ? t('monitoring.stale_data_notice')
+      : null;
   const hasPrices = Object.keys(modelPrices).length > 0;
+  const usageCatchUpStatusPresentation = presentUsageCatchUpStatus(
+    usageCatchUpStatusQuery.found,
+    usageCatchUpStatusQuery.status,
+    i18n.language,
+    t
+  );
 
   useEffect(() => {
     accountQuotaStatesRef.current = accountQuotaStates;
@@ -513,6 +576,7 @@ export function MonitoringCenterPage() {
       selectedStatus,
       apiKeyPageSize,
       realtimePageSize,
+      realtimeLowCacheHitRateThreshold,
     });
   }, [
     activeDataTab,
@@ -520,6 +584,7 @@ export function MonitoringCenterPage() {
     autoRefreshMs,
     customEndInput,
     customStartInput,
+    realtimeLowCacheHitRateThreshold,
     realtimePageSize,
     searchInput,
     selectedAccount,
@@ -593,6 +658,19 @@ export function MonitoringCenterPage() {
   const accountOverviewScopeText = useMemo(
     () => formatAccountOverviewScopeText(accountStatusBounds, i18n.language, t),
     [accountStatusBounds, i18n.language, t]
+  );
+  const monitoringSummaryScopeText = useMemo(
+    () => formatMonitoringSummaryScopeText(timeRange, t, customRangeDescriptor, i18n.language),
+    [customRangeDescriptor, i18n.language, t, timeRange]
+  );
+  // 时间行"自定义"段的紧凑标签：仅在真的处于 custom 档时用描述符还原实际选择，
+  // 其余快捷档下 timeRange !== 'custom'，回退到笼统的"自定义"文案(段本身不高亮)。
+  const customRangeCompactLabel = useMemo(
+    () =>
+      timeRange === 'custom'
+        ? formatMonitoringCustomRangeCompactLabel(customRangeDescriptor, i18n.language, t)
+        : t('monitoring.range_custom'),
+    [customRangeDescriptor, i18n.language, t, timeRange]
   );
 
   const scopedSummary = monitoringSummary;
@@ -721,8 +799,7 @@ export function MonitoringCenterPage() {
             )
           )
           .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
-        const nextState =
-          mergeObservedAccountQuotaState(state, targets, observedEntries) ?? state;
+        const nextState = mergeObservedAccountQuotaState(state, targets, observedEntries) ?? state;
         changed = changed || nextState !== state;
         return [account, nextState] as const;
       })
@@ -916,12 +993,59 @@ export function MonitoringCenterPage() {
     if (customDraftTimeRangeError) return;
     setCustomStartInput(customDraftStartInput);
     setCustomEndInput(customDraftEndInput);
+    // 日期范围模式的描述符只在提交时(而不是每次草稿改动时)重新计算一次，
+    // 用最终确认的开始/结束时间还原展示，与其余 hours/days 模式一致。
+    const startMs = parseDateTimeLocalValue(customDraftStartInput);
+    const endMs = parseDateTimeLocalValue(customDraftEndInput);
+    setCustomRangeDescriptor(
+      startMs !== null && endMs !== null ? { mode: 'range', startMs, endMs } : null
+    );
     setTimeRange('custom');
     setIsCustomRangeModalOpen(false);
   }, [customDraftEndInput, customDraftStartInput, customDraftTimeRangeError]);
 
+  // 任意 N 小时/N 天：换算成 [now - N, now] 的 datetime-local 输入值，复用既有
+  // custom 日期区间提交路径(customStartInput/customEndInput + timeRange='custom')，
+  // 不新增单独的时间范围计算口径；额外记录 hours/days 描述符，供 caption 与时间行
+  // "自定义"段还原"最近 N 小时/N 天"这种更直观的展示，而不是退化成日期范围格式。
+  const applyHoursTimeRange = useCallback((hours: number) => {
+    const endDate = new Date();
+    const startDate = new Date(endDate.getTime() - hours * 60 * 60 * 1000);
+    const startValue = formatDateTimeLocalValue(startDate);
+    const endValue = formatDateTimeLocalValue(endDate);
+    setCustomStartInput(startValue);
+    setCustomEndInput(endValue);
+    setCustomDraftStartInput(startValue);
+    setCustomDraftEndInput(endValue);
+    setCustomRangeDescriptor({ mode: 'hours', hours });
+    setTimeRange('custom');
+    setIsCustomRangeModalOpen(false);
+  }, []);
+
+  const applyDaysTimeRange = useCallback((days: number) => {
+    const endDate = new Date();
+    const startDate = new Date(endDate.getTime() - days * 24 * 60 * 60 * 1000);
+    const startValue = formatDateTimeLocalValue(startDate);
+    const endValue = formatDateTimeLocalValue(endDate);
+    setCustomStartInput(startValue);
+    setCustomEndInput(endValue);
+    setCustomDraftStartInput(startValue);
+    setCustomDraftEndInput(endValue);
+    setCustomRangeDescriptor({ mode: 'days', days });
+    setTimeRange('custom');
+    setIsCustomRangeModalOpen(false);
+  }, []);
+
   const toggleFailedOnly = useCallback(() => {
     setSelectedStatus((previous) => (previous === 'failed' ? 'all' : 'failed'));
+  }, []);
+
+  const toggleRealtimeLowCacheHitRateOnly = useCallback(() => {
+    setRealtimeLowCacheHitRateOnly((previous) => !previous);
+  }, []);
+
+  const changeRealtimeLowCacheHitRateThreshold = useCallback((threshold: number) => {
+    setRealtimeLowCacheHitRateThreshold(normalizeLowCacheHitRateThreshold(threshold));
   }, []);
 
   const toggleApiKeyExpanded = useCallback((apiKeyId: string) => {
@@ -1184,9 +1308,13 @@ export function MonitoringCenterPage() {
         rowCount={realtimeLogRows.length}
         scopedFailureCount={scopedFailureCount}
         failedOnlyActive={failedOnlyActive}
+        lowCacheHitRateOnly={realtimeLowCacheHitRateOnly}
+        lowCacheHitRateThreshold={realtimeLowCacheHitRateThreshold}
         accountDisplayMode={accountDisplayMode}
         t={t}
         onToggleFailedOnly={toggleFailedOnly}
+        onToggleLowCacheHitRateOnly={toggleRealtimeLowCacheHitRateOnly}
+        onLowCacheHitRateThresholdChange={changeRealtimeLowCacheHitRateThreshold}
         onAccountDisplayModeChange={setAccountDisplayMode}
       />
     );
@@ -1197,15 +1325,19 @@ export function MonitoringCenterPage() {
     accountSortOptions,
     activeDataTab,
     apiKeyRows.length,
+    changeRealtimeLowCacheHitRateThreshold,
     failedOnlyActive,
     handleAccountSortKeyChange,
     overallLoading,
     realtimeLogRows.length,
+    realtimeLowCacheHitRateOnly,
+    realtimeLowCacheHitRateThreshold,
     refreshAll,
     scopedFailureCount,
     searchInput,
     t,
     toggleFailedOnly,
+    toggleRealtimeLowCacheHitRateOnly,
   ]);
 
   const handleAccountPageChange = useCallback(
@@ -1250,6 +1382,113 @@ export function MonitoringCenterPage() {
       setUsageExporting(false);
     }
   }, [exportUsage, resolveUsageTransferError, showNotification, t]);
+
+  const runSyncCoreHistory = useCallback(
+    async (since: string | undefined) => {
+      usageSyncCancelRef.current = false;
+      setUsageSyncCancelling(false);
+      const abortController = new AbortController();
+      usageSyncAbortControllerRef.current = abortController;
+      setUsageSyncingFromCore(true);
+      setUsageSyncProgress({ batchCount: 0, added: 0, skipped: 0 });
+      try {
+        const outcome = await runSyncCoreHistoryCursorLoop(syncCoreHistory, {
+          since,
+          onProgress: (progress) => setUsageSyncProgress(progress),
+          isCancelled: () => usageSyncCancelRef.current,
+          signal: abortController.signal,
+        });
+
+        if (outcome.status === 'no_data') {
+          usageSyncResumeSinceRef.current = undefined;
+          setUsageSyncResumable(false);
+          showNotification(t('usage_stats.sync_core_history_no_data'), 'warning');
+          return;
+        }
+
+        if (outcome.status === 'cancelled') {
+          usageSyncResumeSinceRef.current = outcome.nextSince;
+          setUsageSyncResumable(true);
+          showNotification(
+            t('usage_stats.sync_core_history_cancelled', {
+              batches: outcome.batchCount,
+              added: outcome.added,
+            }),
+            'warning'
+          );
+          if (outcome.batchCount > 0) await refreshAll();
+          return;
+        }
+
+        if (outcome.status === 'failed') {
+          usageSyncResumeSinceRef.current = outcome.nextSince;
+          setUsageSyncResumable(true);
+          const code = getUsageServiceErrorCode(outcome.error);
+          const message =
+            code === 'cpa_core_connection_not_configured'
+              ? t('usage_stats.sync_core_history_not_configured')
+              : resolveUsageTransferError(outcome.error);
+          if (outcome.batchCount > 0) {
+            showNotification(
+              t('usage_stats.sync_core_history_partial_failed', {
+                batches: outcome.batchCount,
+                added: outcome.added,
+                nextBatch: outcome.batchCount + 1,
+                message,
+              }),
+              'error'
+            );
+            await refreshAll();
+          } else {
+            showNotification(
+              `${t('usage_stats.sync_core_history_failed')}${message ? `: ${message}` : ''}`,
+              'error'
+            );
+          }
+          return;
+        }
+
+        // completed
+        usageSyncResumeSinceRef.current = undefined;
+        setUsageSyncResumable(false);
+        showNotification(
+          t('usage_stats.sync_core_history_success', {
+            added: outcome.added,
+            skipped: outcome.skipped,
+            batches: outcome.batchCount,
+          }),
+          'success'
+        );
+        await refreshAll();
+      } finally {
+        usageSyncAbortControllerRef.current = null;
+        setUsageSyncingFromCore(false);
+        setUsageSyncCancelling(false);
+        setUsageSyncProgress(null);
+      }
+    },
+    [refreshAll, resolveUsageTransferError, showNotification, syncCoreHistory, t]
+  );
+
+  const handleSyncCoreHistoryRangeSelect = useCallback(
+    (sinceMs: number | null) => {
+      const since = sinceMs === null ? undefined : new Date(sinceMs).toISOString();
+      void runSyncCoreHistory(since);
+    },
+    [runSyncCoreHistory]
+  );
+
+  const handleSyncCoreHistoryRetry = useCallback(() => {
+    void runSyncCoreHistory(usageSyncResumeSinceRef.current);
+  }, [runSyncCoreHistory]);
+
+  const handleSyncCoreHistoryCancel = useCallback(() => {
+    usageSyncCancelRef.current = true;
+    setUsageSyncCancelling(true);
+    // 立即中断在途请求，而不是等到下一批开始前才检查取消标志；
+    // 否则单批耗时较长时点击取消不会有任何效果，请求会一直跑到完成。
+    usageSyncAbortControllerRef.current?.abort();
+  }, []);
 
   const importUsageFile = useCallback(
     async (file: File) => {
@@ -1354,6 +1593,10 @@ export function MonitoringCenterPage() {
         usageTransferAvailable={usageTransferAvailable}
         usageExporting={usageExporting}
         usageImporting={usageImporting}
+        usageSyncingFromCore={usageSyncingFromCore}
+        usageSyncCancelling={usageSyncCancelling}
+        usageSyncProgress={usageSyncProgress}
+        hasResumableCoreHistorySync={usageSyncResumable}
         loggingToFile={isFileLogsAvailable(config)}
         modelPricesAvailable={requestMonitoringAvailability.modelPricesAvailable}
         usageImportInputRef={usageImportInputRef}
@@ -1361,6 +1604,9 @@ export function MonitoringCenterPage() {
         onUsageExport={handleUsageExport}
         onUsageImportClick={handleUsageImportClick}
         onUsageImportChange={handleUsageImportChange}
+        onSyncCoreHistoryRangeSelect={handleSyncCoreHistoryRangeSelect}
+        onSyncCoreHistoryRetry={handleSyncCoreHistoryRetry}
+        onSyncCoreHistoryCancel={handleSyncCoreHistoryCancel}
         statusSummary={
           <MonitoringStatusSummary
             connectionTone={connectionTone}
@@ -1370,12 +1616,14 @@ export function MonitoringCenterPage() {
             scopedFailureCount={scopedFailureCount}
             totalCalls={scopedSummary.totalCalls}
             t={t}
+            usageCatchUpStatus={usageCatchUpStatusPresentation}
           />
         }
       />
 
       <MonitoringFiltersPanel
         timeRange={timeRange}
+        customRangeCompactLabel={customRangeCompactLabel}
         autoRefreshMs={autoRefreshMs}
         selectedAccount={selectedAccount}
         selectedProvider={selectedProvider}
@@ -1391,6 +1639,7 @@ export function MonitoringCenterPage() {
         apiKeyOptions={apiKeyOptions}
         statusOptions={statusOptions}
         combinedError={combinedError}
+        staleDataNotice={staleDataNotice}
         usageStatisticsEnabled={Boolean(config?.usageStatisticsEnabled)}
         overallLoading={overallLoading}
         t={t}
@@ -1410,6 +1659,7 @@ export function MonitoringCenterPage() {
       <MonitoringSummarySection
         primaryCards={primarySummaryCards}
         secondaryCards={secondarySummaryCards}
+        scopeText={monitoringSummaryScopeText}
       />
 
       <MonitoringDataPanel
@@ -1489,6 +1739,8 @@ export function MonitoringCenterPage() {
               pageSize={realtimePageSize}
               scopedFailureCount={scopedFailureCount}
               failedOnlyActive={failedOnlyActive}
+              lowCacheHitRateOnly={realtimeLowCacheHitRateOnly}
+              lowCacheHitRateThreshold={realtimeLowCacheHitRateThreshold}
               eventsHasMore={eventsHasMore}
               eventsLoadingMore={eventsLoadingMore}
               eventsRetentionLimited={eventsRetentionLimited}
@@ -1501,6 +1753,8 @@ export function MonitoringCenterPage() {
               emptyState={renderMonitoringEmptyState()}
               t={t}
               onToggleFailedOnly={toggleFailedOnly}
+              onToggleLowCacheHitRateOnly={toggleRealtimeLowCacheHitRateOnly}
+              onLowCacheHitRateThresholdChange={changeRealtimeLowCacheHitRateThreshold}
               onAccountDisplayModeChange={setAccountDisplayMode}
               onPageChange={setRealtimePage}
               onPageSizeChange={handleRealtimePageSizeChange}
@@ -1520,6 +1774,8 @@ export function MonitoringCenterPage() {
         onApply={applyCustomTimeRange}
         onStartChange={handleCustomDraftStartChange}
         onEndChange={handleCustomDraftEndChange}
+        onApplyHours={applyHoursTimeRange}
+        onApplyDays={applyDaysTimeRange}
       />
     </div>
   );

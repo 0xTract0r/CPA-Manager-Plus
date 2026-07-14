@@ -159,9 +159,29 @@ describe('MonitoringCenterPage summary cards', () => {
     expect(html).toContain('Reasoning 5.0M');
     expect(html).toContain('Share 99.6%');
     expect(html).toContain('Share 0.4%');
-    expect(html).toContain('Hit rate 80.3%');
+    expect(html).toContain('Hit rate 13.3%');
     expect(html).not.toContain('Create 555.5M');
     expect(html).not.toContain('Read 444.4M');
+  });
+
+  it('renders a scope caption stating the current stats window when scopeText is provided', () => {
+    const html = renderToStaticMarkup(
+      <MonitoringSummarySection
+        primaryCards={[]}
+        secondaryCards={[]}
+        scopeText="Current stats window: Today"
+      />
+    );
+
+    expect(html).toContain('Current stats window: Today');
+  });
+
+  it('omits the scope caption when scopeText is not provided', () => {
+    const html = renderToStaticMarkup(
+      <MonitoringSummarySection primaryCards={[]} secondaryCards={[]} />
+    );
+
+    expect(html).not.toContain('Current stats window');
   });
 
   it('shows legacy cache hit rate against input tokens', () => {
@@ -229,7 +249,7 @@ describe('MonitoringCenterPage summary cards', () => {
     );
     const cachedCard = secondaryCards.find((card) => card.label === 'Cached Tokens');
 
-    expect(cachedCard?.meta).toBe('Hit rate 35.7%');
+    expect(cachedCard?.meta).toBe('Hit rate 27.3%');
   });
 });
 

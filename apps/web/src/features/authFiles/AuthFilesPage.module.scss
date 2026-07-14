@@ -397,6 +397,9 @@
   display: grid;
   gap: $spacing-md;
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+  // 同一行卡片等高：网格项按行拉伸，卡片内部用 min-height:100% + margin-top:auto
+  // 把操作栏顶到底部，避免内容多寡不一导致行内高度参差。
+  align-items: stretch;
 }
 
 .fileGridQuotaManaged {
@@ -838,6 +841,7 @@
   padding: 16px;
   display: flex;
   flex-direction: column;
+  height: 100%;
   min-height: 100%;
   transition:
     transform $transition-fast,
@@ -1194,7 +1198,10 @@
   font-size: 14px;
   font-weight: 800;
   color: var(--text-primary);
-  word-break: break-all;
+  // 窄屏在合理边界断词，避免像 break-all 那样把 gmail.com.json 逐字符断行；
+  // 超出仍由 -webkit-line-clamp + title 悬浮全文兜底。
+  overflow-wrap: anywhere;
+  word-break: break-word;
   line-height: 1.4;
   display: -webkit-box;
   overflow: hidden;
@@ -1260,6 +1267,30 @@
 
 .priorityValue {
   font-variant-numeric: tabular-nums;
+}
+
+.cardMetaAction {
+  min-width: 0;
+  // 审计入口现在是两个紧凑 chip，点击后在右侧抽屉（Drawer, portal）里展示历史，
+  // 卡片本体不再因展开变长，因此这里占满整行只是为了让两个 chip 独占一行、不与上方 meta 挤在一起。
+  flex: 1 1 100%;
+  width: 100%;
+  display: flex;
+  justify-content: flex-start;
+  align-items: flex-start;
+}
+
+.cardMetaActionList {
+  display: flex;
+  // 两个审计入口 chip 并排放在同一行；窄卡时允许换行兜底，不横向溢出。
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
 }
 
 .noteText {
@@ -1384,6 +1415,20 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+// 无健康数据时的紧凑占位：单行 label + "--"，不占整块状态面板高度。
+.statusPanelEmpty {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.statusPanelEmptyValue {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
 }
 
 .statusPanelCompact {
@@ -1811,6 +1856,16 @@
   .statusToggle {
     width: 100%;
     justify-content: space-between;
+  }
+
+  .cardMetaAction {
+    width: 100%;
+    margin-left: 0;
+    justify-content: flex-start;
+  }
+
+  .cardMetaActionList {
+    justify-content: flex-start;
   }
 }
 

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -479,10 +478,8 @@ func eventsFromLegacyUsage(usageRecord map[string]any, format string) (ImportPar
 		},
 	}
 	now := time.Now().UnixMilli()
-	endpointIndex := 0
 	for _, endpoint := range sortedKeys(apisRaw) {
 		apiRaw := apisRaw[endpoint]
-		endpointIndex++
 		apiEntry, ok := apiRaw.(map[string]any)
 		if !ok {
 			result.Failed++
@@ -495,10 +492,8 @@ func eventsFromLegacyUsage(usageRecord map[string]any, format string) (ImportPar
 		}
 
 		method, path := parseEndpoint(endpoint)
-		modelIndex := 0
 		for _, model := range sortedKeys(modelsRaw) {
 			modelRaw := modelsRaw[model]
-			modelIndex++
 			modelEntry, ok := modelRaw.(map[string]any)
 			if !ok {
 				result.Failed++
@@ -509,23 +504,13 @@ func eventsFromLegacyUsage(usageRecord map[string]any, format string) (ImportPar
 				result.Unsupported++
 				continue
 			}
-			for detailIndex, detailRaw := range detailsRaw {
+			for _, detailRaw := range detailsRaw {
 				detail, ok := detailRaw.(map[string]any)
 				if !ok {
 					result.Failed++
 					continue
 				}
-				event, err := eventFromLegacyDetail(
-					endpoint,
-					method,
-					path,
-					model,
-					detail,
-					endpointIndex,
-					modelIndex,
-					detailIndex,
-					now,
-				)
+				event, err := eventFromLegacyDetail(endpoint, method, path, model, detail, now)
 				if err != nil {
 					result.Failed++
 					continue
@@ -547,9 +532,6 @@ func eventFromLegacyDetail(
 	path string,
 	model string,
 	detail map[string]any,
-	endpointIndex int,
-	modelIndex int,
-	detailIndex int,
 	now int64,
 ) (Event, error) {
 	timestamp := readString(detail, "timestamp", "time", "created_at", "createdAt")
@@ -574,10 +556,17 @@ func eventFromLegacyDetail(
 	apiKey := readString(detail, "api_key", "apiKey", "key")
 	authIndex := readString(detail, "auth_index", "authIndex", "AuthIndex")
 	rawJSON := legacyRawJSON(endpoint, model, detail)
+	// requestID prefers the real per-request correlation id (present once core
+	// exposes request_id on /usage/export details). When it is absent (older
+	// core versions, or synthetic/imported records), fall back to a content
+	// digest built purely from the event's own fields below -- never from the
+	// detail's position within the endpoint/model/details traversal. A
+	// position-derived id previously double-counted every event ingested both
+	// through the redis-queue collector (which has the real request_id) and
+	// through a later legacy export import (which had no request_id and
+	// synthesized a different id per traversal position), because the two
+	// paths produced different event hashes for the same underlying request.
 	requestID := readString(detail, "request_id", "requestId", "id")
-	if requestID == "" {
-		requestID = legacyRequestID(endpoint, model, normalizedTimestamp, rawJSON, endpointIndex, modelIndex, detailIndex)
-	}
 
 	event := Event{
 		RequestID:             requestID,
@@ -626,6 +615,15 @@ func eventFromLegacyDetail(
 		event.Endpoint = "-"
 	}
 	AttachResponseHeaderMetadata(&event, ResponseHeaderMetadataFromRecord(detail, time.UnixMilli(timestampMS)))
+	// Do NOT synthesize a request id when the legacy detail carries none. The
+	// realtime redis-queue collector (NormalizeRaw) leaves RequestID empty for
+	// request_id-less events and feeds that empty first field straight into
+	// buildEventHash. If the import path instead synthesized a non-empty id
+	// here, the same underlying request would hash differently on the two
+	// ingest paths, bypass the event_hash unique constraint, and be double
+	// counted. Keeping RequestID empty makes the import path byte-for-byte
+	// identical to the collector for the empty-id case. request_id-present
+	// events are untouched, so their historical hashes are unchanged.
 	event.EventHash = buildEventHash(event)
 	return event, nil
 }
@@ -639,24 +637,6 @@ func legacyRawJSON(endpoint string, model string, detail map[string]any) string 
 	}
 	raw, _ := json.Marshal(record)
 	return string(raw)
-}
-
-func legacyRequestID(endpoint string, model string, timestamp string, rawJSON string, endpointIndex int, modelIndex int, detailIndex int) string {
-	raw := strings.Join([]string{
-		"legacy",
-		strconv.Itoa(endpointIndex),
-		strconv.Itoa(modelIndex),
-		strconv.Itoa(detailIndex),
-		endpoint,
-		model,
-		timestamp,
-		rawJSON,
-	}, "|")
-	hash := hashString(raw)
-	if len(hash) > 16 {
-		hash = hash[:16]
-	}
-	return "legacy:" + hash
 }
 
 func parseEndpoint(endpoint string) (method string, path string) {

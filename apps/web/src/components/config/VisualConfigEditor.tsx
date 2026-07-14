@@ -241,6 +241,18 @@ export function VisualConfigEditor({
     t,
     validationErrors?.['streaming.nonstreamKeepaliveInterval']
   );
+  const quotaSnapshotRefreshIntervalError = getValidationMessage(
+    t,
+    validationErrors?.['quotaSnapshotRefresh.interval']
+  );
+  const quotaSnapshotRefreshJitterError = getValidationMessage(
+    t,
+    validationErrors?.['quotaSnapshotRefresh.jitter']
+  );
+  const quotaSnapshotRefreshStartupMaxStalenessError = getValidationMessage(
+    t,
+    validationErrors?.['quotaSnapshotRefresh.startupMaxStaleness']
+  );
 
   const handleApiKeysTextChange = useCallback(
     (apiKeysText: string) => onChange({ apiKeysText }),
@@ -332,7 +344,11 @@ export function VisualConfigEditor({
         title: t('config_management.visual.sections.quota.title'),
         description: t('config_management.visual.sections.quota.description'),
         icon: IconTimer,
-        errorCount: 0,
+        errorCount: countErrors([
+          'quotaSnapshotRefresh.interval',
+          'quotaSnapshotRefresh.jitter',
+          'quotaSnapshotRefresh.startupMaxStaleness',
+        ]),
       },
       {
         id: 'streaming',
@@ -1177,6 +1193,15 @@ export function VisualConfigEditor({
                   disabled={disabled}
                   onChange={(wsAuth) => onChange({ wsAuth })}
                 />
+                <ToggleRow
+                  title={t('config_management.visual.sections.network.enable_gemini_cli_endpoint')}
+                  description={t(
+                    'config_management.visual.sections.network.enable_gemini_cli_endpoint_desc'
+                  )}
+                  checked={values.enableGeminiCliEndpoint}
+                  disabled={disabled}
+                  onChange={(enableGeminiCliEndpoint) => onChange({ enableGeminiCliEndpoint })}
+                />
               </SectionGrid>
 
               <SectionSubsection
@@ -1190,40 +1215,48 @@ export function VisualConfigEditor({
                     <SectionGrid>
                       <Input
                         label={t('config_management.visual.sections.headers.user_agent')}
+                        placeholder="claude-cli/2.1.44 (external, sdk-cli)"
                         value={values.claudeHeaderUserAgent}
                         onChange={(e) => onChange({ claudeHeaderUserAgent: e.target.value })}
                         disabled={disabled}
                       />
                       <Input
                         label={t('config_management.visual.sections.headers.package_version')}
+                        placeholder="0.74.0"
                         value={values.claudeHeaderPackageVersion}
                         onChange={(e) => onChange({ claudeHeaderPackageVersion: e.target.value })}
                         disabled={disabled}
                       />
                       <Input
                         label={t('config_management.visual.sections.headers.runtime_version')}
+                        placeholder="v24.3.0"
                         value={values.claudeHeaderRuntimeVersion}
                         onChange={(e) => onChange({ claudeHeaderRuntimeVersion: e.target.value })}
                         disabled={disabled}
                       />
                       <Input
                         label={t('config_management.visual.sections.headers.os')}
+                        placeholder="MacOS"
                         value={values.claudeHeaderOs}
                         onChange={(e) => onChange({ claudeHeaderOs: e.target.value })}
                         disabled={disabled}
                       />
                       <Input
                         label={t('config_management.visual.sections.headers.arch')}
+                        placeholder="arm64"
                         value={values.claudeHeaderArch}
                         onChange={(e) => onChange({ claudeHeaderArch: e.target.value })}
                         disabled={disabled}
                       />
                       <Input
                         label={t('config_management.visual.sections.headers.timeout')}
+                        placeholder="600"
                         value={values.claudeHeaderTimeout}
                         onChange={(e) => onChange({ claudeHeaderTimeout: e.target.value })}
                         disabled={disabled}
                       />
+                    </SectionGrid>
+                    <SectionGrid>
                       <ToggleRow
                         title={t('config_management.visual.sections.headers.stabilize_device')}
                         description={t(
@@ -1235,6 +1268,17 @@ export function VisualConfigEditor({
                           onChange({ claudeHeaderStabilizeDeviceProfile })
                         }
                       />
+                      <ToggleRow
+                        title={t('config_management.visual.sections.headers.online_update')}
+                        description={t(
+                          'config_management.visual.sections.headers.online_update_desc'
+                        )}
+                        checked={values.managedHeaderOnlineUpdate}
+                        disabled={disabled}
+                        onChange={(managedHeaderOnlineUpdate) =>
+                          onChange({ managedHeaderOnlineUpdate })
+                        }
+                      />
                     </SectionGrid>
                   </SectionSubsection>
 
@@ -1244,16 +1288,20 @@ export function VisualConfigEditor({
                     <SectionGrid>
                       <Input
                         label={t('config_management.visual.sections.headers.user_agent')}
+                        placeholder="codex_cli_rs/0.114.0 (Mac OS 14.2.0; x86_64) vscode/1.111.0"
                         value={values.codexHeaderUserAgent}
                         onChange={(e) => onChange({ codexHeaderUserAgent: e.target.value })}
                         disabled={disabled}
                       />
                       <Input
                         label={t('config_management.visual.sections.headers.beta_features')}
+                        placeholder="multi_agent"
                         value={values.codexHeaderBetaFeatures}
                         onChange={(e) => onChange({ codexHeaderBetaFeatures: e.target.value })}
                         disabled={disabled}
                       />
+                    </SectionGrid>
+                    <SectionGrid>
                       <ToggleRow
                         title={t('config_management.visual.sections.headers.identity_confuse')}
                         description={t(
@@ -1302,6 +1350,98 @@ export function VisualConfigEditor({
                 onChange={(quotaAntigravityCredits) => onChange({ quotaAntigravityCredits })}
               />
             </SectionGrid>
+
+            <SectionSubsection
+              title={t('config_management.visual.sections.quota.snapshot_refresh_title')}
+              description={t('config_management.visual.sections.quota.snapshot_refresh_desc')}
+            >
+              <SectionStack>
+                <SectionGrid>
+                  <ToggleRow
+                    title={t('config_management.visual.sections.quota.snapshot_refresh_enabled')}
+                    description={t(
+                      'config_management.visual.sections.quota.snapshot_refresh_enabled_desc'
+                    )}
+                    checked={values.quotaSnapshotRefresh.enabled}
+                    disabled={disabled}
+                    onChange={(enabled) =>
+                      onChange({
+                        quotaSnapshotRefresh: { ...values.quotaSnapshotRefresh, enabled },
+                      })
+                    }
+                  />
+                  <ToggleRow
+                    title={t(
+                      'config_management.visual.sections.quota.snapshot_refresh_startup_catch_up'
+                    )}
+                    description={t(
+                      'config_management.visual.sections.quota.snapshot_refresh_startup_catch_up_desc'
+                    )}
+                    checked={values.quotaSnapshotRefresh.startupCatchUp}
+                    disabled={disabled}
+                    onChange={(startupCatchUp) =>
+                      onChange({
+                        quotaSnapshotRefresh: { ...values.quotaSnapshotRefresh, startupCatchUp },
+                      })
+                    }
+                  />
+                </SectionGrid>
+                <SectionGrid>
+                  <Input
+                    label={t('config_management.visual.sections.quota.snapshot_refresh_interval')}
+                    placeholder="45m"
+                    value={values.quotaSnapshotRefresh.interval}
+                    onChange={(e) =>
+                      onChange({
+                        quotaSnapshotRefresh: {
+                          ...values.quotaSnapshotRefresh,
+                          interval: e.target.value,
+                        },
+                      })
+                    }
+                    disabled={disabled}
+                    hint={t('config_management.visual.sections.quota.snapshot_refresh_interval_hint')}
+                    error={quotaSnapshotRefreshIntervalError}
+                  />
+                  <Input
+                    label={t('config_management.visual.sections.quota.snapshot_refresh_jitter')}
+                    placeholder="10m"
+                    value={values.quotaSnapshotRefresh.jitter}
+                    onChange={(e) =>
+                      onChange({
+                        quotaSnapshotRefresh: {
+                          ...values.quotaSnapshotRefresh,
+                          jitter: e.target.value,
+                        },
+                      })
+                    }
+                    disabled={disabled}
+                    hint={t('config_management.visual.sections.quota.snapshot_refresh_jitter_hint')}
+                    error={quotaSnapshotRefreshJitterError}
+                  />
+                  <Input
+                    label={t(
+                      'config_management.visual.sections.quota.snapshot_refresh_startup_max_staleness'
+                    )}
+                    placeholder="24h"
+                    value={values.quotaSnapshotRefresh.startupMaxStaleness}
+                    onChange={(e) =>
+                      onChange({
+                        quotaSnapshotRefresh: {
+                          ...values.quotaSnapshotRefresh,
+                          startupMaxStaleness: e.target.value,
+                        },
+                      })
+                    }
+                    disabled={disabled}
+                    hint={t(
+                      'config_management.visual.sections.quota.snapshot_refresh_startup_max_staleness_hint'
+                    )}
+                    error={quotaSnapshotRefreshStartupMaxStalenessError}
+                  />
+                </SectionGrid>
+              </SectionStack>
+            </SectionSubsection>
           </ConfigSection>
 
           <ConfigSection

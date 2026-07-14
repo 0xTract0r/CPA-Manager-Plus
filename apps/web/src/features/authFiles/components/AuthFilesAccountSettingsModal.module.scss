@@ -1,0 +1,1106 @@
+// 账号设置(身份隔离)弹窗样式。
+// 迁移自旧版 fork `src/pages/AuthFilesPage.module.scss` 中账号设置弹窗相关的类
+// （原文件按选择器名与本文件保持一致，避免迁移 JSX 时改动 className）。
+@use '../../../styles/variables' as *;
+
+// 弹窗根容器 hook：仅用于账号设置弹窗，不影响其它 Modal 调用。
+.accountSettingsModal {
+  width: 100%;
+}
+
+.accountSettingsEditor {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-md;
+  // P1：不再在此再套一层 max-height/overflow。此前它与全局 `.modal-body`
+  //（max-height:65vh; overflow:auto）形成嵌套双滚动，导致正文被压进一条超长
+  // 内部滚动条、关键区落到折叠线下。改为让 `.modal-body` 作为唯一滚动容器。
+}
+
+.accountSettingsLoading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: $spacing-sm;
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: $spacing-sm 0;
+}
+
+.accountSettingsError {
+  padding: $spacing-sm $spacing-md;
+  border-radius: $radius-md;
+  border: 1px solid var(--danger-color);
+  background-color: rgba($error-color, 0.1);
+  color: var(--danger-color);
+  font-size: 12px;
+}
+
+.jsonWrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.advancedDetails {
+  border: 1px solid color-mix(in srgb, var(--border-color) 78%, transparent);
+  border-radius: $radius-md;
+  background-color: color-mix(in srgb, var(--bg-secondary) 82%, transparent);
+
+  > summary {
+    padding: 9px 12px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    user-select: none;
+  }
+}
+
+.advancedBody {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+  padding: 0 12px 12px;
+}
+
+.savePreview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--primary-color) 30%, var(--border-color));
+  border-radius: $radius-md;
+  background-color: color-mix(in srgb, var(--primary-color) 6%, transparent);
+}
+
+.savePreviewHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+
+  strong {
+    font-size: 13px;
+    color: var(--text-primary);
+  }
+}
+
+.fieldLabel {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.readOnlyViewer {
+  width: 100%;
+  max-height: 280px;
+  padding: $spacing-sm;
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--border-color) 96%, var(--text-tertiary));
+  border-radius: $radius-md;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  box-sizing: border-box;
+  cursor: default;
+  user-select: text;
+
+  &:focus {
+    outline: 2px solid color-mix(in srgb, var(--primary-color) 28%, transparent);
+    outline-offset: 2px;
+  }
+}
+
+.readOnlyToolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.readOnlyBadge {
+  display: inline-flex;
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 75%, transparent);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.readOnlyCopyButton {
+  margin-left: auto;
+  border: 1px solid color-mix(in srgb, var(--primary-color) 28%, var(--border-color));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--primary-color) 8%, transparent);
+  color: var(--primary-color);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  cursor: pointer;
+
+  &:hover {
+    background: color-mix(in srgb, var(--primary-color) 14%, transparent);
+  }
+}
+
+.readOnlyCode {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+
+  code {
+    display: block;
+  }
+}
+
+.jsonTree {
+  min-width: 0;
+  color: var(--text-primary);
+
+  ul {
+    list-style: none;
+  }
+}
+
+.jsonTreeContainer {
+  font-family: monospace;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.jsonTreeChildFields {
+  margin: 0;
+  padding: 2px 0 2px 18px;
+  border-left: 1px solid color-mix(in srgb, var(--border-color) 58%, transparent);
+}
+
+.jsonTreeChild {
+  min-width: 0;
+}
+
+.jsonTreeLabel,
+.jsonTreeClickableLabel {
+  color: color-mix(in srgb, var(--primary-color) 70%, var(--text-primary));
+  font-weight: 700;
+}
+
+.jsonTreeString {
+  color: color-mix(in srgb, #0f8a4b 70%, var(--text-primary));
+}
+
+.jsonTreeNumber,
+.jsonTreeBoolean {
+  color: color-mix(in srgb, #8a4de8 72%, var(--text-primary));
+}
+
+.jsonTreeNull,
+.jsonTreeOther {
+  color: var(--text-tertiary);
+}
+
+.jsonTreePunctuation {
+  color: var(--text-secondary);
+}
+
+.jsonTreeExpandIcon,
+.jsonTreeCollapseIcon {
+  color: var(--primary-color);
+  margin-right: 5px;
+}
+
+.jsonTreeCollapsedContent {
+  color: var(--text-tertiary);
+}
+
+.runtimeTlsSummaryPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: $spacing-sm $spacing-md;
+  border: 1px solid color-mix(in srgb, var(--primary-color) 28%, var(--border-color));
+  border-radius: $radius-md;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--primary-color) 8%, transparent), transparent 76%),
+    var(--bg-secondary);
+}
+
+.runtimeTlsSummaryHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: $spacing-sm;
+  align-items: flex-start;
+
+  strong {
+    color: var(--text-primary);
+    font-size: 13px;
+  }
+}
+
+.runtimeTlsSummaryBadges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+
+  span {
+    max-width: 220px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background-color: color-mix(in srgb, var(--primary-color) 12%, var(--bg-tertiary));
+    color: var(--text-primary);
+    font-size: 11px;
+    font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.runtimeTlsSummaryGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+
+  div {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+    padding: 8px 9px;
+    border-radius: $radius-sm;
+    background-color: color-mix(in srgb, var(--bg-primary) 76%, transparent);
+    border: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
+  }
+
+  span {
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  strong {
+    color: var(--text-primary);
+    font-size: 12px;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+}
+
+.runtimeTlsSummaryText {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+
+  p {
+    margin: 0;
+  }
+}
+
+.fieldsGrid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: $spacing-sm;
+
+  :global(.form-group) {
+    margin: 0;
+  }
+}
+
+.jsonEditor {
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border-color) 88%, transparent);
+  border-radius: $radius-md;
+  background-color: var(--bg-primary);
+
+  :global(.cm-editor) {
+    font-size: 12px;
+    line-height: 1.5;
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+  }
+
+  :global(.cm-scroller) {
+    max-height: 220px;
+    overflow: auto;
+  }
+
+  :global(.cm-gutters) {
+    background-color: color-mix(in srgb, var(--bg-secondary) 82%, transparent);
+    border-right-color: color-mix(in srgb, var(--border-color) 76%, transparent);
+    color: var(--text-tertiary);
+  }
+
+  :global(.cm-placeholder) {
+    color: var(--text-tertiary);
+  }
+}
+
+.jsonEditorInvalid {
+  border-color: var(--danger-color);
+  box-shadow: 0 0 0 3px rgba($error-color, 0.12);
+}
+
+.jsonExample {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+
+  span {
+    font-weight: 600;
+  }
+
+  code {
+    padding: 2px 6px;
+    border: 1px solid color-mix(in srgb, var(--border-color) 70%, transparent);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--bg-secondary) 82%, transparent);
+    color: var(--text-primary);
+    font-size: 11px;
+    white-space: nowrap;
+  }
+}
+
+.managedHeaderPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.managedHeaderPlainHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-sm;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.managedHeaderMeta {
+  flex-shrink: 0;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background-color: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.managedHeaderTable {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  border: 1px solid color-mix(in srgb, var(--border-color) 70%, transparent);
+  border-radius: $radius-sm;
+  overflow: hidden;
+  background-color: var(--bg-secondary);
+
+  th,
+  td {
+    min-width: 0;
+    padding: 8px 10px;
+    border-bottom: 1px solid color-mix(in srgb, var(--border-color) 62%, transparent);
+    font-size: 12px;
+    text-align: left;
+    vertical-align: top;
+  }
+
+  thead th {
+    color: var(--text-secondary);
+    font-weight: 700;
+    background-color: color-mix(in srgb, var(--bg-tertiary) 76%, transparent);
+  }
+
+  thead th:first-child,
+  tbody th {
+    width: min(34%, 220px);
+  }
+
+  tbody tr:last-child th,
+  tbody tr:last-child td {
+    border-bottom: 0;
+  }
+}
+
+.managedHeaderKey {
+  color: var(--text-secondary);
+  font-weight: 700;
+  border-right: 1px solid color-mix(in srgb, var(--border-color) 70%, transparent);
+  overflow-wrap: anywhere;
+}
+
+.managedHeaderValue {
+  display: block;
+  color: var(--text-primary);
+  font-family: monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.clientObservationTable {
+  thead th:first-child,
+  tbody th {
+    width: 18%;
+  }
+
+  thead th:nth-child(2),
+  tbody td:nth-child(2) {
+    width: 48%;
+  }
+
+  thead th:nth-child(3),
+  tbody td:nth-child(3) {
+    width: 24%;
+  }
+
+  thead th:nth-child(4),
+  tbody td:nth-child(4) {
+    width: 10%;
+  }
+}
+
+.clientObservationUserAgent {
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  text-overflow: clip;
+  line-height: 1.35;
+}
+
+.clientObservationSubtext {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clientObservationTable .clientObservationSubtext {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.managedHeaderEmpty {
+  padding: 10px 12px;
+  border-radius: $radius-sm;
+  background-color: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.managedHeaderPolicyGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.managedHeaderPolicyItem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 65%, transparent);
+  border-radius: $radius-sm;
+  background-color: color-mix(in srgb, var(--bg-primary) 75%, transparent);
+
+  span {
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  strong {
+    color: var(--text-primary);
+    font-size: 12px;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+}
+
+.managedHeaderPolicyItemWide {
+  grid-column: 1 / -1;
+}
+
+.managedHeaderHistoryList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.managedHeaderHistoryEntry {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: $spacing-sm;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 65%, transparent);
+  border-radius: $radius-sm;
+  background-color: color-mix(in srgb, var(--bg-primary) 75%, transparent);
+}
+
+.managedHeaderHistorySummary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: $spacing-sm;
+  width: 100%;
+}
+
+.managedHeaderHistoryMeta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 160px;
+  color: var(--text-secondary);
+  font-size: 11px;
+
+  strong {
+    color: var(--text-primary);
+    font-size: 12px;
+  }
+}
+
+.managedHeaderChips {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+
+.managedHeaderChip {
+  max-width: 220px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background-color: color-mix(in srgb, var(--primary-color) 12%, var(--bg-tertiary));
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.managedHeaderHistoryDetails {
+  width: 100%;
+}
+
+.managedHeaderHistoryToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  padding: 5px 10px;
+  border: 1px solid color-mix(in srgb, var(--primary-color) 30%, var(--border-color));
+  border-radius: 999px;
+  color: var(--primary-color);
+  background-color: color-mix(in srgb, var(--primary-color) 8%, transparent);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  list-style: none;
+
+  &::-webkit-details-marker {
+    display: none;
+  }
+
+  &::before {
+    content: '▸';
+    font-size: 10px;
+    transition: transform 0.16s ease;
+  }
+
+  .managedHeaderHistoryDetails[open] &::before {
+    transform: rotate(90deg);
+  }
+}
+
+.managedHeaderHistoryDetailGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.managedHeaderHistoryDetailItem {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding: 7px 8px;
+  border-radius: $radius-sm;
+  background-color: var(--bg-tertiary);
+
+  span {
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  strong {
+    color: var(--text-primary);
+    font-size: 12px;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+}
+
+.managedHeaderHistoryDetailItemWide {
+  grid-column: 1 / -1;
+}
+
+.managedHeaderHistoryDiffTable {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.7fr) repeat(2, minmax(0, 1fr));
+  margin-top: 8px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border-color) 65%, transparent);
+  border-radius: $radius-sm;
+}
+
+.managedHeaderHistoryDiffHead,
+.managedHeaderHistoryDiffRow > span,
+.managedHeaderHistoryDiffRow > code {
+  min-width: 0;
+  padding: 7px 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 65%, transparent);
+  font-size: 11px;
+}
+
+.managedHeaderHistoryDiffHead {
+  color: var(--text-secondary);
+  font-weight: 700;
+  background-color: var(--bg-tertiary);
+}
+
+.managedHeaderHistoryDiffRow {
+  display: contents;
+
+  &:last-child > span,
+  &:last-child > code {
+    border-bottom: 0;
+  }
+
+  > span {
+    color: var(--text-secondary);
+    font-weight: 700;
+    overflow-wrap: anywhere;
+  }
+
+  > code {
+    color: var(--text-primary);
+    font-family: monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+.managedHeaderHistoryNoDiff {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: $radius-sm;
+  background-color: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+// ====== 账号设置弹窗：编辑 / 身份 / 审计 三大分区 ======
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+  padding: $spacing-md;
+  border: 1px solid color-mix(in srgb, var(--border-color) 72%, transparent);
+  border-radius: $radius-md;
+  background-color: color-mix(in srgb, var(--bg-secondary) 55%, transparent);
+
+  :global(.form-group) {
+    margin: 0;
+  }
+}
+
+.sectionEditable {
+  border-color: color-mix(in srgb, var(--primary-color) 32%, var(--border-color));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--primary-color) 6%, transparent), transparent 64px),
+    color-mix(in srgb, var(--bg-secondary) 55%, transparent);
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: $spacing-sm;
+  padding-bottom: 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 55%, transparent);
+
+  strong {
+    display: block;
+    color: var(--text-primary);
+    font-size: 13px;
+  }
+
+  p {
+    margin: 3px 0 0;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.45;
+  }
+}
+
+.sectionBadge {
+  flex-shrink: 0;
+  padding: 3px 9px;
+  border: 1px solid color-mix(in srgb, var(--primary-color) 35%, var(--border-color));
+  border-radius: 999px;
+  background-color: color-mix(in srgb, var(--primary-color) 10%, transparent);
+  color: var(--primary-color);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.sectionBadgeReadonly {
+  border-color: color-mix(in srgb, var(--border-color) 80%, transparent);
+  background-color: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.proxyStatusRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 65%, transparent);
+  border-radius: $radius-sm;
+  background-color: color-mix(in srgb, var(--bg-primary) 75%, transparent);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.proxyStatusLabel {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.proxyStatusPill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.proxyStatusHealthy {
+  color: var(--success-badge-text, #065f46);
+  background: var(--success-badge-bg, #d1fae5);
+  border: 1px solid var(--success-badge-border, #6ee7b7);
+}
+
+.proxyStatusWarning {
+  color: var(--warning-text);
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-border);
+}
+
+.toggleGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.toggleCard {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 65%, transparent);
+  border-radius: $radius-sm;
+  background-color: color-mix(in srgb, var(--bg-primary) 75%, transparent);
+}
+
+.toggleCardTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-sm;
+
+  label {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 600;
+  }
+}
+
+// ====== 身份模型：A/B 类字段成对展示 ======
+
+.identityClassCard {
+  gap: 6px;
+}
+
+.identityClassEntries {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.identityClassEntry {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+
+  > span {
+    flex-shrink: 0;
+    min-width: 130px;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 700;
+    overflow-wrap: anywhere;
+  }
+
+  > code {
+    min-width: 0;
+    color: var(--text-primary);
+    font-family: monospace;
+    font-size: 12px;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+}
+
+// ====== 身份变更审计：身份模型变更 vs 例行版本刷新 ======
+
+.identityAuditGroupHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-sm;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.identityAuditEntrySignificant {
+  border-color: color-mix(in srgb, var(--primary-color) 42%, var(--border-color));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--primary-color) 7%, transparent), transparent 56px),
+    color-mix(in srgb, var(--bg-primary) 75%, transparent);
+}
+
+.identityAuditChipSignificant {
+  background-color: color-mix(in srgb, var(--primary-color) 24%, var(--bg-tertiary));
+  color: var(--text-primary);
+}
+
+.identityAuditChipRoutine {
+  background-color: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.identityAuditSourceTag {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  max-width: 100%;
+  margin-top: 2px;
+  padding: 1px 7px;
+  border: 1px solid color-mix(in srgb, var(--primary-color) 32%, var(--border-color));
+  border-radius: $radius-sm;
+  background-color: color-mix(in srgb, var(--primary-color) 12%, var(--bg-tertiary));
+  color: var(--text-primary);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.identityAuditEmpty {
+  padding: 12px;
+  border: 1px dashed color-mix(in srgb, var(--border-color) 80%, transparent);
+  border-radius: $radius-sm;
+  background-color: color-mix(in srgb, var(--bg-tertiary) 60%, transparent);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.identityAuditRoutineGroup {
+  border: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
+  border-radius: $radius-sm;
+  background-color: color-mix(in srgb, var(--bg-tertiary) 40%, transparent);
+}
+
+.identityAuditRoutineSummary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-sm;
+  padding: 9px 12px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+
+  &::-webkit-details-marker {
+    display: none;
+  }
+
+  > span:first-child::before {
+    content: '▸ ';
+    color: var(--text-tertiary);
+    font-size: 10px;
+  }
+
+  .identityAuditRoutineGroup[open] & > span:first-child::before {
+    content: '▾ ';
+  }
+}
+
+.identityAuditRoutineBody {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+
+@media (max-width: $breakpoint-mobile) {
+  // P2：窄屏只读表格改为堆叠式（parity 旧版 AuthFilesPage.module.scss 的
+  // `@include mobile` 处理，迁移到 cpamp 时丢失）。表头隐藏、每格竖排为整行，
+  // 并用 ::before 注入列名标签，Source / Last seen 等值不再被 ellipsis 硬截断。
+  .managedHeaderTable {
+    font-size: 11px;
+    table-layout: auto;
+
+    thead {
+      display: none;
+    }
+
+    tbody,
+    tr,
+    th,
+    td {
+      display: block;
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    tbody tr {
+      border-bottom: 1px solid color-mix(in srgb, var(--border-color) 62%, transparent);
+
+      &:last-child {
+        border-bottom: 0;
+      }
+    }
+
+    tbody th {
+      border-right: 0;
+      border-bottom: 0;
+      background-color: color-mix(in srgb, var(--bg-tertiary) 60%, transparent);
+    }
+
+    tbody td {
+      border-bottom: 0;
+      padding-top: 2px;
+    }
+
+    // 堆叠态下用 data-label 注入列名，避免隐藏 thead 后失去列语义。
+    tbody td[data-label]::before {
+      content: attr(data-label);
+      display: block;
+      margin-bottom: 2px;
+      color: var(--text-secondary);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+  }
+
+  // 堆叠态下值单元格全宽换行，不再 nowrap + ellipsis 截断关键值。
+  .managedHeaderValue {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .managedHeaderPolicyGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .managedHeaderHistorySummary {
+    flex-direction: column;
+  }
+
+  .managedHeaderChips {
+    justify-content: flex-start;
+  }
+
+  .managedHeaderHistoryDetailGrid,
+  .managedHeaderHistoryDiffTable {
+    grid-template-columns: 1fr;
+  }
+
+  .managedHeaderHistoryDiffRow > code {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .toggleGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .sectionHeader {
+    flex-direction: column;
+  }
+
+  .identityClassEntry {
+    flex-direction: column;
+    gap: 2px;
+  }
+}

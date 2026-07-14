@@ -4,10 +4,17 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Link } from 'react-router-dom';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { usePanelFeatureAvailability } from '@/hooks/usePanelFeatureAvailability';
 import { useAuthStore } from '@/stores';
 import { authFilesApi, configFileApi } from '@/services/api';
+import {
+  quotaSnapshotsApi,
+  parseCoreQuotaTimestamp,
+  type CoreQuotaRefreshPolicy,
+  type CoreQuotaSnapshotsResponse,
+} from '@/services/api/quotaSnapshots';
 import {
   monitoringAnalyticsApi,
   type UsageHeaderSnapshot,
@@ -15,7 +22,8 @@ import {
 import { buildUsageHeaderSnapshotLookup } from '@/utils/usageHeaderSnapshots';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
-import { IconSearch } from '@/components/ui/icons';
+import { Button } from '@/components/ui/Button';
+import { IconSearch, IconRefreshCw } from '@/components/ui/icons';
 import {
   QuotaSection,
   ANTIGRAVITY_CONFIG,
@@ -31,6 +39,7 @@ import {
 } from '@/features/oauth/codexReauthModel';
 import type { QuotaSortMode } from '@/components/quota/quotaConfigs';
 import type { AuthFileItem } from '@/types';
+import { formatInUtc8 } from '@/utils/format';
 import {
   DEFAULT_QUOTA_ACCOUNT_DISPLAY_MODE,
   readQuotaPageUiState,
@@ -40,6 +49,107 @@ import {
   type QuotaAccountDisplayMode,
 } from './quotaPageUiState';
 import styles from './QuotaPage.module.scss';
+
+// ---- 核心定时刷新状态面板：字段兼容层（从旧版 apps/web QuotaPage 移植） ----
+// core 的刷新策略字段历史上有 seconds / minutes 两种命名，需要做兼容归一化。
+
+type NormalizedQuotaRefreshPolicy = {
+  returned: boolean;
+  enabled?: boolean;
+  intervalMinutes?: number;
+  jitterMinutes?: number;
+  startupCatchUp?: boolean;
+  startupMaxStalenessMinutes?: number;
+};
+
+const readPolicyNumber = (
+  policy: CoreQuotaRefreshPolicy | null,
+  key: keyof CoreQuotaRefreshPolicy
+): number | undefined => {
+  const value = policy?.[key];
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+};
+
+const secondsToDisplayMinutes = (seconds: number): number => {
+  const minutes = seconds / 60;
+  return Number.isInteger(minutes) ? minutes : Number(minutes.toFixed(2));
+};
+
+const readPolicyMinutes = (
+  policy: CoreQuotaRefreshPolicy | null,
+  secondsKey: keyof CoreQuotaRefreshPolicy,
+  legacyMinutesKey: keyof CoreQuotaRefreshPolicy
+): number | undefined => {
+  const seconds = readPolicyNumber(policy, secondsKey);
+  if (seconds !== undefined) return secondsToDisplayMinutes(seconds);
+  return readPolicyNumber(policy, legacyMinutesKey);
+};
+
+const normalizeQuotaRefreshPolicy = (
+  response: CoreQuotaSnapshotsResponse | null
+): NormalizedQuotaRefreshPolicy => {
+  const policy = response?.policy ?? response?.refresh_policy ?? null;
+  if (!policy) return { returned: false };
+
+  return {
+    returned: true,
+    enabled: typeof policy.enabled === 'boolean' ? policy.enabled : undefined,
+    intervalMinutes: readPolicyMinutes(policy, 'interval_seconds', 'interval_minutes'),
+    jitterMinutes: readPolicyMinutes(policy, 'jitter_seconds', 'jitter_minutes'),
+    startupCatchUp:
+      typeof policy.startup_catch_up === 'boolean' ? policy.startup_catch_up : undefined,
+    startupMaxStalenessMinutes: readPolicyMinutes(
+      policy,
+      'startup_max_staleness_seconds',
+      'startup_max_staleness_minutes'
+    ),
+  };
+};
+
+const pickQuotaTimestamp = (
+  response: CoreQuotaSnapshotsResponse | null,
+  field: 'last_refreshed_at' | 'next_refresh_at',
+  mode: 'latest' | 'earliest'
+): Date | null => {
+  const topLevel = parseCoreQuotaTimestamp(response?.[field]);
+  if (topLevel) return topLevel;
+  const now = Date.now();
+
+  const dates =
+    response?.entries
+      ?.filter((entry) => entry.disabled !== true)
+      ?.map((entry) => parseCoreQuotaTimestamp(entry[field]))
+      .filter((date): date is Date => Boolean(date))
+      .filter((date) => field !== 'next_refresh_at' || date.getTime() > now) ?? [];
+
+  if (dates.length === 0) return null;
+  return dates.reduce((selected, date) =>
+    mode === 'latest'
+      ? date.getTime() > selected.getTime()
+        ? date
+        : selected
+      : date.getTime() < selected.getTime()
+        ? date
+        : selected
+  );
+};
+
+const formatRefreshTime = (value: Date | null) => {
+  if (!value) return '';
+  // 展示一律 UTC+8（Asia/Shanghai），不跟随浏览器本地时区。
+  return formatInUtc8(value, {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    withZoneLabel: true,
+  });
+};
 
 export function QuotaPage() {
   const { t } = useTranslation();
@@ -62,8 +172,101 @@ export function QuotaPage() {
   const [accountDisplayModes, setAccountDisplayModes] = useState(() => ({
     ...initialUiState.current.accountDisplayModes,
   }));
+  const [quotaSnapshotStatus, setQuotaSnapshotStatus] = useState<CoreQuotaSnapshotsResponse | null>(
+    null
+  );
+  const [pageRefreshInFlight, setPageRefreshInFlight] = useState(false);
+  const pageRefreshInFlightRef = useRef(false);
 
   const disableControls = connectionStatus !== 'connected';
+  const quotaRefreshPolicy = useMemo(
+    () => normalizeQuotaRefreshPolicy(quotaSnapshotStatus),
+    [quotaSnapshotStatus]
+  );
+  const quotaLastRefreshedAt = useMemo(
+    () => pickQuotaTimestamp(quotaSnapshotStatus, 'last_refreshed_at', 'latest'),
+    [quotaSnapshotStatus]
+  );
+  const quotaNextRefreshAt = useMemo(
+    () => pickQuotaTimestamp(quotaSnapshotStatus, 'next_refresh_at', 'earliest'),
+    [quotaSnapshotStatus]
+  );
+
+  const formatMinutes = useCallback(
+    (minutes: number | undefined) => {
+      if (minutes === undefined) return t('quota_management.auto_refresh_default_policy');
+      if (minutes === 1) return t('quota_management.auto_refresh_one_minute');
+      if (minutes >= 60 && Number.isInteger(minutes / 60)) {
+        return t('quota_management.auto_refresh_hours_with_minutes', {
+          hours: minutes / 60,
+          minutes,
+        });
+      }
+      return t('quota_management.auto_refresh_minutes', { minutes });
+    },
+    [t]
+  );
+
+  const autoRefreshRows = useMemo(
+    () => [
+      {
+        testId: 'quota-auto-refresh-policy',
+        label: t('quota_management.auto_refresh_policy_label'),
+        value: !quotaRefreshPolicy.returned
+          ? t('quota_management.auto_refresh_policy_missing')
+          : quotaRefreshPolicy.enabled === undefined
+            ? t('quota_management.auto_refresh_default_policy')
+            : quotaRefreshPolicy.enabled
+              ? t('quota_management.auto_refresh_policy_enabled')
+              : t('quota_management.auto_refresh_policy_disabled'),
+      },
+      {
+        testId: 'quota-auto-refresh-interval',
+        label: t('quota_management.auto_refresh_interval_label'),
+        value: formatMinutes(quotaRefreshPolicy.intervalMinutes),
+      },
+      {
+        testId: 'quota-auto-refresh-jitter',
+        label: t('quota_management.auto_refresh_jitter_label'),
+        value:
+          quotaRefreshPolicy.jitterMinutes === undefined
+            ? t('quota_management.auto_refresh_default_policy')
+            : t('quota_management.auto_refresh_jitter_duration', {
+                duration: formatMinutes(quotaRefreshPolicy.jitterMinutes),
+              }),
+      },
+      {
+        testId: 'quota-auto-refresh-startup',
+        label: t('quota_management.auto_refresh_startup_label'),
+        value:
+          quotaRefreshPolicy.startupCatchUp === undefined
+            ? t('quota_management.auto_refresh_default_policy')
+            : quotaRefreshPolicy.startupCatchUp
+              ? t('quota_management.auto_refresh_startup_enabled')
+              : t('quota_management.auto_refresh_startup_disabled'),
+      },
+      {
+        testId: 'quota-auto-refresh-startup-max-staleness',
+        label: t('quota_management.auto_refresh_startup_max_staleness_label'),
+        value: formatMinutes(quotaRefreshPolicy.startupMaxStalenessMinutes),
+      },
+      {
+        testId: 'quota-auto-refresh-last',
+        label: t('quota_management.auto_refresh_last_label'),
+        value: quotaLastRefreshedAt
+          ? formatRefreshTime(quotaLastRefreshedAt)
+          : t('quota_management.auto_refresh_not_refreshed'),
+      },
+      {
+        testId: 'quota-auto-refresh-next',
+        label: t('quota_management.auto_refresh_next_label'),
+        value: quotaNextRefreshAt
+          ? formatRefreshTime(quotaNextRefreshAt)
+          : t('quota_management.auto_refresh_waiting_schedule'),
+      },
+    ],
+    [formatMinutes, quotaLastRefreshedAt, quotaNextRefreshAt, quotaRefreshPolicy, t]
+  );
   const sortOptions = useMemo(
     () => [
       { value: 'default', label: t('quota_management.sort_default') },
@@ -113,17 +316,50 @@ export function QuotaPage() {
     }
   }, [managementKey, managerServiceBase]);
 
+  const loadQuotaSnapshotStatus = useCallback(async () => {
+    try {
+      const data = await quotaSnapshotsApi.getSnapshots();
+      setQuotaSnapshotStatus(data);
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : t('notification.refresh_failed');
+      setError((prev) => prev || errorMessage);
+    }
+  }, [t]);
+
   const handleHeaderRefresh = useCallback(async () => {
-    await Promise.all([loadConfig(), loadFiles(), loadHeaderSnapshots()]);
-  }, [loadConfig, loadFiles, loadHeaderSnapshots]);
+    await Promise.all([loadConfig(), loadFiles(), loadHeaderSnapshots(), loadQuotaSnapshotStatus()]);
+  }, [loadConfig, loadFiles, loadHeaderSnapshots, loadQuotaSnapshotStatus]);
 
   useHeaderRefresh(handleHeaderRefresh);
+
+  const refreshPageQuota = useCallback(async () => {
+    if (disableControls || pageRefreshInFlightRef.current) return;
+
+    pageRefreshInFlightRef.current = true;
+    setPageRefreshInFlight(true);
+    setError('');
+    try {
+      const [, , refreshedStatus] = await Promise.all([
+        loadConfig(),
+        loadFiles(),
+        quotaSnapshotsApi.refresh({}),
+      ]);
+      setQuotaSnapshotStatus(refreshedStatus);
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : t('notification.refresh_failed');
+      setError(errorMessage);
+    } finally {
+      pageRefreshInFlightRef.current = false;
+      setPageRefreshInFlight(false);
+    }
+  }, [disableControls, loadConfig, loadFiles, t]);
 
   useEffect(() => {
     loadFiles();
     loadConfig();
     loadHeaderSnapshots();
-  }, [loadFiles, loadConfig, loadHeaderSnapshots]);
+    loadQuotaSnapshotStatus();
+  }, [loadFiles, loadConfig, loadHeaderSnapshots, loadQuotaSnapshotStatus]);
 
   const headerSnapshotLookup = useMemo(
     () => buildUsageHeaderSnapshotLookup(headerSnapshots),
@@ -177,6 +413,47 @@ export function QuotaPage() {
 
   return (
     <div className={styles.container}>
+      <div className={styles.autoRefreshPanel} data-testid="quota-auto-refresh-panel">
+        <div className={styles.autoRefreshText}>
+          <div className={styles.autoRefreshTitle}>{t('quota_management.auto_refresh_title')}</div>
+          <div className={styles.autoRefreshStatus} data-testid="quota-auto-refresh-status">
+            {t('quota_management.auto_refresh_status_hint')}
+          </div>
+          <div className={styles.autoRefreshMetaGrid}>
+            {autoRefreshRows.map((row) => (
+              <div key={row.testId} className={styles.autoRefreshMetaItem} data-testid={row.testId}>
+                <span className={styles.autoRefreshMetaLabel}>{row.label}</span>
+                <span className={styles.autoRefreshMetaValue}>{row.value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className={styles.autoRefreshControls}>
+          <Link
+            data-testid="quota-auto-refresh-config-link"
+            className={styles.autoRefreshButton}
+            to="/config"
+          >
+            {t('quota_management.auto_refresh_configure')}
+          </Link>
+          <Button
+            data-testid="quota-refresh-now"
+            className={styles.autoRefreshButton}
+            variant="secondary"
+            size="sm"
+            type="button"
+            disabled={disableControls || pageRefreshInFlight}
+            loading={pageRefreshInFlight}
+            onClick={() => void refreshPageQuota()}
+          >
+            {!pageRefreshInFlight && <IconRefreshCw size={16} />}
+            {pageRefreshInFlight
+              ? t('quota_management.auto_refresh_running')
+              : t('quota_management.refresh_now')}
+          </Button>
+        </div>
+      </div>
+
       {error && <div className={styles.errorBox}>{error}</div>}
 
       <div className={styles.toolbar}>

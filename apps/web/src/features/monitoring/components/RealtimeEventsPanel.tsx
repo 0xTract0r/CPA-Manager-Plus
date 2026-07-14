@@ -12,16 +12,28 @@ import {
 import { createPortal } from 'react-dom';
 import type { TFunction } from 'i18next';
 import { Button } from '@/components/ui/Button';
-import { IconCopy, IconEye, IconEyeOff, IconFilter } from '@/components/ui/icons';
+import {
+  IconChevronDown,
+  IconCopy,
+  IconEye,
+  IconEyeOff,
+  IconFilter,
+  IconInfo,
+} from '@/components/ui/icons';
 import {
   PaginationControls,
   RecentPattern,
 } from '@/features/monitoring/components/MonitoringShared';
 import { MonitoringPanel } from '@/features/monitoring/components/MonitoringPanel';
 import { formatPercent } from '@/features/monitoring/components/accountOverviewPresentation';
+import { computeCacheHitRate } from '@/features/monitoring/model/monitoringCenterPageModel';
 import { buildRealtimeSourceDisplay } from '@/features/monitoring/realtimeSourceDisplay';
 import type { MonitoringEventRow } from '@/features/monitoring/hooks/useMonitoringData';
 import type { AccountDisplayMode } from '@/features/monitoring/accountOverviewState';
+import {
+  isValidLowCacheHitRateThreshold,
+  REALTIME_LOW_CACHE_HIT_RATE_THRESHOLD_PRESETS,
+} from '@/features/monitoring/monitoringCenterUiState';
 import { useNotificationStore } from '@/stores';
 import { copyToClipboard } from '@/utils/clipboard';
 import { maskSensitiveText, truncateText } from '@/utils/format';
@@ -50,6 +62,8 @@ type RealtimeEventsPanelProps = {
   pageSize: number;
   scopedFailureCount: number;
   failedOnlyActive: boolean;
+  lowCacheHitRateOnly: boolean;
+  lowCacheHitRateThreshold: number;
   eventsHasMore: boolean;
   eventsLoadingMore: boolean;
   eventsRetentionLimited: boolean;
@@ -62,6 +76,8 @@ type RealtimeEventsPanelProps = {
   emptyState: ReactNode;
   t: TFunction;
   onToggleFailedOnly: () => void;
+  onToggleLowCacheHitRateOnly: () => void;
+  onLowCacheHitRateThresholdChange: (threshold: number) => void;
   onAccountDisplayModeChange: (mode: AccountDisplayMode) => void;
   onPageChange: (page: number) => void;
   onPageSizeChange: (pageSize: number) => void;
@@ -72,9 +88,13 @@ export type RealtimeEventsPanelActionsProps = {
   rowCount: number;
   scopedFailureCount: number;
   failedOnlyActive: boolean;
+  lowCacheHitRateOnly: boolean;
+  lowCacheHitRateThreshold: number;
   accountDisplayMode: AccountDisplayMode;
   t: TFunction;
   onToggleFailedOnly: () => void;
+  onToggleLowCacheHitRateOnly: () => void;
+  onLowCacheHitRateThresholdChange: (threshold: number) => void;
   onAccountDisplayModeChange: (mode: AccountDisplayMode) => void;
 };
 
@@ -117,6 +137,19 @@ const formatShortHash = (value: string | null | undefined) => {
   const trimmed = formatReadableText(value);
   return trimmed ? `#${trimmed.slice(0, 8)}` : '';
 };
+
+// 表头悬浮说明：复用现有 tableHeaderWithInfo/tableHeaderInfoIcon 样式（见 AccountOverviewPanel），
+// 用 title 承载说明文字，不引入新的 Tooltip 组件。
+function TableHeaderInfo({ label, info }: { label: ReactNode; info: string }) {
+  return (
+    <span className={styles.tableHeaderWithInfo}>
+      <span>{label}</span>
+      <span title={info}>
+        <IconInfo size={13} className={styles.tableHeaderInfoIcon} aria-label={info} />
+      </span>
+    </span>
+  );
+}
 
 const clampNumber = (value: number, min: number, max: number) =>
   Math.min(Math.max(value, min), max);
@@ -575,7 +608,10 @@ function RealtimeFailureStatus({ details, tooltipId, t, onCopy }: RealtimeFailur
   );
 }
 
-const buildRealtimeTokenSummary = (row: MonitoringEventRow, t: TFunction) => {
+// 每个 "标签 数值" 段必须作为不可断整体渲染（见下方 realtimeUsageSegment 样式），
+// 否则窄列 + word-break:break-word 会把紧凑数字（如 "200.0K"）从中间断行。
+// 段落之间允许在 " · " 分隔符处换行，因此分隔符本身不进入 nowrap span。
+const buildRealtimeTokenSummary = (row: MonitoringEventRow, t: TFunction): ReactNode => {
   const parts = [
     `I ${formatCompactNumber(row.inputTokens)}`,
     `O ${formatCompactNumber(row.outputTokens)}`,
@@ -583,27 +619,253 @@ const buildRealtimeTokenSummary = (row: MonitoringEventRow, t: TFunction) => {
   if (row.reasoningTokens > 0) {
     parts.push(`R ${formatCompactNumber(row.reasoningTokens)}`);
   }
-  parts.push(`C ${formatCompactNumber(row.cachedTokens)}`);
+  // 细分缓存字段（读/写）齐全时，裸 "C"（legacy CompatibleCachedTokens）语义空洞且常为 0，不再展示；
+  // 只有细分字段全为 0 而 legacy cachedTokens > 0（旧数据未拆分）时才用 "缓存 X" 兜底，避免信息丢失。
+  const hasCacheBreakdown = row.cacheCreationTokens > 0 || row.cacheReadTokens > 0;
+  if (!hasCacheBreakdown && row.cachedTokens > 0) {
+    parts.push(
+      `${shortLabel(t, 'monitoring.cached_tokens_short', 'monitoring.cached_tokens', 'Cached')} ${formatCompactNumber(row.cachedTokens)}`
+    );
+  }
   if (row.cacheCreationTokens > 0) {
     parts.push(
-      `${shortLabel(t, 'monitoring.cache_creation_tokens_short', 'monitoring.cache_creation_tokens', 'Create')} ${formatCompactNumber(row.cacheCreationTokens)}`
+      `${shortLabel(t, 'monitoring.cache_creation_tokens_short', 'monitoring.cache_creation_tokens', 'Cache create')} ${formatCompactNumber(row.cacheCreationTokens)}`
     );
   }
   if (row.cacheReadTokens > 0) {
     parts.push(
-      `${shortLabel(t, 'monitoring.cache_read_tokens_short', 'monitoring.cache_read_tokens', 'Read')} ${formatCompactNumber(row.cacheReadTokens)}`
+      `${shortLabel(t, 'monitoring.cache_read_tokens_short', 'monitoring.cache_read_tokens', 'Cache read')} ${formatCompactNumber(row.cacheReadTokens)}`
     );
   }
-  return parts.join(' · ');
+  return parts.map((part, index) => (
+    <span key={`${index}-${part}`} className={styles.realtimeUsageSegment}>
+      {part}
+      {index < parts.length - 1 ? ' · ' : ''}
+    </span>
+  ));
 };
+
+// 单请求缓存命中率染色阈值：与成功率三档样式复用同一套 goodText/warnText/badText，
+// 但阈值口径独立（缓存命中率天然低于成功率，不能共用 95%/85% 判定）。
+// 注意：这套染色阈值(黄/红分界)与下方"仅显示低命中率" chip 的筛选阈值已解耦——
+// 筛选阈值现在由用户可配置(见 lowCacheHitRateThreshold prop)，染色阈值保持固定，
+// 避免用户改筛选档位时表格单元格颜色跟着意外重染色。
+const REALTIME_CACHE_HIT_RATE_GOOD_THRESHOLD = 0.6;
+const REALTIME_CACHE_HIT_RATE_WARN_THRESHOLD = 0.3;
+
+const getRealtimeCacheHitRateToneClass = (rate: number | null) => {
+  if (rate === null) return undefined;
+  if (rate >= REALTIME_CACHE_HIT_RATE_GOOD_THRESHOLD) return styles.goodText;
+  if (rate >= REALTIME_CACHE_HIT_RATE_WARN_THRESHOLD) return styles.warnText;
+  return styles.badText;
+};
+
+// 阈值 0.3 -> "30%"，仅用于 UI 展示，不参与计算精度。
+const formatThresholdPercentLabel = (threshold: number) => `${Math.round(threshold * 100)}%`;
+
+type LowCacheHitRateFilterControlProps = {
+  active: boolean;
+  threshold: number;
+  t: TFunction;
+  onToggleActive: () => void;
+  onThresholdChange: (threshold: number) => void;
+};
+
+// "仅显示低命中率" 筛选控件：chip 主体点击=开关筛选；chip 右侧 caret 打开阈值菜单，
+// 让用户在预设档位(<50%/<30%/<10%)之间切换，或输入 0-100 之间的自定义百分比。
+// 阈值本身可见（chip 文案带当前阈值），解决"不知道低于多少算低命中率"的问题。
+function LowCacheHitRateFilterControl({
+  active,
+  threshold,
+  t,
+  onToggleActive,
+  onThresholdChange,
+}: LowCacheHitRateFilterControlProps) {
+  const menuId = useId();
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [customDraft, setCustomDraft] = useState('');
+  const [customError, setCustomError] = useState(false);
+  const isPreset = (REALTIME_LOW_CACHE_HIT_RATE_THRESHOLD_PRESETS as readonly number[]).includes(
+    threshold
+  );
+
+  const lowCacheHitRateLabel = shortLabel(
+    t,
+    'monitoring.filter_low_cache_hit_rate_short',
+    'monitoring.filter_low_cache_hit_rate'
+  );
+  const chipLabel = `${lowCacheHitRateLabel} <${formatThresholdPercentLabel(threshold)}`;
+  const menuLabel = t('monitoring.filter_low_cache_hit_rate_threshold_menu_label');
+
+  const closeMenu = useCallback(() => {
+    setMenuOpen(false);
+    setCustomError(false);
+  }, []);
+
+  useEffect(() => {
+    if (!menuOpen || typeof document === 'undefined') return undefined;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        closeMenu();
+      }
+    };
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closeMenu();
+      }
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [closeMenu, menuOpen]);
+
+  const handleToggleMenu = () => {
+    setMenuOpen((previous) => {
+      const next = !previous;
+      if (next) {
+        setCustomDraft(isPreset ? '' : formatThresholdPercentLabel(threshold).replace('%', ''));
+        setCustomError(false);
+      }
+      return next;
+    });
+  };
+
+  const handleSelectPreset = (preset: number) => {
+    onThresholdChange(preset);
+    closeMenu();
+  };
+
+  const handleCustomSubmit = () => {
+    const parsedFraction = Number(customDraft) / 100;
+    if (!isValidLowCacheHitRateThreshold(parsedFraction)) {
+      setCustomError(true);
+      return;
+    }
+    onThresholdChange(parsedFraction);
+    closeMenu();
+  };
+
+  return (
+    <div className={styles.lowCacheHitRateFilterControl} ref={containerRef}>
+      <button
+        type="button"
+        className={[styles.filterToggleChip, active ? styles.filterToggleChipActive : '']
+          .filter(Boolean)
+          .join(' ')}
+        onClick={onToggleActive}
+        title={t('monitoring.filter_low_cache_hit_rate_hint', {
+          threshold: formatThresholdPercentLabel(threshold),
+        })}
+      >
+        <IconFilter size={14} aria-hidden="true" />
+        {chipLabel}
+      </button>
+      <button
+        type="button"
+        className={[
+          styles.lowCacheHitRateThresholdTrigger,
+          active ? styles.filterToggleChipActive : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
+        onClick={handleToggleMenu}
+        title={menuLabel}
+        aria-label={menuLabel}
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
+        aria-controls={menuOpen ? menuId : undefined}
+      >
+        <IconChevronDown size={13} aria-hidden="true" />
+      </button>
+      {menuOpen ? (
+        <div id={menuId} role="menu" className={styles.lowCacheHitRateThresholdMenu}>
+          {REALTIME_LOW_CACHE_HIT_RATE_THRESHOLD_PRESETS.map((preset) => (
+            <button
+              key={preset}
+              type="button"
+              role="menuitemradio"
+              aria-checked={preset === threshold}
+              className={[
+                styles.lowCacheHitRateThresholdMenuItem,
+                preset === threshold ? styles.lowCacheHitRateThresholdMenuItemActive : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
+              onClick={() => handleSelectPreset(preset)}
+            >
+              {`<${formatThresholdPercentLabel(preset)}`}
+            </button>
+          ))}
+          <div className={styles.lowCacheHitRateThresholdMenuCustom}>
+            <label htmlFor={`${menuId}-custom`}>
+              {t('monitoring.filter_low_cache_hit_rate_threshold_custom')}
+            </label>
+            <div className={styles.lowCacheHitRateThresholdMenuCustomInputRow}>
+              <input
+                id={`${menuId}-custom`}
+                type="number"
+                min={0}
+                max={100}
+                step={1}
+                inputMode="numeric"
+                value={customDraft}
+                placeholder="30"
+                className={[
+                  styles.lowCacheHitRateThresholdMenuCustomInput,
+                  customError ? styles.lowCacheHitRateThresholdMenuCustomInputError : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+                onChange={(event) => {
+                  setCustomDraft(event.target.value);
+                  setCustomError(false);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    handleCustomSubmit();
+                  }
+                }}
+              />
+              <span>%</span>
+              <button
+                type="button"
+                className={styles.lowCacheHitRateThresholdMenuCustomApply}
+                onClick={handleCustomSubmit}
+              >
+                {t('common.confirm')}
+              </button>
+            </div>
+            {customError ? (
+              <span className={styles.lowCacheHitRateThresholdMenuCustomError}>
+                {t('monitoring.filter_low_cache_hit_rate_threshold_custom_invalid')}
+              </span>
+            ) : null}
+          </div>
+          <p className={styles.lowCacheHitRateThresholdMenuHint}>
+            {t('monitoring.filter_low_cache_hit_rate_scope_hint')}
+          </p>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 export function RealtimeEventsPanelActions({
   rowCount,
   scopedFailureCount,
   failedOnlyActive,
+  lowCacheHitRateOnly,
+  lowCacheHitRateThreshold,
   accountDisplayMode,
   t,
   onToggleFailedOnly,
+  onToggleLowCacheHitRateOnly,
+  onLowCacheHitRateThresholdChange,
   onAccountDisplayModeChange,
 }: RealtimeEventsPanelActionsProps) {
   const nextAccountDisplayMode: AccountDisplayMode =
@@ -655,7 +917,10 @@ export function RealtimeEventsPanelActions({
       </button>
       <button
         type="button"
-        className={[styles.filterToggleChip, failedOnlyActive ? styles.filterToggleChipActive : '']
+        className={[
+          styles.filterToggleChip,
+          failedOnlyActive ? styles.filterToggleChipDangerActive : '',
+        ]
           .filter(Boolean)
           .join(' ')}
         onClick={onToggleFailedOnly}
@@ -664,6 +929,16 @@ export function RealtimeEventsPanelActions({
         <IconFilter size={14} aria-hidden="true" />
         {failedOnlyLabel}
       </button>
+      {/* "仅显示低命中率" chip 与 "仅显示失败" chip 并排在同一 inlineMetrics 行内。
+          筛选状态提升到页面级(MonitoringCenterPage)统一持有，两处 chip 共享同一状态；
+          阈值本身也提升到页面级并持久化，chip 旁的 caret 打开菜单可切换预设/自定义阈值。 */}
+      <LowCacheHitRateFilterControl
+        active={lowCacheHitRateOnly}
+        threshold={lowCacheHitRateThreshold}
+        t={t}
+        onToggleActive={onToggleLowCacheHitRateOnly}
+        onThresholdChange={onLowCacheHitRateThresholdChange}
+      />
     </div>
   );
 }
@@ -675,6 +950,8 @@ export function RealtimeEventsPanel({
   pageSize,
   scopedFailureCount,
   failedOnlyActive,
+  lowCacheHitRateOnly,
+  lowCacheHitRateThreshold,
   eventsHasMore,
   eventsLoadingMore,
   eventsRetentionLimited,
@@ -687,6 +964,8 @@ export function RealtimeEventsPanel({
   emptyState,
   t,
   onToggleFailedOnly,
+  onToggleLowCacheHitRateOnly,
+  onLowCacheHitRateThresholdChange,
   onAccountDisplayModeChange,
   onPageChange,
   onPageSizeChange,
@@ -731,6 +1010,11 @@ export function RealtimeEventsPanel({
     'monitoring.this_call_usage'
   );
   const costLabel = shortLabel(t, 'monitoring.this_call_cost_short', 'monitoring.this_call_cost');
+  const cacheHitRateLabel = shortLabel(
+    t,
+    'monitoring.column_cache_hit_rate_short',
+    'monitoring.column_cache_hit_rate'
+  );
   const handleCopyFailureDetails = async (text: string) => {
     const copied = await copyToClipboard(text);
     showNotification(
@@ -738,22 +1022,40 @@ export function RealtimeEventsPanel({
       copied ? 'success' : 'error'
     );
   };
+  // "仅显示低命中率" 筛选状态与阈值都由页面级(MonitoringCenterPage)统一持有，经 props 传入，
+  // 与 "仅显示失败" chip 并排在同一行的 masthead 工具条；此处只按用户所选阈值做纯前端本地过滤，
+  // 只作用于当前已加载并分页展示的行，不影响上层分页/加载更多状态（跨分页全量筛选是后续 G2b 范围）。
+  const displayedRows = lowCacheHitRateOnly
+    ? pagination.pageItems.filter((row) => {
+        const rate = computeCacheHitRate(row);
+        return rate !== null && rate < lowCacheHitRateThreshold;
+      })
+    : pagination.pageItems;
   const actions = (
     <RealtimeEventsPanelActions
       rowCount={rows.length}
       scopedFailureCount={scopedFailureCount}
       failedOnlyActive={failedOnlyActive}
+      lowCacheHitRateOnly={lowCacheHitRateOnly}
+      lowCacheHitRateThreshold={lowCacheHitRateThreshold}
       accountDisplayMode={accountDisplayMode}
       t={t}
       onToggleFailedOnly={onToggleFailedOnly}
+      onToggleLowCacheHitRateOnly={onToggleLowCacheHitRateOnly}
+      onLowCacheHitRateThresholdChange={onLowCacheHitRateThresholdChange}
       onAccountDisplayModeChange={onAccountDisplayModeChange}
     />
   );
   const content = (
     <>
+      {/* 筛选 chip("仅显示失败" + "仅显示低命中率")统一由 masthead 工具条承载：
+          embedded 模式下 MonitoringCenterPage 在页面级 masthead 渲染 RealtimeEventsPanelActions；
+          非 embedded 模式(下方 MonitoringPanel)通过 `extra={actions}` 渲染同一份工具条。
+          content 内不再单独放工具条，避免与 masthead 重复。 */}
       <div className={styles.tableWrapper}>
         <table className={`${styles.table} ${styles.realtimeTable}`}>
           <colgroup>
+            <col />
             <col />
             <col />
             <col />
@@ -774,7 +1076,12 @@ export function RealtimeEventsPanel({
               <th>{reasoningEffortLabel}</th>
               <th>{recentStatusLabel}</th>
               <th>{requestStatusLabel}</th>
-              <th>{successRateLabel}</th>
+              <th>
+                <TableHeaderInfo
+                  label={successRateLabel}
+                  info={t('monitoring.realtime_success_rate_hint')}
+                />
+              </th>
               <th>{totalCallsLabel}</th>
               <th className={styles.realtimeTpsColumn}>{t('monitoring.column_output_tps')}</th>
               <th className={styles.realtimeLatencyColumn}>
@@ -787,12 +1094,21 @@ export function RealtimeEventsPanel({
                 </span>
               </th>
               <th>{t('monitoring.column_time')}</th>
-              <th>{usageLabel}</th>
+              <th>
+                <TableHeaderInfo label={usageLabel} info={t('monitoring.realtime_usage_hint')} />
+              </th>
+              {/* 缓存命中率紧跟"本次用量"列：命中率由该列 token 派生，相邻语义最贴近。 */}
+              <th>
+                <TableHeaderInfo
+                  label={cacheHitRateLabel}
+                  info={t('monitoring.realtime_cache_hit_rate_hint')}
+                />
+              </th>
               <th>{costLabel}</th>
             </tr>
           </thead>
           <tbody>
-            {pagination.pageItems.map((row) => {
+            {displayedRows.map((row) => {
               const sourceDisplay = buildRealtimeSourceDisplay(row, t, accountDisplayMode);
               const apiKeyDisplay = buildRealtimeApiKeyDisplay(row, t);
               const showResolvedModel =
@@ -809,6 +1125,8 @@ export function RealtimeEventsPanel({
               const hasTtftMs = row.ttftMs !== null && row.ttftMs !== undefined;
               const ttftToneClass = getRealtimeDurationToneClass(row.ttftMs);
               const latencyToneClass = getRealtimeDurationToneClass(row.latencyMs);
+              const cacheHitRate = computeCacheHitRate(row);
+              const cacheHitRateToneClass = getRealtimeCacheHitRateToneClass(cacheHitRate);
               return (
                 <tr key={row.id} className={row.failed ? styles.logRowFailed : undefined}>
                   <td>
@@ -941,13 +1259,21 @@ export function RealtimeEventsPanel({
                       <small>{buildRealtimeTokenSummary(row, t)}</small>
                     </div>
                   </td>
+                  <td className={cacheHitRateToneClass}>
+                    {cacheHitRate === null ? '--' : formatPercent(cacheHitRate)}
+                  </td>
                   <td>{hasPrices ? formatUsd(row.totalCost) : '--'}</td>
                 </tr>
               );
             })}
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={12}>{emptyState}</td>
+                <td colSpan={13}>{emptyState}</td>
+              </tr>
+            ) : null}
+            {rows.length > 0 && displayedRows.length === 0 ? (
+              <tr>
+                <td colSpan={13}>{emptyState}</td>
               </tr>
             ) : null}
           </tbody>

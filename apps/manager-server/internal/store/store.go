@@ -45,6 +45,8 @@ type QuotaCooldownUpsert = model.QuotaCooldownUpsert
 type AccountActionCandidate = model.AccountActionCandidate
 type AccountActionCandidateUpsert = model.AccountActionCandidateUpsert
 type AutomationSettings = model.AutomationSettings
+type UsageCatchUpCursor = model.UsageCatchUpCursor
+type UsageCatchUpRunStatus = model.UsageCatchUpRunStatus
 
 var DefaultCodexInspectionConfig = model.DefaultCodexInspectionConfig
 var NormalizeCodexInspectionConfig = model.NormalizeCodexInspectionConfig
@@ -162,6 +164,22 @@ func (s *Store) LoadBootstrapState(ctx context.Context) (BootstrapState, bool, e
 
 func (s *Store) HasHistoricalData(ctx context.Context) (bool, error) {
 	return s.Settings.HasHistoricalData(ctx)
+}
+
+func (s *Store) SaveUsageCatchUpCursor(ctx context.Context, cursor UsageCatchUpCursor) error {
+	return s.Settings.SaveUsageCatchUpCursor(ctx, cursor)
+}
+
+func (s *Store) LoadUsageCatchUpCursor(ctx context.Context) (UsageCatchUpCursor, bool, error) {
+	return s.Settings.LoadUsageCatchUpCursor(ctx)
+}
+
+func (s *Store) SaveUsageCatchUpStatus(ctx context.Context, status UsageCatchUpRunStatus) error {
+	return s.Settings.SaveUsageCatchUpStatus(ctx, status)
+}
+
+func (s *Store) LoadUsageCatchUpStatus(ctx context.Context) (UsageCatchUpRunStatus, bool, error) {
+	return s.Settings.LoadUsageCatchUpStatus(ctx)
 }
 
 func (s *Store) LoadModelPrices(ctx context.Context) (map[string]ModelPrice, error) {

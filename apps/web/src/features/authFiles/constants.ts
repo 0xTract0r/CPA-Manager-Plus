@@ -12,6 +12,7 @@ import iconQwen from '@/assets/icons/qwen.svg';
 import iconVertex from '@/assets/icons/vertex.svg';
 import type { AuthFileItem } from '@/types';
 import { parseTimestamp } from '@/utils/timestamp';
+import { formatInUtc8 } from '@/utils/format';
 
 export type ThemeColors = { bg: string; text: string; border?: string };
 export type TypeColorSet = { light: ThemeColors; dark?: ThemeColors };
@@ -150,6 +151,118 @@ export const hasAuthFileStatusMessage = (file: AuthFileItem): boolean =>
 export const isHealthyAuthFile = (file: AuthFileItem): boolean =>
   file.disabled !== true && !hasAuthFileStatusMessage(file);
 
+// --- 迁移自 cpa fork：身份隔离/账号设置相关的结构化状态判定 ---
+// 与上面基于 status_message 文本的 isHealthyAuthFile 并存，不替换：
+// isHealthyAuthFile 是既有卡片健康态判定的既有入口，继续保留；
+// hasAuthFileStatusWarning 是 cpa 新增的更细粒度判定（结构化 unavailable/status
+// 优先，legacy status_message 白名单兜底），供 Phase 2 身份隔离弹窗/审计面板使用。
+
+/**
+ * 归一 core 顶层 `status` 字段（snake/camel 都从同名字段读，core 实际是顶层 `status`）。
+ * 返回小写 trim 后的字符串；缺省返回空串。
+ */
+export const getAuthFileStatusValue = (file: AuthFileItem): string => {
+  const raw = file.status;
+  if (typeof raw === 'string') return raw.trim().toLowerCase();
+  if (raw == null) return '';
+  return String(raw).trim().toLowerCase();
+};
+
+/**
+ * 归一 core 顶层 `unavailable`(boolean) 字段，兼容 snake_case / camelCase 与字符串布尔。
+ * 这是「账号是否不可用」的机器真源（core#26/#27 缺 proxy_url 等会置 true），
+ * 优先于 status_message 文本判断。返回 undefined 表示该 payload 没有显式下发该字段。
+ */
+export const getAuthFileUnavailable = (file: AuthFileItem): boolean | undefined => {
+  const raw = file.unavailable ?? file['is_unavailable'] ?? file['isUnavailable'];
+  if (typeof raw === 'boolean') return raw;
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw !== 0;
+  if (typeof raw === 'string') {
+    const normalized = raw.trim().toLowerCase();
+    if (!normalized) return undefined;
+    if (TRUTHY_TEXT_VALUES.has(normalized)) return true;
+    if (FALSY_TEXT_VALUES.has(normalized)) return false;
+  }
+  return undefined;
+};
+
+/**
+ * 健康态 `status` 值白名单（用于「core 下发了 status 但未下发 unavailable」的兼容判断）。
+ * 仅作为结构化 status 字段的判定，不再用 status_message 自由文本做关键字匹配。
+ */
+export const HEALTHY_AUTH_FILE_STATUS_VALUES = new Set([
+  'ok',
+  'healthy',
+  'ready',
+  'active',
+  'available',
+  'success',
+]);
+
+/**
+ * 旧 payload 兼容回退：当 core 既没下发结构化 `unavailable` 也没下发 `status` 时，
+ * 退化为旧的 status_message 文本白名单判断。仅在结构化字段全缺时才走到这里。
+ */
+const HEALTHY_AUTH_FILE_STATUS_MESSAGES = new Set([
+  'ok',
+  'healthy',
+  'ready',
+  'success',
+  'available',
+]);
+
+const hasLegacyStatusMessageWarning = (file: AuthFileItem): boolean => {
+  const rawStatusMessage = getAuthFileStatusMessage(file);
+  return (
+    Boolean(rawStatusMessage) &&
+    !HEALTHY_AUTH_FILE_STATUS_MESSAGES.has(rawStatusMessage.toLowerCase())
+  );
+};
+
+/**
+ * 是否处于「告警 / 不可用」态。判定优先级（迁移自 cpa fork T047 改造）：
+ *  1. core 顶层结构化 `unavailable`(boolean)：显式 true=告警，显式 false=健康。
+ *  2. core 顶层结构化 `status`：非健康白名单值即告警。
+ *  3. 两者都缺时，回退旧 status_message 文本白名单（兼容历史 payload）。
+ * status_message 退化为纯展示文案，不再作为判定真源。
+ */
+export const hasAuthFileStatusWarning = (file: AuthFileItem): boolean => {
+  const unavailable = getAuthFileUnavailable(file);
+  if (unavailable !== undefined) return unavailable;
+
+  const status = getAuthFileStatusValue(file);
+  if (status) return !HEALTHY_AUTH_FILE_STATUS_VALUES.has(status);
+
+  return hasLegacyStatusMessageWarning(file);
+};
+
+/**
+ * 解析账号视图的 warnings（core#26/#27 在 account 视图 `warnings []string` 下发，
+ * 例如缺失 proxy_url 的不可用账号）。兼容 snake_case / camelCase 两种 account_settings 键。
+ */
+export const getAuthFileWarnings = (file: AuthFileItem): string[] => {
+  const settings = file.account_settings || file.accountSettings || null;
+  const warnings = settings?.warnings;
+  if (!Array.isArray(warnings)) return [];
+  return warnings.filter((item): item is string => typeof item === 'string' && item.trim() !== '');
+};
+
+/**
+ * 是否缺失 proxy_url（住宅代理）。优先用 core 下发的 warnings 命中 "proxy_url" 关键字；
+ * 退化情况下，非虚拟账号且 account_settings.proxy_url 为空也判定为缺失。
+ * 让账号卡片一眼看出哪个号缺 proxy、需要补填，避免请求直连暴露真 IP。
+ */
+export const isAuthFileMissingProxyUrl = (file: AuthFileItem): boolean => {
+  const warnings = getAuthFileWarnings(file);
+  if (warnings.some((warning) => warning.toLowerCase().includes('proxy_url'))) {
+    return true;
+  }
+  if (isRuntimeOnlyAuthFile(file)) return false;
+  const settings = file.account_settings || file.accountSettings || null;
+  if (!settings) return false;
+  return typeof settings.proxy_url === 'string' && settings.proxy_url.trim() === '';
+};
+
 export const getTypeLabel = (t: TFunction, type: string): string => {
   const providerKey = normalizeProviderKey(type);
   const key = `auth_files.filter_${providerKey}`;
@@ -252,7 +365,15 @@ export const formatModified = (item: AuthFileItem): string => {
     Number.isFinite(asNumber) && !Number.isNaN(asNumber)
       ? new Date(asNumber < 1e12 ? asNumber * 1000 : asNumber)
       : parseTimestamp(raw) ?? new Date(String(raw));
-  return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString();
+  // 与旧版一致：强制 UTC+8（Asia/Shanghai）展示，不跟随浏览器本地时区。
+  return Number.isNaN(date.getTime())
+    ? '-'
+    : formatInUtc8(
+        date,
+        { dateStyle: 'medium', timeStyle: 'medium', withZoneLabel: true },
+        undefined,
+        '-'
+      );
 };
 
 // 检查模型是否被 OAuth 排除

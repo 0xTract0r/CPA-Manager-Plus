@@ -7,6 +7,7 @@ import {
   fetchKimiQuota,
   fetchXaiQuota,
 } from '@/utils/quota';
+import en from '@/i18n/locales/en.json';
 import zhCN from '@/i18n/locales/zh-CN.json';
 import zhTW from '@/i18n/locales/zh-TW.json';
 import type { MonitoringAccountQuotaTarget } from '@/features/monitoring/accountOverviewQuotaTargets';
@@ -22,6 +23,9 @@ import {
   buildMonitoringInitialStateFromQuery,
   buildModelOptionsFromValues,
   buildProviderOptionsFromValues,
+  computeCacheHitRate,
+  formatMonitoringCustomRangeCompactLabel,
+  formatMonitoringSummaryScopeText,
   mergeObservedAccountQuotaEntry,
   mergeObservedAccountQuotaState,
   requestAccountQuota,
@@ -238,6 +242,92 @@ describe('monitoringCenterPageModel filter options', () => {
         t
       ).map((item) => item.value)
     ).toEqual(['all', 'auth:openai-auth']);
+  });
+});
+
+describe('formatMonitoringSummaryScopeText', () => {
+  const buildLocaleT = (locale: Record<string, string>) =>
+    ((key: string, options?: Record<string, unknown>) => {
+      const rawKey = key.startsWith('monitoring.') ? key.slice('monitoring.'.length) : key;
+      let value = locale[rawKey] ?? key;
+      Object.entries(options ?? {}).forEach(([name, replacement]) => {
+        value = value.replace(`{{${name}}}`, String(replacement));
+      });
+      return value;
+    }) as TFunction;
+
+  it('states the currently selected time window unambiguously so "today" is never mistaken for a longer range', () => {
+    expect(formatMonitoringSummaryScopeText('today', buildLocaleT(en.monitoring))).toBe(
+      'Current stats window: Today'
+    );
+    expect(formatMonitoringSummaryScopeText('7d', buildLocaleT(en.monitoring))).toBe(
+      'Current stats window: Last 7 Days'
+    );
+    expect(formatMonitoringSummaryScopeText('today', buildLocaleT(zhCN.monitoring))).toBe(
+      '当前统计范围：今天'
+    );
+    expect(formatMonitoringSummaryScopeText('7d', buildLocaleT(zhCN.monitoring))).toBe(
+      '当前统计范围：最近 7 天'
+    );
+    expect(formatMonitoringSummaryScopeText('today', buildLocaleT(zhTW.monitoring))).toBe(
+      '目前統計範圍：今天'
+    );
+  });
+
+  it('reflects every supported time range option', () => {
+    const localeT = buildLocaleT(zhCN.monitoring);
+    expect(formatMonitoringSummaryScopeText('14d', localeT)).toBe('当前统计范围：最近 14 天');
+    expect(formatMonitoringSummaryScopeText('30d', localeT)).toBe('当前统计范围：最近 30 天');
+    expect(formatMonitoringSummaryScopeText('all', localeT)).toBe('当前统计范围：全部');
+    // 没有描述符(如旧持久化状态只存了 timeRange='custom')时回退到笼统"自定义"文案，
+    // 保持向后兼容。
+    expect(formatMonitoringSummaryScopeText('custom', localeT)).toBe('当前统计范围：自定义');
+  });
+
+  it('covers the new relative and calendar-day presets added by the time-range redesign', () => {
+    const localeT = buildLocaleT(zhCN.monitoring);
+    expect(formatMonitoringSummaryScopeText('1h', localeT)).toBe('当前统计范围：最近 1 小时');
+    expect(formatMonitoringSummaryScopeText('3h', localeT)).toBe('当前统计范围：最近 3 小时');
+    expect(formatMonitoringSummaryScopeText('24h', localeT)).toBe('当前统计范围：最近 24 小时');
+    expect(formatMonitoringSummaryScopeText('yesterday', localeT)).toBe('当前统计范围：昨天');
+  });
+
+  it('shows the actual selected custom range instead of the generic "custom" label once a descriptor is recorded', () => {
+    const localeT = buildLocaleT(zhCN.monitoring);
+    expect(
+      formatMonitoringSummaryScopeText('custom', localeT, { mode: 'days', days: 20 }, 'zh-CN')
+    ).toBe('当前统计范围：最近 20 天');
+    expect(
+      formatMonitoringSummaryScopeText('custom', localeT, { mode: 'hours', hours: 20 }, 'zh-CN')
+    ).toBe('当前统计范围：最近 20 小时');
+
+    const startMs = new Date('2026-07-01T00:00:00').getTime();
+    const endMs = new Date('2026-07-14T12:00:00').getTime();
+    expect(
+      formatMonitoringSummaryScopeText(
+        'custom',
+        localeT,
+        { mode: 'range', startMs, endMs },
+        'zh-CN'
+      )
+    ).toBe('当前统计范围：7/1 00:00 - 7/14 12:00');
+  });
+
+  it('formats a compact custom-range label for the segmented control tab, distinct from the full caption', () => {
+    const localeT = buildLocaleT(zhCN.monitoring);
+    expect(formatMonitoringCustomRangeCompactLabel(null, 'zh-CN', localeT)).toBe('自定义');
+    expect(
+      formatMonitoringCustomRangeCompactLabel({ mode: 'days', days: 20 }, 'zh-CN', localeT)
+    ).toBe('最近20天');
+    expect(
+      formatMonitoringCustomRangeCompactLabel({ mode: 'hours', hours: 20 }, 'zh-CN', localeT)
+    ).toBe('最近20小时');
+
+    const startMs = new Date('2026-07-01T00:00:00').getTime();
+    const endMs = new Date('2026-07-14T12:00:00').getTime();
+    expect(
+      formatMonitoringCustomRangeCompactLabel({ mode: 'range', startMs, endMs }, 'zh-CN', localeT)
+    ).toBe('07/01~07/14');
   });
 });
 
@@ -1013,5 +1103,97 @@ describe('monitoringCenterPageModel account quota', () => {
         },
       ],
     });
+  });
+});
+
+describe('computeCacheHitRate', () => {
+  it('returns null when the denominator is zero', () => {
+    expect(
+      computeCacheHitRate({
+        inputTokens: 0,
+        cachedTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+      })
+    ).toBeNull();
+  });
+
+  it('prefers cacheReadTokens over cachedTokens for the hit numerator (no double count) when no model is given', () => {
+    const rate = computeCacheHitRate({
+      inputTokens: 10,
+      cachedTokens: 5,
+      cacheReadTokens: 3,
+      cacheCreationTokens: 2,
+    });
+
+    // hit = cacheReadTokens (3, takes priority over cachedTokens)
+    // denom (default/OpenAI-style, no model) = max(10, 3) + 2 = 12
+    // 3 / 12 = 0.25
+    expect(rate).toBeCloseTo(0.25, 6);
+  });
+
+  it('counts legacy cachedTokens toward both hit tokens and the input-side denominator', () => {
+    const rate = computeCacheHitRate({
+      inputTokens: 0,
+      cachedTokens: 6,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+    });
+
+    // hit = cachedTokens fallback (6) since cacheReadTokens is 0
+    // denom (default/OpenAI-style) = max(0, 6) + 0 = 6
+    expect(rate).toBe(1);
+  });
+
+  it('regression: OpenAI-style gpt-5.6-sol with cache_read only must not double-count cache_read into the denominator', () => {
+    // 真实回归案例：单条 input=55406/cache_read=54784，旧公式误算 0.497，正确应约 0.989。
+    const rate = computeCacheHitRate({
+      model: 'gpt-5.6-sol',
+      inputTokens: 55406,
+      cachedTokens: 0,
+      cacheReadTokens: 54784,
+      cacheCreationTokens: 0,
+    });
+
+    expect(rate).not.toBeNull();
+    expect(rate!).toBeGreaterThan(0.9);
+    expect(rate!).toBeCloseTo(0.9888, 3);
+  });
+
+  it('regression: Anthropic-style model adds cacheReadTokens/cacheCreationTokens on top of inputTokens', () => {
+    const rate = computeCacheHitRate({
+      model: 'claude-opus-4-6',
+      inputTokens: 1000,
+      cachedTokens: 0,
+      cacheReadTokens: 5000,
+      cacheCreationTokens: 200,
+    });
+
+    expect(rate).not.toBeNull();
+    expect(rate!).toBeCloseTo(0.8065, 3);
+  });
+
+  it('strips the provider/ prefix before matching Anthropic model slugs, aligned with the backend isAnthropicModel', () => {
+    // 后端 service.go 的 isAnthropicModelSlug 用 strings.LastIndex(slug, '/') 剥前缀；
+    // 前端要与之一致，否则 'openrouter/claude-...' 这类带前缀的 model 会被误判成非
+    // Anthropic，从而走错分母分支。
+    const prefixed = computeCacheHitRate({
+      model: 'openrouter/claude-opus-4-6',
+      inputTokens: 1000,
+      cachedTokens: 0,
+      cacheReadTokens: 5000,
+      cacheCreationTokens: 200,
+    });
+    const bare = computeCacheHitRate({
+      model: 'claude-opus-4-6',
+      inputTokens: 1000,
+      cachedTokens: 0,
+      cacheReadTokens: 5000,
+      cacheCreationTokens: 200,
+    });
+
+    expect(prefixed).not.toBeNull();
+    expect(prefixed).toBeCloseTo(bare!, 6);
+    expect(prefixed).toBeCloseTo(0.8065, 3);
   });
 });

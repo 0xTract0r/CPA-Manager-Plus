@@ -54,10 +54,12 @@ type Manager struct {
 	store             *store.Store
 	snapshotResolver  *authSnapshotResolver
 	usageEventHandler UsageEventHandler
+	reconnectHandler  func()
 	mu                sync.Mutex
 	cancel            context.CancelFunc
 	status            Status
 	runtimeCfg        RuntimeConfig
+	disconnected      bool
 }
 
 func NewManager(base config.Config, store *store.Store) *Manager {
@@ -111,6 +113,32 @@ func (m *Manager) Status() Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.status
+}
+
+// SetReconnectHandler registers a callback invoked whenever the collector
+// re-establishes its upstream connection (subscribe/http/resp) after having
+// previously lost it (auth/connect/subscribe/consume error). It is not
+// invoked on the very first successful connect after Start, only on actual
+// reconnects, so callers (e.g. a usage catch-up worker) can use it to trigger
+// a one-off gap-fill sync without competing with the initial startup sync.
+func (m *Manager) SetReconnectHandler(handler func()) {
+	m.mu.Lock()
+	m.reconnectHandler = handler
+	m.mu.Unlock()
+}
+
+// notifyReconnected fires the registered reconnect handler exactly once per
+// disconnect episode: it is a no-op unless the manager previously recorded a
+// connection error (see markError) since the last successful (re)connect.
+func (m *Manager) notifyReconnected() {
+	m.mu.Lock()
+	wasDisconnected := m.disconnected
+	m.disconnected = false
+	handler := m.reconnectHandler
+	m.mu.Unlock()
+	if wasDisconnected && handler != nil {
+		go handler()
+	}
 }
 
 func (m *Manager) SetUsageEventHandler(handler UsageEventHandler) {
@@ -207,6 +235,7 @@ func (m *Manager) runSubscribe(ctx context.Context, cfg RuntimeConfig, mode stri
 			status.Transport = "subscribe"
 			status.LastError = ""
 		})
+		m.notifyReconnected()
 
 		err = m.consumeSubscribe(ctx, cfg, client)
 		_ = client.Close()
@@ -326,6 +355,7 @@ func (m *Manager) runRESP(ctx context.Context, cfg RuntimeConfig) {
 			status.Transport = "resp"
 			status.LastError = ""
 		})
+		m.notifyReconnected()
 
 		err = m.consumeRESP(ctx, cfg, client, queue, popSide)
 		_ = client.Close()
@@ -357,6 +387,7 @@ func (m *Manager) consumeHTTP(ctx context.Context, cfg RuntimeConfig, client *ht
 		if err != nil {
 			return err
 		}
+		m.notifyReconnected()
 		if len(items) == 0 {
 			select {
 			case <-ctx.Done():
@@ -557,6 +588,9 @@ func needsAccountSnapshotEnrichment(event usage.Event) bool {
 }
 
 func (m *Manager) markError(stage string, err error) {
+	m.mu.Lock()
+	m.disconnected = true
+	m.mu.Unlock()
 	m.setStatus(func(status *Status) {
 		status.Collector = "error"
 		status.LastError = stage + ": " + err.Error()

@@ -1,0 +1,175 @@
+// 折叠态触发器：紧凑操作 chip（图标 + 短标签），是明确的操作控件而非裸文本链接。
+// 不再用整行 flex 容器纵向堆叠，改由卡片侧的 .cardMetaActionList 把两个 chip 排在同一行。
+.trigger {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  box-sizing: border-box;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 78%, transparent);
+  background: color-mix(in srgb, var(--bg-secondary) 78%, transparent);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color 0.16s ease,
+    border-color 0.16s ease,
+    background 0.16s ease;
+
+  &:hover {
+    color: var(--primary-color);
+    border-color: color-mix(in srgb, var(--primary-color) 55%, transparent);
+    background: color-mix(in srgb, var(--primary-color) 12%, transparent);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+  }
+}
+
+.triggerIcon {
+  flex-shrink: 0;
+  color: currentColor;
+}
+
+.triggerLabel {
+  min-width: 0;
+}
+
+// Drawer body 内容容器：撑满抽屉正文，历史列表由 Drawer 自带 body 滚动承载。
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.contentBody {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.item {
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent);
+  background: color-mix(in srgb, var(--bg-secondary) 88%, var(--bg-primary));
+  padding: 12px 14px;
+}
+
+.itemSuccess {
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--success-color) 78%, transparent);
+}
+
+.itemFailure {
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--warning-text) 78%, transparent);
+}
+
+.itemHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.itemSummary {
+  min-width: 0;
+  flex: 1;
+}
+
+.itemTitle {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.meta {
+  margin-top: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.status {
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.statusSuccess {
+  background: color-mix(in srgb, var(--success-color) 16%, transparent);
+  color: var(--success-color);
+}
+
+.statusFailure {
+  background: color-mix(in srgb, var(--warning-text) 14%, transparent);
+  color: var(--warning-text);
+}
+
+.detailList {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.detail {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.loading,
+.error {
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.loading {
+  background: color-mix(in srgb, var(--bg-secondary) 90%, transparent);
+  color: var(--text-secondary);
+}
+
+// 空态改为紧凑小字，不再用大灰圆角框占竖向空间。
+.empty {
+  padding: 2px 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-tertiary);
+}
+
+.error {
+  background: color-mix(in srgb, var(--warning-text) 8%, var(--bg-primary));
+  color: var(--warning-text);
+}
+
+.footer {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1.45;
+  // 长路径脚注可换行，不裸截断；配合 title 悬浮全文。
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}

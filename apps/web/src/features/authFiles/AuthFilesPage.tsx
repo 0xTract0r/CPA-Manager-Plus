@@ -25,6 +25,7 @@ import { IconFilterAll, IconSearch } from '@/components/ui/icons';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import {
+  CLAUDE_CONFIG,
   CODEX_CONFIG,
   buildObservedCodexQuotaState,
   getQuotaStoreKey,
@@ -41,6 +42,7 @@ import {
   getTypeColor,
   getTypeLabel,
   hasAuthFileStatusMessage,
+  hasAuthFileStatusWarning,
   isHealthyAuthFile,
   isRuntimeOnlyAuthFile,
   normalizeProviderKey,
@@ -53,6 +55,7 @@ import { AuthFileCard } from '@/features/authFiles/components/AuthFileCard';
 import { AuthJsonPasteModal } from '@/features/authFiles/components/AuthJsonPasteModal';
 import { AuthFileModelsModal } from '@/features/authFiles/components/AuthFileModelsModal';
 import { AuthFilesPrefixProxyEditorModal } from '@/features/authFiles/components/AuthFilesPrefixProxyEditorModal';
+import { AuthFilesAccountSettingsModal } from '@/features/authFiles/components/AuthFilesAccountSettingsModal';
 import { OAuthExcludedCard } from '@/features/authFiles/components/OAuthExcludedCard';
 import { OAuthModelAliasCard } from '@/features/authFiles/components/OAuthModelAliasCard';
 import { CodexReauthDialog } from '@/features/oauth/CodexReauthDialog';
@@ -71,10 +74,21 @@ import {
   getHighConfidenceUsageHeaderSnapshotForAuthFile,
   isUsageHeaderQuotaSnapshotExpired,
 } from '@/utils/usageHeaderSnapshots';
+import {
+  quotaSnapshotsApi,
+  type CoreQuotaSnapshotEntry,
+} from '@/services/api/quotaSnapshots';
+import {
+  buildCoreQuotaSnapshotLookup,
+  buildObservedClaudeQuotaStateFromCoreSnapshot,
+  buildObservedCodexQuotaStateFromCoreSnapshot,
+  getHighConfidenceCoreQuotaSnapshotForAuthFile,
+} from '@/utils/quota/coreQuotaSnapshots';
 import { useAuthFilesData } from '@/features/authFiles/hooks/useAuthFilesData';
 import { useAuthFilesModels } from '@/features/authFiles/hooks/useAuthFilesModels';
 import { useAuthFilesOauth } from '@/features/authFiles/hooks/useAuthFilesOauth';
 import { useAuthFilesPrefixProxyEditor } from '@/features/authFiles/hooks/useAuthFilesPrefixProxyEditor';
+import { useAuthFilesAccountSettings } from '@/features/authFiles/hooks/useAuthFilesAccountSettings';
 import { useAuthFilesStatusBarCache } from '@/features/authFiles/hooks/useAuthFilesStatusBarCache';
 import { useAntigravitySubscriptions } from '@/features/authFiles/hooks/useAntigravitySubscriptions';
 import {
@@ -123,9 +137,15 @@ import {
   type AuthFilesSortMode,
 } from '@/features/authFiles/uiState';
 import type { AuthJsonInputType } from '@/features/authFiles/sessionAuthConverter';
-import type { AuthFileItem, CodexQuotaState } from '@/types';
+import type { AuthFileItem, ClaudeQuotaState, CodexQuotaState } from '@/types';
 import { useAuthStore, useNotificationStore, useQuotaStore, useThemeStore } from '@/stores';
 import styles from './AuthFilesPage.module.scss';
+
+// 迁移自 cpa fork：告警账号的定向静默状态刷新节奏（对照旧版 web 端）。
+// interval：常规轮询间隔；reentry cooldown：从后台/切页回来时的最短间隔，
+// 避免 visibilitychange / focus 和 interval 短时间内重复触发同一账号的刷新。
+const WARNING_AUTO_REFRESH_INTERVAL_MS = 240_000;
+const WARNING_AUTO_REFRESH_REENTRY_COOLDOWN_MS = 15_000;
 
 const hasInlineQuotaLayout = (file: AuthFileItem): boolean => {
   if (isRuntimeOnlyAuthFile(file)) return false;
@@ -197,6 +217,7 @@ export function AuthFilesPage() {
   const resolvedTheme: ResolvedTheme = useThemeStore((state) => state.resolvedTheme);
   const codexQuota = useQuotaStore((state) => state.codexQuota);
   const setCodexQuota = useQuotaStore((state) => state.setCodexQuota);
+  const claudeQuota = useQuotaStore((state) => state.claudeQuota);
   const featureAvailability = usePanelFeatureAvailability();
   const managerServiceBase = featureAvailability.managerServiceBase;
   const pageTransitionLayer = usePageTransitionLayer();
@@ -235,6 +256,10 @@ export function AuthFilesPage() {
   const quotaCooldowns = quotaCooldownState.items;
   const [headerSnapshots, setHeaderSnapshots] = useState<UsageHeaderSnapshot[]>([]);
   const [headerSnapshotGeneratedAtMs, setHeaderSnapshotGeneratedAtMs] = useState(0);
+  // core `GET /quota/snapshots` 只读持久快照：core 后台调度器周期刷新写入，
+  // 前端只在挂载时拉一次作为 observed 兜底，不据此自建 provider 轮询。
+  const [coreQuotaSnapshots, setCoreQuotaSnapshots] = useState<CoreQuotaSnapshotEntry[]>([]);
+  const coreQuotaSnapshotReqId = useRef(0);
   const floatingBatchActionsRef = useRef<HTMLDivElement>(null);
   const batchActionAnimationRef = useRef<AnimationPlaybackControlsWithThen | null>(null);
   const previousSelectionCountRef = useRef(0);
@@ -259,6 +284,12 @@ export function AuthFilesPage() {
   const cooldownContextRef = useRef({ managerServiceBase, managementKey });
   const cooldownRecoveryContextRef = useRef({ managerServiceBase, managementKey });
   const headerSnapshotContextRef = useRef({ managerServiceBase, managementKey });
+  // bumpAuditReloadKey 定义在 useAuthFilesData 之后（依赖其 loadFiles 的其它 hook
+  // 也在中间声明），用 ref 打破声明顺序依赖，供下面 onStatusHistoryChanged 回调使用。
+  const bumpAuditReloadKeyRef = useRef<(fileName: string) => void>(() => {});
+  // 迁移自 cpa fork：记录每个账号最近一次告警自动刷新的时间戳，用于 interval /
+  // visibilitychange / focus 三路触发之间的去重节流。
+  const warningAutoRefreshAtRef = useRef<Record<string, number>>({});
 
   const {
     files,
@@ -271,6 +302,8 @@ export function AuthFilesPage() {
     deleting,
     deletingAll,
     statusUpdating,
+    statusRefreshing,
+    messageTesting,
     batchStatusUpdating,
     batchFieldsUpdating,
     fileInputRef,
@@ -282,6 +315,8 @@ export function AuthFilesPage() {
     handleDeleteAll,
     handleDownload,
     handleStatusToggle,
+    handleStatusRefresh,
+    handleTestMessage,
     toggleSelect,
     selectAllVisible,
     invertVisibleSelection,
@@ -290,7 +325,9 @@ export function AuthFilesPage() {
     batchSetStatus,
     batchPatchFields,
     batchDelete,
-  } = useAuthFilesData();
+  } = useAuthFilesData({
+    onStatusHistoryChanged: (fileName: string) => bumpAuditReloadKeyRef.current(fileName),
+  });
 
   const statusBarCache = useAuthFilesStatusBarCache(files);
   const uniqueAuthFileKeyByFallbackCooldownKey = useMemo(() => {
@@ -371,6 +408,32 @@ export function AuthFilesPage() {
     disableControls: connectionStatus !== 'connected',
     loadFiles,
   });
+
+  const {
+    accountSettingsEditor,
+    accountSettingsUpdatedText,
+    accountSettingsDirty,
+    openAccountSettingsEditor,
+    closeAccountSettingsEditor,
+    handleAccountSettingsChange,
+    handleAccountSettingsSave,
+  } = useAuthFilesAccountSettings({
+    disableControls: connectionStatus !== 'connected',
+    loadFiles,
+    // cpamp 当前没有独立的「key/用量统计」重载入口；account settings 保存后
+    // `loadFiles()` 已经足以刷新该 auth 文件（含 account_settings 投影），
+    // 这里传空实现只是满足 hook 的双回调契约，不引入未在本次范围内的新状态源。
+    loadKeyStats: async () => {},
+  });
+
+  // 认证文件卡片内两个审计面板（reauth / 状态检查历史）的按文件重载键。
+  // 重新认证成功、账号设置保存成功等会改历史的操作后，对该文件的 key +1，
+  // 面板下次展开时据此重新拉取，而不是长期缓存旧历史。
+  const [auditReloadKeys, setAuditReloadKeys] = useState<Record<string, number>>({});
+  const bumpAuditReloadKey = useCallback((fileName: string) => {
+    setAuditReloadKeys((prev) => ({ ...prev, [fileName]: (prev[fileName] ?? 0) + 1 }));
+  }, []);
+  bumpAuditReloadKeyRef.current = bumpAuditReloadKey;
 
   const disableControls = connectionStatus !== 'connected';
   const normalizedFilter = normalizeProviderKey(String(filter));
@@ -636,6 +699,98 @@ export function AuthFilesPage() {
     isCurrentLayer ? 240_000 : null
   );
 
+  // 迁移自 cpa fork：对「当前处于状态告警」的账号做定向静默刷新，补充上面
+  // 每 240s 的全量粗刷——粗刷只重新拉取列表快照，不会主动触发 core 侧重新探测
+  // 该账号的最新状态；这里显式调用 refresh-status，让告警账号有机会尽快恢复。
+  const warningFilesForAutoRefresh = useMemo(
+    () =>
+      files.filter((file) => {
+        if (isRuntimeOnlyAuthFile(file) || file.disabled) return false;
+        if (!hasAuthFileStatusWarning(file)) return false;
+        if (statusRefreshing[file.name] === true) return false;
+        return true;
+      }),
+    [files, statusRefreshing]
+  );
+
+  const refreshWarningFilesSilently = useCallback(
+    (reason: 'interval' | 'layer' | 'visible' | 'focus' = 'interval') => {
+      if (warningFilesForAutoRefresh.length === 0) return;
+
+      const now = Date.now();
+      const minimumElapsed =
+        reason === 'interval'
+          ? WARNING_AUTO_REFRESH_INTERVAL_MS
+          : WARNING_AUTO_REFRESH_REENTRY_COOLDOWN_MS;
+
+      const candidates = warningFilesForAutoRefresh.filter((file) => {
+        const lastRefreshedAt = warningAutoRefreshAtRef.current[file.name] ?? 0;
+        return now - lastRefreshedAt >= minimumElapsed;
+      });
+
+      if (candidates.length === 0) return;
+
+      candidates.forEach((file) => {
+        warningAutoRefreshAtRef.current[file.name] = now;
+        void handleStatusRefresh(file, { silent: true, trigger: 'auto' });
+      });
+    },
+    [handleStatusRefresh, warningFilesForAutoRefresh]
+  );
+
+  useEffect(() => {
+    if (!isCurrentLayer || loading) return;
+    refreshWarningFilesSilently('layer');
+  }, [isCurrentLayer, loading, refreshWarningFilesSilently]);
+
+  useEffect(() => {
+    if (!isCurrentLayer) return;
+    if (typeof document === 'undefined' || typeof window === 'undefined') return;
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return;
+      refreshWarningFilesSilently('visible');
+    };
+
+    const handleWindowFocus = () => {
+      refreshWarningFilesSilently('focus');
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleWindowFocus);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleWindowFocus);
+    };
+  }, [isCurrentLayer, refreshWarningFilesSilently]);
+
+  useEffect(() => {
+    // 仅在账号真正脱离 warning 候选集时清理 cooldown。
+    // 不要因为“当前正在刷新中”就把 cooldown 删掉，否则会在 finally 后立刻再次触发 auto refresh。
+    const retainedWarningNames = new Set(
+      files
+        .filter((file) => {
+          if (isRuntimeOnlyAuthFile(file) || file.disabled) return false;
+          return hasAuthFileStatusWarning(file);
+        })
+        .map((file) => file.name)
+    );
+
+    Object.keys(warningAutoRefreshAtRef.current).forEach((name) => {
+      if (!retainedWarningNames.has(name)) {
+        delete warningAutoRefreshAtRef.current[name];
+      }
+    });
+  }, [files]);
+
+  useInterval(
+    () => {
+      refreshWarningFilesSilently('interval');
+    },
+    isCurrentLayer ? WARNING_AUTO_REFRESH_INTERVAL_MS : null
+  );
+
   const loadQuotaCooldowns = useCallback(async () => {
     // Stamp this fetch with a fresh id so a later fetch or context identity
     // invalidation can supersede it. If the generation has changed by the time
@@ -694,6 +849,21 @@ export function AuthFilesPage() {
       // Header snapshots are passive hints; keep the current page usable if Manager data is unavailable.
     }
   }, [managementKey, managerServiceBase]);
+
+  // core `GET /quota/snapshots` 直连 core（复用 cpamp apiClient，不经
+  // manager-server），只读持久快照；挂载拉一次即可作为 observed 兜底，周期刷新
+  // 交给 core 后台调度器，前端不建 interval。
+  const loadCoreQuotaSnapshots = useCallback(async () => {
+    const id = ++coreQuotaSnapshotReqId.current;
+    try {
+      const response = await quotaSnapshotsApi.getSnapshots();
+      if (id !== coreQuotaSnapshotReqId.current) return;
+      setCoreQuotaSnapshots(response.entries ?? []);
+    } catch {
+      // Core quota snapshots are a passive observed source; keep the page usable
+      // if core is unavailable and fall back to the existing observed sources.
+    }
+  }, []);
 
   const refreshRecoveredCodexQuotaForFile = useCallback(
     async (file: AuthFileItem) => {
@@ -801,6 +971,13 @@ export function AuthFilesPage() {
     void loadHeaderSnapshots();
   }, [isCurrentLayer, managerServiceBase, loadHeaderSnapshots, loadQuotaCooldowns]);
 
+  // core 快照直连 core（不依赖 managerServiceBase）：挂载/回到当前 layer 时拉一次
+  // 即可，周期刷新交由 core 后台调度器负责，这里不设 interval。
+  useEffect(() => {
+    if (!isCurrentLayer) return;
+    void loadCoreQuotaSnapshots();
+  }, [isCurrentLayer, loadCoreQuotaSnapshots]);
+
   useInterval(
     () => {
       void loadQuotaCooldowns();
@@ -874,6 +1051,13 @@ export function AuthFilesPage() {
   const headerSnapshotLookup = useMemo(
     () => buildUsageHeaderSnapshotLookup(headerSnapshots),
     [headerSnapshots]
+  );
+
+  // core `GET /quota/snapshots` observed 源的多键 lookup（auth_id/auth_index/name），
+  // 避免身份隔离下同名文件串号。
+  const coreQuotaSnapshotLookup = useMemo(
+    () => buildCoreQuotaSnapshotLookup(coreQuotaSnapshots),
+    [coreQuotaSnapshots]
   );
 
   const getActiveCodexQuota = useCallback(
@@ -961,14 +1145,49 @@ export function AuthFilesPage() {
       if (resolveAuthProvider(file) !== 'codex') return undefined;
       const statusKey = getAuthFileCodexInspectionKeyForFile(file);
       const activeQuota = getActiveCodexQuota(file);
-      const observedQuota = buildObservedCodexQuotaState(
+      // 请求头 usage snapshot 是"最近一次真实请求"观测，比 core 只读持久快照更
+      // 新鲜，因此优先用它做 observed 兜底；core 快照只在没有请求头观测时兜底。
+      const headerObservedQuota = buildObservedCodexQuotaState(
         file,
         codexStatusSourcesByAuthFileKey.get(statusKey)?.headerSnapshot,
         t
       );
+      const observedQuota =
+        headerObservedQuota ??
+        buildObservedCodexQuotaStateFromCoreSnapshot(
+          file,
+          getHighConfidenceCoreQuotaSnapshotForAuthFile(coreQuotaSnapshotLookup, file),
+          t
+        );
       return resolveQuotaDisplayState(activeQuota, observedQuota);
     },
-    [codexStatusSourcesByAuthFileKey, getActiveCodexQuota, t]
+    [codexStatusSourcesByAuthFileKey, coreQuotaSnapshotLookup, getActiveCodexQuota, t]
+  );
+
+  const getActiveClaudeQuota = useCallback(
+    (file: AuthFileItem): ClaudeQuotaState | undefined => {
+      if (resolveAuthProvider(file) !== 'claude') return undefined;
+      const storeKey = getQuotaStoreKey(CLAUDE_CONFIG, file);
+      return claudeQuota[storeKey] as ClaudeQuotaState | undefined;
+    },
+    [claudeQuota]
+  );
+
+  // Claude 目前没有请求头 usage snapshot 观测源（该机制只覆盖 Codex），core 只读
+  // 持久快照是 Claude 认证文件页唯一的 observed 兜底源：挂载拉一次即可让用户不用
+  // 点进详情才看到配额，不覆盖 cooldown 恢复 / expiry 触发的真实刷新结果。
+  const getDisplayClaudeQuota = useCallback(
+    (file: AuthFileItem): ClaudeQuotaState | undefined => {
+      if (resolveAuthProvider(file) !== 'claude') return undefined;
+      const activeQuota = getActiveClaudeQuota(file);
+      const observedQuota = buildObservedClaudeQuotaStateFromCoreSnapshot(
+        file,
+        getHighConfidenceCoreQuotaSnapshotForAuthFile(coreQuotaSnapshotLookup, file),
+        t
+      );
+      return resolveQuotaDisplayState(activeQuota, observedQuota);
+    },
+    [coreQuotaSnapshotLookup, getActiveClaudeQuota, t]
   );
 
   const codexStatusByAuthFileKey = useMemo(() => {
@@ -1286,6 +1505,9 @@ export function AuthFilesPage() {
     const target = codexReauthTarget;
     await loadFiles();
     await loadCodexInspectionSnapshots();
+    if (target?.fileName) {
+      bumpAuditReloadKey(target.fileName);
+    }
     if (!target?.fileName) return;
 
     const targetKey = getAuthFileCodexInspectionKey(target.fileName, target.authIndex ?? null);
@@ -1295,7 +1517,18 @@ export function AuthFilesPage() {
         return itemKey !== targetKey || !isStaleCodexReauthSnapshot(item);
       })
     );
-  }, [codexReauthTarget, loadCodexInspectionSnapshots, loadFiles]);
+  }, [bumpAuditReloadKey, codexReauthTarget, loadCodexInspectionSnapshots, loadFiles]);
+
+  // 账号设置保存成功后（hook 内部会把 editor 置空）也会改变身份/审计相关历史，
+  // 这里包一层：调用 hook 自带的保存逻辑，再据「保存前 fileName、保存后 editor 已关闭」
+  // 判断成功，据此 bump 该文件的审计面板重载键。
+  const handleAccountSettingsSaveWithAuditReload = useCallback(async () => {
+    const fileName = accountSettingsEditor?.fileName;
+    await handleAccountSettingsSave();
+    if (fileName) {
+      bumpAuditReloadKey(fileName);
+    }
+  }, [accountSettingsEditor, bumpAuditReloadKey, handleAccountSettingsSave]);
 
   const openExcludedEditor = useCallback(
     (provider?: string) => {
@@ -1727,10 +1960,13 @@ export function AuthFilesPage() {
                       disableControls={disableControls}
                       deleting={deleting}
                       statusUpdating={statusUpdating}
+                      statusRefreshing={statusRefreshing}
+                      messageTesting={messageTesting}
                       statusBarCache={statusBarCache}
                       codexStatusBadges={codexStatus?.badges ?? []}
                       codexNeedsReauth={codexStatus?.needsReauth ?? false}
                       codexDisplayQuota={getDisplayCodexQuota(file)}
+                      claudeDisplayQuota={getDisplayClaudeQuota(file)}
                       antigravitySubscription={antigravitySubscriptions[file.name]}
                       onRefreshAntigravitySubscription={refreshSubscription}
                       quotaCooldown={getQuotaCooldownForFile(file)}
@@ -1738,8 +1974,12 @@ export function AuthFilesPage() {
                       onReauth={(targetFile) =>
                         setCodexReauthTarget(createCodexReauthTargetFromAuthFile(targetFile))
                       }
+                      onRefreshStatus={handleStatusRefresh}
+                      onTestMessage={handleTestMessage}
                       onDownload={handleDownload}
                       onOpenPrefixProxyEditor={openPrefixProxyEditor}
+                      onOpenAccountSettings={openAccountSettingsEditor}
+                      auditReloadKey={auditReloadKeys[file.name] ?? 0}
                       onDelete={handleDelete}
                       onToggleStatus={handleStatusToggle}
                       onToggleSelect={() => toggleSelect(getAuthFileSelectionKey(file))}
@@ -1827,6 +2067,17 @@ export function AuthFilesPage() {
         onCopyText={copyTextWithNotification}
         onSave={handlePrefixProxySave}
         onChange={handlePrefixProxyChange}
+      />
+
+      <AuthFilesAccountSettingsModal
+        disableControls={disableControls}
+        editor={accountSettingsEditor}
+        updatedText={accountSettingsUpdatedText}
+        dirty={accountSettingsDirty}
+        onClose={closeAccountSettingsEditor}
+        onCopyText={copyTextWithNotification}
+        onSave={() => void handleAccountSettingsSaveWithAuditReload()}
+        onChange={handleAccountSettingsChange}
       />
 
       <AuthJsonPasteModal

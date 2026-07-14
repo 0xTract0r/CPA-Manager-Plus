@@ -381,6 +381,62 @@ describe('useVisualConfig', () => {
     harness.unmount();
   });
 
+  it('uses the CPA default for absent managed-header-profile.online-update and does not materialize it', () => {
+    const harness = mountUseVisualConfig();
+    const yaml = ['host: 127.0.0.1', ''].join('\n');
+
+    act(() => {
+      expect(harness.getCurrent().loadVisualValuesFromYaml(yaml).ok).toBe(true);
+    });
+
+    expect(harness.getCurrent().visualValues.managedHeaderOnlineUpdate).toBe(true);
+
+    const parsed = parseYaml(harness.getCurrent().applyVisualChangesToYaml(yaml)) as Record<
+      string,
+      unknown
+    >;
+    expect(parsed['managed-header-profile']).toBeUndefined();
+
+    harness.unmount();
+  });
+
+  it('writes managed-header-profile.online-update false when the user explicitly disables it', () => {
+    const harness = mountUseVisualConfig();
+    const yaml = ['host: 127.0.0.1', ''].join('\n');
+
+    act(() => {
+      expect(harness.getCurrent().loadVisualValuesFromYaml(yaml).ok).toBe(true);
+      harness.getCurrent().setVisualValues({ managedHeaderOnlineUpdate: false });
+    });
+
+    const parsed = parseYaml(harness.getCurrent().applyVisualChangesToYaml(yaml)) as {
+      'managed-header-profile'?: Record<string, unknown>;
+    };
+    expect(parsed['managed-header-profile']).toEqual({ 'online-update': false });
+
+    harness.unmount();
+  });
+
+  it('round-trips an existing managed-header-profile.online-update: false without dirtying it', () => {
+    const harness = mountUseVisualConfig();
+    const yaml = ['host: 127.0.0.1', 'managed-header-profile:', '  online-update: false', ''].join(
+      '\n'
+    );
+
+    act(() => {
+      expect(harness.getCurrent().loadVisualValuesFromYaml(yaml).ok).toBe(true);
+    });
+
+    expect(harness.getCurrent().visualValues.managedHeaderOnlineUpdate).toBe(false);
+
+    const parsed = parseYaml(harness.getCurrent().applyVisualChangesToYaml(yaml)) as {
+      'managed-header-profile'?: Record<string, unknown>;
+    };
+    expect(parsed['managed-header-profile']).toEqual({ 'online-update': false });
+
+    harness.unmount();
+  });
+
   it('rejects zero Redis usage retention because CPA normalizes it to 60', () => {
     const harness = mountUseVisualConfig();
 
@@ -532,6 +588,176 @@ describe('useVisualConfig', () => {
     expect(parsed['disable-claude-cloak-mode']).toBe(false);
     expect(parsed['gpt-image-2-base-model']).toBe('gpt-5.4-mini');
     expect(parsed['video-result-auth-cache-ttl']).toBe('3h');
+
+    harness.unmount();
+  });
+
+  it('defaults enable-gemini-cli-endpoint to false and does not materialize it when absent', () => {
+    const harness = mountUseVisualConfig();
+    const yaml = ['host: 127.0.0.1', ''].join('\n');
+
+    act(() => {
+      expect(harness.getCurrent().loadVisualValuesFromYaml(yaml).ok).toBe(true);
+    });
+
+    expect(harness.getCurrent().visualValues.enableGeminiCliEndpoint).toBe(false);
+
+    const parsed = parseYaml(harness.getCurrent().applyVisualChangesToYaml(yaml)) as Record<
+      string,
+      unknown
+    >;
+    expect(parsed['enable-gemini-cli-endpoint']).toBeUndefined();
+
+    harness.unmount();
+  });
+
+  it('writes enable-gemini-cli-endpoint true when the user explicitly enables it', () => {
+    const harness = mountUseVisualConfig();
+    const yaml = ['host: 127.0.0.1', ''].join('\n');
+
+    act(() => {
+      expect(harness.getCurrent().loadVisualValuesFromYaml(yaml).ok).toBe(true);
+      harness.getCurrent().setVisualValues({ enableGeminiCliEndpoint: true });
+    });
+
+    const parsed = parseYaml(harness.getCurrent().applyVisualChangesToYaml(yaml)) as Record<
+      string,
+      unknown
+    >;
+    expect(parsed['enable-gemini-cli-endpoint']).toBe(true);
+
+    harness.unmount();
+  });
+
+  it('round-trips an existing enable-gemini-cli-endpoint: true without dirtying it', () => {
+    const harness = mountUseVisualConfig();
+    const yaml = ['host: 127.0.0.1', 'enable-gemini-cli-endpoint: true', ''].join('\n');
+
+    act(() => {
+      expect(harness.getCurrent().loadVisualValuesFromYaml(yaml).ok).toBe(true);
+    });
+
+    expect(harness.getCurrent().visualValues.enableGeminiCliEndpoint).toBe(true);
+
+    const parsed = parseYaml(harness.getCurrent().applyVisualChangesToYaml(yaml)) as Record<
+      string,
+      unknown
+    >;
+    expect(parsed['enable-gemini-cli-endpoint']).toBe(true);
+
+    harness.unmount();
+  });
+
+  it('uses CPA defaults for absent quota-snapshot-refresh fields and keeps duration strings', () => {
+    const harness = mountUseVisualConfig();
+    const yaml = ['host: 127.0.0.1', ''].join('\n');
+
+    act(() => {
+      expect(harness.getCurrent().loadVisualValuesFromYaml(yaml).ok).toBe(true);
+    });
+
+    const quotaSnapshotRefresh = harness.getCurrent().visualValues.quotaSnapshotRefresh;
+    expect(quotaSnapshotRefresh).toEqual({
+      enabled: true,
+      interval: '45m',
+      jitter: '10m',
+      startupCatchUp: true,
+      startupMaxStaleness: '24h',
+    });
+
+    const parsed = parseYaml(harness.getCurrent().applyVisualChangesToYaml(yaml)) as Record<
+      string,
+      unknown
+    >;
+    expect(parsed['quota-snapshot-refresh']).toBeUndefined();
+
+    harness.unmount();
+  });
+
+  it('writes only the quota-snapshot-refresh field explicitly changed from an absent block', () => {
+    const harness = mountUseVisualConfig();
+    const yaml = ['host: 127.0.0.1', ''].join('\n');
+
+    act(() => {
+      expect(harness.getCurrent().loadVisualValuesFromYaml(yaml).ok).toBe(true);
+      harness.getCurrent().setVisualValues({
+        quotaSnapshotRefresh: {
+          ...harness.getCurrent().visualValues.quotaSnapshotRefresh,
+          interval: '2h',
+        },
+      });
+    });
+
+    const parsed = parseYaml(harness.getCurrent().applyVisualChangesToYaml(yaml)) as {
+      'quota-snapshot-refresh'?: Record<string, unknown>;
+    };
+    expect(parsed['quota-snapshot-refresh']).toEqual({ interval: '2h' });
+
+    harness.unmount();
+  });
+
+  it('round-trips a full quota-snapshot-refresh block preserving duration strings without drift', () => {
+    const harness = mountUseVisualConfig();
+    const yaml = [
+      'host: 127.0.0.1',
+      'quota-snapshot-refresh:',
+      '  enabled: false',
+      '  interval: 30min',
+      '  jitter: 90s',
+      '  startup-catch-up: false',
+      '  startup-max-staleness: 12h',
+      '',
+    ].join('\n');
+
+    act(() => {
+      expect(harness.getCurrent().loadVisualValuesFromYaml(yaml).ok).toBe(true);
+    });
+
+    const loaded = harness.getCurrent().visualValues.quotaSnapshotRefresh;
+    expect(loaded).toEqual({
+      enabled: false,
+      interval: '30min',
+      jitter: '90s',
+      startupCatchUp: false,
+      startupMaxStaleness: '12h',
+    });
+
+    // Trigger an unrelated save without touching quota-snapshot-refresh fields.
+    act(() => {
+      harness.getCurrent().setVisualValues({ debug: true });
+    });
+
+    const parsed = parseYaml(harness.getCurrent().applyVisualChangesToYaml(yaml)) as {
+      'quota-snapshot-refresh'?: Record<string, unknown>;
+    };
+    expect(parsed['quota-snapshot-refresh']).toEqual({
+      enabled: false,
+      interval: '30min',
+      jitter: '90s',
+      'startup-catch-up': false,
+      'startup-max-staleness': '12h',
+    });
+
+    harness.unmount();
+  });
+
+  it('flags invalid quota-snapshot-refresh duration strings without coercing them to integers', () => {
+    const harness = mountUseVisualConfig();
+    const yaml = ['host: 127.0.0.1', ''].join('\n');
+
+    act(() => {
+      expect(harness.getCurrent().loadVisualValuesFromYaml(yaml).ok).toBe(true);
+      harness.getCurrent().setVisualValues({
+        quotaSnapshotRefresh: {
+          ...harness.getCurrent().visualValues.quotaSnapshotRefresh,
+          interval: '45',
+        },
+      });
+    });
+
+    expect(harness.getCurrent().visualValidationErrors['quotaSnapshotRefresh.interval']).toBe(
+      'duration_format'
+    );
 
     harness.unmount();
   });

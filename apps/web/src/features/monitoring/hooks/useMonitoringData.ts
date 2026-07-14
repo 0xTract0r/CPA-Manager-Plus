@@ -96,6 +96,11 @@ export {
 
 const MONITORING_EVENTS_PAGE_LIMIT = 500;
 export const MONITORING_EVENTS_RETENTION_LIMIT = 2_000;
+// 事件明细分页(events_page)体积大(500 条/页可达约 1.9MB)，从首屏聚合请求中拆出，
+// 用独立的 useMonitoringAnalytics 实例单独请求，避免拖慢首屏概览面板(KPI/图表)。
+// 拆分后的请求耗时更长（大范围/慢查询），超时相应调大到 60s，与 usageService 默认
+// 的 30s 通用超时区分开，只影响这一个较重的分页请求。
+const MONITORING_EVENTS_REQUEST_TIMEOUT_MS = 60 * 1000;
 const MONITORING_PRESENTATION_CACHE_LIMIT = 4;
 const EMPTY_MONITORING_ANALYTICS_EVENT_ROWS: MonitoringAnalyticsEventRow[] = [];
 
@@ -457,6 +462,9 @@ export function useMonitoringData({
   const eventsHasMore = activeEventsPageState.hasMore;
   const eventsLoadingMore = activeEventsPageState.loadingMore;
 
+  // 首屏概览请求：只取 KPI/图表/账号-API Key 汇总等聚合数据，不再勾 events_page /
+  // recent_failures。recent_failures 在监控页当前 UI 未被任何面板消费（"最近失败"是
+  // 独立的仪表盘页面 dashboard/summary 接口，与本页无关），移出首屏后无可见回归。
   const analytics = useMonitoringAnalytics({
     fromMs: analyticsBounds?.startMs,
     toMs: analyticsBounds?.endMs,
@@ -477,7 +485,26 @@ export function useMonitoringData({
       api_key_stats: true,
       filter_options: true,
       task_buckets: true,
-      recent_failures: 8,
+      granularity: analyticsGranularity,
+    },
+    throttleMs: 1_000,
+  });
+  const analyticsData = analytics.data;
+  const currentAnalyticsData = analytics.dataStale ? null : analyticsData;
+
+  // 事件明细分页独立请求：账号总览的"近期状态"迷你条形图（accountStatusDataByRowId）
+  // 需要事件级时间戳，因此不能完全推迟到用户滚动到"实时"分栏才请求；但把它从首屏聚合
+  // 请求中拆开后，概览面板（KPI/图表）不必等这个大分页请求返回即可先渲染，且该请求可
+  // 独立设置更长超时/更低 limit。分页游标(loadMoreEvents)固定走这个独立请求。
+  const eventsAnalytics = useMonitoringAnalytics({
+    fromMs: analyticsBounds?.startMs,
+    toMs: analyticsBounds?.endMs,
+    nowMs: analyticsNowMs,
+    dataScopeKey: eventsScopeKey,
+    searchQuery,
+    searchApiKeyHash,
+    filters: analyticsFilters,
+    include: {
       events_page: {
         limit: MONITORING_EVENTS_PAGE_LIMIT,
         before_ms: eventsBeforeMs,
@@ -486,38 +513,40 @@ export function useMonitoringData({
       granularity: analyticsGranularity,
     },
     throttleMs: 1_000,
+    timeoutMs: MONITORING_EVENTS_REQUEST_TIMEOUT_MS,
   });
-  const analyticsData = analytics.data;
-  const currentAnalyticsData = analytics.dataStale ? null : analyticsData;
+  const eventsAnalyticsData = eventsAnalytics.data;
+  const currentEventsAnalyticsData = eventsAnalytics.dataStale ? null : eventsAnalyticsData;
   const displayEventItems = useMemo(
     () =>
       resolveMonitoringDisplayEventItems({
-        analyticsData,
-        currentPageItems: currentAnalyticsData?.events?.items ?? null,
+        analyticsData: eventsAnalyticsData,
+        currentPageItems: currentEventsAnalyticsData?.events?.items ?? null,
         eventsPageItems: eventItems,
         eventsBeforeMs,
-        dataStale: analytics.dataStale,
+        dataStale: eventsAnalytics.dataStale,
       }),
     [
-      analytics.dataStale,
-      analyticsData,
-      currentAnalyticsData?.events?.items,
+      eventsAnalytics.dataStale,
+      eventsAnalyticsData,
+      currentEventsAnalyticsData?.events?.items,
       eventItems,
       eventsBeforeMs,
     ]
   );
   const eventsLoadedCount = displayEventItems.length;
-  const displayEventsTotalCount = currentAnalyticsData?.events?.total_count ?? eventsLoadedCount;
+  const displayEventsTotalCount =
+    currentEventsAnalyticsData?.events?.total_count ?? eventsLoadedCount;
   const eventsRetentionLimited =
     eventsLoadedCount >= MONITORING_EVENTS_RETENTION_LIMIT &&
-    (Boolean(currentAnalyticsData?.events?.has_more) ||
+    (Boolean(currentEventsAnalyticsData?.events?.has_more) ||
       eventsHasMore ||
       displayEventsTotalCount > MONITORING_EVENTS_RETENTION_LIMIT);
   const displayEventsHasMore =
-    !eventsRetentionLimited && (currentAnalyticsData?.events?.has_more ?? eventsHasMore);
+    !eventsRetentionLimited && (currentEventsAnalyticsData?.events?.has_more ?? eventsHasMore);
 
   useEffect(() => {
-    const page = currentAnalyticsData?.events;
+    const page = currentEventsAnalyticsData?.events;
     if (!page) return;
     const requestBeforeMs = eventsBeforeMs;
     const requestBeforeId = eventsBeforeId;
@@ -549,10 +578,10 @@ export function useMonitoringData({
     return () => {
       cancelled = true;
     };
-  }, [currentAnalyticsData?.events, eventsScopeKey, eventsBeforeMs, eventsBeforeId]);
+  }, [currentEventsAnalyticsData?.events, eventsScopeKey, eventsBeforeMs, eventsBeforeId]);
 
   useEffect(() => {
-    if (analytics.error) {
+    if (eventsAnalytics.error) {
       let cancelled = false;
       queueMicrotask(() => {
         if (cancelled) return;
@@ -564,19 +593,19 @@ export function useMonitoringData({
         cancelled = true;
       };
     }
-  }, [analytics.error]);
+  }, [eventsAnalytics.error]);
 
   const loadMoreEvents = useCallback(() => {
     if (
-      analytics.loading ||
+      eventsAnalytics.loading ||
       eventsLoadingMore ||
       !eventsHasMore ||
       eventItems.length >= MONITORING_EVENTS_RETENTION_LIMIT
     )
       return;
-    const nextBeforeMs = currentAnalyticsData?.events?.next_before_ms;
+    const nextBeforeMs = currentEventsAnalyticsData?.events?.next_before_ms;
     if (!nextBeforeMs) return;
-    const nextBeforeId = currentAnalyticsData?.events?.next_before_id ?? null;
+    const nextBeforeId = currentEventsAnalyticsData?.events?.next_before_id ?? null;
     setEventsPageState((previous) => {
       const base =
         previous.scopeKey === eventsScopeKey ? previous : createEventsPageState(eventsScopeKey);
@@ -584,9 +613,9 @@ export function useMonitoringData({
       return { ...base, beforeMs: nextBeforeMs, beforeId: nextBeforeId, loadingMore: true };
     });
   }, [
-    currentAnalyticsData?.events?.next_before_ms,
-    currentAnalyticsData?.events?.next_before_id,
-    analytics.loading,
+    currentEventsAnalyticsData?.events?.next_before_ms,
+    currentEventsAnalyticsData?.events?.next_before_id,
+    eventsAnalytics.loading,
     eventItems.length,
     eventsScopeKey,
     eventsHasMore,
@@ -594,7 +623,7 @@ export function useMonitoringData({
   ]);
 
   const allRows = useMemo(() => {
-    const details = analyticsData
+    const details = eventsAnalyticsData
       ? buildUsageDetailsFromAnalyticsEvents(displayEventItems)
       : collectUsageDetailsWithEndpoint(usage);
     return buildEventRows(
@@ -611,7 +640,7 @@ export function useMonitoringData({
     authFileMap,
     authMetaMap,
     channelByAuthIndex,
-    analyticsData,
+    eventsAnalyticsData,
     displayEventItems,
     modelPrices,
     sourceInfoMap,
@@ -850,8 +879,15 @@ export function useMonitoringData({
     ]
   );
 
+  // 概览聚合(analytics)与事件分页(eventsAnalytics)拆成两个独立请求后，展示快照的
+  // "是否过期"必须同时看两者：只要有一个还在为新 scope 转场中，就不能把当前计算结果
+  // 当作稳定快照缓存下来，否则会把"事件分页还没到"的半成品（如账号卡片的近期状态迷你
+  // 条形图为空）误存成该 scope 的稳定态。两个请求仍然是并行发出、独立完成的，只是
+  // "何时提交为稳定展示"这一步骤合并判断，不影响首屏 KPI/图表与事件分页并行加载的收益。
+  const combinedAnalyticsDataStale = analytics.dataStale || eventsAnalytics.dataStale;
+
   useEffect(() => {
-    if (analytics.dataStale) return;
+    if (combinedAnalyticsDataStale) return;
 
     let cancelled = false;
     queueMicrotask(() => {
@@ -882,19 +918,19 @@ export function useMonitoringData({
     return () => {
       cancelled = true;
     };
-  }, [analytics.dataStale, computedPresentationSnapshot, eventsScopeKey]);
+  }, [combinedAnalyticsDataStale, computedPresentationSnapshot, eventsScopeKey]);
 
   const presentationResolution = useMemo(
     () =>
       resolveMonitoringPresentationSnapshot({
         computedSnapshot: computedPresentationSnapshot,
         scopeKey: eventsScopeKey,
-        dataStale: analytics.dataStale,
+        dataStale: combinedAnalyticsDataStale,
         cachedSnapshots: presentationSnapshotStore.cachedSnapshots,
         lastStableSnapshot: presentationSnapshotStore.lastStableSnapshot,
       }),
     [
-      analytics.dataStale,
+      combinedAnalyticsDataStale,
       computedPresentationSnapshot,
       eventsScopeKey,
       presentationSnapshotStore.cachedSnapshots,
@@ -925,8 +961,11 @@ export function useMonitoringData({
   const statusChips = useMemo(() => buildStatusChips(metadata), [metadata]);
 
   return {
+    // 首屏阻塞态只看概览请求；事件分页请求独立、较慢，不应阻塞 KPI/图表先渲染。
     loading: loading || analytics.loading,
-    error: [error, analytics.error].filter(Boolean).join('；'),
+    // 错误信息合并两路请求：事件分页失败也必须让用户看见（C 项要求的"刷新失败"必须
+    // 显式提示，不能静默只保留旧数据)，而不是被首屏请求的成功状态掩盖。
+    error: [error, analytics.error, eventsAnalytics.error].filter(Boolean).join('；'),
     authFiles,
     channels,
     summary: presentationSnapshot.summary,
@@ -951,7 +990,7 @@ export function useMonitoringData({
     eventsTotalCount: presentationSnapshot.eventsTotalCount,
     eventsLoadedCount: presentationSnapshot.eventsLoadedCount,
     lastRefreshedAt: presentationSnapshot.lastRefreshedAt,
-    isTransitioningScope: analytics.dataStale,
+    isTransitioningScope: combinedAnalyticsDataStale,
     hasPresentationSnapshot: presentationResolution.hasPresentationSnapshot,
     refreshMeta,
     loadMoreEvents,

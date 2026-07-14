@@ -4,15 +4,17 @@ import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { SelectionCheckbox } from '@/components/ui/SelectionCheckbox';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import {
+  IconBot,
   IconDownload,
   IconInfo,
   IconModelCluster,
   IconRefreshCw,
   IconSettings,
+  IconShield,
   IconTrash2,
 } from '@/components/ui/icons';
 import { ProviderStatusBar } from '@/components/providers/ProviderStatusBar';
-import type { AuthFileItem, CodexQuotaState } from '@/types';
+import type { AuthFileItem, ClaudeQuotaState, CodexQuotaState } from '@/types';
 import { resolveAuthProvider } from '@/utils/quota';
 import {
   normalizeRecentRequestAuthIndex,
@@ -20,13 +22,14 @@ import {
   normalizeUsageTotal,
   statusBarDataFromRecentRequests,
 } from '@/utils/recentRequests';
-import { formatFileSize, formatUnixTimestamp } from '@/utils/format';
+import { formatDateTime, formatFileSize, formatUnixTimestamp } from '@/utils/format';
 import {
   QUOTA_PROVIDER_TYPES,
   formatModified,
   getAuthFileStatusMessage,
   getTypeColor,
   getTypeLabel,
+  isAuthFileMissingProxyUrl,
   isRuntimeOnlyAuthFile,
   normalizeProviderKey,
   parsePriorityValue,
@@ -38,9 +41,25 @@ import type { AntigravitySubscriptionState } from '@/features/authFiles/hooks/us
 import type { AuthFileCodexStatusBadge } from '@/features/authFiles/model/authFilesPageModel';
 import type { QuotaCooldownInfo } from '@/services/api/usageService';
 import { AuthFileQuotaSection } from '@/features/authFiles/components/AuthFileQuotaSection';
+import { AuthFilesReauthHistoryPanel } from '@/features/authFiles/components/AuthFilesReauthHistoryPanel';
+import { AuthFilesStatusHistoryPanel } from '@/features/authFiles/components/AuthFilesStatusHistoryPanel';
 import styles from '@/features/authFiles/AuthFilesPage.module.scss';
 
 const HEALTHY_STATUS_MESSAGES = new Set(['ok', 'healthy', 'ready', 'success', 'available']);
+
+// 审计入口（reauth / status 历史）门槛：与旧版一致，仅 OAuth 账号显示。
+// 对照旧版 useAuthFilesReauth.AUTH_FILE_OAUTH_PROVIDER_MAP 的 provider key 集合，
+// 避免像旧版那样对所有非 runtime 卡都挂审计面板，导致同行卡片元素多寡不一、高度参差。
+const OAUTH_AUDITABLE_PROVIDER_KEYS = new Set([
+  'anthropic',
+  'claude',
+  'codex',
+  'antigravity',
+  'gemini',
+  'gemini-cli',
+  'kimi',
+  'xai',
+]);
 
 export type AuthFileCardProps = {
   file: AuthFileItem;
@@ -50,17 +69,31 @@ export type AuthFileCardProps = {
   disableControls: boolean;
   deleting: string | null;
   statusUpdating: Record<string, boolean>;
+  /** 迁移自旧版：逐账号「刷新状态」按钮的 loading 态，key 为 file.name。 */
+  statusRefreshing?: Record<string, boolean>;
+  /** 迁移自旧版：逐账号「测试消息」按钮的 loading 态，key 为 file.name。 */
+  messageTesting?: Record<string, boolean>;
   statusBarCache: Map<string, AuthFileStatusBarData>;
   codexStatusBadges?: AuthFileCodexStatusBadge[];
   codexNeedsReauth?: boolean;
   codexDisplayQuota?: CodexQuotaState;
+  /** core `GET /quota/snapshots` observed 兜底状态；Claude 没有请求头 usage snapshot 源，只靠 core 快照。 */
+  claudeDisplayQuota?: ClaudeQuotaState;
   antigravitySubscription?: AntigravitySubscriptionState;
   onRefreshAntigravitySubscription?: (file: AuthFileItem) => void;
   quotaCooldown?: QuotaCooldownInfo;
   onShowModels: (file: AuthFileItem) => void;
   onReauth?: (file: AuthFileItem) => void;
+  /** 迁移自旧版：逐账号手动触发一次状态检查刷新（core /auth-files/refresh-status）。 */
+  onRefreshStatus?: (file: AuthFileItem) => void;
+  /** 迁移自旧版：逐账号发送一次测试消息，验证账号是否能正常出请求。 */
+  onTestMessage?: (file: AuthFileItem) => void;
   onDownload: (name: string) => void;
   onOpenPrefixProxyEditor: (file: AuthFileItem) => void;
+  /** 打开身份隔离账号设置弹窗（与「编辑原始 JSON」的 onOpenPrefixProxyEditor 并存，互不替代）。 */
+  onOpenAccountSettings: (file: AuthFileItem) => void;
+  /** 该文件的审计面板重载键；reauth / 账号设置保存成功等操作后由页面 bump，用于让已展开的面板重新拉取历史。 */
+  auditReloadKey?: number;
   onDelete: (name: string) => void;
   onToggleStatus: (file: AuthFileItem, enabled: boolean) => void;
   onToggleSelect: (name: string) => void;
@@ -88,17 +121,24 @@ export function AuthFileCard(props: AuthFileCardProps) {
     disableControls,
     deleting,
     statusUpdating,
+    statusRefreshing = {},
+    messageTesting = {},
     statusBarCache,
     codexStatusBadges = [],
     codexNeedsReauth = false,
     codexDisplayQuota,
+    claudeDisplayQuota,
     antigravitySubscription,
     onRefreshAntigravitySubscription,
     quotaCooldown,
     onShowModels,
     onReauth,
+    onRefreshStatus,
+    onTestMessage,
     onDownload,
     onOpenPrefixProxyEditor,
+    onOpenAccountSettings,
+    auditReloadKey = 0,
     onDelete,
     onToggleStatus,
     onToggleSelect,
@@ -112,6 +152,13 @@ export function AuthFileCard(props: AuthFileCardProps) {
   const isRuntimeOnly = isRuntimeOnlyAuthFile(file);
   const resolvedProvider = resolveAuthProvider(file);
   const providerKey = normalizeProviderKey(String(file.type ?? file.provider ?? 'unknown'));
+  // 审计入口仅 OAuth 账号显示（恢复旧版门槛），非 OAuth / runtime 卡不挂审计面板。
+  // 与旧版 resolveAuthFileOAuthProvider 一致：provider / type 任一命中 OAuth 集合即算。
+  const auditProviderKeyFromProvider = normalizeProviderKey(String(file.provider ?? ''));
+  const canViewAuditHistory =
+    !isRuntimeOnly &&
+    (OAUTH_AUDITABLE_PROVIDER_KEYS.has(providerKey) ||
+      OAUTH_AUDITABLE_PROVIDER_KEYS.has(auditProviderKeyFromProvider));
   const isAntigravity = resolvedProvider === 'antigravity';
   const isAistudio = providerKey === 'aistudio';
   const showModelsButton = !isRuntimeOnly || isAistudio;
@@ -140,6 +187,32 @@ export function AuthFileCard(props: AuthFileCardProps) {
   const rawStatusMessage = getAuthFileStatusMessage(file);
   const hasStatusWarning =
     Boolean(rawStatusMessage) && !HEALTHY_STATUS_MESSAGES.has(rawStatusMessage.toLowerCase());
+  // 无健康数据（成功/失败均为 0）时不占整块 HEALTH 面板，改成一行紧凑占位。
+  const hasStatusData = statusData.totalSuccess + statusData.totalFailure > 0;
+
+  // 缺失 proxy_url（住宅代理）告警：core#26/#27 把空 proxy_url 账号标为不可用并下发 warnings。
+  // 对照旧版卡片，用醒目橙色徽标 + tooltip 提示，避免请求直连暴露真实 IP。
+  const missingProxyUrl = isAuthFileMissingProxyUrl(file);
+  const missingProxyBadgeTitle = missingProxyUrl
+    ? t('auth_files.proxy_url_missing_marker', {
+        defaultValue:
+          'Missing proxy_url: this account is unavailable until a residential proxy is set, otherwise requests would expose your real IP.',
+      })
+    : '';
+
+  // 迁移自旧版：逐账号「刷新状态」「测试消息」按钮的可用性判定。
+  // 两者都只对非虚拟且已启用的账号开放；刷新状态额外要求当前处于告警态才展示，
+  // 避免对健康账号也铺满操作按钮。
+  const canRefreshStatus = !isRuntimeOnly && hasStatusWarning && !file.disabled && Boolean(onRefreshStatus);
+  const canTestMessage = !isRuntimeOnly && !file.disabled && Boolean(onTestMessage);
+  const isStatusRefreshing = statusRefreshing[file.name] === true;
+  const isMessageTesting = messageTesting[file.name] === true;
+  const refreshStatusButtonTitle = t('auth_files.status_refresh_button', {
+    defaultValue: 'Refresh status',
+  });
+  const testMessageButtonTitle = t('auth_files.test_message_button', {
+    defaultValue: 'Test message',
+  });
 
   const priorityValue = parsePriorityValue(file.priority ?? file['priority']);
   const projectIdValue = getProjectIdValue(file);
@@ -219,6 +292,15 @@ export function AuthFileCard(props: AuthFileCardProps) {
     info: styles.codexStatusBadgeInfo,
   } satisfies Record<AuthFileCodexStatusBadge['tone'], string>;
 
+  // 风控命中计数：只读契约字段，未提供（undefined）或 <=0 时不渲染徽章。
+  const cyberPolicyFlagCount =
+    typeof file.cyber_policy_flag_count === 'number' && file.cyber_policy_flag_count > 0
+      ? file.cyber_policy_flag_count
+      : 0;
+  const lastCyberPolicyAtRaw =
+    typeof file.last_cyber_policy_at === 'string' ? file.last_cyber_policy_at.trim() : '';
+  const lastCyberPolicyAtLabel = lastCyberPolicyAtRaw ? formatDateTime(lastCyberPolicyAtRaw) : '';
+
   return (
     <div
       className={`${styles.fileCard} ${compact ? styles.fileCardCompact : ''} ${providerCardClass} ${selected ? styles.fileCardSelected : ''} ${file.disabled ? styles.fileCardDisabled : ''}`}
@@ -250,6 +332,15 @@ export function AuthFileCard(props: AuthFileCardProps) {
                   {typeLabel}
                 </span>
                 <span className={`${styles.stateBadge} ${stateBadgeClass}`}>{stateLabel}</span>
+                {missingProxyUrl && (
+                  <span
+                    className={`${styles.stateBadge} ${styles.stateBadgeWarning}`}
+                    title={missingProxyBadgeTitle}
+                  >
+                    <IconInfo className={styles.actionIcon} size={12} />
+                    {t('auth_files.proxy_url_missing_badge', { defaultValue: 'Missing proxy' })}
+                  </span>
+                )}
                 {subscriptionBadgeLabel && (
                   <span
                     className={`${styles.subscriptionBadge} ${subscriptionBadgeClass}`}
@@ -310,6 +401,23 @@ export function AuthFileCard(props: AuthFileCardProps) {
                     })}
                   </span>
                 )}
+                {cyberPolicyFlagCount > 0 && (
+                  <span
+                    className={`${styles.codexStatusBadge} ${styles.codexStatusBadgeDanger}`}
+                    title={t('auth_files.cyber_policy_flag_badge_title', {
+                      count: cyberPolicyFlagCount,
+                      lastAt: lastCyberPolicyAtLabel || '-',
+                      defaultValue:
+                        'This auth file has been flagged by cyber policy risk control {{count}} time(s). Last hit: {{lastAt}}.',
+                    })}
+                  >
+                    <IconShield className={styles.actionIcon} size={12} />
+                    {t('auth_files.cyber_policy_flag_badge', {
+                      count: cyberPolicyFlagCount,
+                      defaultValue: 'Risk control x{{count}}',
+                    })}
+                  </span>
+                )}
               </div>
               <span className={styles.fileName} title={file.name}>
                 {file.name}
@@ -348,6 +456,14 @@ export function AuthFileCard(props: AuthFileCardProps) {
                 <span className={styles.metaValue}>{projectIdValue}</span>
               </div>
             )}
+            {canViewAuditHistory && (
+              <div className={styles.cardMetaAction}>
+                <div className={styles.cardMetaActionList}>
+                  <AuthFilesReauthHistoryPanel file={file} reloadKey={auditReloadKey} />
+                  <AuthFilesStatusHistoryPanel file={file} reloadKey={auditReloadKey} />
+                </div>
+              </div>
+            )}
           </div>
 
           {rawStatusMessage && hasStatusWarning && (
@@ -380,19 +496,34 @@ export function AuthFileCard(props: AuthFileCardProps) {
               </div>
             </div>
 
-            <div className={`${styles.statusPanel} ${compact ? styles.statusPanelCompact : ''}`}>
-              <div className={styles.statusPanelLabel}>
-                <span>{t('auth_files.health_status_label')}</span>
+            {hasStatusData ? (
+              <div className={`${styles.statusPanel} ${compact ? styles.statusPanelCompact : ''}`}>
+                <div className={styles.statusPanelLabel}>
+                  <span>{t('auth_files.health_status_label')}</span>
+                </div>
+                <ProviderStatusBar statusData={statusData} styles={styles} />
               </div>
-              <ProviderStatusBar statusData={statusData} styles={styles} />
-            </div>
+            ) : (
+              <div className={styles.statusPanelEmpty}>
+                <span className={styles.statusPanelLabel}>
+                  {t('auth_files.health_status_label')}
+                </span>
+                <span className={styles.statusPanelEmptyValue}>--</span>
+              </div>
+            )}
 
             {showQuotaLayout && quotaType && (
               <AuthFileQuotaSection
                 file={file}
                 quotaType={quotaType}
                 disableControls={disableControls}
-                quotaOverride={quotaType === 'codex' ? (codexDisplayQuota ?? null) : undefined}
+                quotaOverride={
+                  quotaType === 'codex'
+                    ? (codexDisplayQuota ?? null)
+                    : quotaType === 'claude'
+                      ? (claudeDisplayQuota ?? null)
+                      : undefined
+                }
               />
             )}
           </div>
@@ -428,6 +559,40 @@ export function AuthFileCard(props: AuthFileCardProps) {
                       >
                         <IconDownload className={styles.actionIcon} size={16} />
                       </Button>
+                      {canRefreshStatus && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => onRefreshStatus?.(file)}
+                          className={styles.iconButton}
+                          title={refreshStatusButtonTitle}
+                          aria-label={refreshStatusButtonTitle}
+                          disabled={disableControls || isStatusRefreshing}
+                        >
+                          {isStatusRefreshing ? (
+                            <LoadingSpinner size={14} />
+                          ) : (
+                            <IconRefreshCw className={styles.actionIcon} size={16} />
+                          )}
+                        </Button>
+                      )}
+                      {canTestMessage && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => onTestMessage?.(file)}
+                          className={styles.iconButton}
+                          title={testMessageButtonTitle}
+                          aria-label={testMessageButtonTitle}
+                          disabled={disableControls || isMessageTesting}
+                        >
+                          {isMessageTesting ? (
+                            <LoadingSpinner size={14} />
+                          ) : (
+                            <IconBot className={styles.actionIcon} size={16} />
+                          )}
+                        </Button>
+                      )}
                       {codexNeedsReauth && onReauth ? (
                         <Button
                           variant="secondary"
@@ -450,6 +615,21 @@ export function AuthFileCard(props: AuthFileCardProps) {
                         disabled={disableControls}
                       >
                         <IconSettings className={styles.actionIcon} size={16} />
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => onOpenAccountSettings(file)}
+                        className={styles.iconButton}
+                        title={t('auth_files.account_settings_button', {
+                          defaultValue: 'Account settings',
+                        })}
+                        aria-label={t('auth_files.account_settings_button', {
+                          defaultValue: 'Account settings',
+                        })}
+                        disabled={disableControls}
+                      >
+                        <IconShield className={styles.actionIcon} size={16} />
                       </Button>
                       <Button
                         variant="danger"
@@ -484,6 +664,7 @@ export function AuthFileCard(props: AuthFileCardProps) {
               </div>
             )}
           </div>
+
         </div>
       </div>
     </div>

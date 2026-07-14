@@ -43,6 +43,8 @@ const USAGE_SERVICE_ERROR_CODES = new Set([
   'model_price_sync_failed',
   'method_not_allowed',
   'account_processing_policy_env_locked',
+  'cpa_core_connection_not_configured',
+  'cpa_core_usage_export_failed',
 ]);
 
 export interface UsageServiceApiError extends Error {
@@ -406,6 +408,45 @@ export interface UsageExportResponse {
   filename: string;
 }
 
+export interface UsageSyncCoreHistoryResponse {
+  format?: string;
+  added: number;
+  skipped: number;
+  total: number;
+  failed: number;
+  unsupported?: number;
+  warnings?: string[];
+  noHistoricalData?: boolean;
+  /** True when more batches remain; caller should re-request with `nextSince`. */
+  hasMore?: boolean;
+  /** Cursor to pass as `since` on the next batch request when `hasMore` is true. */
+  nextSince?: string;
+}
+
+export interface UsageSyncCoreHistoryParams {
+  /** RFC3339 timestamp cursor; omit for the first batch (server default = earliest). */
+  since?: string;
+  /** Batch size; server defaults to 5000 when omitted. */
+  limit?: number;
+}
+
+export type UsageCatchUpStatusValue = 'ok' | 'error' | 'skipped' | 'nodata' | string;
+export type UsageCatchUpTrigger = 'timer' | 'reconnect' | string;
+
+export interface UsageCatchUpRunStatus {
+  lastRunAtMs: number;
+  lastAdded: number;
+  lastStatus: UsageCatchUpStatusValue;
+  lastError?: string;
+  totalAdded: number;
+  trigger: UsageCatchUpTrigger;
+}
+
+export interface UsageCatchUpStatusResponse {
+  found: boolean;
+  status: UsageCatchUpRunStatus;
+}
+
 export interface DashboardSummaryWindow {
   today_start_ms: number;
   now_ms: number;
@@ -608,6 +649,9 @@ export interface MonitoringAnalyticsFilters {
   failed_only?: boolean;
   min_latency_ms?: number;
   cache_status?: string;
+  // G2b "低命中率全量筛":后端按此阈值(严格小于)在 SQL 层筛出低命中率事件,
+  // 覆盖当前时间范围内的全部数据而非仅已加载分页；与前端本地过滤(双保险)配合使用。
+  max_cache_hit_rate?: number;
 }
 
 export interface MonitoringAnalyticsEventsPageRequest {
@@ -2010,6 +2054,71 @@ export const usageServiceApi = {
       return response.data;
     });
   },
+
+  syncCoreHistory: async (
+    base: string,
+    managementKey?: string,
+    params?: UsageSyncCoreHistoryParams,
+    signal?: AbortSignal
+  ): Promise<UsageSyncCoreHistoryResponse> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return {
+        format: 'legacy_usage_export',
+        added: 0,
+        skipped: 0,
+        total: 0,
+        failed: 0,
+        hasMore: false,
+      };
+    }
+
+    return withUsageServiceError(async () => {
+      // 后端新契约：body 优先于 query；无参 = 首批（不再是全量）。
+      const body: UsageSyncCoreHistoryParams = {};
+      if (params?.since) body.since = params.since;
+      if (params?.limit !== undefined) body.limit = params.limit;
+
+      const response = await axios.post<UsageSyncCoreHistoryResponse>(
+        buildUrl(base, '/v0/management/usage/sync'),
+        body,
+        {
+          timeout: USAGE_SERVICE_TRANSFER_TIMEOUT_MS,
+          headers: authHeaders(managementKey),
+          signal,
+        }
+      );
+      return response.data;
+    });
+  },
+
+  getCatchUpStatus: async (
+    base: string,
+    managementKey?: string
+  ): Promise<UsageCatchUpStatusResponse> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return {
+        found: true,
+        status: {
+          lastRunAtMs: Date.now() - 4 * 60 * 1000,
+          lastAdded: 12,
+          lastStatus: 'ok',
+          totalAdded: 4821,
+          trigger: 'timer',
+        },
+      };
+    }
+
+    return withUsageServiceError(async () => {
+      const response = await axios.get<UsageCatchUpStatusResponse>(
+        buildUrl(base, '/v0/management/usage/catchup-status'),
+        {
+          timeout: USAGE_SERVICE_TIMEOUT_MS,
+          headers: authHeaders(managementKey),
+        }
+      );
+      return response.data;
+    });
+  },
 };
 
 export const dashboardApi = {
@@ -2069,7 +2178,8 @@ export const monitoringAnalyticsApi = {
     base: string,
     managementKey: string | undefined,
     request: MonitoringAnalyticsRequest,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    timeoutMs: number = USAGE_SERVICE_TIMEOUT_MS
   ): Promise<MonitoringAnalyticsResponse> => {
     if (__DEMO_SITE__ && isDemoMode()) {
       return getDemoMonitoringAnalytics(request);
@@ -2080,7 +2190,7 @@ export const monitoringAnalyticsApi = {
         buildUrl(base, '/v0/management/monitoring/analytics'),
         request,
         {
-          timeout: USAGE_SERVICE_TIMEOUT_MS,
+          timeout: timeoutMs,
           headers: authHeaders(managementKey),
           signal,
         }

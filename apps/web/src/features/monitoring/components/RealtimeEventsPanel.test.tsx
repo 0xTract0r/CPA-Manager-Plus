@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AccountDisplayMode } from '@/features/monitoring/accountOverviewState';
 import type { MonitoringEventRow } from '@/features/monitoring/hooks/useMonitoringData';
 import styles from '../MonitoringCenterPage.module.scss';
-import { RealtimeEventsPanel } from './RealtimeEventsPanel';
+import { RealtimeEventsPanel, RealtimeEventsPanelActions } from './RealtimeEventsPanel';
 
 const t = ((key: string, options?: Record<string, unknown>) => {
   const messages: Record<string, string> = {
@@ -14,8 +14,11 @@ const t = ((key: string, options?: Record<string, unknown>) => {
     'monitoring.account_overview_account_display_full': 'Full',
     'monitoring.account_overview_show_full_accounts_hint': 'Show full accounts',
     'monitoring.account_overview_show_masked_accounts_hint': 'Show masked accounts',
+    'monitoring.cached_tokens_short': 'Cached',
     'monitoring.cache_creation_tokens_short': 'Create',
     'monitoring.cache_read_tokens_short': 'Read',
+    'monitoring.column_cache_hit_rate': 'Cache Hit Rate',
+    'monitoring.column_cache_hit_rate_short': 'Cache Hit',
     'monitoring.column_latency': 'Latency',
     'monitoring.column_model': 'Model',
     'monitoring.column_output_tps': 'TPS',
@@ -23,6 +26,17 @@ const t = ((key: string, options?: Record<string, unknown>) => {
     'monitoring.column_success_rate': 'Success',
     'monitoring.column_time': 'Time',
     'monitoring.column_type': 'Type',
+    'monitoring.filter_low_cache_hit_rate': 'Low Cache Hit Only',
+    'monitoring.filter_low_cache_hit_rate_short': 'Low Cache Hit',
+    'monitoring.filter_low_cache_hit_rate_hint':
+      'Show only rows with a cache hit rate below {{threshold}}.',
+    'monitoring.filter_low_cache_hit_rate_threshold_menu_label': 'Change low cache hit threshold',
+    'monitoring.filter_low_cache_hit_rate_threshold_custom': 'Custom threshold',
+    'monitoring.filter_low_cache_hit_rate_threshold_custom_invalid':
+      'Enter a number between 0 and 100.',
+    'monitoring.filter_low_cache_hit_rate_scope_hint':
+      'Filters all data in the current time window by cache hit rate (server-side).',
+    'common.confirm': 'Confirm',
     'monitoring.elapsed_short': 'Elapsed',
     'monitoring.executor_type_short': 'Executor',
     'monitoring.fail_status_code_short': 'HTTP',
@@ -42,6 +56,12 @@ const t = ((key: string, options?: Record<string, unknown>) => {
     'monitoring.realtime_api_key_hash': 'API Key hash',
     'monitoring.realtime_api_key_label': 'API Key',
     'monitoring.realtime_api_key_masked': 'Masked key',
+    'monitoring.realtime_cache_hit_rate_hint':
+      '(cachedTokens + cacheReadTokens) / (max(inputTokens, cachedTokens) + cacheReadTokens + cacheCreationTokens) for this single request. Shows “--” when there is no input-side token data.',
+    'monitoring.realtime_success_rate_hint':
+      'Rolling success rate for this account + provider + model + channel combination, not the result of this single request.',
+    'monitoring.realtime_usage_hint':
+      'I = input tokens, O = output tokens, R = reasoning tokens; also shows cache read/write tokens when present.',
     'monitoring.request_status': 'Status',
     'monitoring.result_failed': 'Failed',
     'monitoring.result_success': 'Success',
@@ -75,6 +95,8 @@ type PanelOverrides = {
   eventsRetentionLimited?: boolean;
   eventsTotalCount?: number;
   eventsLoadedCount?: number;
+  lowCacheHitRateOnly?: boolean;
+  lowCacheHitRateThreshold?: number;
 };
 
 const baseRow = (overrides: Partial<PanelRow> = {}): PanelRow => ({
@@ -142,6 +164,8 @@ const renderPanel = (row: PanelRow, overrides: PanelOverrides = {}) =>
       pageSize={10}
       scopedFailureCount={row.failed ? 1 : 0}
       failedOnlyActive={false}
+      lowCacheHitRateOnly={overrides.lowCacheHitRateOnly ?? false}
+      lowCacheHitRateThreshold={overrides.lowCacheHitRateThreshold ?? 0.3}
       eventsHasMore={overrides.eventsHasMore ?? false}
       eventsLoadingMore={overrides.eventsLoadingMore ?? false}
       eventsRetentionLimited={overrides.eventsRetentionLimited ?? false}
@@ -154,10 +178,29 @@ const renderPanel = (row: PanelRow, overrides: PanelOverrides = {}) =>
       emptyState={<span>empty</span>}
       t={t}
       onToggleFailedOnly={noop}
+      onToggleLowCacheHitRateOnly={noop}
+      onLowCacheHitRateThresholdChange={noop}
       onAccountDisplayModeChange={noop}
       onPageChange={noop}
       onPageSizeChange={noop}
       onLoadMoreEvents={noop}
+    />
+  );
+
+const renderActions = () =>
+  renderToStaticMarkup(
+    <RealtimeEventsPanelActions
+      rowCount={1}
+      scopedFailureCount={0}
+      failedOnlyActive={false}
+      lowCacheHitRateOnly={false}
+      lowCacheHitRateThreshold={0.3}
+      accountDisplayMode="masked"
+      t={t}
+      onToggleFailedOnly={noop}
+      onToggleLowCacheHitRateOnly={noop}
+      onLowCacheHitRateThresholdChange={noop}
+      onAccountDisplayModeChange={noop}
     />
   );
 
@@ -206,7 +249,17 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).toContain('Elapsed');
     expect(markup).toContain('1.5 s');
     expect(markup).toContain('20');
-    expect(markup).toContain('I 10 · O 20 · R 3 · C 5 · Create 1 · Read 4');
+    // 用量各段各自渲染为独立 span（防止窄列数字断行），" · " 分隔符落在段内，
+    // 因此不再断言整段连续字符串，改为逐段校验并核对 DOM 顺序。
+    expect(markup).toContain('I 10 · ');
+    expect(markup).toContain('O 20 · ');
+    expect(markup).toContain('R 3 · ');
+    expect(markup).toContain('Create 1 · ');
+    expect(markup).toContain('Read 4');
+    const usageOrder = ['I 10', 'O 20', 'R 3', 'Create 1', 'Read 4'].map((needle) =>
+      markup.indexOf(needle)
+    );
+    expect(usageOrder).toEqual([...usageOrder].sort((a, b) => a - b));
     expect(markup).toContain('role="tooltip"');
     expect(markup).toContain(styles.realtimeFailureTooltip);
     expect(markup).toContain(styles.realtimeFailureTooltipBelow);
@@ -221,7 +274,7 @@ describe('RealtimeEventsPanel', () => {
     const markup = renderPanel(baseRow({ reasoningTokens: 0 }));
 
     expect(markup).toContain('<colgroup>');
-    expect(markup.match(/<col\b/g)).toHaveLength(12);
+    expect(markup.match(/<col\b/g)).toHaveLength(13);
     expect(markup).not.toContain('Effort -');
     expect(markup).toContain('<th>Effort</th>');
     expect(markup).toContain('>TPS</th>');
@@ -229,7 +282,14 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).toMatch(/TTFT<\/span><span class="[^"]+">｜<\/span><span class="[^"]+">Elapsed/);
     expect(markup).toContain(expectedDate);
     expect(markup).toContain(expectedTime);
-    expect(markup).toContain('I 10 · O 20 · C 5');
+    // 细分缓存字段(cacheReadTokens/cacheCreationTokens)全为 0 但 legacy cachedTokens=5 时，
+    // 用 "Cached 5" 兜底展示，不再输出语义空洞的裸 "C 5"。用量各段渲染为独立 span，
+    // 因此逐段校验而非断言整段连续字符串。
+    expect(markup).toContain('I 10 · ');
+    expect(markup).toContain('O 20');
+    expect(markup).toContain('Cached 5');
+    const usageOrder = ['I 10', 'O 20', 'Cached 5'].map((needle) => markup.indexOf(needle));
+    expect(usageOrder).toEqual([...usageOrder].sort((a, b) => a - b));
     expect(markup).not.toContain('R 0');
     expect(markup).not.toContain('Read 0');
     expect(markup).not.toContain('Create 0');
@@ -341,7 +401,7 @@ describe('RealtimeEventsPanel', () => {
     );
   });
 
-  it('renders residual cached tokens even when they equal cache read tokens', () => {
+  it('omits the semantically empty legacy "C" token once cache read/creation are broken out', () => {
     const markup = renderPanel(
       baseRow({
         cachedTokens: 4,
@@ -350,7 +410,8 @@ describe('RealtimeEventsPanel', () => {
       })
     );
 
-    expect(markup).toContain('C 4');
+    expect(markup).not.toContain('C 4');
+    expect(markup).not.toContain('Cached 4');
     expect(markup).toContain('Read 4');
     expect(markup).toContain('Create 1');
   });
@@ -399,5 +460,125 @@ describe('RealtimeEventsPanel', () => {
 
     expect(markup).toContain('Loaded 500 of 500 events');
     expect(markup).toContain('Load more');
+  });
+
+  it('renders the cache hit rate column with header tooltips right after the usage column', () => {
+    const markup = renderPanel(
+      baseRow({
+        inputTokens: 10,
+        cachedTokens: 5,
+        cacheReadTokens: 3,
+        cacheCreationTokens: 2,
+      })
+    );
+
+    // 新口径（非 Anthropic model）：分子取 cacheReadTokens 优先；
+    // 分母 = max(inputTokens, cacheReadTokens) + cacheCreationTokens = max(10, 3) + 2 = 12；
+    // 3 / 12 = 25.0%
+    expect(markup).toContain('Cache Hit');
+    expect(markup).toContain('25.0%');
+    expect(markup).toContain(
+      'title="Rolling success rate for this account + provider + model + channel combination, not the result of this single request."'
+    );
+    expect(markup).toContain(
+      'title="I = input tokens, O = output tokens, R = reasoning tokens; also shows cache read/write tokens when present."'
+    );
+    expect(markup).toContain(
+      'title="(cachedTokens + cacheReadTokens) / (max(inputTokens, cachedTokens) + cacheReadTokens + cacheCreationTokens) for this single request. Shows “--” when there is no input-side token data."'
+    );
+    // 列顺序：本次用量(Usage) -> 缓存命中率(Cache Hit) -> 花费(Cost)。
+    const usageIdx = markup.indexOf('Usage');
+    const cacheHitHeaderIdx = markup.indexOf('Cache Hit');
+    const costIdx = markup.indexOf('>Cost<');
+    expect(usageIdx).toBeGreaterThanOrEqual(0);
+    expect(cacheHitHeaderIdx).toBeGreaterThan(usageIdx);
+    expect(costIdx).toBeGreaterThan(cacheHitHeaderIdx);
+  });
+
+  it('renders both filter chips side by side in the masthead actions toolbar', () => {
+    const markup = renderActions();
+
+    // "仅显示失败" 与 "仅显示低命中率" chip 在同一行工具条内并排渲染。
+    const failedIdx = markup.indexOf('Failed only');
+    const lowCacheIdx = markup.indexOf('Low Cache Hit');
+    expect(failedIdx).toBeGreaterThanOrEqual(0);
+    expect(lowCacheIdx).toBeGreaterThan(failedIdx);
+  });
+
+  it('filters displayed rows to low cache hit rate when the chip is active', () => {
+    const highHitRow = baseRow({
+      id: 'high',
+      inputTokens: 10,
+      cachedTokens: 10,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+    });
+
+    const activeMarkup = renderPanel(highHitRow, { lowCacheHitRateOnly: true });
+    const inactiveMarkup = renderPanel(highHitRow, { lowCacheHitRateOnly: false });
+
+    // 100% 命中率的行在开启低命中率过滤后应被隐藏（fallback 到空态），关闭时正常展示。
+    expect(inactiveMarkup).toContain('100.0%');
+    expect(activeMarkup).not.toContain('100.0%');
+    expect(activeMarkup).toContain('empty');
+  });
+
+  it('shows the current threshold on the chip label and lets a lower threshold pass through more rows', () => {
+    const markup = renderActions();
+    // chip 文案带当前阈值(如 "Low Cache Hit <30%")，用户无需猜测筛选口径。
+    expect(markup).toContain('Low Cache Hit &lt;30%');
+  });
+
+  it('filters displayed rows using the configured threshold, not a hardcoded 30%', () => {
+    // 命中率 40%：在默认阈值(<30%)下不算低命中率，但把阈值配置成 <50% 后应被筛出。
+    const midHitRow = baseRow({
+      id: 'mid',
+      inputTokens: 10,
+      cachedTokens: 4,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+    });
+
+    const defaultThresholdMarkup = renderPanel(midHitRow, {
+      lowCacheHitRateOnly: true,
+      lowCacheHitRateThreshold: 0.3,
+    });
+    const widerThresholdMarkup = renderPanel(midHitRow, {
+      lowCacheHitRateOnly: true,
+      lowCacheHitRateThreshold: 0.5,
+    });
+
+    expect(defaultThresholdMarkup).toContain('empty');
+    expect(widerThresholdMarkup).not.toContain('empty');
+    expect(widerThresholdMarkup).toContain('40.0%');
+  });
+
+  it('shows "--" for cache hit rate when there is no input-side token data', () => {
+    const markup = renderPanel(
+      baseRow({
+        inputTokens: 0,
+        cachedTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+      })
+    );
+
+    expect(markup).toContain('--');
+  });
+
+  it('colors the cache hit rate cell using the low/mid/high thresholds independent of success rate', () => {
+    const goodMarkup = renderPanel(
+      baseRow({ inputTokens: 10, cachedTokens: 10, cacheReadTokens: 0, cacheCreationTokens: 0 })
+    );
+    const warnMarkup = renderPanel(
+      baseRow({ inputTokens: 10, cachedTokens: 4, cacheReadTokens: 0, cacheCreationTokens: 0 })
+    );
+    const badMarkup = renderPanel(
+      baseRow({ inputTokens: 10, cachedTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 })
+    );
+
+    expect(goodMarkup).toMatch(/class="[^"]*goodText[^"]*">100\.0%/);
+    expect(warnMarkup).toMatch(/class="[^"]*warnText[^"]*">40\.0%/);
+    expect(badMarkup).toMatch(/class="[^"]*badText[^"]*">10\.0%/);
   });
 });

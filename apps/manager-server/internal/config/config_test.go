@@ -27,6 +27,12 @@ func TestLoadCreatesDefaultConfig(t *testing.T) {
 	if !cfg.DashboardHourlyRollupEnabled {
 		t.Fatal("DashboardHourlyRollupEnabled = false by default")
 	}
+	if !cfg.UsageCatchUpEnabled {
+		t.Fatal("UsageCatchUpEnabled = false by default")
+	}
+	if cfg.UsageCatchUpInterval != 10*time.Minute {
+		t.Fatalf("UsageCatchUpInterval = %s, want 10m default", cfg.UsageCatchUpInterval)
+	}
 
 	data, err := os.ReadFile(configPath)
 	if err != nil {
@@ -150,6 +156,8 @@ func TestLoadEnvOverridesConfig(t *testing.T) {
 	t.Setenv("USAGE_BATCH_SIZE", "12")
 	t.Setenv("CPA_MANAGER_PPROF_ADDR", "[::1]:6061")
 	t.Setenv("USAGE_DASHBOARD_HOURLY_ROLLUP_ENABLED", "false")
+	t.Setenv("USAGE_CATCHUP_ENABLED", "false")
+	t.Setenv("USAGE_CATCHUP_INTERVAL_SECONDS", "120")
 
 	cfg, err := Load()
 	if err != nil {
@@ -172,6 +180,12 @@ func TestLoadEnvOverridesConfig(t *testing.T) {
 	}
 	if cfg.DashboardHourlyRollupEnabled {
 		t.Fatal("DashboardHourlyRollupEnabled = true, want false")
+	}
+	if cfg.UsageCatchUpEnabled {
+		t.Fatal("UsageCatchUpEnabled = true, want false")
+	}
+	if cfg.UsageCatchUpInterval != 2*time.Minute {
+		t.Fatalf("UsageCatchUpInterval = %s, want 2m", cfg.UsageCatchUpInterval)
 	}
 }
 
@@ -219,6 +233,8 @@ func clearConfigEnv(t *testing.T) {
 		"USAGE_ACCOUNT_ACTIONS_ENABLED",
 		"USAGE_ACCOUNT_ACTIONS_AUTO_DISABLE",
 		"USAGE_DASHBOARD_HOURLY_ROLLUP_ENABLED",
+		"USAGE_CATCHUP_ENABLED",
+		"USAGE_CATCHUP_INTERVAL_SECONDS",
 		"PANEL_PATH",
 	} {
 		t.Setenv(key, "")

@@ -13,6 +13,7 @@ import type {
   MonitoringApiKeyRow,
   MonitoringEventRow,
   MonitoringSummary,
+  MonitoringTimeRange,
 } from '@/features/monitoring/hooks/useMonitoringData';
 import {
   resolveAccountDisplayText,
@@ -64,6 +65,14 @@ import {
 } from '@/utils/usage';
 
 export type StatusFilter = 'all' | 'success' | 'failed';
+
+// 自定义时间范围描述符：记录用户在 自定义弹层 里实际选择的方式(N小时/N天/日期范围)，
+// 供"当前统计范围"caption 与时间行"自定义"段展示实际所选范围，而不是笼统的"自定义"文案。
+// 仅描述"如何得到这个范围"，不参与范围计算本身(计算仍由 shared/model/timeRange 负责)。
+export type MonitoringCustomRangeDescriptor =
+  | { mode: 'hours'; hours: number }
+  | { mode: 'days'; days: number }
+  | { mode: 'range'; startMs: number; endMs: number };
 
 export type FocusSnapshot = {
   searchInput: string;
@@ -629,6 +638,44 @@ export const buildPrimarySummaryCards = ({
   },
 ];
 
+// Anthropic/Claude 系上报的 input_tokens 不含缓存，cache_read/cache_creation 是独立叠加的
+// bucket；OpenAI 系（含 gpt-5.6-* 等）上报的 input_tokens 本身已经是包含缓存命中的超集，
+// cache_read 只是重复披露同一批已在 input 里的 token，不能再叠加进分母，否则会把命中率
+// 腰斩（真实案例：gpt-5.6-sol 单条 input=55406/cache_read=54784 应≈98.9%，误加 cache_read
+// 到分母后被算成 49.7%）。判据对齐后端 pricing/cost.go 的 isAnthropicModel。
+const isAnthropicModelSlug = (model?: string | null): boolean => {
+  if (!model) return false;
+  const trimmed = model.trim().toLowerCase();
+  const index = trimmed.lastIndexOf('/');
+  const slug = index >= 0 ? trimmed.slice(index + 1) : trimmed;
+  return slug.startsWith('claude') || slug.startsWith('anthropic');
+};
+
+// 缓存命中率口径（单行/汇总共用），按 provider 区分分母：
+// 分子：cache_read 优先，否则回退 cached（避免 Anthropic 把 cache_read 镜像进 cached 造成双计）。
+// - Anthropic 系（input 不含缓存）：分母 = inputTokens + cacheReadTokens + cacheCreationTokens
+// - OpenAI/默认系（input 含缓存）：分母 = max(inputTokens, 命中 tokens) + cacheCreationTokens
+//   （不再额外加 cache_read，因为它已经包含在 inputTokens 里）
+// model 缺省（例如跨模型聚合的 MonitoringSummary，没有单一 provider）时按 OpenAI/默认系口径计算，
+// 与该函数此前的行为保持一致。分母 <= 0 时返回 null，由调用方决定展示 "--"。
+export const computeCacheHitRate = (tokens: {
+  inputTokens: number;
+  cachedTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  model?: string | null;
+}): number | null => {
+  const cacheHitTokens =
+    tokens.cacheReadTokens > 0 ? tokens.cacheReadTokens : tokens.cachedTokens;
+
+  const inputSideTokens = isAnthropicModelSlug(tokens.model)
+    ? tokens.inputTokens + tokens.cacheReadTokens + tokens.cacheCreationTokens
+    : Math.max(tokens.inputTokens, cacheHitTokens) + tokens.cacheCreationTokens;
+
+  if (inputSideTokens <= 0) return null;
+  return Math.min(1, cacheHitTokens / inputSideTokens);
+};
+
 export const buildSecondarySummaryCards = (
   summary: MonitoringSummary,
   locale: string,
@@ -636,12 +683,7 @@ export const buildSecondarySummaryCards = (
 ): SummaryCardProps[] => {
   const totalCacheTokens =
     summary.cachedTokens + summary.cacheCreationTokens + summary.cacheReadTokens;
-  const cacheHitTokens = summary.cachedTokens + summary.cacheReadTokens;
-  const inputSideTokens =
-    Math.max(summary.inputTokens, summary.cachedTokens) +
-    summary.cacheReadTokens +
-    summary.cacheCreationTokens;
-  const cacheHitRate = inputSideTokens > 0 ? cacheHitTokens / inputSideTokens : 0;
+  const cacheHitRate = computeCacheHitRate(summary) ?? 0;
 
   return [
     {
@@ -1394,4 +1436,72 @@ export const formatAccountOverviewScopeText = (
       : t('monitoring.range_all');
 
   return t('monitoring.account_overview_scope_range', { range: rangeLabel });
+};
+
+// 默认时间窗是 "today"，用户容易把"今天"数据误当成更长参考窗口(如 7 天)导致数字对不上。
+// 在总计卡片区域标注当前生效的时间窗简称(与 chip 上文案一致，如"今天"/"7 天"），消除歧义。
+const MONITORING_SUMMARY_RANGE_LABEL_KEYS: Record<MonitoringTimeRange, string> = {
+  '1h': 'monitoring.range_1h',
+  '3h': 'monitoring.range_3h',
+  '24h': 'monitoring.range_24h',
+  today: 'monitoring.range_today',
+  yesterday: 'monitoring.range_yesterday',
+  '7d': 'monitoring.range_7d',
+  '14d': 'monitoring.range_14d',
+  '30d': 'monitoring.range_30d',
+  all: 'monitoring.range_all',
+  custom: 'monitoring.range_custom',
+};
+
+// custom 档的紧凑标签：优先用描述符还原用户实际选择("最近 N 天/小时"或日期范围)；
+// 没有描述符时(如首次进入、或旧持久化状态里只有 timeRange='custom' 没有描述符)回退到
+// 笼统的"自定义"文案，保持向后兼容——不能因为加了描述符就让旧状态渲染出错误/空白文案。
+export const formatMonitoringCustomRangeLabel = (
+  descriptor: MonitoringCustomRangeDescriptor | null | undefined,
+  locale: string,
+  t: TFunction
+): string => {
+  if (!descriptor) return t('monitoring.range_custom');
+  if (descriptor.mode === 'hours') {
+    return t('monitoring.custom_hours_applied', { count: descriptor.hours });
+  }
+  if (descriptor.mode === 'days') {
+    return t('monitoring.custom_days_applied', { count: descriptor.days });
+  }
+  return formatStatusWindowLabel(descriptor.startMs, descriptor.endMs, locale);
+};
+
+// 时间行"自定义"段专用的紧凑标签：与 caption 共用同一个描述符，但日期范围模式用更短的
+// 月/日格式(如"07/01~07/14")而不是 formatStatusWindowLabel 的完整"月/日 时:分"格式，
+// 避免撑破连体分段模块的单行布局。
+export const formatMonitoringCustomRangeCompactLabel = (
+  descriptor: MonitoringCustomRangeDescriptor | null | undefined,
+  locale: string,
+  t: TFunction
+): string => {
+  if (!descriptor) return t('monitoring.range_custom');
+  if (descriptor.mode === 'hours') {
+    return t('monitoring.custom_hours_compact', { count: descriptor.hours });
+  }
+  if (descriptor.mode === 'days') {
+    return t('monitoring.custom_days_compact', { count: descriptor.days });
+  }
+  const dateOptions: Intl.DateTimeFormatOptions = { month: '2-digit', day: '2-digit' };
+  const startLabel = new Date(descriptor.startMs).toLocaleDateString(locale, dateOptions);
+  const endLabel = new Date(descriptor.endMs).toLocaleDateString(locale, dateOptions);
+  return `${startLabel}~${endLabel}`;
+};
+
+export const formatMonitoringSummaryScopeText = (
+  timeRange: MonitoringTimeRange,
+  t: TFunction,
+  customDescriptor?: MonitoringCustomRangeDescriptor | null,
+  locale?: string
+): string => {
+  if (timeRange === 'custom') {
+    return t('monitoring.summary_scope_current', {
+      range: formatMonitoringCustomRangeLabel(customDescriptor, locale ?? 'zh-CN', t),
+    });
+  }
+  return t('monitoring.summary_scope_current', { range: t(MONITORING_SUMMARY_RANGE_LABEL_KEYS[timeRange]) });
 };
