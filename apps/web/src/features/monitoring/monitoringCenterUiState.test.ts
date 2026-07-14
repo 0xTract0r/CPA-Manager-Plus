@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   DEFAULT_MONITORING_DATA_TAB,
+  DEFAULT_MONITORING_TIME_RANGE,
   MONITORING_CENTER_UI_STATE_STORAGE_KEY,
   getDefaultMonitoringCenterUiState,
   normalizeMonitoringCenterUiState,
@@ -67,7 +68,7 @@ describe('monitoringCenterUiState', () => {
 
   it('normalizes persisted filter fields', () => {
     expect(normalizeMonitoringTimeRange('30d')).toBe('30d');
-    expect(normalizeMonitoringTimeRange('bad')).toBe('today');
+    expect(normalizeMonitoringTimeRange('bad')).toBe(DEFAULT_MONITORING_TIME_RANGE);
     expect(normalizeMonitoringStatusFilter('failed')).toBe('failed');
     expect(normalizeMonitoringStatusFilter('bad')).toBe('all');
     expect(normalizeMonitoringAutoRefreshMs(30000)).toBe('30000');

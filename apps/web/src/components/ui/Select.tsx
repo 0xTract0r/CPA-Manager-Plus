@@ -15,6 +15,13 @@ import styles from './Select.module.scss';
 export interface SelectOption {
   value: string;
   label: string;
+  /**
+   * Optional group heading rendered above this option when it differs from the
+   * previous option's groupLabel. Used for grouped dropdowns (e.g. relative vs.
+   * calendar-day time range presets) without introducing a separate component;
+   * keyboard navigation and `options` indexing stay flat/unaffected.
+   */
+  groupLabel?: string;
 }
 
 interface SelectProps {
@@ -276,20 +283,27 @@ export function Select({
             {options.map((opt, index) => {
               const active = opt.value === value;
               const highlighted = index === resolvedHighlightedIndex;
+              const showGroupHeading = Boolean(opt.groupLabel) && opt.groupLabel !== options[index - 1]?.groupLabel;
               return (
-                <button
-                  key={opt.value}
-                  id={`${selectId}-option-${index}`}
-                  type="button"
-                  role="option"
-                  aria-selected={active}
-                  className={`${styles.option} ${active ? styles.optionActive : ''} ${highlighted ? styles.optionHighlighted : ''}`.trim()}
-                  onMouseEnter={() => setHighlightedIndex(index)}
-                  onKeyDown={handleKeyDown}
-                  onClick={() => commitSelection(index)}
-                >
-                  {opt.label}
-                </button>
+                <div key={opt.value} className={styles.optionGroupItem}>
+                  {showGroupHeading ? (
+                    <div className={styles.optionGroupLabel} role="presentation">
+                      {opt.groupLabel}
+                    </div>
+                  ) : null}
+                  <button
+                    id={`${selectId}-option-${index}`}
+                    type="button"
+                    role="option"
+                    aria-selected={active}
+                    className={`${styles.option} ${active ? styles.optionActive : ''} ${highlighted ? styles.optionHighlighted : ''}`.trim()}
+                    onMouseEnter={() => setHighlightedIndex(index)}
+                    onKeyDown={handleKeyDown}
+                    onClick={() => commitSelection(index)}
+                  >
+                    {opt.label}
+                  </button>
+                </div>
               );
             })}
           </div>

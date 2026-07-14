@@ -23,6 +23,12 @@ type MonitoringFiltersPanelProps = {
   apiKeyOptions: ReadonlyArray<SelectOption>;
   statusOptions: ReadonlyArray<SelectOption>;
   combinedError: string | null;
+  /**
+   * 非空时表示：本次刷新失败，当前展示的仍是上一次成功范围的数据（stale-on-error）。
+   * 必须与 combinedError 分开渲染，让用户明确知道"看到的不是当前筛选条件的最新结果"，
+   * 而不是让旧数据静默地看起来像是最新的。
+   */
+  staleDataNotice: string | null;
   usageStatisticsEnabled: boolean;
   overallLoading: boolean;
   t: TFunction;
@@ -39,13 +45,26 @@ type MonitoringFiltersPanelProps = {
   onClearFilters: () => void;
 };
 
-const TIME_RANGE_OPTIONS: Array<{ value: MonitoringTimeRange; labelKey: string }> = [
-  { value: 'today', labelKey: 'monitoring.range_today' },
-  { value: '7d', labelKey: 'monitoring.range_7d' },
-  { value: '14d', labelKey: 'monitoring.range_14d' },
-  { value: '30d', labelKey: 'monitoring.range_30d' },
-  { value: 'all', labelKey: 'monitoring.range_all' },
-  { value: 'custom', labelKey: 'monitoring.range_custom' },
+// 时间范围下拉分两组：相对滚动窗口("最近 N 小时/天"，随请求时刻滚动)与自然日锚定
+// ("今天"/"昨天"，按本地时区零点对齐)。用分组 Select 承载 10 档，避免按钮组在窄屏下
+// 溢出(已知坑)；分组标题只用于视觉分隔，不参与值匹配。
+type TimeRangeOptionGroup = 'relative' | 'calendar';
+
+const TIME_RANGE_OPTIONS: Array<{
+  value: MonitoringTimeRange;
+  labelKey: string;
+  group: TimeRangeOptionGroup;
+}> = [
+  { value: '1h', labelKey: 'monitoring.range_1h', group: 'relative' },
+  { value: '3h', labelKey: 'monitoring.range_3h', group: 'relative' },
+  { value: '24h', labelKey: 'monitoring.range_24h', group: 'relative' },
+  { value: '7d', labelKey: 'monitoring.range_7d', group: 'relative' },
+  { value: '14d', labelKey: 'monitoring.range_14d', group: 'relative' },
+  { value: '30d', labelKey: 'monitoring.range_30d', group: 'relative' },
+  { value: 'today', labelKey: 'monitoring.range_today', group: 'calendar' },
+  { value: 'yesterday', labelKey: 'monitoring.range_yesterday', group: 'calendar' },
+  { value: 'all', labelKey: 'monitoring.range_all', group: 'calendar' },
+  { value: 'custom', labelKey: 'monitoring.range_custom', group: 'calendar' },
 ];
 
 const AUTO_REFRESH_OPTIONS = [
@@ -80,6 +99,7 @@ export function MonitoringFiltersPanel({
   apiKeyOptions,
   statusOptions,
   combinedError,
+  staleDataNotice,
   usageStatisticsEnabled,
   overallLoading,
   t,
@@ -105,22 +125,28 @@ export function MonitoringFiltersPanel({
     'monitoring.clear_filters_short',
     'monitoring.clear_filters'
   );
+  const timeRangeGroupLabels: Record<TimeRangeOptionGroup, string> = {
+    relative: t('monitoring.range_group_relative'),
+    calendar: t('monitoring.range_group_calendar'),
+  };
+  const timeRangeOptions: SelectOption[] = TIME_RANGE_OPTIONS.map((option) => ({
+    value: option.value,
+    label: t(option.labelKey),
+    groupLabel: timeRangeGroupLabels[option.group],
+  }));
 
   return (
     <MonitoringPanel className={styles.toolbarPanel}>
       <div className={styles.controlBar}>
-        <div className={styles.segmentedControl}>
-          {TIME_RANGE_OPTIONS.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              className={`${styles.segmentButton} ${timeRange === option.value ? styles.segmentButtonActive : ''}`}
-              onClick={() => onTimeRangeChange(option.value)}
-            >
-              {t(option.labelKey)}
-            </button>
-          ))}
-        </div>
+        <Select
+          className={styles.timeRangeControl}
+          value={timeRange}
+          options={timeRangeOptions}
+          onChange={(value) => onTimeRangeChange(value as MonitoringTimeRange)}
+          ariaLabel={t('monitoring.filter_time_range')}
+          triggerClassName={styles.filterSelectTrigger}
+          fullWidth={false}
+        />
 
         <div className={styles.filterSearchInputWrap}>
           <Input
@@ -229,6 +255,11 @@ export function MonitoringFiltersPanel({
       </div>
 
       {combinedError ? <div className={styles.errorBox}>{combinedError}</div> : null}
+      {staleDataNotice ? (
+        <div className={styles.errorBox} role="status">
+          {staleDataNotice}
+        </div>
+      ) : null}
       {!usageStatisticsEnabled ? (
         <div className={styles.callout}>
           <strong>{t('monitoring.usage_disabled_title')}</strong>

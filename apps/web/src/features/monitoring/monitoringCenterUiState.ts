@@ -1,5 +1,15 @@
 export type MonitoringDataTab = 'accounts' | 'apiKeys' | 'realtime';
-export type MonitoringCenterTimeRange = 'today' | '7d' | '14d' | '30d' | 'all' | 'custom';
+export type MonitoringCenterTimeRange =
+  | '1h'
+  | '3h'
+  | '24h'
+  | 'today'
+  | 'yesterday'
+  | '7d'
+  | '14d'
+  | '30d'
+  | 'all'
+  | 'custom';
 export type MonitoringCenterStatusFilter = 'all' | 'success' | 'failed';
 
 export const MONITORING_DATA_TABS: readonly MonitoringDataTab[] = [
@@ -9,7 +19,9 @@ export const MONITORING_DATA_TABS: readonly MonitoringDataTab[] = [
 ] as const;
 
 export const DEFAULT_MONITORING_DATA_TAB: MonitoringDataTab = 'accounts';
-export const DEFAULT_MONITORING_TIME_RANGE: MonitoringCenterTimeRange = 'today';
+// 默认时间窗从"今天"改为"最近 24 小时"：跨零点后"今天"几乎没有数据，容易让用户误以为
+// 系统没有流量；"最近 24 小时"打开即有数据，体验更稳定。
+export const DEFAULT_MONITORING_TIME_RANGE: MonitoringCenterTimeRange = '24h';
 export const DEFAULT_MONITORING_AUTO_REFRESH_MS = '30000';
 export const DEFAULT_MONITORING_TABLE_PAGE_SIZE = 12;
 export const DEFAULT_MONITORING_REALTIME_PAGE_SIZE = 10;
@@ -36,7 +48,11 @@ export type MonitoringCenterUiState = {
 
 const TAB_SET = new Set<MonitoringDataTab>(MONITORING_DATA_TABS);
 const TIME_RANGE_SET = new Set<MonitoringCenterTimeRange>([
+  '1h',
+  '3h',
+  '24h',
   'today',
+  'yesterday',
   '7d',
   '14d',
   '30d',

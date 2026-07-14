@@ -1433,7 +1433,11 @@ export const formatAccountOverviewScopeText = (
 // 默认时间窗是 "today"，用户容易把"今天"数据误当成更长参考窗口(如 7 天)导致数字对不上。
 // 在总计卡片区域标注当前生效的时间窗简称(与 chip 上文案一致，如"今天"/"7 天"），消除歧义。
 const MONITORING_SUMMARY_RANGE_LABEL_KEYS: Record<MonitoringTimeRange, string> = {
+  '1h': 'monitoring.range_1h',
+  '3h': 'monitoring.range_3h',
+  '24h': 'monitoring.range_24h',
   today: 'monitoring.range_today',
+  yesterday: 'monitoring.range_yesterday',
   '7d': 'monitoring.range_7d',
   '14d': 'monitoring.range_14d',
   '30d': 'monitoring.range_30d',

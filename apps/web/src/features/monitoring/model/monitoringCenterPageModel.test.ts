@@ -260,13 +260,13 @@ describe('formatMonitoringSummaryScopeText', () => {
       'Current stats window: Today'
     );
     expect(formatMonitoringSummaryScopeText('7d', buildLocaleT(en.monitoring))).toBe(
-      'Current stats window: 7d'
+      'Current stats window: Last 7 Days'
     );
     expect(formatMonitoringSummaryScopeText('today', buildLocaleT(zhCN.monitoring))).toBe(
       '当前统计范围：今天'
     );
     expect(formatMonitoringSummaryScopeText('7d', buildLocaleT(zhCN.monitoring))).toBe(
-      '当前统计范围：7 天'
+      '当前统计范围：最近 7 天'
     );
     expect(formatMonitoringSummaryScopeText('today', buildLocaleT(zhTW.monitoring))).toBe(
       '目前統計範圍：今天'
@@ -275,10 +275,18 @@ describe('formatMonitoringSummaryScopeText', () => {
 
   it('reflects every supported time range option', () => {
     const localeT = buildLocaleT(zhCN.monitoring);
-    expect(formatMonitoringSummaryScopeText('14d', localeT)).toBe('当前统计范围：14 天');
-    expect(formatMonitoringSummaryScopeText('30d', localeT)).toBe('当前统计范围：30 天');
+    expect(formatMonitoringSummaryScopeText('14d', localeT)).toBe('当前统计范围：最近 14 天');
+    expect(formatMonitoringSummaryScopeText('30d', localeT)).toBe('当前统计范围：最近 30 天');
     expect(formatMonitoringSummaryScopeText('all', localeT)).toBe('当前统计范围：全部');
     expect(formatMonitoringSummaryScopeText('custom', localeT)).toBe('当前统计范围：自定义');
+  });
+
+  it('covers the new relative and calendar-day presets added by the time-range redesign', () => {
+    const localeT = buildLocaleT(zhCN.monitoring);
+    expect(formatMonitoringSummaryScopeText('1h', localeT)).toBe('当前统计范围：最近 1 小时');
+    expect(formatMonitoringSummaryScopeText('3h', localeT)).toBe('当前统计范围：最近 3 小时');
+    expect(formatMonitoringSummaryScopeText('24h', localeT)).toBe('当前统计范围：最近 24 小时');
+    expect(formatMonitoringSummaryScopeText('yesterday', localeT)).toBe('当前统计范围：昨天');
   });
 });
 

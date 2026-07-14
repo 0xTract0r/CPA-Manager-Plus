@@ -21,6 +21,7 @@ import {
 } from '@/features/monitoring/model/apiKeys';
 import { buildMonitoringSourceDisplay } from '@/features/monitoring/model/sourceDisplay';
 import type { MonitoringAuthMeta, MonitoringChannelMeta } from '@/features/monitoring/model/types';
+import { getRangeBounds as getSharedRangeBounds } from '@/shared/model/timeRange';
 import type { CredentialInfo } from '@/types/sourceInfo';
 import { buildSourceInfoMap } from '@/utils/sourceResolver';
 import { formatCompactNumber, formatUsd } from '@/utils/usage';
@@ -598,45 +599,18 @@ export const formatLocalDateTime = (timestampMs: number, locale: string) =>
     minute: '2-digit',
   }).format(new Date(timestampMs));
 
-const localDayStartMs = (timestampMs: number) => {
-  const date = new Date(timestampMs);
-  date.setHours(0, 0, 0, 0);
-  return date.getTime();
-};
-
+// 分析页时间范围计算委托给 shared/model/timeRange，与监控页共用同一套口径。
+// 分析页此前的 24h/today/yesterday/7d/30d 语义（滚动窗口 vs 自然日锚定）与共享模块
+// 完全一致，迁移不改变任何已发布档位的计算结果或视觉表现；'7d' 仍是未知/兜底档位。
 export const getUsageRangeBounds = (
   filters: Pick<UsageAnalyticsFiltersState, 'timeRange' | 'customRange'>,
   nowMs: number
-) => {
-  if (filters.timeRange === 'custom') {
-    const range = filters.customRange;
-    if (
-      !range ||
-      !Number.isFinite(range.startMs) ||
-      !Number.isFinite(range.endMs) ||
-      range.startMs >= range.endMs
-    ) {
-      return null;
-    }
-    return { fromMs: range.startMs, toMs: range.endMs };
-  }
-
-  switch (filters.timeRange) {
-    case '24h':
-      return { fromMs: nowMs - DAY_MS, toMs: nowMs };
-    case 'today':
-      return { fromMs: localDayStartMs(nowMs), toMs: nowMs };
-    case 'yesterday': {
-      const todayStart = localDayStartMs(nowMs);
-      return { fromMs: todayStart - DAY_MS, toMs: todayStart };
-    }
-    case '30d':
-      return { fromMs: nowMs - 30 * DAY_MS, toMs: nowMs };
-    case '7d':
-    default:
-      return { fromMs: nowMs - 7 * DAY_MS, toMs: nowMs };
-  }
-};
+) =>
+  getSharedRangeBounds({
+    preset: filters.timeRange === 'custom' ? 'custom' : filters.timeRange || '7d',
+    nowMs,
+    customRange: filters.customRange,
+  });
 
 export const resolveUsageGranularity = (
   filters: Pick<UsageAnalyticsFiltersState, 'timeRange' | 'customRange' | 'granularity'>,

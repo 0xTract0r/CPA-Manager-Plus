@@ -502,6 +502,14 @@ export function MonitoringCenterPage() {
   const combinedError = monitoringUnavailable
     ? monitoringError
     : [usageError, monitoringError].filter(Boolean).join('；');
+  // 显式 stale-on-error 提示：请求失败/超时时，useMonitoringData 会保留上一次成功范围
+  // 的展示快照(hasPresentationSnapshot)而不是清空页面，但这必须让用户明确知道，而不是
+  // 静默地把旧数据当作最新结果展示。仅在真的还在为新 scope 转场、且已有旧快照可显示时
+  // 才提示，避免和首次加载失败(还没有任何快照)的 combinedError 重复。
+  const staleDataNotice =
+    monitoringError && monitoringScopeTransitioning && hasMonitoringPresentationSnapshot
+      ? t('monitoring.stale_data_notice')
+      : null;
   const hasPrices = Object.keys(modelPrices).length > 0;
   const usageCatchUpStatusPresentation = presentUsageCatchUpStatus(
     usageCatchUpStatusQuery.found,
@@ -1553,6 +1561,7 @@ export function MonitoringCenterPage() {
         apiKeyOptions={apiKeyOptions}
         statusOptions={statusOptions}
         combinedError={combinedError}
+        staleDataNotice={staleDataNotice}
         usageStatisticsEnabled={Boolean(config?.usageStatisticsEnabled)}
         overallLoading={overallLoading}
         t={t}

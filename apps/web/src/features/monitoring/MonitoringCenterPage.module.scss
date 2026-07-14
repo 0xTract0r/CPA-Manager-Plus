@@ -197,6 +197,12 @@
   display: none;
 }
 
+// 时间范围下拉(分组 Select)只需要复用 .segmentedControl 原本承担的 grid 排序/宽度行为，
+// 不需要它的按钮组视觉样式(边框/背景由 Select 自身的 trigger 承担，避免双重边框)。
+.timeRangeControl {
+  max-width: 100%;
+}
+
 .segmentButton,
 .refreshButton,
 .actionButton,
@@ -1752,7 +1758,8 @@
     align-items: start;
   }
 
-  .controlBar .segmentedControl {
+  .controlBar .segmentedControl,
+  .controlBar .timeRangeControl {
     order: 1;
     justify-content: flex-start;
   }

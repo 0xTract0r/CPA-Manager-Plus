@@ -2175,7 +2175,8 @@ export const monitoringAnalyticsApi = {
     base: string,
     managementKey: string | undefined,
     request: MonitoringAnalyticsRequest,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    timeoutMs: number = USAGE_SERVICE_TIMEOUT_MS
   ): Promise<MonitoringAnalyticsResponse> => {
     if (__DEMO_SITE__ && isDemoMode()) {
       return getDemoMonitoringAnalytics(request);
@@ -2186,7 +2187,7 @@ export const monitoringAnalyticsApi = {
         buildUrl(base, '/v0/management/monitoring/analytics'),
         request,
         {
-          timeout: USAGE_SERVICE_TIMEOUT_MS,
+          timeout: timeoutMs,
           headers: authHeaders(managementKey),
           signal,
         }
