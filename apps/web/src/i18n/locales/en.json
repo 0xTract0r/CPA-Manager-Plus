@@ -2422,7 +2422,7 @@
     "filter_low_cache_hit_rate_threshold_menu_label": "Change low cache hit threshold",
     "filter_low_cache_hit_rate_threshold_custom": "Custom threshold",
     "filter_low_cache_hit_rate_threshold_custom_invalid": "Enter a number between 0 and 100.",
-    "filter_low_cache_hit_rate_scope_hint": "Filters only within the currently loaded rows, not across all pages.",
+    "filter_low_cache_hit_rate_scope_hint": "Filters all data in the current time window by cache hit rate (server-side).",
     "state_disabled": "Disabled",
     "state_active": "Active",
     "state_inactive": "Inactive",

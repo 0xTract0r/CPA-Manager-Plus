@@ -35,7 +35,7 @@ const t = ((key: string, options?: Record<string, unknown>) => {
     'monitoring.filter_low_cache_hit_rate_threshold_custom_invalid':
       'Enter a number between 0 and 100.',
     'monitoring.filter_low_cache_hit_rate_scope_hint':
-      'Filters only the currently loaded rows on this page.',
+      'Filters all data in the current time window by cache hit rate (server-side).',
     'common.confirm': 'Confirm',
     'monitoring.elapsed_short': 'Elapsed',
     'monitoring.executor_type_short': 'Executor',

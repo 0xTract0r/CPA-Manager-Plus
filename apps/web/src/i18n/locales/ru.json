@@ -2413,7 +2413,7 @@
     "filter_low_cache_hit_rate_threshold_menu_label": "Изменить порог низкого процента попаданий",
     "filter_low_cache_hit_rate_threshold_custom": "Свой порог",
     "filter_low_cache_hit_rate_threshold_custom_invalid": "Введите число от 0 до 100.",
-    "filter_low_cache_hit_rate_scope_hint": "Фильтрует только уже загруженные строки, а не все страницы целиком.",
+    "filter_low_cache_hit_rate_scope_hint": "Фильтрует все данные в текущем диапазоне времени по коэффициенту попаданий в кэш (на стороне сервера).",
     "state_disabled": "Отключено",
     "state_active": "Активно",
     "state_inactive": "Неактивно",
