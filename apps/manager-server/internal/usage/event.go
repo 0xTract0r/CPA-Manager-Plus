@@ -597,7 +597,43 @@ func hashString(value string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// buildEventHash derives the event_hash used as the sole insert-dedup key
+// (usage_events.event_hash UNIQUE + `insert or ignore`).
+//
+// The same underlying request is ingested by two independent paths that write
+// the SAME usage_events table:
+//
+//  1. the realtime redis-queue collector (NormalizeRaw), whose Endpoint is the
+//     real HTTP endpoint, e.g. "POST /v1/messages"; and
+//  2. the catch-up /usage/export importer (eventFromLegacyDetail), whose
+//     Endpoint is the export apis-map key -- in production that key is the
+//     inbound bearer "quotio-local-<UUID>", NOT the HTTP endpoint.
+//
+// Because Endpoint (and potentially the normalized Timestamp, if the two
+// upstream sources ever format the same instant at different precision)
+// diverges across paths, including them in the hash split one logical request
+// into two rows and double-counted its tokens.
+//
+// Fix (forward-only; historical rows keep their frozen hashes):
+//
+//   - When RequestID is non-empty, the hash is keyed PURELY on the request id
+//     (namespaced "req|<RequestID>"). A real per-request id already uniquely
+//     identifies the request, so the two paths now collapse to one row
+//     regardless of Endpoint/Timestamp/token jitter. Different request ids
+//     produce different hashes and are NEVER merged. An unpaired ("orphan")
+//     row -- e.g. the pre-2026-07-13 quotio-local rows that have no partner --
+//     still hashes to its own unique "req|<its id>" and is inserted normally.
+//
+//   - When RequestID is empty, the layout is byte-for-byte the legacy layout
+//     (RequestID first, so an empty id yields a leading "|"). This preserves
+//     every historical empty-id hash and keeps NormalizeRaw and
+//     eventFromLegacyDetail byte-identical for the id-less case.
 func buildEventHash(event Event) string {
+	if event.RequestID != "" {
+		// Namespaced so a request-id-keyed hash can never collide with the
+		// content-digest branch below (which starts with an empty first field).
+		return hashString("req|" + event.RequestID)
+	}
 	parts := []string{
 		event.RequestID,
 		event.Timestamp,

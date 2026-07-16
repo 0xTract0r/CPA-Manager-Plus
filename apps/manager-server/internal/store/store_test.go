@@ -252,6 +252,126 @@ func TestStorePersistsRequestedAndResolvedModels(t *testing.T) {
 	}
 }
 
+// TestStoreDualIngestSameRequestInsertsOneRow proves at the DB layer that the
+// realtime collector event and the /usage/export importer event for the SAME
+// request_id collapse into a single usage_events row via `insert or ignore` on
+// the UNIQUE event_hash, even though their Endpoint differs (real HTTP endpoint
+// vs the "quotio-local-<UUID>" inbound bearer used as the export apis-map key).
+// The total token sum must not double.
+func TestStoreDualIngestSameRequestInsertsOneRow(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "usage.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	// Path A: realtime collector, real endpoint.
+	rich, err := usage.NormalizeRaw([]byte(`{
+		"request_id": "req-db-dual",
+		"model": "claude-sonnet-4",
+		"endpoint": "POST /v1/messages",
+		"timestamp": "2026-07-16T10:00:00Z",
+		"auth_index": "0",
+		"source": "alice@example.com",
+		"tokens": {"input_tokens": 10, "output_tokens": 20}
+	}`))
+	if err != nil {
+		t.Fatalf("NormalizeRaw rich: %v", err)
+	}
+	// Path B: same request_id, but endpoint is the quotio-local inbound bearer.
+	legacy, err := usage.NormalizeRaw([]byte(`{
+		"request_id": "req-db-dual",
+		"model": "claude-sonnet-4",
+		"endpoint": "quotio-local-1f2e3d4c-aaaa-bbbb-cccc-000000000000",
+		"timestamp": "2026-07-16T10:00:00.500Z",
+		"auth_index": "0",
+		"source": "alice@example.com",
+		"tokens": {"input_tokens": 10, "output_tokens": 20}
+	}`))
+	if err != nil {
+		t.Fatalf("NormalizeRaw legacy: %v", err)
+	}
+	if rich.Endpoint == legacy.Endpoint {
+		t.Fatalf("test setup invalid: endpoints equal (%q), production divergence not exercised", rich.Endpoint)
+	}
+
+	ctx := context.Background()
+	if _, err := db.InsertEvents(ctx, []usage.Event{rich}); err != nil {
+		t.Fatalf("insert rich: %v", err)
+	}
+	res, err := db.InsertEvents(ctx, []usage.Event{legacy})
+	if err != nil {
+		t.Fatalf("insert legacy: %v", err)
+	}
+	if res.Inserted != 0 || res.Skipped != 1 {
+		t.Fatalf("second ingest of same request should be skipped: inserted=%d skipped=%d", res.Inserted, res.Skipped)
+	}
+
+	events, err := db.RecentEvents(ctx, 10)
+	if err != nil {
+		t.Fatalf("recent events: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("row count = %d, want 1 (double-count regression)", len(events))
+	}
+	if events[0].TotalTokens != 30 {
+		t.Fatalf("total tokens = %d, want 30 (not doubled)", events[0].TotalTokens)
+	}
+}
+
+// TestStoreOrphanLegacyRowPreserved proves the safety guard at the DB layer:
+// a legacy-only row (no paired realtime row, its endpoint looks quotio-local)
+// with its own request_id is still inserted and keeps its tokens. Two distinct
+// request_ids never merge.
+func TestStoreOrphanLegacyRowPreserved(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "usage.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	orphan, err := usage.NormalizeRaw([]byte(`{
+		"request_id": "R2-orphan",
+		"model": "claude-sonnet-4",
+		"endpoint": "quotio-local-9999aaaa-bbbb-cccc-dddd-eeeeffff0000",
+		"timestamp": "2026-07-10T00:00:00Z",
+		"auth_index": "0",
+		"source": "quotio-local-user",
+		"tokens": {"input_tokens": 100, "output_tokens": 50}
+	}`))
+	if err != nil {
+		t.Fatalf("NormalizeRaw orphan: %v", err)
+	}
+	other, err := usage.NormalizeRaw([]byte(`{
+		"request_id": "R3-different",
+		"model": "claude-sonnet-4",
+		"endpoint": "quotio-local-9999aaaa-bbbb-cccc-dddd-eeeeffff0000",
+		"timestamp": "2026-07-10T00:00:00Z",
+		"auth_index": "0",
+		"source": "quotio-local-user",
+		"tokens": {"input_tokens": 100, "output_tokens": 50}
+	}`))
+	if err != nil {
+		t.Fatalf("NormalizeRaw other: %v", err)
+	}
+
+	ctx := context.Background()
+	res, err := db.InsertEvents(ctx, []usage.Event{orphan, other})
+	if err != nil {
+		t.Fatalf("insert orphans: %v", err)
+	}
+	if res.Inserted != 2 {
+		t.Fatalf("distinct request_ids must both insert: inserted=%d skipped=%d", res.Inserted, res.Skipped)
+	}
+	events, err := db.RecentEvents(ctx, 10)
+	if err != nil {
+		t.Fatalf("recent events: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("row count = %d, want 2 (orphan preservation)", len(events))
+	}
+}
+
 func TestStoreAPIKeyAliases(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "usage.sqlite"))
 	if err != nil {

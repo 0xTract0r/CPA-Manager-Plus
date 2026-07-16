@@ -746,8 +746,11 @@ func TestCrossPathEventHashMatchesWhenRequestIDEmpty(t *testing.T) {
 }
 
 // TestBuildEventHashRequestIDPresentByteStable locks the exact hash for a
-// canonical request_id-present event, guaranteeing the fix did not alter the
-// hashing of any non-empty-request-id historical row (the common case).
+// canonical request_id-present event. Since the dual-ingest dedup fix, a
+// non-empty request_id is hashed PURELY as "req|<RequestID>" -- Endpoint,
+// Timestamp, tokens and latency are deliberately excluded so the realtime
+// collector and the /usage/export importer collapse to a single row even when
+// those fields diverge across paths. This golden freezes that layout.
 func TestBuildEventHashRequestIDPresentByteStable(t *testing.T) {
 	latency := int64(123)
 	event := Event{
@@ -766,19 +769,26 @@ func TestBuildEventHashRequestIDPresentByteStable(t *testing.T) {
 	if got == "" {
 		t.Fatal("empty hash")
 	}
-	// Golden is the sha256 of the exact frozen serialized layout. If field
-	// order, separator, or per-field formatting ever drift, this fails. Note
-	// the CachedTokens/CacheTokens field is max(0,0)=0 for this event.
-	// Layout: RequestID|Timestamp|Endpoint|Model|AuthIndex|SourceHash|
-	//         Input|Output|Reasoning|max(Cached,Cache)|Failed|Latency
-	goldenInput := strings.Join([]string{
-		"req-123", "2026-01-01T00:00:00Z", "POST /v1/chat/completions", "gpt-4o",
-		"0", "sourcehash", "10", "5", "0", "0", "false", "123",
-	}, "|")
+	// Golden is the sha256 of the request-id-only key. If the request_id
+	// namespace prefix or the pure-id keying ever drifts, this fails.
+	// Layout: "req|" + RequestID
+	goldenInput := "req|req-123"
 	sum := sha256.Sum256([]byte(goldenInput))
 	want := hex.EncodeToString(sum[:])
 	if got != want {
-		t.Fatalf("buildEventHash drifted from frozen field layout: got=%q want=%q input=%q", got, want, goldenInput)
+		t.Fatalf("buildEventHash drifted from frozen request-id layout: got=%q want=%q input=%q", got, want, goldenInput)
+	}
+
+	// Regression guard: fields that legitimately diverge across the two ingest
+	// paths (Endpoint, Timestamp, tokens, latency) must NOT change the hash of a
+	// request_id-present event. Otherwise the same request double-inserts again.
+	other := event
+	other.Endpoint = "quotio-local-abc123"
+	other.Timestamp = "2026-01-01T00:00:00.500Z"
+	other.InputTokens = 999
+	other.LatencyMS = nil
+	if buildEventHash(other) != got {
+		t.Fatalf("request-id hash must ignore endpoint/timestamp/token divergence: got=%q other=%q", got, buildEventHash(other))
 	}
 }
 
@@ -847,5 +857,141 @@ func TestCrossPathEventHashMatchesWhenRequestIDPresent(t *testing.T) {
 			"event hash mismatch across paths (double-counting regression): queue=%q legacy=%q queueEvent=%+v legacyEvent=%+v",
 			queueEvent.EventHash, legacyEvent.EventHash, queueEvent, legacyEvent,
 		)
+	}
+}
+
+// TestDualIngestSameRequestNotDoubleCounted reproduces the exact production
+// double-count: one request ingested by the realtime redis-queue collector
+// (endpoint "POST /v1/messages", full fields) and later re-ingested by the
+// /usage/export importer, whose apis-map key -- and therefore the Endpoint it
+// passes down -- is the inbound bearer "quotio-local-<UUID>", NOT the HTTP
+// endpoint. Both carry the SAME request_id. Since event_hash is the sole
+// insert-dedup key (`insert or ignore` on the UNIQUE column), the two events
+// must produce the SAME event_hash so only one row survives and its tokens are
+// counted once. Before the fix, Endpoint was part of the hash, the two paths
+// diverged, and the request was double-counted (2236x2 in production).
+func TestDualIngestSameRequestNotDoubleCounted(t *testing.T) {
+	const totalTokens = int64(30) // 10 input + 20 output
+
+	// Path A: realtime collector, real HTTP endpoint.
+	richPayload := []byte(`{
+		"request_id": "req-dual-1",
+		"model": "claude-sonnet-4",
+		"endpoint": "POST /v1/messages",
+		"timestamp": "2026-07-16T10:00:00Z",
+		"auth_index": "0",
+		"source": "alice@example.com",
+		"tokens": {"input_tokens": 10, "output_tokens": 20},
+		"failed": false
+	}`)
+	richEvent, err := NormalizeRaw(richPayload)
+	if err != nil {
+		t.Fatalf("NormalizeRaw: %v", err)
+	}
+
+	// Path B: /usage/export importer. In production the apis-map key is the
+	// inbound bearer, so Endpoint is "quotio-local-<UUID>" -- deliberately
+	// different from path A's "POST /v1/messages". Same request_id, same tokens.
+	legacyDetail := map[string]any{
+		"request_id":    "req-dual-1",
+		"timestamp":     "2026-07-16T10:00:00Z",
+		"input_tokens":  float64(10),
+		"output_tokens": float64(20),
+		"auth_index":    "0",
+		"source":        "alice@example.com",
+	}
+	legacyEvent, err := eventFromLegacyDetail(
+		"quotio-local-1f2e3d4c-aaaa-bbbb-cccc-000000000000", // apis-map key = inbound bearer
+		"", "", // parseEndpoint yields empty method/path for a non-HTTP key
+		"claude-sonnet-4", legacyDetail, 0,
+	)
+	if err != nil {
+		t.Fatalf("eventFromLegacyDetail: %v", err)
+	}
+
+	// The two paths must NOT have converged their Endpoint (this is what makes
+	// the test faithful to production; a fix that only worked when endpoints
+	// matched would be useless).
+	if richEvent.Endpoint == legacyEvent.Endpoint {
+		t.Fatalf("test setup invalid: endpoints unexpectedly equal (%q); production divergence not exercised", richEvent.Endpoint)
+	}
+	if richEvent.EventHash != legacyEvent.EventHash {
+		t.Fatalf(
+			"same request_id but different event_hash -> double count: rich=%q legacy=%q (endpoints rich=%q legacy=%q)",
+			richEvent.EventHash, legacyEvent.EventHash, richEvent.Endpoint, legacyEvent.Endpoint,
+		)
+	}
+
+	// Simulate the DB's `insert or ignore` on the UNIQUE event_hash: dedup by
+	// hash, sum tokens over surviving rows. Must be exactly one row, one count.
+	byHash := map[string]Event{}
+	byHash[richEvent.EventHash] = richEvent
+	byHash[legacyEvent.EventHash] = legacyEvent
+	if len(byHash) != 1 {
+		t.Fatalf("expected 1 surviving row after dedup, got %d", len(byHash))
+	}
+	var sum int64
+	for _, ev := range byHash {
+		sum += ev.TotalTokens
+	}
+	if sum != totalTokens {
+		t.Fatalf("tokens double-counted: sum=%d want=%d", sum, totalTokens)
+	}
+}
+
+// TestOrphanLegacyRowPreserved is the safety guard for the pre-2026-07-13
+// quotio-local rows that have NO paired realtime row: they are the only usage
+// record for that window (212,957 real rows). A legacy-only event with its own
+// request_id must still be ingested -- it must not be dropped just because its
+// endpoint "looks like" quotio-local, and it must never collapse into some
+// other request. Its hash is keyed on its own request_id, so it is unique and
+// inserted normally.
+func TestOrphanLegacyRowPreserved(t *testing.T) {
+	orphanDetail := map[string]any{
+		"request_id":    "R2-orphan",
+		"timestamp":     "2026-07-10T00:00:00Z",
+		"input_tokens":  float64(100),
+		"output_tokens": float64(50),
+		"auth_index":    "0",
+		"source":        "quotio-local-user",
+	}
+	orphan, err := eventFromLegacyDetail(
+		"quotio-local-9999aaaa-bbbb-cccc-dddd-eeeeffff0000",
+		"", "",
+		"claude-sonnet-4", orphanDetail, 0,
+	)
+	if err != nil {
+		t.Fatalf("eventFromLegacyDetail (orphan): %v", err)
+	}
+	if orphan.RequestID != "R2-orphan" {
+		t.Fatalf("orphan request id = %q, want R2-orphan", orphan.RequestID)
+	}
+	if orphan.EventHash == "" {
+		t.Fatal("orphan event has empty hash; it would fail the NOT NULL event_hash column and be lost")
+	}
+	if orphan.TotalTokens != 150 {
+		t.Fatalf("orphan tokens = %d, want 150", orphan.TotalTokens)
+	}
+
+	// A DIFFERENT request (different request_id) must never share the orphan's
+	// hash -- constraint (b): never merge distinct requests.
+	otherDetail := map[string]any{
+		"request_id":    "R3-different",
+		"timestamp":     "2026-07-10T00:00:00Z",
+		"input_tokens":  float64(100),
+		"output_tokens": float64(50),
+		"auth_index":    "0",
+		"source":        "quotio-local-user",
+	}
+	other, err := eventFromLegacyDetail(
+		"quotio-local-9999aaaa-bbbb-cccc-dddd-eeeeffff0000",
+		"", "",
+		"claude-sonnet-4", otherDetail, 0,
+	)
+	if err != nil {
+		t.Fatalf("eventFromLegacyDetail (other): %v", err)
+	}
+	if orphan.EventHash == other.EventHash {
+		t.Fatalf("distinct request_ids share a hash -> wrongful merge: %q", orphan.EventHash)
 	}
 }
