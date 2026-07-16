@@ -203,6 +203,8 @@ export type MonitoringEventRow = {
   headerErrorKind?: string;
   headerErrorCode?: string;
   headerTraceId?: string;
+  /** core 稳定 request_id，用于「查看原始请求」按 id 取回原始日志；缺失时该行不可溯源。 */
+  requestId?: string;
   taskKey: string;
   searchText: string;
 };

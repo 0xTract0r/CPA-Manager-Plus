@@ -933,6 +933,7 @@ export const buildUsageDetailsFromAnalyticsEvents = (
     header_error_kind: readString(item.header_error_kind),
     header_error_code: readString(item.header_error_code),
     header_trace_id: readString(item.header_trace_id),
+    request_id: readString(item.request_id) || undefined,
     __modelName: item.model,
     __resolvedModel: readString(item.resolved_model),
     __endpoint: item.endpoint || `${item.method} ${item.path}`.trim(),

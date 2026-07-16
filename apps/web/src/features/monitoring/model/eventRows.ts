@@ -156,6 +156,9 @@ export const buildEventRows = (
       const headerTraceId =
         readString(detail.header_trace_id ?? detail.headerTraceId) ||
         readString(responseMetadata?.trace?.primary_trace_id);
+      // 纯新增字段：core request_id，用于「查看原始请求」溯源。绝不参与 stableId / taskKey 组装，
+      // 避免影响自动刷新的稳定 row key（闪屏修复敏感区）。
+      const requestId = readString(detail.request_id);
 
       // 稳定 row id：优先使用后端 event_hash(与 mergeAnalyticsEventItems 的去重口径一致)，
       // 缺失时退回时间戳+model+source+authIndex+endpoint 的复合兜底键——绝不使用数组
@@ -217,6 +220,7 @@ export const buildEventRows = (
         headerErrorKind,
         headerErrorCode,
         headerTraceId,
+        requestId: requestId || undefined,
         taskKey,
         searchText: buildSearchText(
           detail.__modelName,

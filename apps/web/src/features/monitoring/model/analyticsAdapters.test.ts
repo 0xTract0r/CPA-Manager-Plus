@@ -69,6 +69,42 @@ describe('buildUsageDetailsFromAnalyticsEvents', () => {
     });
   });
 
+  it('carries the core request_id from analytics events into usage details', () => {
+    const withId: MonitoringAnalyticsEventRow = {
+      event_hash: 'event-req-id',
+      request_id: 'req-trace-42',
+      timestamp_ms: Date.UTC(2026, 4, 20, 1, 2, 3),
+      model: 'gpt-5.4',
+      endpoint: 'POST /v1/chat/completions',
+      method: 'POST',
+      path: '/v1/chat/completions',
+      auth_index: 'auth-1',
+      source: 'source.json',
+      source_hash: 'source-hash',
+      api_key_hash: 'api-key-hash',
+      account_snapshot: '',
+      auth_label_snapshot: '',
+      auth_provider_snapshot: '',
+      input_tokens: 10,
+      output_tokens: 5,
+      cached_tokens: 0,
+      cache_read_tokens: 0,
+      cache_creation_tokens: 0,
+      reasoning_tokens: 0,
+      total_tokens: 15,
+      latency_ms: 100,
+      failed: false,
+    };
+    const withoutId: MonitoringAnalyticsEventRow = { ...withId, request_id: undefined };
+
+    const [detailWithId] = buildUsageDetailsFromAnalyticsEvents([withId]);
+    const [detailWithoutId] = buildUsageDetailsFromAnalyticsEvents([withoutId]);
+
+    expect(detailWithId.request_id).toBe('req-trace-42');
+    // 缺失时应为 undefined，而非空串，便于下游判定「不可溯源」。
+    expect(detailWithoutId.request_id).toBeUndefined();
+  });
+
   it('trusts backend-deduped cached tokens from analytics events', () => {
     const events: MonitoringAnalyticsEventRow[] = [
       {

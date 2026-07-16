@@ -64,6 +64,31 @@ describe('buildEventRows', () => {
     expect(zeroLatency.tokensPerSecond).toBeNull();
   });
 
+  it('exposes the top-level request_id on the row for traceability', () => {
+    const [row] = buildRows({ request_id: 'req-abc-123' });
+
+    expect(row.requestId).toBe('req-abc-123');
+  });
+
+  it('leaves requestId undefined (not empty string) when the detail has no request_id', () => {
+    const [missing] = buildRows();
+    const [blank] = buildRows({ request_id: '   ' });
+
+    expect(missing.requestId).toBeUndefined();
+    expect(blank.requestId).toBeUndefined();
+  });
+
+  it('does not fold request_id into the stable row id (flash-screen sensitive key)', () => {
+    const [withId] = buildRows({ request_id: 'req-1' });
+    const [withOtherId] = buildRows({ request_id: 'req-2' });
+    const [withoutId] = buildRows();
+
+    // request_id 是纯展示字段，绝不参与 stableId：不同 request_id、缺失 request_id
+    // 的同一事件必须得到同一稳定 id，避免自动刷新时整表重挂载(闪屏)。
+    expect(withId.id).toBe(withoutId.id);
+    expect(withOtherId.id).toBe(withoutId.id);
+  });
+
   it('keeps CPA executor and service tier metadata searchable', () => {
     const [row] = buildRows({
       executor_type: 'codex',
