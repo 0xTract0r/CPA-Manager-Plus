@@ -182,14 +182,21 @@ export const buildMonitoringEventsScopeKey = (
   filters: unknown,
   granularity: string
 ) =>
+  // 事件表 scope 身份/staleness 判定用 key。滚动档(24h/7d/…)的 analyticsBounds.startMs
+  // 会随每 30s 自动刷新前移(nowMs - N)，若把它纳入 scopeKey，会让"同一档位的定时刷新"
+  // 被误判为切换到了新 scope → eventsDataStale 翻 true → 事件表回退到被清空事件的缓存快照
+  // (filteredRows=[]) → 实时表某一帧渲染 0 行 → 整表卸载重挂载(闪屏)。
+  //
+  // 修复：非 custom 的滚动/锚定档 scopeKey 只纳入 range 档位标识，剔除会漂移的 startMs。
+  // 档位名本身已唯一区分各滚动档(24h/7d/…)与锚定档(today/yesterday)，切换档位时 scopeKey
+  // 仍会变化 → 正常触发 stale/refetch。custom 档仍纳入显式 startMs/endMs 边界。
+  //
+  // 注意：真实请求体仍使用漂移的 analyticsBounds.startMs/endMs 与 nowMs(见 useMonitoringData
+  // 中 useMonitoringAnalytics 的 fromMs/toMs/nowMs)，scopeKey 不参与请求参数，只做 staleness
+  // 判定 → 数据每 30s 仍真实刷新，稳定 scopeKey 下拿到新数据会原地覆盖 displayedRows。
   JSON.stringify({
     range: timeRange,
-    bounds:
-      timeRange === 'custom'
-        ? analyticsBounds
-        : analyticsBounds
-          ? { startMs: analyticsBounds.startMs }
-          : null,
+    bounds: timeRange === 'custom' ? analyticsBounds : null,
     searchQuery,
     searchApiKeyHash,
     filters,
