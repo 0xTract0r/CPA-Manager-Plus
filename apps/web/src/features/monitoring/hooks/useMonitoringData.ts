@@ -182,14 +182,21 @@ export const buildMonitoringEventsScopeKey = (
   filters: unknown,
   granularity: string
 ) =>
+  // 事件表 scope 身份/staleness 判定用 key。滚动档(24h/7d/…)的 analyticsBounds.startMs
+  // 会随每 30s 自动刷新前移(nowMs - N)，若把它纳入 scopeKey，会让"同一档位的定时刷新"
+  // 被误判为切换到了新 scope → eventsDataStale 翻 true → 事件表回退到被清空事件的缓存快照
+  // (filteredRows=[]) → 实时表某一帧渲染 0 行 → 整表卸载重挂载(闪屏)。
+  //
+  // 修复：非 custom 的滚动/锚定档 scopeKey 只纳入 range 档位标识，剔除会漂移的 startMs。
+  // 档位名本身已唯一区分各滚动档(24h/7d/…)与锚定档(today/yesterday)，切换档位时 scopeKey
+  // 仍会变化 → 正常触发 stale/refetch。custom 档仍纳入显式 startMs/endMs 边界。
+  //
+  // 注意：真实请求体仍使用漂移的 analyticsBounds.startMs/endMs 与 nowMs(见 useMonitoringData
+  // 中 useMonitoringAnalytics 的 fromMs/toMs/nowMs)，scopeKey 不参与请求参数，只做 staleness
+  // 判定 → 数据每 30s 仍真实刷新，稳定 scopeKey 下拿到新数据会原地覆盖 displayedRows。
   JSON.stringify({
     range: timeRange,
-    bounds:
-      timeRange === 'custom'
-        ? analyticsBounds
-        : analyticsBounds
-          ? { startMs: analyticsBounds.startMs }
-          : null,
+    bounds: timeRange === 'custom' ? analyticsBounds : null,
     searchQuery,
     searchApiKeyHash,
     filters,
@@ -879,12 +886,22 @@ export function useMonitoringData({
     ]
   );
 
-  // 概览聚合(analytics)与事件分页(eventsAnalytics)拆成两个独立请求后，展示快照的
-  // "是否过期"必须同时看两者：只要有一个还在为新 scope 转场中，就不能把当前计算结果
-  // 当作稳定快照缓存下来，否则会把"事件分页还没到"的半成品（如账号卡片的近期状态迷你
-  // 条形图为空）误存成该 scope 的稳定态。两个请求仍然是并行发出、独立完成的，只是
-  // "何时提交为稳定展示"这一步骤合并判断，不影响首屏 KPI/图表与事件分页并行加载的收益。
-  const combinedAnalyticsDataStale = analytics.dataStale || eventsAnalytics.dataStale;
+  // 概览聚合(analytics)与事件分页(eventsAnalytics)是两个独立请求、独立完成时机。
+  // 概览类展示(summary/timeline/图表/账号-API Key 汇总卡片等)只依赖 analytics 本身，
+  // 数据一到手就应该渲染，不应该被"事件分页(大数据量下明显更慢)还没追上新 scope"
+  // 拖成空/旧数据——这正是曾经出现过的生产 bug：概览请求早已拿到新 scope 的真实数据，
+  // 但因为把两者的 stale 状态耦合在一起判断，导致概览被一直挡在上一个 scope 的旧快照。
+  // 事件明细表(filteredRows/eventsXxx)则仍然只应该看 eventsAnalytics 自己的 stale，
+  // 独立 loading，不被概览请求的状态影响、也不反过来拖累概览。
+  // 缓存快照仍然合并存一份完整对象（withoutMonitoringSnapshotEvents 清空其中的事件字段
+  // 后落盘），只是"是否使用该缓存"这一步分别用各自的 stale 判断，两条门禁互不影响。
+  const overviewDataStale = analytics.dataStale;
+  const eventsDataStale = eventsAnalytics.dataStale;
+  // 仍然保留一个"整体是否在转场"的合并信号，供页面级 loading 遮罩/stale 提示等场景使用
+  // （这些场景关心的是"任一路数据还没追上新 scope"，不需要拆分为概览/事件两路）。
+  // 缓存快照写入门禁仍用合并信号：只要有一路还在为新 scope 转场，就不把当前计算结果
+  // 当作稳定态缓存，避免把"事件分页还没到"的半成品误存成该 scope 的稳定快照。
+  const combinedAnalyticsDataStale = overviewDataStale || eventsDataStale;
 
   useEffect(() => {
     if (combinedAnalyticsDataStale) return;
@@ -920,24 +937,74 @@ export function useMonitoringData({
     };
   }, [combinedAnalyticsDataStale, computedPresentationSnapshot, eventsScopeKey]);
 
-  const presentationResolution = useMemo(
+  // 概览展示门禁：只由 analytics.dataStale 决定。一旦为 false，直接用本次计算结果
+  // （不必等缓存快照），概览数据到手即可见；为 true 时才回退缓存/上一次稳定快照。
+  const overviewPresentationResolution = useMemo(
     () =>
       resolveMonitoringPresentationSnapshot({
         computedSnapshot: computedPresentationSnapshot,
         scopeKey: eventsScopeKey,
-        dataStale: combinedAnalyticsDataStale,
+        dataStale: overviewDataStale,
         cachedSnapshots: presentationSnapshotStore.cachedSnapshots,
         lastStableSnapshot: presentationSnapshotStore.lastStableSnapshot,
       }),
     [
-      combinedAnalyticsDataStale,
+      overviewDataStale,
       computedPresentationSnapshot,
       eventsScopeKey,
       presentationSnapshotStore.cachedSnapshots,
       presentationSnapshotStore.lastStableSnapshot,
     ]
   );
-  const presentationSnapshot = presentationResolution.snapshot;
+  // 事件表展示门禁：只由 eventsAnalytics.dataStale 决定，独立于概览请求的状态。
+  const eventsPresentationResolution = useMemo(
+    () =>
+      resolveMonitoringPresentationSnapshot({
+        computedSnapshot: computedPresentationSnapshot,
+        scopeKey: eventsScopeKey,
+        dataStale: eventsDataStale,
+        cachedSnapshots: presentationSnapshotStore.cachedSnapshots,
+        lastStableSnapshot: presentationSnapshotStore.lastStableSnapshot,
+      }),
+    [
+      eventsDataStale,
+      computedPresentationSnapshot,
+      eventsScopeKey,
+      presentationSnapshotStore.cachedSnapshots,
+      presentationSnapshotStore.lastStableSnapshot,
+    ]
+  );
+  // 合并展示：概览字段取 overview 门禁的结果，事件表字段取 events 门禁的结果。
+  // hasPresentationSnapshot/usingSnapshotFallback 仍然用合并信号，供页面级"整体是否
+  // 还在转场"判断使用（loading 遮罩、stale 提示等不区分概览/事件两路）。
+  const presentationSnapshot = useMemo<MonitoringPresentationSnapshot>(
+    () => ({
+      ...overviewPresentationResolution.snapshot,
+      filteredRows: eventsPresentationResolution.snapshot.filteredRows,
+      eventsHasMore: eventsPresentationResolution.snapshot.eventsHasMore,
+      eventsLoadingMore: eventsPresentationResolution.snapshot.eventsLoadingMore,
+      eventsRetentionLimited: eventsPresentationResolution.snapshot.eventsRetentionLimited,
+      eventsTotalCount: eventsPresentationResolution.snapshot.eventsTotalCount,
+      eventsLoadedCount: eventsPresentationResolution.snapshot.eventsLoadedCount,
+    }),
+    [overviewPresentationResolution.snapshot, eventsPresentationResolution.snapshot]
+  );
+  const presentationResolution = useMemo(
+    () => ({
+      hasPresentationSnapshot:
+        overviewPresentationResolution.hasPresentationSnapshot ||
+        eventsPresentationResolution.hasPresentationSnapshot,
+      usingSnapshotFallback:
+        overviewPresentationResolution.usingSnapshotFallback ||
+        eventsPresentationResolution.usingSnapshotFallback,
+    }),
+    [
+      overviewPresentationResolution.hasPresentationSnapshot,
+      overviewPresentationResolution.usingSnapshotFallback,
+      eventsPresentationResolution.hasPresentationSnapshot,
+      eventsPresentationResolution.usingSnapshotFallback,
+    ]
+  );
 
   const metadata = useMemo<MonitoringMetadata>(() => {
     const planTypes = Array.from(

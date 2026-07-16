@@ -199,4 +199,102 @@ describe('buildEventRows', () => {
     expect(row.provider).toBe('codex');
     expect(display.primary).toBe('Shared Relay');
   });
+
+  it('keeps row id stable across refresh when new events are prepended (regression: realtime table flush/闪屏)', () => {
+    const buildDetail = (
+      eventHash: string,
+      timestamp: string,
+      overrides: Partial<UsageDetailWithEndpoint> = {}
+    ): UsageDetailWithEndpoint => ({
+      timestamp,
+      source: 'alice@example.com',
+      auth_index: 'auth-1',
+      tokens: { input_tokens: 10, output_tokens: 20, total_tokens: 30 },
+      failed: false,
+      __modelName: 'gpt-5.4',
+      __endpoint: 'POST /v1/chat/completions',
+      __endpointMethod: 'POST',
+      __endpointPath: '/v1/chat/completions',
+      __timestampMs: Date.parse(timestamp),
+      __eventHash: eventHash,
+      ...overrides,
+    });
+
+    const buildIds = (details: UsageDetailWithEndpoint[]) =>
+      buildEventRows(
+        details,
+        new Map(),
+        new Map(),
+        { byAuthIndex: new Map(), bySource: new Map(), byIdentityKey: new Map() },
+        new Map(),
+        {},
+        new Map()
+      ).map((row) => row.id);
+
+    const detailA = buildDetail('hash-a', '2026-05-19T10:00:00Z');
+    const detailB = buildDetail('hash-b', '2026-05-19T10:01:00Z');
+    const detailC = buildDetail('hash-c', '2026-05-19T10:02:00Z');
+    const detailNew = buildDetail('hash-new', '2026-05-19T10:03:00Z');
+
+    const idsBeforePrepend = buildIds([detailA, detailB, detailC]);
+    // 模拟自动刷新:新事件 prepend 到数组头部,导致 A/B/C 的数组 index 全部 +1。
+    const idsAfterPrepend = buildIds([detailNew, detailA, detailB, detailC]);
+
+    const [idA, idB, idC] = idsBeforePrepend;
+    const [idNewAfter, idAAfter, idBAfter, idCAfter] = idsAfterPrepend;
+
+    // 核心断言:同一事件跨刷新(数组位置变化)id 必须保持不变。
+    // 这个断言在未修复的 index-based id 实现上会失败,因为 prepend 后
+    // A/B/C 的 index 从 0/1/2 变成 1/2/3,拼出的 id 也随之改变。
+    expect(idAAfter).toBe(idA);
+    expect(idBAfter).toBe(idB);
+    expect(idCAfter).toBe(idC);
+    // 新事件应该拿到一个此前不存在的新 id。
+    expect(idNewAfter).not.toBe(idA);
+    expect(idNewAfter).not.toBe(idB);
+    expect(idNewAfter).not.toBe(idC);
+  });
+
+  it('falls back to a composite stable key (without array index) when event_hash is missing', () => {
+    const buildDetailNoHash = (
+      timestamp: string,
+      overrides: Partial<UsageDetailWithEndpoint> = {}
+    ): UsageDetailWithEndpoint => ({
+      timestamp,
+      source: 'alice@example.com',
+      auth_index: 'auth-1',
+      tokens: { input_tokens: 10, output_tokens: 20, total_tokens: 30 },
+      failed: false,
+      __modelName: 'gpt-5.4',
+      __endpoint: 'POST /v1/chat/completions',
+      __endpointMethod: 'POST',
+      __endpointPath: '/v1/chat/completions',
+      __timestampMs: Date.parse(timestamp),
+      __eventHash: undefined,
+      ...overrides,
+    });
+
+    const buildIds = (details: UsageDetailWithEndpoint[]) =>
+      buildEventRows(
+        details,
+        new Map(),
+        new Map(),
+        { byAuthIndex: new Map(), bySource: new Map(), byIdentityKey: new Map() },
+        new Map(),
+        {},
+        new Map()
+      ).map((row) => row.id);
+
+    const detailA = buildDetailNoHash('2026-05-19T10:00:00Z');
+    const detailB = buildDetailNoHash('2026-05-19T10:01:00Z');
+    const detailNew = buildDetailNoHash('2026-05-19T10:02:00Z');
+
+    const idsBeforePrepend = buildIds([detailA, detailB]);
+    const idsAfterPrepend = buildIds([detailNew, detailA, detailB]);
+
+    expect(idsAfterPrepend[1]).toBe(idsBeforePrepend[0]);
+    expect(idsAfterPrepend[2]).toBe(idsBeforePrepend[1]);
+    // 兜底 key 不应包含数组 index 本身作为唯一区分因子。
+    expect(idsBeforePrepend[0]).not.toMatch(/-\d+$/);
+  });
 });

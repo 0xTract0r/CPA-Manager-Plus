@@ -497,6 +497,58 @@ describe('buildMonitoringEventsScopeKey', () => {
     expect(second).toBe(first);
   });
 
+  // 复现根因(a)：滚动档(24h 等)每 30s 自动刷新会让 startMs 前移 ~30000ms。
+  // scopeKey 必须保持不变，否则 eventsDataStale 会被误翻 true、事件表回退到被清空的快照。
+  it('keeps rolling-window ranges stable when the drifting start time moves forward', () => {
+    const nowMs = 1_768_759_000_000;
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    // 第一次刷新：[now - 24h, now]
+    const first = buildMonitoringEventsScopeKey(
+      '24h',
+      { startMs: nowMs - DAY_MS, endMs: nowMs },
+      '',
+      '',
+      {},
+      'hour'
+    );
+    // 30s 后自动刷新：startMs 与 endMs 各前移 30000ms（滚动窗漂移）
+    const driftedNowMs = nowMs + 30_000;
+    const second = buildMonitoringEventsScopeKey(
+      '24h',
+      { startMs: driftedNowMs - DAY_MS, endMs: driftedNowMs },
+      '',
+      '',
+      {},
+      'hour'
+    );
+
+    expect(second).toBe(first);
+  });
+
+  // 防回归：切换档位(24h → 7d)时 scopeKey 仍必须变化，触发正常 stale/refetch。
+  it('changes the scope key when the preset changes', () => {
+    const nowMs = 1_768_759_000_000;
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const twentyFourHour = buildMonitoringEventsScopeKey(
+      '24h',
+      { startMs: nowMs - DAY_MS, endMs: nowMs },
+      '',
+      '',
+      {},
+      'hour'
+    );
+    const sevenDay = buildMonitoringEventsScopeKey(
+      '7d',
+      { startMs: nowMs - 7 * DAY_MS, endMs: nowMs },
+      '',
+      '',
+      {},
+      'day'
+    );
+
+    expect(sevenDay).not.toBe(twentyFourHour);
+  });
+
   it('keeps custom ranges tied to the explicit end time', () => {
     const first = buildMonitoringEventsScopeKey(
       'custom',
@@ -730,5 +782,114 @@ describe('resolveMonitoringPresentationSnapshot', () => {
     expect(result.snapshot).toBe(computed);
     expect(result.hasPresentationSnapshot).toBe(true);
     expect(result.usingSnapshotFallback).toBe(false);
+  });
+});
+
+// 端到端复现"实时事件表 30s 自动刷新闪屏"根因：滚动档 startMs 漂移 → scopeKey 变 →
+// eventsDataStale 翻 true → 事件表回退到被 withoutMonitoringSnapshotEvents 清空事件的缓存
+// 快照(filteredRows=[]) → 某一帧渲染 0 行 → 整表重挂载。
+//
+// 关键：eventsDataStale 的真实定义(见 useMonitoringAnalytics)是
+//   Boolean(dataScopeKey && data && dataScopeStateKey !== activeDataScopeKey)
+// 即"上次成功落盘用的 scopeKey" !== "当前 scopeKey"。scopeKey 稳定 → 不 stale → 用 computed。
+describe('monitoring realtime table stability across 30s auto-refresh', () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const REFRESH_INTERVAL_MS = 30_000;
+
+  // 模拟 useMonitoringAnalytics.dataStale 判定：已落盘 scope !== 当前 scope 即 stale。
+  const computeEventsDataStale = (persistedScopeKey: string, currentScopeKey: string) =>
+    persistedScopeKey !== currentScopeKey;
+
+  it('never resolves the realtime table to an empty frame during same-preset background refresh', () => {
+    const baseNowMs = 1_768_759_000_000;
+    const buildScopeAt = (nowMs: number) =>
+      buildMonitoringEventsScopeKey(
+        '24h',
+        { startMs: nowMs - DAY_MS, endMs: nowMs },
+        '',
+        '',
+        {},
+        'hour'
+      );
+
+    // 首屏成功落盘：scopeKey 记为 persistedScopeKey，缓存快照按落盘规则清空事件字段。
+    const persistedScopeKey = buildScopeAt(baseNowMs);
+    const firstComputed = createPresentationSnapshot('first-fresh-rows');
+    expect(firstComputed.filteredRows.length).toBeGreaterThan(0);
+    const cachedSnapshots = new Map([
+      [persistedScopeKey, withoutMonitoringSnapshotEvents(firstComputed)],
+    ]);
+    const lastStableSnapshot = withoutMonitoringSnapshotEvents(firstComputed);
+
+    // 30s 后台自动刷新（同 24h 档，请求真实发生一帧）：新 nowMs 漂移，但 scopeKey 必须稳定。
+    const refreshedNowMs = baseNowMs + REFRESH_INTERVAL_MS;
+    const currentScopeKey = buildScopeAt(refreshedNowMs);
+    expect(currentScopeKey).toBe(persistedScopeKey);
+
+    // 刷新拿到新数据前的这一帧：computed 仍带真实行；stale 由稳定 scope 决定，应为 false。
+    const refreshingComputed = createPresentationSnapshot('refreshing-rows');
+    const eventsDataStale = computeEventsDataStale(persistedScopeKey, currentScopeKey);
+    expect(eventsDataStale).toBe(false);
+
+    const resolution = resolveMonitoringPresentationSnapshot({
+      computedSnapshot: refreshingComputed,
+      scopeKey: currentScopeKey,
+      dataStale: eventsDataStale,
+      cachedSnapshots,
+      lastStableSnapshot,
+    });
+
+    // 根因断言：解析出的事件行全程非空、从不为 []（未修复前 scopeKey 会变 → stale=true →
+    // 回退到清空事件的缓存快照 → filteredRows=[]，此断言会红）。
+    expect(resolution.snapshot.filteredRows).not.toEqual([]);
+    expect(resolution.snapshot.filteredRows.length).toBeGreaterThan(0);
+    expect(resolution.usingSnapshotFallback).toBe(false);
+  });
+
+  // 数据新鲜度守卫：稳定 scopeKey 下拿到"新数据"时，解析结果必须更新为新数据（不冻结旧数据）。
+  it('updates the realtime rows to newly fetched data under a stable scope key', () => {
+    const baseNowMs = 1_768_759_000_000;
+    const persistedScopeKey = buildMonitoringEventsScopeKey(
+      '24h',
+      { startMs: baseNowMs - DAY_MS, endMs: baseNowMs },
+      '',
+      '',
+      {},
+      'hour'
+    );
+
+    // 上一轮稳定快照的行（旧数据），落盘时事件被清空。
+    const previousComputed = createPresentationSnapshot('previous-rows');
+    const cachedSnapshots = new Map([
+      [persistedScopeKey, withoutMonitoringSnapshotEvents(previousComputed)],
+    ]);
+    const lastStableSnapshot = withoutMonitoringSnapshotEvents(previousComputed);
+
+    // 30s 后自动刷新拿到新数据：scopeKey 稳定，computed 带新行。
+    const refreshedNowMs = baseNowMs + REFRESH_INTERVAL_MS;
+    const currentScopeKey = buildMonitoringEventsScopeKey(
+      '24h',
+      { startMs: refreshedNowMs - DAY_MS, endMs: refreshedNowMs },
+      '',
+      '',
+      {},
+      'hour'
+    );
+    expect(currentScopeKey).toBe(persistedScopeKey);
+
+    const newComputed = createPresentationSnapshot('new-fetched-rows');
+    const eventsDataStale = computeEventsDataStale(persistedScopeKey, currentScopeKey);
+
+    const resolution = resolveMonitoringPresentationSnapshot({
+      computedSnapshot: newComputed,
+      scopeKey: currentScopeKey,
+      dataStale: eventsDataStale,
+      cachedSnapshots,
+      lastStableSnapshot,
+    });
+
+    // 必须解析为本次新数据(newComputed)，而非上一轮旧行/清空快照。
+    expect(resolution.snapshot).toBe(newComputed);
+    expect(resolution.snapshot.filteredRows[0]?.id).toBe('new-fetched-rows');
   });
 });
