@@ -939,4 +939,5 @@ export const buildUsageDetailsFromAnalyticsEvents = (
     __endpointMethod: item.method,
     __endpointPath: item.path,
     __timestampMs: item.timestamp_ms,
+    __eventHash: readString(item.event_hash) || undefined,
   }));

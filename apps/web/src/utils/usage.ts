@@ -161,6 +161,8 @@ export interface UsageDetail {
   __modelName?: string;
   __resolvedModel?: string;
   __timestampMs?: number;
+  /** 稳定事件标识(优先取后端 event_hash)，用于列表渲染的稳定 key，避免自动刷新时整表 flush/闪屏。 */
+  __eventHash?: string;
 }
 
 export interface UsageDetailWithEndpoint extends UsageDetail {

@@ -37,7 +37,7 @@ export const buildEventRows = (
   apiKeyDisplayMap: Map<string, ApiKeyDisplayInfo>
 ) =>
   details
-    .map((detail, index) => {
+    .map((detail) => {
       const timestampMs =
         typeof detail.__timestampMs === 'number' && detail.__timestampMs > 0
           ? detail.__timestampMs
@@ -157,8 +157,15 @@ export const buildEventRows = (
         readString(detail.header_trace_id ?? detail.headerTraceId) ||
         readString(responseMetadata?.trace?.primary_trace_id);
 
+      // 稳定 row id：优先使用后端 event_hash(与 mergeAnalyticsEventItems 的去重口径一致)，
+      // 缺失时退回时间戳+model+source+authIndex+endpoint 的复合兜底键——绝不使用数组
+      // index，否则 prepend 新事件会让所有后续行 index 偏移、id 全变，导致 React 整表
+      // 卸载重挂载（自动刷新时闪屏）。
+      const stableId =
+        detail.__eventHash || `${detail.timestamp}-${detail.__modelName || '-'}-${sourceKey}-${authIndex}-${endpoint}`;
+
       return {
-        id: `${detail.timestamp}-${detail.__modelName || '-'}-${sourceKey}-${authIndex}-${index}`,
+        id: stableId,
         timestamp: detail.timestamp,
         timestampMs,
         dayKey,
