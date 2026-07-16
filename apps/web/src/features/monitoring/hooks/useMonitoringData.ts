@@ -899,6 +899,8 @@ export function useMonitoringData({
   const eventsDataStale = eventsAnalytics.dataStale;
   // 仍然保留一个"整体是否在转场"的合并信号，供页面级 loading 遮罩/stale 提示等场景使用
   // （这些场景关心的是"任一路数据还没追上新 scope"，不需要拆分为概览/事件两路）。
+  // 缓存快照写入门禁仍用合并信号：只要有一路还在为新 scope 转场，就不把当前计算结果
+  // 当作稳定态缓存，避免把"事件分页还没到"的半成品误存成该 scope 的稳定快照。
   const combinedAnalyticsDataStale = overviewDataStale || eventsDataStale;
 
   useEffect(() => {
