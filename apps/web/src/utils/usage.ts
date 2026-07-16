@@ -158,6 +158,8 @@ export interface UsageDetail {
   headerTraceId?: string;
   fail_body?: string;
   failBody?: string;
+  /** core 侧稳定 request_id（用于按 id 取回原始请求日志，见 downloadRequestLogById）。 */
+  request_id?: string;
   __modelName?: string;
   __resolvedModel?: string;
   __timestampMs?: number;

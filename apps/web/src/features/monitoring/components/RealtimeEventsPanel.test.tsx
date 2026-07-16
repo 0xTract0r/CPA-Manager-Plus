@@ -58,6 +58,12 @@ const t = ((key: string, options?: Record<string, unknown>) => {
     'monitoring.realtime_api_key_masked': 'Masked key',
     'monitoring.realtime_cache_hit_rate_hint':
       '(cachedTokens + cacheReadTokens) / (max(inputTokens, cachedTokens) + cacheReadTokens + cacheCreationTokens) for this single request. Shows “--” when there is no input-side token data.',
+    'monitoring.realtime_request_log_action': 'View raw request',
+    'monitoring.realtime_request_log_action_hint':
+      'Fetch the raw request/response body for request_id {{id}}.',
+    'monitoring.realtime_request_log_untraceable': 'Not traceable',
+    'monitoring.realtime_request_log_untraceable_hint':
+      'This row has no request_id, so the raw request log cannot be retrieved.',
     'monitoring.realtime_success_rate_hint':
       'Rolling success rate for this account + provider + model + channel combination, not the result of this single request.',
     'monitoring.realtime_usage_hint':
@@ -268,6 +274,27 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).toContain('aria-label="Copy"');
     expect(markup).toContain('HTTP 429');
     expect(markup).toContain('rate limit exceeded');
+  });
+
+  it('renders a "view raw request" trigger in the source cell when the row carries a request_id', () => {
+    const markup = renderPanel(baseRow({ requestId: 'req-trace-42' }));
+
+    expect(markup).toContain('View raw request');
+    expect(markup).toContain(styles.realtimeRequestLogTrigger);
+    expect(markup).toContain('title="Fetch the raw request/response body for request_id req-trace-42."');
+    // 有 request_id 时不应显示「不可溯源」占位。
+    expect(markup).not.toContain('Not traceable');
+    // 触发按钮嵌在 source 单元格里，不新增列(仍为 13 列)。
+    expect(markup.match(/<col\b/g)).toHaveLength(13);
+  });
+
+  it('marks the row as not traceable (not blank) when the request_id is missing', () => {
+    const markup = renderPanel(baseRow({ requestId: undefined }));
+
+    expect(markup).toContain('Not traceable');
+    expect(markup).toContain(styles.realtimeRequestLogUntraceable);
+    expect(markup).not.toContain('View raw request');
+    expect(markup.match(/<col\b/g)).toHaveLength(13);
   });
 
   it('renders safe defaults when optional usage fields are missing', () => {

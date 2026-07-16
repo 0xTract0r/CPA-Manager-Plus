@@ -12,11 +12,13 @@ import {
 import { createPortal } from 'react-dom';
 import type { TFunction } from 'i18next';
 import { Button } from '@/components/ui/Button';
+import { Modal } from '@/components/ui/Modal';
 import {
   IconChevronDown,
   IconCopy,
   IconEye,
   IconEyeOff,
+  IconFileText,
   IconFilter,
   IconInfo,
 } from '@/components/ui/icons';
@@ -34,11 +36,21 @@ import {
   isValidLowCacheHitRateThreshold,
   REALTIME_LOW_CACHE_HIT_RATE_THRESHOLD_PRESETS,
 } from '@/features/monitoring/monitoringCenterUiState';
+import { logsApi } from '@/services/api/logs';
 import { useNotificationStore } from '@/stores';
 import { copyToClipboard } from '@/utils/clipboard';
+import { downloadBlob } from '@/utils/download';
 import { maskSensitiveText, truncateText } from '@/utils/format';
 import { formatCompactNumber, formatUsd } from '@/utils/usage';
 import styles from '../MonitoringCenterPage.module.scss';
+
+const getDownloadErrorMessage = (err: unknown): string => {
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'string') return err;
+  if (typeof err !== 'object' || err === null || !('message' in err)) return '';
+  const message = (err as { message?: unknown }).message;
+  return typeof message === 'string' ? message : '';
+};
 
 type RealtimeLogRow = MonitoringEventRow & {
   requestCount: number;
@@ -973,6 +985,49 @@ export function RealtimeEventsPanel({
 }: RealtimeEventsPanelProps) {
   const tooltipIdPrefix = useId();
   const showNotification = useNotificationStore((state) => state.showNotification);
+  // 「查看原始请求」：以行的 core request_id 调 GET /request-log-by-id/{id} 取回原始 .log（req/resp body）。
+  // 复用 LogsPage 的下载态模式——成功下载整份 .log（不在页面内回显明文 body，从源头规避密钥/PII 泄漏），
+  // 404 / 文件缺失 / 过保留期时给出明确错误提示，绝不静默。
+  const [requestLogId, setRequestLogId] = useState<string | null>(null);
+  const [requestLogDownloading, setRequestLogDownloading] = useState(false);
+  const closeRequestLogModal = useCallback(() => {
+    setRequestLogDownloading((downloading) => {
+      if (!downloading) {
+        setRequestLogId(null);
+      }
+      return downloading;
+    });
+  }, []);
+  const downloadRequestLog = useCallback(
+    async (id: string) => {
+      setRequestLogDownloading(true);
+      try {
+        const response = await logsApi.downloadRequestLogById(id);
+        downloadBlob({
+          filename: `request-${id}.log`,
+          blob: new Blob([response.data], { type: 'text/plain' }),
+        });
+        showNotification(
+          t('monitoring.request_log_download_success', {
+            defaultValue: t('logs.request_log_download_success'),
+          }),
+          'success'
+        );
+        setRequestLogId(null);
+      } catch (err: unknown) {
+        const message = getDownloadErrorMessage(err);
+        showNotification(
+          `${t('monitoring.request_log_download_failed', {
+            defaultValue: t('notification.download_failed'),
+          })}${message ? `: ${message}` : ''}`,
+          'error'
+        );
+      } finally {
+        setRequestLogDownloading(false);
+      }
+    },
+    [showNotification, t]
+  );
   const sourceApiKeyLabel = shortLabel(
     t,
     'monitoring.column_source_api_key_short',
@@ -1139,6 +1194,26 @@ export function RealtimeEventsPanel({
                             {`${t('monitoring.realtime_api_key_label')}: ${apiKeyDisplay.display}`}
                           </small>
                         ) : null}
+                        {row.requestId ? (
+                          <button
+                            type="button"
+                            className={styles.realtimeRequestLogTrigger}
+                            onClick={() => setRequestLogId(row.requestId ?? null)}
+                            title={t('monitoring.realtime_request_log_action_hint', {
+                              id: row.requestId,
+                            })}
+                          >
+                            <IconFileText size={12} aria-hidden="true" />
+                            <span>{t('monitoring.realtime_request_log_action')}</span>
+                          </button>
+                        ) : (
+                          <small
+                            className={styles.realtimeRequestLogUntraceable}
+                            title={t('monitoring.realtime_request_log_untraceable_hint')}
+                          >
+                            {t('monitoring.realtime_request_log_untraceable')}
+                          </small>
+                        )}
                       </div>
                     </div>
                   </td>
@@ -1318,6 +1393,42 @@ export function RealtimeEventsPanel({
           ) : null}
         </div>
       ) : null}
+      <Modal
+        open={Boolean(requestLogId)}
+        onClose={closeRequestLogModal}
+        title={t('monitoring.request_log_download_title', {
+          defaultValue: t('logs.request_log_download_title'),
+        })}
+        footer={
+          <>
+            <Button
+              variant="secondary"
+              onClick={closeRequestLogModal}
+              disabled={requestLogDownloading}
+            >
+              {t('common.cancel')}
+            </Button>
+            <Button
+              onClick={() => {
+                if (requestLogId) {
+                  void downloadRequestLog(requestLogId);
+                }
+              }}
+              loading={requestLogDownloading}
+              disabled={!requestLogId}
+            >
+              {t('common.confirm')}
+            </Button>
+          </>
+        }
+      >
+        {requestLogId
+          ? t('monitoring.request_log_download_confirm', {
+              id: requestLogId,
+              defaultValue: t('logs.request_log_download_confirm', { id: requestLogId }),
+            })
+          : null}
+      </Modal>
     </>
   );
 
