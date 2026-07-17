@@ -72,8 +72,12 @@ export type UseAuthFilesDataResult = {
   deletingAll: boolean;
   statusUpdating: Record<string, boolean>;
   statusRefreshing: Record<string, boolean>;
-  /** 迁移自旧版：逐账号「测试消息」按钮的 loading 态，key 为 file.name。 */
+  /** 迁移自旧版：逐账号「测试消息」按钮的 loading 态，key 为 file.name。
+   * 实际的「测试消息」弹窗状态与提交逻辑在 useAuthFilesTestMessage 里，
+   * 该 hook 通过 setMessageTesting 共享同一份 loading 态，避免同一账号被
+   * 两处并发触发。 */
   messageTesting: Record<string, boolean>;
+  setMessageTesting: (updater: (prev: Record<string, boolean>) => Record<string, boolean>) => void;
   batchStatusUpdating: boolean;
   batchFieldsUpdating: boolean;
   fileInputRef: RefObject<HTMLInputElement | null>;
@@ -90,8 +94,6 @@ export type UseAuthFilesDataResult = {
   handleDownload: (name: string) => Promise<void>;
   handleStatusToggle: (item: AuthFileItem, enabled: boolean) => Promise<void>;
   handleStatusRefresh: (item: AuthFileItem, options?: HandleStatusRefreshOptions) => Promise<void>;
-  /** 迁移自旧版：对单个账号发送一次测试消息，验证账号是否能正常出请求；结果/失败原因通过通知展示。 */
-  handleTestMessage: (item: AuthFileItem) => Promise<void>;
   toggleSelect: (key: string) => void;
   selectAllVisible: (visibleFiles: AuthFileItem[]) => void;
   invertVisibleSelection: (visibleFiles: AuthFileItem[]) => void;
@@ -724,52 +726,6 @@ export function useAuthFilesData(
     [onStatusHistoryChanged, showNotification, statusRefreshing, t]
   );
 
-  // 迁移自旧版：逐账号「测试消息」按钮。旧版打开一个可选模型/自定义文案的弹窗；
-  // cpamp 本次改动范围不包含新增弹窗组件，这里保留同一个 API 契约和 loading /
-  // 通知反馈，用固定的默认消息 + 账号默认模型（不传 model，交由后端选择）触发
-  // 一次最小验证请求，行为对齐旧版“确认账号能正常出请求”的核心用途。
-  const handleTestMessage = useCallback(
-    async (item: AuthFileItem) => {
-      const name = item.name;
-      if (!name) return;
-      if (messageTesting[name] === true) return;
-
-      setMessageTesting((prev) => ({ ...prev, [name]: true }));
-      try {
-        const result = await authFilesApi.testMessage({
-          name,
-          message: 'Reply with OK only.',
-          max_tokens: 16,
-        });
-        const meta = [
-          result.provider ? `${t('auth_files.test_message_result_provider', { provider: result.provider })}` : '',
-          result.model ? `${t('auth_files.test_message_result_model', { model: result.model })}` : '',
-          typeof result.latency_ms === 'number'
-            ? t('auth_files.test_message_result_latency', {
-                latency: Math.round(result.latency_ms),
-              })
-            : '',
-        ]
-          .filter(Boolean)
-          .join(' · ');
-        const successMessage = t('auth_files.test_message_success', { name });
-        showNotification(meta ? `${successMessage} (${meta})` : successMessage, 'success');
-      } catch (err: unknown) {
-        const errorMessage = err instanceof Error ? err.message : '';
-        const failedMessage = t('auth_files.test_message_failed', { name });
-        showNotification(errorMessage ? `${failedMessage}: ${errorMessage}` : failedMessage, 'error');
-      } finally {
-        setMessageTesting((prev) => {
-          if (!prev[name]) return prev;
-          const next = { ...prev };
-          delete next[name];
-          return next;
-        });
-      }
-    },
-    [messageTesting, showNotification, t]
-  );
-
   const batchSetStatus = useCallback(
     async (names: string[], enabled: boolean) => {
       if (batchStatusPendingRef.current) return;
@@ -1020,6 +976,7 @@ export function useAuthFilesData(
     statusUpdating,
     statusRefreshing,
     messageTesting,
+    setMessageTesting,
     batchStatusUpdating,
     batchFieldsUpdating,
     fileInputRef,
@@ -1032,7 +989,6 @@ export function useAuthFilesData(
     handleDownload,
     handleStatusToggle,
     handleStatusRefresh,
-    handleTestMessage,
     toggleSelect,
     selectAllVisible,
     invertVisibleSelection,

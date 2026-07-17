@@ -518,6 +518,11 @@ export function MonitoringCenterPage() {
     monitoringLoading && (!monitoringScopeTransitioning || !hasMonitoringPresentationSnapshot);
   const overallLoading =
     usageLoading || monitoringBlockingLoading || requestMonitoringAvailability.checking;
+  // KPI 卡片级 loading 反馈：区分"已有旧数据的 refetch"（变暗+更新中遮罩）与
+  // "首屏还没有任何展示快照"（骨架占位）。全页阻塞遮罩仍由 hasPresentationSnapshot
+  // 有意抑制（避免事件分页慢拖住概览首屏），这里只是把同一份信号下沉到卡片区块。
+  const kpiUpdating = monitoringLoading && hasMonitoringPresentationSnapshot;
+  const kpiFirstLoad = monitoringLoading && !hasMonitoringPresentationSnapshot;
   const combinedError = monitoringUnavailable
     ? monitoringError
     : [usageError, monitoringError].filter(Boolean).join('；');
@@ -1660,6 +1665,8 @@ export function MonitoringCenterPage() {
         primaryCards={primarySummaryCards}
         secondaryCards={secondarySummaryCards}
         scopeText={monitoringSummaryScopeText}
+        updating={kpiUpdating}
+        firstLoad={kpiFirstLoad}
       />
 
       <MonitoringDataPanel

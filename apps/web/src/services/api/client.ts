@@ -19,6 +19,33 @@ import {
 } from '@/features/demo/demoApi';
 import { isDemoMode } from '@/features/demo/demoMode';
 
+/**
+ * 账号级探测端点：这些端点会拿「被测账号」去请求上游，上游认证失败时后端会把
+ * 上游的 401 原样透传为响应状态码。这里的 401 表示「被测账号凭证失效」，而不是
+ * 「管理会话过期」，因此不能触发全局登出——账号级失败应由发起该操作的页面就地
+ * 处理（展示错误结果），否则测一个坏号就会把整个管理前端登出。
+ *
+ * 经核对 core 后端（gitlink 9c295240）：仅 POST /auth-files/test-message 会把上游
+ * 401 透传成自身 HTTP 401；同类按账号名请求的管理端点（/auth-files/refresh-status
+ * 恒 200 包 body、/auth-files/models 只读本地不打上游、account-settings /
+ * quota/refresh / provider-tls-probe / oauth-callback / *-auth-url / get-auth-status
+ * 均返回 200 或本地业务码）都不透传上游 401，因此不加入本白名单。
+ */
+const ACCOUNT_LEVEL_PROBE_PATHS = ['/auth-files/test-message'];
+
+/**
+ * 判断某次请求 URL 是否属于账号级探测端点。请求拦截器里 baseURL 单独挂在
+ * config.baseURL 上，config.url 恒为传入的相对字面量路径（如
+ * `/auth-files/test-message`，且该端点不带 query string），所以用精确相等匹配即可。
+ * 刻意不做 endsWith 前缀匹配，避免将来出现 `/x/auth-files/test-message` 之类路径被
+ * 误豁免，也避免掩盖该端点自身真正的管理鉴权 401。
+ */
+const isAccountLevelProbeUrl = (url: string | undefined): boolean => {
+  if (!url) return false;
+  const path = url.split('?')[0];
+  return ACCOUNT_LEVEL_PROBE_PATHS.some((probe) => path === probe);
+};
+
 class ApiClient {
   private instance: AxiosInstance;
   private apiBase: string = '';
@@ -181,8 +208,10 @@ class ApiClient {
       apiError.details = responseData;
       apiError.data = responseData;
 
-      // 401 未授权 - 触发登出事件
-      if (error.response?.status === 401) {
+      // 401 未授权 - 触发登出事件。
+      // 但账号级探测端点（如测试发送消息）的 401 来自「被测账号」上游认证失败，
+      // 不代表管理会话过期，跳过全局登出，交由发起页面就地处理错误。
+      if (error.response?.status === 401 && !isAccountLevelProbeUrl(error.config?.url)) {
         window.dispatchEvent(new Event('unauthorized'));
       }
 
