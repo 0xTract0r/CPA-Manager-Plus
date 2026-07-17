@@ -14,18 +14,32 @@ import (
 
 var (
 	longContextThresholdSQL = strconv.FormatInt(usage.LongContextInputTokenThreshold, 10)
-	compatCachedExpr        = "max(max(cached_tokens, cache_tokens) - max(cache_read_tokens, 0) - max(cache_creation_tokens, 0), 0)"
-	compatCachedFExpr       = "max(max(f.cached_tokens, f.cache_tokens) - max(f.cache_read_tokens, 0) - max(f.cache_creation_tokens, 0), 0)"
-	longInputExpr           = "case when input_tokens > " + longContextThresholdSQL + " then input_tokens else 0 end"
-	longOutputExpr          = "case when input_tokens > " + longContextThresholdSQL + " then output_tokens else 0 end"
-	longCachedExpr          = "case when input_tokens > " + longContextThresholdSQL + " then " + compatCachedExpr + " else 0 end"
-	longCacheReadExpr       = "case when input_tokens > " + longContextThresholdSQL + " then cache_read_tokens else 0 end"
-	longCacheCreationExpr   = "case when input_tokens > " + longContextThresholdSQL + " then cache_creation_tokens else 0 end"
-	longInputFExpr          = "case when f.input_tokens > " + longContextThresholdSQL + " then f.input_tokens else 0 end"
-	longOutputFExpr         = "case when f.input_tokens > " + longContextThresholdSQL + " then f.output_tokens else 0 end"
-	longCachedFExpr         = "case when f.input_tokens > " + longContextThresholdSQL + " then " + compatCachedFExpr + " else 0 end"
-	longCacheReadFExpr      = "case when f.input_tokens > " + longContextThresholdSQL + " then f.cache_read_tokens else 0 end"
-	longCacheCreationFExpr  = "case when f.input_tokens > " + longContextThresholdSQL + " then f.cache_creation_tokens else 0 end"
+	// compatCachedExpr 是"缓存"列(CachedTokens)的口径:实际被命中/写入的缓存量。
+	// 现代上报格式直接给 cache_read_tokens/cache_creation_tokens 拆分字段,应取其和,
+	// 与"总 Token"(total_tokens 同样计入 cache_read/cache_creation)和"缓存命中率"
+	// (取 raw cache_read_tokens)保持一致的实际缓存用量口径。
+	// 但历史行只回填了旧版合并字段 cached_tokens/cache_tokens、拆分字段为 0,若直接取
+	// 拆分之和会让这些历史行的"缓存"列退化为 0(比旧实现更糟),并使喂给成本计算的缓存量
+	// 为 0、丢失缓存折扣、成本被高估。因此做稳健回退:拆分之和 > 0 时用拆分之和;否则回退
+	// 到 legacy 合并字段 max(cached_tokens, cache_tokens)。
+	compatCachedSplit  = "(coalesce(cache_read_tokens, 0) + coalesce(cache_creation_tokens, 0))"
+	compatCachedLegacy = "max(coalesce(cached_tokens, 0), coalesce(cache_tokens, 0))"
+	compatCachedExpr   = "(case when " + compatCachedSplit + " > 0 then " + compatCachedSplit + " else " + compatCachedLegacy + " end)"
+
+	compatCachedSplitF  = "(coalesce(f.cache_read_tokens, 0) + coalesce(f.cache_creation_tokens, 0))"
+	compatCachedLegacyF = "max(coalesce(f.cached_tokens, 0), coalesce(f.cache_tokens, 0))"
+	compatCachedFExpr   = "(case when " + compatCachedSplitF + " > 0 then " + compatCachedSplitF + " else " + compatCachedLegacyF + " end)"
+
+	longInputExpr          = "case when input_tokens > " + longContextThresholdSQL + " then input_tokens else 0 end"
+	longOutputExpr         = "case when input_tokens > " + longContextThresholdSQL + " then output_tokens else 0 end"
+	longCachedExpr         = "case when input_tokens > " + longContextThresholdSQL + " then " + compatCachedExpr + " else 0 end"
+	longCacheReadExpr      = "case when input_tokens > " + longContextThresholdSQL + " then cache_read_tokens else 0 end"
+	longCacheCreationExpr  = "case when input_tokens > " + longContextThresholdSQL + " then cache_creation_tokens else 0 end"
+	longInputFExpr         = "case when f.input_tokens > " + longContextThresholdSQL + " then f.input_tokens else 0 end"
+	longOutputFExpr        = "case when f.input_tokens > " + longContextThresholdSQL + " then f.output_tokens else 0 end"
+	longCachedFExpr        = "case when f.input_tokens > " + longContextThresholdSQL + " then " + compatCachedFExpr + " else 0 end"
+	longCacheReadFExpr     = "case when f.input_tokens > " + longContextThresholdSQL + " then f.cache_read_tokens else 0 end"
+	longCacheCreationFExpr = "case when f.input_tokens > " + longContextThresholdSQL + " then f.cache_creation_tokens else 0 end"
 )
 
 type AnalyticsFilter struct {
@@ -2049,13 +2063,14 @@ func analyticsWhere(filter AnalyticsFilter) (string, []any) {
 	}
 
 	if filter.MaxCacheHitRate != nil {
-		// 与前端 monitoringCenterPageModel.ts:computeCacheHitRate 逐字对齐:
-		//   命中 tokens = cache_read_tokens>0 ? cache_read_tokens : cachedTokens(去重后)
+		// 与前端 usageAnalyticsModel.ts:computeCacheHitRate 逐字对齐:
+		//   命中 tokens = cache_read_tokens>0 ? cache_read_tokens : cachedTokens
 		//   Anthropic 系(model slug 以 claude/anthropic 开头): 分母 = input + cache_read + cache_creation
 		//   其余(OpenAI 系等): 分母 = max(input, 命中 tokens) + cache_creation
 		// cachedTokens 用与 EventsPageWithFilter 同源的 compatCachedExpr(events 行的
-		// CachedTokens 字段就是这个表达式的值),而非原始 cached_tokens/cache_tokens 列,
-		// 避免筛选条件与实际展示给用户、驱动前端本地过滤的数值出现口径分裂。
+		// CachedTokens 字段就是这个表达式的值,即 cache_read_tokens+cache_creation_tokens),
+		// 而非原始 cached_tokens/cache_tokens 列,避免筛选条件与实际展示给用户、驱动前端
+		// 本地过滤的数值出现口径分裂。
 		hitTokensExpr := "(case when coalesce(cache_read_tokens, 0) > 0 then cache_read_tokens else (" + compatCachedExpr + ") end)"
 		anthropicExpr := "(lower(model) like 'claude%' or lower(model) like '%/claude%' or lower(model) like 'anthropic%' or lower(model) like '%/anthropic%')"
 		denomExpr := "(case when " + anthropicExpr + " then input_tokens + coalesce(cache_read_tokens, 0) + coalesce(cache_creation_tokens, 0)" +

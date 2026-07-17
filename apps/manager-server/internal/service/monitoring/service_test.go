@@ -73,6 +73,11 @@ func TestAnalyticsBuildsIncludedSections(t *testing.T) {
 		t.Fatalf("timeline buckets = %#v", resp.Timeline)
 	}
 	timelinePoint := resp.Timeline[0]
+	// CachedTokens("缓存"列)口径:拆分字段(cache_read_tokens+cache_creation_tokens)>0 时取
+	// 拆分之和;否则回退到 legacy 合并字段。这两个事件都只设置了 monitoringEvent 的 legacy
+	// cachedTokens 参数(未设置 CacheReadTokens/CacheCreationTokens),走回退分支,聚合后是
+	// legacy 值 100。回退分支还保证成本计算仍能拿到 cached=100 的缓存折扣(见下方 cost 断言
+	// 期望 1.99995,若缓存量退化为 0 则折扣消失、cost 会变成 2)。
 	if timelinePoint.Calls != 2 || timelinePoint.Success != 1 || timelinePoint.Failure != 1 ||
 		timelinePoint.InputTokens != 1_000_010 || timelinePoint.OutputTokens != 500_020 ||
 		timelinePoint.CachedTokens != 100 || timelinePoint.TotalTokens != 1_500_130 {
@@ -516,16 +521,18 @@ func TestAnalyticsExposesCPA7118UsageFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("analytics: %v", err)
 	}
+	// CachedTokens("缓存"列)口径 = cache_read_tokens + cache_creation_tokens = 4 + 1 = 5,
+	// 而不是历史 legacy 去重公式在当前上报格式下恒为 0 的值。
 	if resp.Summary == nil || resp.Summary.CacheReadTokens != 4 ||
-		resp.Summary.CacheCreationTokens != 1 || resp.Summary.CachedTokens != 0 {
+		resp.Summary.CacheCreationTokens != 1 || resp.Summary.CachedTokens != 5 {
 		t.Fatalf("summary = %#v", resp.Summary)
 	}
 	if len(resp.TaskBuckets) != 1 || resp.TaskBuckets[0].CacheReadTokens != 4 ||
-		resp.TaskBuckets[0].CacheCreationTokens != 1 || resp.TaskBuckets[0].CachedTokens != 0 {
+		resp.TaskBuckets[0].CacheCreationTokens != 1 || resp.TaskBuckets[0].CachedTokens != 5 {
 		t.Fatalf("task buckets = %#v", resp.TaskBuckets)
 	}
 	if len(resp.ModelStats) != 1 || resp.ModelStats[0].CacheReadTokens != 4 ||
-		resp.ModelStats[0].CacheCreationTokens != 1 || resp.ModelStats[0].CachedTokens != 0 {
+		resp.ModelStats[0].CacheCreationTokens != 1 || resp.ModelStats[0].CachedTokens != 5 {
 		t.Fatalf("model stats = %#v", resp.ModelStats)
 	}
 	if resp.Events == nil || len(resp.Events.Items) != 1 {
@@ -534,7 +541,7 @@ func TestAnalyticsExposesCPA7118UsageFields(t *testing.T) {
 	item := resp.Events.Items[0]
 	if item.ExecutorType != "codex" || item.ReasoningEffort != "medium" ||
 		item.ServiceTier != "priority" || item.CacheReadTokens != 4 ||
-		item.CacheCreationTokens != 1 || item.CachedTokens != 0 || item.FailStatusCode == nil ||
+		item.CacheCreationTokens != 1 || item.CachedTokens != 5 || item.FailStatusCode == nil ||
 		*item.FailStatusCode != 429 || item.FailSummary != "rate limit exceeded" ||
 		item.LatencyMS == nil || *item.LatencyMS != 1500 || item.TTFTMS == nil ||
 		*item.TTFTMS != 450 {
@@ -542,7 +549,13 @@ func TestAnalyticsExposesCPA7118UsageFields(t *testing.T) {
 	}
 }
 
-func TestAnalyticsKeepsCompatCachedSeparateFromFineGrainedCache(t *testing.T) {
+// TestAnalyticsCachedTokensReflectsActualCacheRead 校验"缓存"列(CachedTokens)口径
+// 已改为反映实际缓存读取量(cache_read_tokens + cache_creation_tokens),不再是历史
+// legacy 去重公式在当前上报格式下恒为 0 的值(旧测试名
+// TestAnalyticsKeepsCompatCachedSeparateFromFineGrainedCache 曾经把这个 bug 锁定为
+// "期望行为")。与"总 Token"(total_tokens 计入 cache_read/cache_creation)和
+// "缓存命中率"(取 raw cache_read_tokens)口径保持一致。
+func TestAnalyticsCachedTokensReflectsActualCacheRead(t *testing.T) {
 	db := newMonitoringTestStore(t)
 	ctx := context.Background()
 	fromMS := int64(1_778_000_000_000)
@@ -568,18 +581,18 @@ func TestAnalyticsKeepsCompatCachedSeparateFromFineGrainedCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("analytics: %v", err)
 	}
-	if resp.Summary == nil || resp.Summary.CachedTokens != 0 || resp.Summary.CacheReadTokens != 500 {
+	if resp.Summary == nil || resp.Summary.CachedTokens != 500 || resp.Summary.CacheReadTokens != 500 {
 		t.Fatalf("summary cache fields = %#v", resp.Summary)
 	}
-	if len(resp.ModelStats) != 1 || resp.ModelStats[0].CachedTokens != 0 ||
+	if len(resp.ModelStats) != 1 || resp.ModelStats[0].CachedTokens != 500 ||
 		resp.ModelStats[0].CacheReadTokens != 500 {
 		t.Fatalf("model stats cache fields = %#v", resp.ModelStats)
 	}
-	if len(resp.TaskBuckets) != 1 || resp.TaskBuckets[0].CachedTokens != 0 ||
+	if len(resp.TaskBuckets) != 1 || resp.TaskBuckets[0].CachedTokens != 500 ||
 		resp.TaskBuckets[0].CacheReadTokens != 500 {
 		t.Fatalf("task buckets cache fields = %#v", resp.TaskBuckets)
 	}
-	if resp.Events == nil || len(resp.Events.Items) != 1 || resp.Events.Items[0].CachedTokens != 0 ||
+	if resp.Events == nil || len(resp.Events.Items) != 1 || resp.Events.Items[0].CachedTokens != 500 ||
 		resp.Events.Items[0].CacheReadTokens != 500 {
 		t.Fatalf("events cache fields = %#v", resp.Events)
 	}
@@ -1005,6 +1018,69 @@ func TestAnalyticsAccountAndAPIKeyStatsUseFullFilteredScope(t *testing.T) {
 		resp.APIKeyStats[0].Contexts[1].Calls != 1 ||
 		resp.APIKeyStats[0].Contexts[1].FailureRate != 1 {
 		t.Fatalf("second api key context = %#v", resp.APIKeyStats[0].Contexts[1])
+	}
+}
+
+// TestAnalyticsEmptyAPIKeyHashCollapsesIntoSingleUnknownGroup 覆盖根因
+// adf66b9e:补录路径没把 bearer key 写进 api_key_hash,归属留空的事件此前会被
+// apiKeyGroupKey 按 source_hash/auth_index/source/provider 拼接假拆成多个
+// "未知 Key"分组。空 api_key_hash 的事件不论 source_hash/auth_index/source
+// 如何变化,都必须归并进同一个 unknown-client-api-key 桶,而不是产生多条
+// APIKeyStats 记录。
+func TestAnalyticsEmptyAPIKeyHashCollapsesIntoSingleUnknownGroup(t *testing.T) {
+	db := newMonitoringTestStore(t)
+	ctx := context.Background()
+	fromMS := int64(1_778_060_000_000)
+	toMS := fromMS + 60*60*1000
+
+	events := []usage.Event{
+		monitoringEvent("unknown-a", fromMS+1_000, "gpt-a", "auth-1", "source-hash-1", false, 10, 5, 0, 0, 15, nil),
+		monitoringEvent("unknown-b", fromMS+2_000, "gpt-a", "auth-2", "source-hash-2", false, 20, 6, 0, 0, 26, nil),
+		monitoringEvent("unknown-c", fromMS+3_000, "gpt-b", "auth-3", "source-hash-3", true, 1, 1, 0, 0, 2, nil),
+	}
+	for index := range events {
+		// 归属留空(APIKeyHash=""),但 source_hash/auth_index/source 三个维度都刻意
+		// 各不相同,复现补录路径产生的噪声。
+		events[index].APIKeyHash = ""
+		events[index].AccountSnapshot = ""
+		events[index].Source = fmt.Sprintf("masked-source-%d", index)
+	}
+	if _, err := db.InsertEvents(ctx, events); err != nil {
+		t.Fatalf("insert events: %v", err)
+	}
+
+	resp, err := New(db).Analytics(ctx, Request{
+		FromMS: fromMS,
+		ToMS:   toMS,
+		Include: Include{
+			Summary:     true,
+			APIKeyStats: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("analytics: %v", err)
+	}
+	if resp.Summary == nil || resp.Summary.TotalCalls != 3 {
+		t.Fatalf("summary = %#v", resp.Summary)
+	}
+	if len(resp.APIKeyStats) != 1 {
+		t.Fatalf("api key stats must collapse into exactly one unknown group, got %#v", resp.APIKeyStats)
+	}
+	group := resp.APIKeyStats[0]
+	if group.APIKeyHash != "" {
+		t.Fatalf("unknown group must keep empty APIKeyHash, got %#v", group)
+	}
+	if group.ID != "unknown-client-api-key" {
+		t.Fatalf("unknown group id must be the single constant bucket, got %q", group.ID)
+	}
+	if group.Calls != 3 || group.FailureCalls != 1 {
+		t.Fatalf("unknown group must aggregate all empty-hash events, got %#v", group)
+	}
+	if len(group.SourceHashes) != 3 {
+		t.Fatalf("unknown group must still record distinct source hashes for drill-down, got %#v", group.SourceHashes)
+	}
+	if len(group.Contexts) != 3 {
+		t.Fatalf("unknown group must still expose per auth_index contexts for drill-down, got %#v", group.Contexts)
 	}
 }
 

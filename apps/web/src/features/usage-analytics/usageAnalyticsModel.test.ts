@@ -31,7 +31,9 @@ import {
   computeRowCacheHitRate,
   getUsageRangeBounds,
   maskApiKeyHash,
+  resolveUsageApiKeyLabel,
   resolveUsageGranularity,
+  UNATTRIBUTED_API_KEY_LABEL,
   USAGE_ANALYTICS_DEFAULT_FILTERS,
 } from './usageAnalyticsModel';
 
@@ -681,6 +683,70 @@ describe('usage analytics adapters', () => {
       sourceHash: 'source-hash-a',
     });
     expect(maskApiKeyHash('sk-live-raw-secret-value')).toBe('sk-****alue');
+  });
+
+  it('labels unattributed API key rows without faking a sk-**** key', () => {
+    const data: Pick<MonitoringAnalyticsResponse, 'api_key_stats'> = {
+      api_key_stats: [
+        {
+          // 没有真实 api_key_hash（未启用 Key 鉴权/直连请求），后端只给了分组桶 id。
+          id: 'unattributed-bucket',
+          api_key_hash: '',
+          calls: 4,
+          success_calls: 4,
+          failure_calls: 0,
+          success_rate: 1,
+          input_tokens: 40,
+          output_tokens: 10,
+          cached_tokens: 0,
+          cache_read_tokens: 0,
+          cache_creation_tokens: 0,
+          total_tokens: 50,
+          cost: 0.4,
+          average_latency_ms: null,
+          last_seen_ms: NOW_MS,
+        },
+        {
+          // 上游把来源邮箱当兜底值塞进了 id，绝不能被截断渲染成 `sk-****` key。
+          id: 'user@gmail.com',
+          api_key_hash: '',
+          calls: 2,
+          success_calls: 2,
+          failure_calls: 0,
+          success_rate: 1,
+          input_tokens: 20,
+          output_tokens: 5,
+          cached_tokens: 0,
+          cache_read_tokens: 0,
+          cache_creation_tokens: 0,
+          total_tokens: 25,
+          cost: 0.2,
+          average_latency_ms: null,
+          last_seen_ms: NOW_MS,
+        },
+      ],
+    };
+
+    const rows = buildApiKeyRows(data.api_key_stats);
+
+    expect(rows).toHaveLength(2);
+    rows.forEach((row) => {
+      expect(row.label).toBe(UNATTRIBUTED_API_KEY_LABEL);
+      expect(row.label).not.toMatch(/^sk-\*{2,}/);
+      expect(row.label).not.toContain('@gmail.com');
+    });
+  });
+
+  it('resolveUsageApiKeyLabel never masks a non-hash fallback as a real key', () => {
+    expect(resolveUsageApiKeyLabel('')).toBe(UNATTRIBUTED_API_KEY_LABEL);
+    expect(resolveUsageApiKeyLabel(null, undefined, '')).toBe(UNATTRIBUTED_API_KEY_LABEL);
+    // 邮箱既是 hash 又是 fallback（上游同一个值传了两次）时，必须归为未归属，
+    // 不能把邮箱尾巴（如 `.com`）当成 key 材料截断展示。
+    expect(resolveUsageApiKeyLabel('user@gmail.com', undefined, 'user@gmail.com')).toBe(
+      UNATTRIBUTED_API_KEY_LABEL
+    );
+    // 真实 hash 依然按原逻辑掩码展示。
+    expect(resolveUsageApiKeyLabel('abcdef1234567890')).toBe('sk-****7890');
   });
 
   it('resolves API key aliases by hash across analytics views', () => {
