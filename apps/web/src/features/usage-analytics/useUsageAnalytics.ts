@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useMonitoringAnalytics } from '@/features/monitoring/hooks/useMonitoringAnalytics';
 import { useUsageData } from '@/features/monitoring/hooks/useUsageData';
@@ -283,6 +283,19 @@ export function useUsageAnalytics() {
     throttleMs: 0,
   });
 
+  // 底层闪烁修复：dataStale（切筛选/时间范围/重刷新期间旧数据与当前 scope 不匹配）
+  // 不应该把下游数据直接置空——那会让所有依赖 analyticsData 的汇总/表格/图表瞬间归零，
+  // 造成“旧数据 -> 全空/零 -> 新数据”的闪烁。这里维护一份“上一次成功数据”的 ref，
+  // dataStale 期间只要曾经成功过一次，就继续展示旧数据（视觉上叠加 UpdatingOverlay），
+  // 而不是塌陷成 null。真正的首屏（从未成功过）才应该是 null，交给 Skeleton 处理。
+  const lastGoodAnalyticsDataRef = useRef<typeof analytics.data>(null);
+  if (!analytics.dataStale && analytics.data) {
+    lastGoodAnalyticsDataRef.current = analytics.data;
+  }
+  const hasPreviousAnalyticsData = lastGoodAnalyticsDataRef.current !== null;
+  const isFirstLoad = analytics.loading && !hasPreviousAnalyticsData;
+  const isUpdating = (analytics.loading || analytics.dataStale) && hasPreviousAnalyticsData;
+
   const filterSelectorsInclude = useMemo(() => buildUsageAnalyticsFilterSelectorsInclude(), []);
   const filterSelectorsDataScopeKey = useMemo(
     () =>
@@ -335,7 +348,9 @@ export function useUsageAnalytics() {
     throttleMs: 0,
   });
 
-  const analyticsData = analytics.dataStale ? null : analytics.data;
+  const analyticsData = analytics.dataStale
+    ? lastGoodAnalyticsDataRef.current
+    : analytics.data;
   const filterSelectorsData = filterSelectorsAnalytics.dataStale
     ? null
     : filterSelectorsAnalytics.data;
@@ -592,6 +607,11 @@ export function useUsageAnalytics() {
     bounds,
     resolvedGranularity,
     loading: analytics.loading,
+    // isUpdating: 已有过成功数据、正在刷新/切筛选中——UI 应该继续展示旧数据并叠加轻量遮罩，
+    // 不应该切到骨架屏或空态。
+    isUpdating,
+    // isFirstLoad: 从未成功获取过数据的首屏加载——UI 应该展示骨架屏占位。
+    isFirstLoad,
     error: analytics.error,
     enabled: analytics.enabled,
     apiKeyDisplayMap,

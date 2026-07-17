@@ -184,6 +184,8 @@ const createUsageState = (overrides: Record<string, unknown> = {}) => {
     bounds: { fromMs: point.bucketMs, toMs: point.bucketEndMs },
     resolvedGranularity: 'hour',
     loading: false,
+    isUpdating: false,
+    isFirstLoad: false,
     error: '',
     enabled: true,
     unavailableReason: '',
@@ -568,6 +570,50 @@ describe('UsageAnalyticsPage', () => {
     renderer = renderPage();
     expect(getText(renderer.root)).toContain('usage_analytics.error_title');
     expect(getText(renderer.root)).toContain('analytics failed');
+  });
+
+  it('shows a skeleton placeholder instead of the empty state on first load', () => {
+    mocks.usageState = createUsageState({
+      isFirstLoad: true,
+      loading: true,
+      summary: {
+        requestCount: 0,
+        totalTokens: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cachedTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        estimatedCost: 0,
+        averageCostPerCall: 0,
+        successRate: 0,
+        failureCount: 0,
+        averageLatencyMs: null,
+        p95LatencyMs: null,
+        p95TtftMs: null,
+        rpm30m: 0,
+        tpm30m: 0,
+      },
+      timeline: [],
+    });
+    const renderer = renderPage();
+    const text = getText(renderer.root);
+
+    // 首屏加载中：既不应该出现「无数据」空态，也不应该出现真实 tab 内容。
+    expect(text).not.toContain('usage_analytics.empty_title');
+    expect(text).not.toContain('usage_analytics.overview_trend_title');
+  });
+
+  it('keeps previous overview content mounted (no flash to empty) while updating in the background', () => {
+    const usageState = createUsageState({ isUpdating: true, loading: true });
+    mocks.usageState = usageState;
+    const renderer = renderPage();
+    const text = getText(renderer.root);
+
+    // isUpdating 期间旧数据必须继续渲染，不能塌陷成空态或骨架屏。
+    expect(text).not.toContain('usage_analytics.empty_title');
+    expect(text).toContain('usage_analytics.overview_trend_title');
+    expect(text).toContain('usage_analytics.model_overview_title');
   });
 
   it('navigates to request monitoring details for a selected anomaly bucket', () => {

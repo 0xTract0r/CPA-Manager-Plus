@@ -7,6 +7,7 @@ import {
   type UseMonitoringAnalyticsParams,
   type UseMonitoringAnalyticsReturn,
 } from '@/features/monitoring/hooks/useMonitoringAnalytics';
+import type { MonitoringAnalyticsSummary } from '@/services/api/usageService';
 import { useUsageAnalytics } from './useUsageAnalytics';
 
 vi.mock('@/features/monitoring/hooks/useMonitoringAnalytics', () => ({
@@ -32,6 +33,34 @@ const useMonitoringAnalyticsMock = vi.mocked(useMonitoringAnalytics);
 const emptyAnalyticsResponse = {
   generated_at_ms: 1,
   granularity: 'hour',
+};
+
+const fullSummary: MonitoringAnalyticsSummary = {
+  total_calls: 0,
+  success_calls: 0,
+  failure_calls: 0,
+  success_rate: 0,
+  input_tokens: 0,
+  output_tokens: 0,
+  cached_tokens: 0,
+  cache_read_tokens: 0,
+  cache_creation_tokens: 0,
+  reasoning_tokens: 0,
+  total_tokens: 0,
+  total_cost: 0,
+  average_cost_per_call: 0,
+  average_latency_ms: null,
+  p95_latency_ms: null,
+  p95_ttft_ms: null,
+  zero_token_calls: 0,
+  rpm_30m: 0,
+  tpm_30m: 0,
+  avg_daily_requests: 0,
+  avg_daily_tokens: 0,
+  approx_tasks: 0,
+  approx_task_failures: 0,
+  approx_task_success_rate: 0,
+  zero_token_models: [],
 };
 
 describe('useUsageAnalytics request orchestration', () => {
@@ -162,5 +191,58 @@ describe('useUsageAnalytics request orchestration', () => {
     });
     expect(mainRefresh).toHaveBeenCalledTimes(1);
     expect(selectorRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to the last successful data while the main request is stale, instead of flashing empty', async () => {
+    const populatedResponse = {
+      ...emptyAnalyticsResponse,
+      summary: { ...fullSummary, total_calls: 42, total_tokens: 4200 },
+    };
+
+    // 第一次渲染：主请求已经成功返回过数据。
+    useMonitoringAnalyticsMock.mockImplementation((params) => {
+      const base = resultFor(params);
+      if (params.include?.summary) {
+        return { ...base, loading: false, dataStale: false, data: populatedResponse };
+      }
+      return base;
+    });
+    await renderHook();
+    expect(latestResult?.summary.requestCount).toBe(42);
+    expect(latestResult?.isFirstLoad).toBe(false);
+    expect(latestResult?.isUpdating).toBe(false);
+
+    // 第二次渲染：切筛选/时间范围触发 dataStale=true（旧数据还在，但 scope 已经变了）。
+    useMonitoringAnalyticsMock.mockImplementation((params) => {
+      const base = resultFor(params);
+      if (params.include?.summary) {
+        return { ...base, loading: true, dataStale: true, data: populatedResponse };
+      }
+      return base;
+    });
+    await act(async () => {
+      latestResult?.setFilters({ searchQuery: 'changed' });
+      await Promise.resolve();
+    });
+
+    // 底层闪烁修复的核心断言：dataStale 期间摘要必须仍是上一次成功值，不能塌陷成 0/null。
+    expect(latestResult?.summary.requestCount).toBe(42);
+    expect(latestResult?.isFirstLoad).toBe(false);
+    expect(latestResult?.isUpdating).toBe(true);
+  });
+
+  it('reports isFirstLoad only before any successful data has ever arrived', async () => {
+    useMonitoringAnalyticsMock.mockImplementation((params) => {
+      const base = resultFor(params);
+      if (params.include?.summary) {
+        return { ...base, loading: true, dataStale: false, data: null };
+      }
+      return base;
+    });
+    await renderHook();
+
+    expect(latestResult?.isFirstLoad).toBe(true);
+    expect(latestResult?.isUpdating).toBe(false);
+    expect(latestResult?.summary.requestCount).toBe(0);
   });
 });

@@ -15,6 +15,8 @@ import { EChartsView } from '@/components/charts/EChartsView';
 import { Button } from '@/components/ui/Button';
 import { Select, type SelectOption } from '@/components/ui/Select';
 import { SegmentedTabs, type SegmentedTabItem } from '@/components/ui/SegmentedTabs';
+import { Skeleton } from '@/components/ui/Skeleton';
+import { UpdatingOverlay } from '@/components/ui/UpdatingOverlay';
 import {
   IconBinary,
   IconCopy,
@@ -2271,6 +2273,24 @@ function EmptyState({ title, body }: { title: string; body: string }) {
   );
 }
 
+/**
+ * 首屏骨架占位：从未成功获取过数据时展示，避免整页闪一下全空。
+ * 结构上大致对应「汇总卡片行 + 一个主图表/表格面板」，不追求逐像素还原每个 tab。
+ */
+function TabContentSkeleton() {
+  return (
+    <div className={styles.tabContentSkeleton} aria-hidden="true">
+      <div className={styles.skeletonCardRow}>
+        <Skeleton height={92} />
+        <Skeleton height={92} />
+        <Skeleton height={92} />
+        <Skeleton height={92} />
+      </div>
+      <Skeleton height={320} />
+    </div>
+  );
+}
+
 function UsageAnalyticsPageInner() {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
@@ -2848,14 +2868,17 @@ function UsageAnalyticsPageInner() {
         </section>
       ) : null}
 
-      {noData ? (
+      {usage.isFirstLoad ? <TabContentSkeleton /> : null}
+
+      {!usage.isFirstLoad && noData ? (
         <EmptyState
           title={t('usage_analytics.empty_title')}
           body={t('usage_analytics.empty_body')}
         />
       ) : null}
 
-      {usage.activeTab === 'overview' ? (
+      <UpdatingOverlay active={!usage.isFirstLoad && usage.isUpdating}>
+      {usage.isFirstLoad ? null : usage.activeTab === 'overview' ? (
         <>
           <UsageSummarySection cards={overviewSummaryCards} />
 
@@ -3407,6 +3430,7 @@ function UsageAnalyticsPageInner() {
               </div>
             </div>
             <UsageHeatmapChart
+              loading={usage.loading && usage.heatmap.length === 0}
               metric={usage.heatmapMetric}
               points={usage.heatmap}
               scaleMode={usage.heatmapScaleMode}
@@ -3439,6 +3463,7 @@ function UsageAnalyticsPageInner() {
           </section>
         </>
       ) : null}
+      </UpdatingOverlay>
     </div>
   );
 }
