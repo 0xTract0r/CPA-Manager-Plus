@@ -56,6 +56,7 @@ import { AuthJsonPasteModal } from '@/features/authFiles/components/AuthJsonPast
 import { AuthFileModelsModal } from '@/features/authFiles/components/AuthFileModelsModal';
 import { AuthFilesPrefixProxyEditorModal } from '@/features/authFiles/components/AuthFilesPrefixProxyEditorModal';
 import { AuthFilesAccountSettingsModal } from '@/features/authFiles/components/AuthFilesAccountSettingsModal';
+import { TestMessageModal } from '@/features/authFiles/components/TestMessageModal';
 import { OAuthExcludedCard } from '@/features/authFiles/components/OAuthExcludedCard';
 import { OAuthModelAliasCard } from '@/features/authFiles/components/OAuthModelAliasCard';
 import { CodexReauthDialog } from '@/features/oauth/CodexReauthDialog';
@@ -89,6 +90,7 @@ import { useAuthFilesModels } from '@/features/authFiles/hooks/useAuthFilesModel
 import { useAuthFilesOauth } from '@/features/authFiles/hooks/useAuthFilesOauth';
 import { useAuthFilesPrefixProxyEditor } from '@/features/authFiles/hooks/useAuthFilesPrefixProxyEditor';
 import { useAuthFilesAccountSettings } from '@/features/authFiles/hooks/useAuthFilesAccountSettings';
+import { useAuthFilesTestMessage } from '@/features/authFiles/hooks/useAuthFilesTestMessage';
 import { useAuthFilesStatusBarCache } from '@/features/authFiles/hooks/useAuthFilesStatusBarCache';
 import { useAntigravitySubscriptions } from '@/features/authFiles/hooks/useAntigravitySubscriptions';
 import {
@@ -304,6 +306,7 @@ export function AuthFilesPage() {
     statusUpdating,
     statusRefreshing,
     messageTesting,
+    setMessageTesting,
     batchStatusUpdating,
     batchFieldsUpdating,
     fileInputRef,
@@ -316,7 +319,6 @@ export function AuthFilesPage() {
     handleDownload,
     handleStatusToggle,
     handleStatusRefresh,
-    handleTestMessage,
     toggleSelect,
     selectAllVisible,
     invertVisibleSelection,
@@ -327,6 +329,33 @@ export function AuthFilesPage() {
     batchDelete,
   } = useAuthFilesData({
     onStatusHistoryChanged: (fileName: string) => bumpAuditReloadKeyRef.current(fileName),
+  });
+
+  // 迁移自旧版：「测试消息」弹窗（可选模型 + 自定义文案），详见 useAuthFilesTestMessage。
+  const {
+    testMessageFile,
+    testMessageModel,
+    setTestMessageModel,
+    testMessageText,
+    setTestMessageText,
+    testMessageMaxTokens,
+    setTestMessageMaxTokens,
+    testMessageResult,
+    testMessageRawExpanded,
+    setTestMessageRawExpanded,
+    testMessageModelsLoading,
+    testMessageModelsError,
+    testMessageModelOptions,
+    testMessageSubmitting,
+    testMessageSubmitDisabled,
+    parsedTestMessageMaxTokens,
+    handleTestMessage,
+    closeTestMessageModal,
+    submitTestMessage,
+  } = useAuthFilesTestMessage({
+    messageTesting,
+    setMessageTesting,
+    loadFiles,
   });
 
   const statusBarCache = useAuthFilesStatusBarCache(files);
@@ -2078,6 +2107,28 @@ export function AuthFilesPage() {
         onCopyText={copyTextWithNotification}
         onSave={() => void handleAccountSettingsSaveWithAuditReload()}
         onChange={handleAccountSettingsChange}
+      />
+
+      <TestMessageModal
+        testMessageFile={testMessageFile}
+        testMessageModel={testMessageModel}
+        setTestMessageModel={setTestMessageModel}
+        testMessageText={testMessageText}
+        setTestMessageText={setTestMessageText}
+        testMessageMaxTokens={testMessageMaxTokens}
+        setTestMessageMaxTokens={setTestMessageMaxTokens}
+        testMessageResult={testMessageResult}
+        testMessageRawExpanded={testMessageRawExpanded}
+        setTestMessageRawExpanded={setTestMessageRawExpanded}
+        testMessageModelsLoading={testMessageModelsLoading}
+        testMessageModelsError={testMessageModelsError}
+        testMessageModelOptions={testMessageModelOptions}
+        testMessageSubmitting={testMessageSubmitting}
+        testMessageSubmitDisabled={testMessageSubmitDisabled}
+        parsedTestMessageMaxTokens={parsedTestMessageMaxTokens}
+        closeTestMessageModal={closeTestMessageModal}
+        submitTestMessage={submitTestMessage}
+        onCopyText={copyTextWithNotification}
       />
 
       <AuthJsonPasteModal
