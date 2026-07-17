@@ -72,17 +72,34 @@ func TestParseImportPayloadLegacyUsageExport(t *testing.T) {
 	}
 
 	first := result.Events[0]
-	if first.Model != "gpt-4o" || first.Endpoint != "POST /v1/chat/completions" {
+	// Endpoint must be "-", never the apis-map key. In production that key is
+	// the raw inbound bearer (the client's API key); persisting it into
+	// Endpoint was the bug this fixture now guards against. Method/Path are
+	// still derived defensively from the key when it happens to look
+	// endpoint-shaped (as this fixture's key does).
+	if first.Model != "gpt-4o" || first.Endpoint != "-" {
 		t.Fatalf("first event target = %#v", first)
 	}
 	if first.Method != "POST" || first.Path != "/v1/chat/completions" {
 		t.Fatalf("first endpoint parts = %#v", first)
+	}
+	// The apis-map key ("POST /v1/chat/completions" in this fixture) must be
+	// hashed into APIKeyHash using the exact same hashString primitive the
+	// realtime path uses (event.go NormalizeRaw: APIKeyHash: hashString(apiKey)),
+	// so a legacy-imported event for a given key converges with a
+	// realtime-collected event for the same key onto the same APIKeyHash.
+	wantAPIKeyHash := hashString("POST /v1/chat/completions")
+	if first.APIKeyHash == "" || first.APIKeyHash != wantAPIKeyHash {
+		t.Fatalf("first api key hash = %q, want %q", first.APIKeyHash, wantAPIKeyHash)
 	}
 	if first.Source != "ali***@example.com" || first.AuthIndex != "auth-1" {
 		t.Fatalf("first source = %#v", first)
 	}
 	if first.TotalTokens != 33 || first.LatencyMS == nil || *first.LatencyMS != 123 {
 		t.Fatalf("first metrics = %#v", first)
+	}
+	if strings.Contains(first.RawJSON, "POST /v1/chat/completions") {
+		t.Fatalf("raw_json must not embed the apis-map key/endpoint label: %q", first.RawJSON)
 	}
 	// The legacy detail carries no request_id. The import path must leave
 	// RequestID empty (byte-for-byte matching the realtime collector) so the
@@ -863,13 +880,15 @@ func TestCrossPathEventHashMatchesWhenRequestIDPresent(t *testing.T) {
 // TestDualIngestSameRequestNotDoubleCounted reproduces the exact production
 // double-count: one request ingested by the realtime redis-queue collector
 // (endpoint "POST /v1/messages", full fields) and later re-ingested by the
-// /usage/export importer, whose apis-map key -- and therefore the Endpoint it
-// passes down -- is the inbound bearer "quotio-local-<UUID>", NOT the HTTP
-// endpoint. Both carry the SAME request_id. Since event_hash is the sole
-// insert-dedup key (`insert or ignore` on the UNIQUE column), the two events
-// must produce the SAME event_hash so only one row survives and its tokens are
-// counted once. Before the fix, Endpoint was part of the hash, the two paths
-// diverged, and the request was double-counted (2236x2 in production).
+// /usage/export importer, whose apis-map key is the inbound bearer
+// "quotio-local-<UUID>", NOT the HTTP endpoint (that key is hashed into
+// APIKeyHash and the importer's persisted Endpoint ends up as the "-"
+// sentinel, deliberately never equal to path A's real HTTP endpoint). Both
+// carry the SAME request_id. Since event_hash is the sole insert-dedup key
+// (`insert or ignore` on the UNIQUE column), the two events must produce the
+// SAME event_hash so only one row survives and its tokens are counted once.
+// Before the fix, Endpoint was part of the hash, the two paths diverged, and
+// the request was double-counted (2236x2 in production).
 func TestDualIngestSameRequestNotDoubleCounted(t *testing.T) {
 	const totalTokens = int64(30) // 10 input + 20 output
 
@@ -890,8 +909,9 @@ func TestDualIngestSameRequestNotDoubleCounted(t *testing.T) {
 	}
 
 	// Path B: /usage/export importer. In production the apis-map key is the
-	// inbound bearer, so Endpoint is "quotio-local-<UUID>" -- deliberately
-	// different from path A's "POST /v1/messages". Same request_id, same tokens.
+	// inbound bearer "quotio-local-<UUID>"; the importer persists Endpoint as
+	// "-" (never the raw key) -- deliberately different from path A's real
+	// "POST /v1/messages". Same request_id, same tokens.
 	legacyDetail := map[string]any{
 		"request_id":    "req-dual-1",
 		"timestamp":     "2026-07-16T10:00:00Z",
@@ -993,5 +1013,99 @@ func TestOrphanLegacyRowPreserved(t *testing.T) {
 	}
 	if orphan.EventHash == other.EventHash {
 		t.Fatalf("distinct request_ids share a hash -> wrongful merge: %q", orphan.EventHash)
+	}
+}
+
+// TestEventFromLegacyDetailHashesAPIKeyLabelIntoAPIKeyHash pins the fix for
+// the API-key attribution bug: core's /usage/export apis-map key IS the
+// inbound bearer (the client's literal API key) -- see
+// core/internal/usage/logger_plugin.go:258 (`statsKey := record.APIKey`) and
+// the eventsFromLegacyUsage doc comment. Before the fix, the import path
+// looked for api_key/apiKey/key fields on the detail itself (which core's
+// export never sets), so APIKeyHash was always hashString("")="" and the key
+// column leaked the raw bearer via Endpoint/raw_json instead of being
+// attributed. This test locks:
+//  1. APIKeyHash is non-empty and equals hashString(apiKeyLabel).
+//  2. Endpoint no longer carries the raw key (it is the "-" sentinel).
+//  3. raw_json does not embed the raw key in plaintext.
+func TestEventFromLegacyDetailHashesAPIKeyLabelIntoAPIKeyHash(t *testing.T) {
+	const apiKeyLabel = "quotio-local-5bdd1234-aaaa-bbbb-cccc-000000000000"
+	detail := map[string]any{
+		"timestamp":     "2026-07-16T10:00:00Z",
+		"request_id":    "req-attribution-1",
+		"input_tokens":  float64(10),
+		"output_tokens": float64(20),
+		"auth_index":    "0",
+		"source":        "alice@example.com",
+	}
+
+	event, err := eventFromLegacyDetail(apiKeyLabel, "", "", "claude-sonnet-4", detail, 0)
+	if err != nil {
+		t.Fatalf("eventFromLegacyDetail: %v", err)
+	}
+
+	wantHash := hashString(apiKeyLabel)
+	if wantHash == "" {
+		t.Fatal("test setup invalid: hashString(apiKeyLabel) must not be empty")
+	}
+	if event.APIKeyHash != wantHash {
+		t.Fatalf("api_key_hash = %q, want hashString(apiKeyLabel) = %q (bug: hashing an absent detail-level api_key field instead of the apis-map key)", event.APIKeyHash, wantHash)
+	}
+	if event.Endpoint == apiKeyLabel {
+		t.Fatalf("endpoint must not carry the raw api key label, got %q", event.Endpoint)
+	}
+	if event.Endpoint != "-" {
+		t.Fatalf("endpoint = %q, want \"-\" sentinel", event.Endpoint)
+	}
+	if strings.Contains(event.RawJSON, apiKeyLabel) {
+		t.Fatalf("raw_json must not embed the raw api key label in plaintext: %q", event.RawJSON)
+	}
+}
+
+// TestEventFromLegacyDetailAPIKeyHashMatchesRealtimePathForSameKey is the
+// core cross-path regression test for the attribution bug: the SAME API key,
+// once observed by the realtime redis-queue collector (NormalizeRaw, which
+// reads api_key/apiKey/key straight off the request payload) and once
+// recovered from a legacy /usage/export catch-up import (eventFromLegacyDetail,
+// which must hash the apis-map key), must produce the SAME APIKeyHash so
+// usage for one client key is not split into two attribution buckets.
+func TestEventFromLegacyDetailAPIKeyHashMatchesRealtimePathForSameKey(t *testing.T) {
+	const apiKey = "quotio-local-5bdd1234-aaaa-bbbb-cccc-000000000000"
+
+	queuePayload := []byte(`{
+		"model": "claude-sonnet-4",
+		"endpoint": "POST /v1/messages",
+		"timestamp": "2026-07-16T10:00:00Z",
+		"auth_index": "0",
+		"source": "alice@example.com",
+		"api_key": "` + apiKey + `",
+		"tokens": {"input_tokens": 10, "output_tokens": 20},
+		"failed": false
+	}`)
+	queueEvent, err := NormalizeRaw(queuePayload)
+	if err != nil {
+		t.Fatalf("NormalizeRaw: %v", err)
+	}
+	if queueEvent.APIKeyHash == "" {
+		t.Fatal("test setup invalid: realtime path produced empty api_key_hash")
+	}
+
+	legacyDetail := map[string]any{
+		"timestamp":     "2026-07-16T10:05:00Z",
+		"input_tokens":  float64(5),
+		"output_tokens": float64(7),
+		"auth_index":    "0",
+		"source":        "alice@example.com",
+	}
+	legacyEvent, err := eventFromLegacyDetail(apiKey, "", "", "claude-sonnet-4", legacyDetail, 0)
+	if err != nil {
+		t.Fatalf("eventFromLegacyDetail: %v", err)
+	}
+
+	if legacyEvent.APIKeyHash != queueEvent.APIKeyHash {
+		t.Fatalf(
+			"api_key_hash mismatch across paths for the same key (attribution regression): realtime=%q legacy=%q",
+			queueEvent.APIKeyHash, legacyEvent.APIKeyHash,
+		)
 	}
 }

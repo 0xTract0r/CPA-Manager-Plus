@@ -2058,19 +2058,18 @@ func accountGroupKey(accountSnapshot, authLabelSnapshot, source, authIndex strin
 	return "-"
 }
 
+// unknownAPIKeyGroupKey 是 api_key_hash 为空时的统一归属桶。历史实现会把
+// source_hash/auth_index/source/provider 拼进 key,导致同一个"没有归属"的
+// 客户端因为 auth_index 轮转、source 掩码差异等噪声被假拆成多个"未知 Key"分组
+// (根因见 adf66b9e:补录路径没把 key 写进 api_key_hash,归属留空)。空归属统一
+// 归到这一个常量桶,不再按其余维度细分。
+const unknownAPIKeyGroupKey = "unknown-client-api-key"
+
 func apiKeyGroupKey(apiKeyHash, sourceHash, authIndex, source, provider string) string {
 	if strings.TrimSpace(apiKeyHash) != "" {
 		return strings.ToLower(strings.TrimSpace(apiKeyHash))
 	}
-	parts := []string{"unknown-client-api-key"}
-	for _, value := range []string{sourceHash, authIndex, source, provider} {
-		trimmed := strings.TrimSpace(value)
-		if trimmed == "" {
-			trimmed = "-"
-		}
-		parts = append(parts, trimmed)
-	}
-	return strings.Join(parts, ":")
+	return unknownAPIKeyGroupKey
 }
 
 func fillAccountStatSnapshots(row *AccountStatRow, accountSnapshot, authLabelSnapshot, authProviderSnapshot string) {

@@ -478,8 +478,17 @@ func eventsFromLegacyUsage(usageRecord map[string]any, format string) (ImportPar
 		},
 	}
 	now := time.Now().UnixMilli()
-	for _, endpoint := range sortedKeys(apisRaw) {
-		apiRaw := apisRaw[endpoint]
+	// The core /usage/export `apis` map is keyed by the inbound bearer (the
+	// literal API key string used to authenticate the request), NOT by an HTTP
+	// endpoint -- see core/internal/usage/logger_plugin.go:258
+	// (`statsKey := record.APIKey`). It only *looks* endpoint-shaped for
+	// requests whose key happens to be an HTTP-method-like string; in
+	// production the real value is e.g. "quotio-local-<UUID>". Keep the
+	// variable named for what it actually is so it is hashed into
+	// APIKeyHash below instead of being mistaken for -- and persisted as --
+	// an HTTP endpoint.
+	for _, apiKeyLabel := range sortedKeys(apisRaw) {
+		apiRaw := apisRaw[apiKeyLabel]
 		apiEntry, ok := apiRaw.(map[string]any)
 		if !ok {
 			result.Failed++
@@ -491,7 +500,12 @@ func eventsFromLegacyUsage(usageRecord map[string]any, format string) (ImportPar
 			continue
 		}
 
-		method, path := parseEndpoint(endpoint)
+		// parseEndpoint is kept only as a defensive no-op for the case where
+		// apiKeyLabel happens to look like "METHOD /path". In production
+		// apiKeyLabel is the inbound bearer and this never matches, so
+		// method/path stay empty; Endpoint is no longer derived from the
+		// label either way (see eventFromLegacyDetail).
+		method, path := parseEndpoint(apiKeyLabel)
 		for _, model := range sortedKeys(modelsRaw) {
 			modelRaw := modelsRaw[model]
 			modelEntry, ok := modelRaw.(map[string]any)
@@ -510,7 +524,7 @@ func eventsFromLegacyUsage(usageRecord map[string]any, format string) (ImportPar
 					result.Failed++
 					continue
 				}
-				event, err := eventFromLegacyDetail(endpoint, method, path, model, detail, now)
+				event, err := eventFromLegacyDetail(apiKeyLabel, method, path, model, detail, now)
 				if err != nil {
 					result.Failed++
 					continue
@@ -526,8 +540,14 @@ func eventsFromLegacyUsage(usageRecord map[string]any, format string) (ImportPar
 	return result, nil
 }
 
+// eventFromLegacyDetail builds an Event from one detail entry under a legacy
+// /usage/export apis-map key. apiKeyLabel is that key -- in production it is
+// the inbound bearer (the literal API key string), NOT an HTTP endpoint; see
+// eventsFromLegacyUsage for why. method/path are derived defensively from
+// apiKeyLabel only for the rare case it does look endpoint-shaped and are
+// otherwise empty.
 func eventFromLegacyDetail(
-	endpoint string,
+	apiKeyLabel string,
 	method string,
 	path string,
 	model string,
@@ -552,10 +572,16 @@ func eventFromLegacyDetail(
 		failSummary = FailSummaryFromBody(failBody)
 	}
 
+	// sourceRaw only falls back to api_key/apiKey/key from the detail itself;
+	// core's /usage/export details never actually carry those fields (the real
+	// key lives one level up, as apiKeyLabel -- the apis-map key), so this
+	// fallback is effectively a no-op today and kept only for forward
+	// compatibility with a future core export shape.
 	sourceRaw := readString(detail, "source", "api_key", "apiKey", "key", "account", "email")
-	apiKey := readString(detail, "api_key", "apiKey", "key")
 	authIndex := readString(detail, "auth_index", "authIndex", "AuthIndex")
-	rawJSON := legacyRawJSON(endpoint, model, detail)
+	// legacyRawJSON must not embed apiKeyLabel: it is the raw API key and must
+	// never be persisted in plaintext outside of APIKeyHash.
+	rawJSON := legacyRawJSON(model, detail)
 	// requestID prefers the real per-request correlation id (present once core
 	// exposes request_id on /usage/export details). When it is absent (older
 	// core versions, or synthetic/imported records), fall back to a content
@@ -569,20 +595,37 @@ func eventFromLegacyDetail(
 	requestID := readString(detail, "request_id", "requestId", "id")
 
 	event := Event{
-		RequestID:             requestID,
-		TimestampMS:           timestampMS,
-		Timestamp:             normalizedTimestamp,
-		Provider:              readString(detail, "provider", "type", "auth_type", "authType"),
-		ExecutorType:          readString(detail, "executor_type", "executorType"),
-		Model:                 model,
-		Endpoint:              endpoint,
-		Method:                method,
-		Path:                  path,
-		AuthType:              readString(detail, "auth_type", "authType"),
-		AuthIndex:             authIndex,
-		Source:                maskSource(sourceRaw),
-		SourceHash:            hashString(sourceRaw),
-		APIKeyHash:            hashString(apiKey),
+		RequestID:    requestID,
+		TimestampMS:  timestampMS,
+		Timestamp:    normalizedTimestamp,
+		Provider:     readString(detail, "provider", "type", "auth_type", "authType"),
+		ExecutorType: readString(detail, "executor_type", "executorType"),
+		Model:        model,
+		// Endpoint is set to apiKeyLabel here ONLY so buildEventHash's
+		// empty-request_id content-digest branch stays byte-for-byte identical
+		// to before this fix (that branch intentionally freezes historical
+		// hashes -- see buildEventHash's doc comment -- so a re-import of an
+		// already-ingested legacy export still dedups via `insert or ignore`
+		// instead of inserting a duplicate row). It is overwritten to "-"
+		// below, AFTER EventHash is computed, so the persisted/displayed
+		// Endpoint never leaks the raw API key.
+		Endpoint:   apiKeyLabel,
+		Method:     method,
+		Path:       path,
+		AuthType:   readString(detail, "auth_type", "authType"),
+		AuthIndex:  authIndex,
+		Source:     maskSource(sourceRaw),
+		SourceHash: hashString(sourceRaw),
+		// APIKeyHash must be hashString(apiKeyLabel), NOT hashString of a
+		// detail-level api_key/apiKey/key field: core's /usage/export details
+		// never carry those fields, so the old `apiKey := readString(detail,
+		// "api_key", "apiKey", "key")` was always empty and hashString("")=""
+		// left every backfilled event with no client-key attribution. The real
+		// key is apiKeyLabel (the apis-map key), and hashString is the exact
+		// same primitive the realtime path uses in NormalizeRaw
+		// (event.go APIKeyHash: hashString(apiKey)), so hashes converge across
+		// both ingest paths for the same key.
+		APIKeyHash:            hashString(apiKeyLabel),
 		AccountSnapshot:       readString(detail, "account_snapshot", "accountSnapshot"),
 		AuthLabelSnapshot:     readString(detail, "auth_label_snapshot", "authLabelSnapshot"),
 		AuthFileSnapshot:      readString(detail, "auth_file_snapshot", "authFileSnapshot"),
@@ -625,15 +668,23 @@ func eventFromLegacyDetail(
 	// identical to the collector for the empty-id case. request_id-present
 	// events are untouched, so their historical hashes are unchanged.
 	event.EventHash = buildEventHash(event)
+	// Persisted/displayed Endpoint must never be the raw API key. core's
+	// /usage/export has no real HTTP endpoint for this path, so "-" (the same
+	// sentinel used elsewhere for "no endpoint") is the correct value. This
+	// happens AFTER buildEventHash so the hash above is unaffected.
+	event.Endpoint = "-"
 	return event, nil
 }
 
-func legacyRawJSON(endpoint string, model string, detail map[string]any) string {
+// legacyRawJSON must never embed the apis-map key: in production that key is
+// the raw inbound bearer (the client's literal API key). It is intentionally
+// not a parameter here -- see eventFromLegacyDetail, which hashes it into
+// APIKeyHash instead of passing it through to this function.
+func legacyRawJSON(model string, detail map[string]any) string {
 	record := map[string]any{
-		"format":   "legacy_usage_export",
-		"endpoint": endpoint,
-		"model":    model,
-		"detail":   redactValue(detail),
+		"format": "legacy_usage_export",
+		"model":  model,
+		"detail": redactValue(detail),
 	}
 	raw, _ := json.Marshal(record)
 	return string(raw)

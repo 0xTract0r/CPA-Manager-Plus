@@ -1158,6 +1158,17 @@ export const buildModelRows = (
     );
 };
 
+// 未归属客户端：请求没有真实 api_key_hash（例如直连、未启用 Key 鉴权的调用）时使用。
+// 绝不能用 maskApiKeyHash 把邮箱、来源 id 等非哈希值伪装成 `sk-****` 真实 key。
+export const UNATTRIBUTED_API_KEY_LABEL = '未归属客户端';
+
+// 只有形如十六进制摘要（sha256 等）的值才是后端真正的 api_key_hash，才允许当作 key material
+// 走 maskApiKeyHash 展示。邮箱、source id、分组桶 id 之类的回退值必须在进入这条路径前被拦截，
+// 否则会被 maskApiKeyHash 截断成一个看似真实的 `sk-****` key（幽灵 key 展示 bug）。
+const looksLikeApiKeyHash = (value: string) => /^[0-9a-f]{8,}$/i.test(value);
+
+// maskApiKeyHash 本身保持通用掩码契约：调用方保证传入的是真实 key/hash material 时才调用它。
+// 判断「这是不是一个可信的 key 标识」的职责在 resolveUsageApiKeyLabel 等调用方，不在这里。
 export const maskApiKeyHash = (hash: string | null | undefined) => {
   const value = String(hash ?? '').trim();
   if (!value) return '-';
@@ -1190,7 +1201,13 @@ export const resolveUsageApiKeyLabel = (
   const fallback = sanitizeApiKeyDisplayText(String(fallbackLabel ?? ''));
 
   if (!hash) {
-    return fallback || '-';
+    return fallback || UNATTRIBUTED_API_KEY_LABEL;
+  }
+
+  // hash 不是真实哈希（例如上游把邮箱/来源 id 当兜底值传进来），直接归为未归属，
+  // 不再尝试把它当 key 材料掩码展示。
+  if (!looksLikeApiKeyHash(hash)) {
+    return fallback && !isSameApiKeyIdentity(fallback, hash) ? fallback : UNATTRIBUTED_API_KEY_LABEL;
   }
 
   const display = apiKeyDisplayMap?.get(hash);
