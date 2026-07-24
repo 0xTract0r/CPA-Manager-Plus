@@ -74,6 +74,9 @@ export const normalizeLogsResponse = (value: unknown): LogsResponse => {
   };
 };
 
+// 溯源取数端点路径集中在此，下载(blob)与页内查看(text)复用同一构造，避免端点字面量重复。
+const requestLogByIdPath = (id: string) => `/request-log-by-id/${encodeURIComponent(id)}`;
+
 export const logsApi = {
   async fetchLogs(params: LogsQuery = {}): Promise<LogsResponse> {
     const data = await apiClient.get('/logs', { params, timeout: LOGS_TIMEOUT_MS });
@@ -92,8 +95,21 @@ export const logsApi = {
     }),
 
   downloadRequestLogById: (id: string) =>
-    apiClient.getRaw(`/request-log-by-id/${encodeURIComponent(id)}`, {
+    apiClient.getRaw(requestLogByIdPath(id), {
       responseType: 'blob',
       timeout: LOGS_TIMEOUT_MS
     }),
+
+  // 页内查看器取数：命中同一 /request-log-by-id/{id} 端点，但以文本形式返回，
+  // 供 RequestLogViewer 直接在网页端渲染 + 检索原文，避免再实现一条取数路径。
+  async getRequestLogTextById(id: string): Promise<string> {
+    const response = await apiClient.getRaw(requestLogByIdPath(id), {
+      responseType: 'text',
+      timeout: LOGS_TIMEOUT_MS
+    });
+    const { data } = response;
+    if (typeof data === 'string') return data;
+    if (data instanceof Blob) return data.text();
+    return data === null || data === undefined ? '' : String(data);
+  },
 };

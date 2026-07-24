@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
+import { Input } from '@/components/ui/Input';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { SelectionCheckbox } from '@/components/ui/SelectionCheckbox';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
@@ -7,6 +8,7 @@ import {
   IconBot,
   IconDownload,
   IconInfo,
+  IconKey,
   IconModelCluster,
   IconRefreshCw,
   IconSettings,
@@ -40,10 +42,16 @@ import type { AuthFileStatusBarData } from '@/features/authFiles/hooks/useAuthFi
 import type { AntigravitySubscriptionState } from '@/features/authFiles/hooks/useAntigravitySubscriptions';
 import type { AuthFileCodexStatusBadge } from '@/features/authFiles/model/authFilesPageModel';
 import type { QuotaCooldownInfo } from '@/services/api/usageService';
+import {
+  resolveAuthFileOAuthProvider,
+  supportsAuthFileReauthCallback,
+  type AuthFileReauthState,
+} from '@/features/authFiles/hooks/useAuthFilesReauth';
 import { AuthFileQuotaSection } from '@/features/authFiles/components/AuthFileQuotaSection';
 import { AuthFilesReauthHistoryPanel } from '@/features/authFiles/components/AuthFilesReauthHistoryPanel';
 import { AuthFilesStatusHistoryPanel } from '@/features/authFiles/components/AuthFilesStatusHistoryPanel';
 import styles from '@/features/authFiles/AuthFilesPage.module.scss';
+import reauthStyles from '@/features/authFiles/components/AuthFileReauthInline.module.scss';
 
 const HEALTHY_STATUS_MESSAGES = new Set(['ok', 'healthy', 'ready', 'success', 'available']);
 
@@ -84,6 +92,16 @@ export type AuthFileCardProps = {
   quotaCooldown?: QuotaCooldownInfo;
   onShowModels: (file: AuthFileItem) => void;
   onReauth?: (file: AuthFileItem) => void;
+  /**
+   * 迁移自旧版：非 codex OAuth 账号的通用「重新认证」inline 流程状态与回调。
+   * codex 仍走既有 CodexReauthDialog（onReauth），这些 props 只服务通用流程。
+   */
+  reauthState?: AuthFileReauthState;
+  onReauthenticate?: (file: AuthFileItem) => void;
+  onCopyReauthLink?: (fileName: string) => void;
+  onCancelReauth?: (fileName: string) => void;
+  onChangeReauthCallbackUrl?: (fileName: string, callbackUrl: string) => void;
+  onSubmitReauthCallback?: (fileName: string) => void;
   /** 迁移自旧版：逐账号手动触发一次状态检查刷新（core /auth-files/refresh-status）。 */
   onRefreshStatus?: (file: AuthFileItem) => void;
   /** 迁移自旧版：逐账号发送一次测试消息，验证账号是否能正常出请求。 */
@@ -133,6 +151,12 @@ export function AuthFileCard(props: AuthFileCardProps) {
     quotaCooldown,
     onShowModels,
     onReauth,
+    reauthState,
+    onReauthenticate,
+    onCopyReauthLink,
+    onCancelReauth,
+    onChangeReauthCallbackUrl,
+    onSubmitReauthCallback,
     onRefreshStatus,
     onTestMessage,
     onDownload,
@@ -207,6 +231,25 @@ export function AuthFileCard(props: AuthFileCardProps) {
   const canTestMessage = !isRuntimeOnly && !file.disabled && Boolean(onTestMessage);
   const isStatusRefreshing = statusRefreshing[file.name] === true;
   const isMessageTesting = messageTesting[file.name] === true;
+
+  // 通用 OAuth 重认证：仅对非 runtime 的 OAuth 账号开放，且显式排除 codex —— codex
+  // 继续走既有的 CodexReauthDialog（onReauth + codexNeedsReauth 按钮），避免同一账号
+  // 出现两个重认证入口而互相干扰。回调补全 UI 只对支持回调的 provider 展示。
+  const oauthReauthProvider = resolveAuthFileOAuthProvider(file);
+  const canReauthenticate =
+    Boolean(oauthReauthProvider) &&
+    oauthReauthProvider !== 'codex' &&
+    !isRuntimeOnly &&
+    Boolean(onReauthenticate);
+  const reauthInProgress =
+    reauthState?.status === 'starting' || reauthState?.status === 'polling';
+  const supportsReauthCallback =
+    reauthState?.status === 'polling' && supportsAuthFileReauthCallback(reauthState.provider);
+  const reauthButtonTitle = reauthInProgress
+    ? t('auth_files.reauth_waiting', {
+        defaultValue: 'Waiting for re-authentication to complete',
+      })
+    : t('auth_files.reauth_button', { defaultValue: 'Re-authenticate' });
   const refreshStatusButtonTitle = t('auth_files.status_refresh_button', {
     defaultValue: 'Refresh status',
   });
@@ -418,6 +461,20 @@ export function AuthFileCard(props: AuthFileCardProps) {
                     })}
                   </span>
                 )}
+                {canReauthenticate && reauthInProgress && (
+                  <span
+                    className={reauthStyles.reauthPendingBadge}
+                    title={t('auth_files.reauth_waiting', {
+                      defaultValue: 'Waiting for re-authentication to complete',
+                    })}
+                    data-testid="auth-file-reauth-pending-badge"
+                  >
+                    <LoadingSpinner size={10} />
+                    {t('auth_files.reauth_pending_badge', {
+                      defaultValue: 'Re-authenticating',
+                    })}
+                  </span>
+                )}
               </div>
               <span className={styles.fileName} title={file.name}>
                 {file.name}
@@ -465,6 +522,89 @@ export function AuthFileCard(props: AuthFileCardProps) {
               </div>
             )}
           </div>
+
+          {canReauthenticate &&
+            (reauthState?.status === 'polling' ||
+              (reauthState?.status === 'error' && reauthState.error) ||
+              supportsReauthCallback) && (
+              <div className={reauthStyles.reauthInline} data-testid="auth-file-reauth-inline">
+                {reauthState?.status === 'polling' && (
+                  <div className={reauthStyles.reauthActionRow}>
+                    {reauthState.url && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className={reauthStyles.reauthActionButton}
+                        onClick={() => onCopyReauthLink?.(file.name)}
+                        disabled={disableControls}
+                        data-testid="auth-file-reauth-copy-link"
+                      >
+                        {t('auth_files.reauth_copy_link', { defaultValue: 'Copy link' })}
+                      </Button>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className={reauthStyles.reauthActionButton}
+                      onClick={() => onCancelReauth?.(file.name)}
+                      disabled={disableControls}
+                      data-testid="auth-file-reauth-cancel"
+                    >
+                      {t('auth_files.reauth_cancel', { defaultValue: 'Cancel' })}
+                    </Button>
+                  </div>
+                )}
+
+                {reauthState?.status === 'error' && reauthState.error && (
+                  <div className={reauthStyles.reauthPersistentError} role="alert">
+                    <span className={reauthStyles.reauthPersistentErrorTitle}>
+                      {t('auth_files.reauth_failed_badge', {
+                        defaultValue: 'Re-authentication failed',
+                      })}
+                    </span>
+                    <span className={reauthStyles.reauthPersistentErrorMessage}>
+                      {reauthState.error}
+                    </span>
+                  </div>
+                )}
+
+                {supportsReauthCallback && (
+                  <div className={reauthStyles.reauthCallbackSection}>
+                    <Input
+                      label={t('auth_login.oauth_callback_label')}
+                      hint={t('auth_login.oauth_callback_hint')}
+                      value={reauthState.callbackUrl || ''}
+                      onChange={(e) => onChangeReauthCallbackUrl?.(file.name, e.target.value)}
+                      placeholder={t('auth_login.oauth_callback_placeholder')}
+                      disabled={disableControls || Boolean(reauthState.callbackSubmitting)}
+                      error={
+                        reauthState.callbackStatus === 'error'
+                          ? reauthState.callbackError
+                          : undefined
+                      }
+                    />
+                    <div className={reauthStyles.reauthCallbackActions}>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        className={reauthStyles.reauthActionButton}
+                        onClick={() => onSubmitReauthCallback?.(file.name)}
+                        loading={Boolean(reauthState.callbackSubmitting)}
+                        disabled={disableControls}
+                        data-testid="auth-file-reauth-submit-callback"
+                      >
+                        {t('auth_login.oauth_callback_button')}
+                      </Button>
+                      {reauthState.callbackStatus === 'success' && (
+                        <span className={reauthStyles.reauthCallbackSuccess}>
+                          {t('auth_login.oauth_callback_status_success')}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
           {rawStatusMessage && hasStatusWarning && (
             <div className={styles.healthStatusMessage} title={rawStatusMessage}>
@@ -606,6 +746,20 @@ export function AuthFileCard(props: AuthFileCardProps) {
                           <IconRefreshCw className={styles.actionIcon} size={16} />
                         </Button>
                       ) : null}
+                      {canReauthenticate && (
+                        <Button
+                          variant={hasStatusWarning ? 'primary' : 'secondary'}
+                          size="sm"
+                          onClick={() => onReauthenticate?.(file)}
+                          className={styles.iconButton}
+                          title={reauthButtonTitle}
+                          aria-label={reauthButtonTitle}
+                          data-testid="auth-file-action-reauth"
+                          disabled={disableControls || reauthInProgress}
+                        >
+                          <IconKey className={styles.actionIcon} size={16} />
+                        </Button>
+                      )}
                       <Button
                         variant="secondary"
                         size="sm"

@@ -88,6 +88,7 @@ import {
 import { useAuthFilesData } from '@/features/authFiles/hooks/useAuthFilesData';
 import { useAuthFilesModels } from '@/features/authFiles/hooks/useAuthFilesModels';
 import { useAuthFilesOauth } from '@/features/authFiles/hooks/useAuthFilesOauth';
+import { useAuthFilesReauth } from '@/features/authFiles/hooks/useAuthFilesReauth';
 import { useAuthFilesPrefixProxyEditor } from '@/features/authFiles/hooks/useAuthFilesPrefixProxyEditor';
 import { useAuthFilesAccountSettings } from '@/features/authFiles/hooks/useAuthFilesAccountSettings';
 import { useAuthFilesTestMessage } from '@/features/authFiles/hooks/useAuthFilesTestMessage';
@@ -463,6 +464,21 @@ export function AuthFilesPage() {
     setAuditReloadKeys((prev) => ({ ...prev, [fileName]: (prev[fileName] ?? 0) + 1 }));
   }, []);
   bumpAuditReloadKeyRef.current = bumpAuditReloadKey;
+
+  // 通用 OAuth 重认证（非 codex 的 OAuth 账号）：inline 授权链接 / 取消 / 回调补全
+  // + 轮询。codex 仍走上面的 CodexReauthDialog。成功/失败后 bump 该文件的审计面板
+  // 重载键，让 reauth 历史面板下次展开时重新拉取。
+  const {
+    reauthStates,
+    startReauth,
+    copyReauthLink,
+    cancelReauth,
+    updateReauthCallbackUrl,
+    submitReauthCallback,
+  } = useAuthFilesReauth({
+    loadFiles,
+    onReauthHistoryChanged: bumpAuditReloadKey,
+  });
 
   const disableControls = connectionStatus !== 'connected';
   const normalizedFilter = normalizeProviderKey(String(filter));
@@ -2003,6 +2019,12 @@ export function AuthFilesPage() {
                       onReauth={(targetFile) =>
                         setCodexReauthTarget(createCodexReauthTargetFromAuthFile(targetFile))
                       }
+                      reauthState={reauthStates[file.name]}
+                      onReauthenticate={startReauth}
+                      onCopyReauthLink={copyReauthLink}
+                      onCancelReauth={cancelReauth}
+                      onChangeReauthCallbackUrl={updateReauthCallbackUrl}
+                      onSubmitReauthCallback={submitReauthCallback}
                       onRefreshStatus={handleStatusRefresh}
                       onTestMessage={handleTestMessage}
                       onDownload={handleDownload}

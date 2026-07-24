@@ -1,0 +1,101 @@
+// 通用 OAuth 重认证的卡内 inline UI 样式。
+// 单独成模块，避免改动 held 状态的 AuthFilesPage.module.scss；类名与旧版
+// apps/web 对齐（复制授权链接 / 取消 / 回调 URL / 持久错误），并约束宽度不撑破卡片。
+
+.reauthInline {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.reauthPendingBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--text-primary);
+  border: 1px solid color-mix(in srgb, var(--border-color) 70%, transparent);
+  background: color-mix(in srgb, var(--bg-secondary) 60%, transparent);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reauthActionRow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 132px), 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.reauthActionButton:global(.btn.btn-sm) {
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.reauthCallbackSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 65%, transparent);
+  background: color-mix(in srgb, var(--bg-secondary) 60%, transparent);
+  min-width: 0;
+
+  :global(.form-group) {
+    margin-bottom: 0;
+  }
+
+  :global(.hint) {
+    font-size: 12px;
+  }
+}
+
+.reauthCallbackActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.reauthCallbackSuccess {
+  font-size: 12px;
+  color: var(--success-color, #22c55e);
+}
+
+.reauthPersistentError {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--error-color, #ef4444) 45%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--error-color, #ef4444) 10%, transparent);
+  color: var(--text-primary);
+  min-width: 0;
+}
+
+.reauthPersistentErrorTitle {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--error-color, #ef4444);
+}
+
+.reauthPersistentErrorMessage {
+  font-family: var(--font-mono, 'SFMono-Regular', Consolas, monospace);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}

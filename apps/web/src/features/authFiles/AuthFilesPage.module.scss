@@ -2392,3 +2392,115 @@
   color: var(--text-tertiary);
   font-family: inherit;
 }
+
+// 测试消息弹窗：外层容器 + 账号文件名 + 结果框（成功/错误态）+ 预览 + meta。
+// 迁移自旧版 fork src/pages/AuthFilesPage.module.scss，视觉与旧版保持一致，
+// 复用 cpamp 既有 CSS 变量与 $spacing/$radius token。
+.testMessageModal {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-md;
+}
+
+.testMessageFileName {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-md;
+  padding: $spacing-sm $spacing-md;
+  border: 1px solid var(--border-color);
+  border-radius: $radius-md;
+  background-color: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 13px;
+
+  code {
+    min-width: 0;
+    max-width: 70%;
+    overflow: hidden;
+    color: var(--text-primary);
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.testMessageResult {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+  padding: $spacing-md;
+  border: 1px solid var(--border-color);
+  border-radius: $radius-md;
+  background-color: var(--bg-secondary);
+}
+
+.testMessageResultSuccess {
+  border-color: rgba($success-color, 0.45);
+}
+
+.testMessageResultError {
+  border-color: rgba($error-color, 0.45);
+}
+
+.testMessageResultHeader {
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.testMessagePreview {
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.testMessageMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $spacing-xs;
+
+  span {
+    padding: 2px 8px;
+    border-radius: 999px;
+    background-color: var(--bg-tertiary);
+    color: var(--text-secondary);
+    font-size: 12px;
+  }
+}
+
+// 测试消息结果里的「原始详情」区块：切换按钮 + 复制按钮 + 原始 JSON。
+// 两个按钮统一走设计系统的 Button 组件（.btn），这里只负责布局与折叠内容样式。
+.testMessageRaw {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+  margin-top: $spacing-sm;
+}
+
+.testMessageRawActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: $spacing-sm;
+}
+
+.testMessageRawContent {
+  margin: 0;
+  max-height: 260px;
+  overflow: auto;
+  padding: $spacing-sm $spacing-md;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--app-radius-md);
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+
+  code {
+    font-family: inherit;
+  }
+}

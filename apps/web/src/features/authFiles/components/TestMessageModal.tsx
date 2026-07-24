@@ -238,18 +238,26 @@ export function TestMessageModal(props: TestMessageModalProps) {
             )}
             {testMessageResult.raw && (
               <div className={styles.testMessageRaw}>
-                <button
-                  type="button"
-                  className={styles.testMessageRawToggle}
-                  onClick={() => setTestMessageRawExpanded((value) => !value)}
-                >
-                  {testMessageRawExpanded
-                    ? t('auth_files.test_message_raw_hide', { defaultValue: 'Hide raw details' })
-                    : t('auth_files.test_message_raw_show', { defaultValue: 'Show raw details' })}
-                </button>
-                <Button variant="secondary" size="sm" onClick={() => void onCopyText(testMessageResult.raw)}>
-                  {t('common.copy', { defaultValue: 'Copy' })}
-                </Button>
+                <div className={styles.testMessageRawActions}>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setTestMessageRawExpanded((value) => !value)}
+                  >
+                    {testMessageRawExpanded
+                      ? t('auth_files.test_message_raw_hide', { defaultValue: 'Hide raw details' })
+                      : t('auth_files.test_message_raw_show', { defaultValue: 'Show raw details' })}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void onCopyText(testMessageResult.raw)}
+                  >
+                    {t('common.copy', { defaultValue: 'Copy' })}
+                  </Button>
+                </div>
                 {testMessageRawExpanded && (
                   <pre className={styles.testMessageRawContent}>
                     <code>{testMessageResult.raw}</code>

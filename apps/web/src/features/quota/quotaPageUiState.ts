@@ -4,6 +4,7 @@ export type QuotaSectionType =
   | 'antigravity'
   | 'claude'
   | 'codex'
+  | 'gemini-cli'
   | 'kimi'
   | 'xai';
 export type QuotaSectionViewMode = 'paged' | 'all';
@@ -29,6 +30,7 @@ const QUOTA_SECTION_TYPE_SET = new Set<QuotaSectionType>([
   'antigravity',
   'claude',
   'codex',
+  'gemini-cli',
   'kimi',
   'xai',
 ]);

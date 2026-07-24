@@ -12,7 +12,6 @@ import {
 import { createPortal } from 'react-dom';
 import type { TFunction } from 'i18next';
 import { Button } from '@/components/ui/Button';
-import { Modal } from '@/components/ui/Modal';
 import {
   IconChevronDown,
   IconCopy,
@@ -27,6 +26,7 @@ import {
   RecentPattern,
 } from '@/features/monitoring/components/MonitoringShared';
 import { MonitoringPanel } from '@/features/monitoring/components/MonitoringPanel';
+import { RequestLogViewer } from '@/features/monitoring/components/RequestLogViewer';
 import { formatPercent } from '@/features/monitoring/components/accountOverviewPresentation';
 import { computeCacheHitRate } from '@/features/monitoring/model/monitoringCenterPageModel';
 import { buildRealtimeSourceDisplay } from '@/features/monitoring/realtimeSourceDisplay';
@@ -36,21 +36,11 @@ import {
   isValidLowCacheHitRateThreshold,
   REALTIME_LOW_CACHE_HIT_RATE_THRESHOLD_PRESETS,
 } from '@/features/monitoring/monitoringCenterUiState';
-import { logsApi } from '@/services/api/logs';
 import { useNotificationStore } from '@/stores';
 import { copyToClipboard } from '@/utils/clipboard';
-import { downloadBlob } from '@/utils/download';
 import { maskSensitiveText, truncateText } from '@/utils/format';
 import { formatCompactNumber, formatUsd } from '@/utils/usage';
 import styles from '../MonitoringCenterPage.module.scss';
-
-const getDownloadErrorMessage = (err: unknown): string => {
-  if (err instanceof Error) return err.message;
-  if (typeof err === 'string') return err;
-  if (typeof err !== 'object' || err === null || !('message' in err)) return '';
-  const message = (err as { message?: unknown }).message;
-  return typeof message === 'string' ? message : '';
-};
 
 type RealtimeLogRow = MonitoringEventRow & {
   requestCount: number;
@@ -985,49 +975,14 @@ export function RealtimeEventsPanel({
 }: RealtimeEventsPanelProps) {
   const tooltipIdPrefix = useId();
   const showNotification = useNotificationStore((state) => state.showNotification);
-  // 「查看原始请求」：以行的 core request_id 调 GET /request-log-by-id/{id} 取回原始 .log（req/resp body）。
-  // 复用 LogsPage 的下载态模式——成功下载整份 .log（不在页面内回显明文 body，从源头规避密钥/PII 泄漏），
-  // 404 / 文件缺失 / 过保留期时给出明确错误提示，绝不静默。
+  // 「查看原始请求」：以行的 core request_id 打开页内查看器 RequestLogViewer，
+  // 由查看器命中 GET /request-log-by-id/{id} 取回原始 .log 文本并在网页端直接渲染 + 检索，
+  // 顶部提供关键词高亮与上一处/下一处导航，底部保留「下载」。三态：无 request_id→不显示按钮
+  // (下方 fallback 显示「不可溯源」)；加载中→占位；404/缺失/过保留期→查看器内报错且不登出。
   const [requestLogId, setRequestLogId] = useState<string | null>(null);
-  const [requestLogDownloading, setRequestLogDownloading] = useState(false);
-  const closeRequestLogModal = useCallback(() => {
-    setRequestLogDownloading((downloading) => {
-      if (!downloading) {
-        setRequestLogId(null);
-      }
-      return downloading;
-    });
+  const closeRequestLogViewer = useCallback(() => {
+    setRequestLogId(null);
   }, []);
-  const downloadRequestLog = useCallback(
-    async (id: string) => {
-      setRequestLogDownloading(true);
-      try {
-        const response = await logsApi.downloadRequestLogById(id);
-        downloadBlob({
-          filename: `request-${id}.log`,
-          blob: new Blob([response.data], { type: 'text/plain' }),
-        });
-        showNotification(
-          t('monitoring.request_log_download_success', {
-            defaultValue: t('logs.request_log_download_success'),
-          }),
-          'success'
-        );
-        setRequestLogId(null);
-      } catch (err: unknown) {
-        const message = getDownloadErrorMessage(err);
-        showNotification(
-          `${t('monitoring.request_log_download_failed', {
-            defaultValue: t('notification.download_failed'),
-          })}${message ? `: ${message}` : ''}`,
-          'error'
-        );
-      } finally {
-        setRequestLogDownloading(false);
-      }
-    },
-    [showNotification, t]
-  );
   const sourceApiKeyLabel = shortLabel(
     t,
     'monitoring.column_source_api_key_short',
@@ -1393,42 +1348,13 @@ export function RealtimeEventsPanel({
           ) : null}
         </div>
       ) : null}
-      <Modal
+      <RequestLogViewer
         open={Boolean(requestLogId)}
-        onClose={closeRequestLogModal}
-        title={t('monitoring.request_log_download_title', {
-          defaultValue: t('logs.request_log_download_title'),
-        })}
-        footer={
-          <>
-            <Button
-              variant="secondary"
-              onClick={closeRequestLogModal}
-              disabled={requestLogDownloading}
-            >
-              {t('common.cancel')}
-            </Button>
-            <Button
-              onClick={() => {
-                if (requestLogId) {
-                  void downloadRequestLog(requestLogId);
-                }
-              }}
-              loading={requestLogDownloading}
-              disabled={!requestLogId}
-            >
-              {t('common.confirm')}
-            </Button>
-          </>
-        }
-      >
-        {requestLogId
-          ? t('monitoring.request_log_download_confirm', {
-              id: requestLogId,
-              defaultValue: t('logs.request_log_download_confirm', { id: requestLogId }),
-            })
-          : null}
-      </Modal>
+        requestId={requestLogId}
+        t={t}
+        onClose={closeRequestLogViewer}
+        onNotify={showNotification}
+      />
     </>
   );
 
