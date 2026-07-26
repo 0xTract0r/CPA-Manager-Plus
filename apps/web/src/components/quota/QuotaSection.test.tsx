@@ -2,6 +2,8 @@ import { act, useEffect } from 'react';
 import { create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthFileItem } from '@/types';
+import type { CoreQuotaSnapshotEntry } from '@/services/api/quotaSnapshots';
+import { buildCoreQuotaSnapshotLookup } from '@/utils/quota/coreQuotaSnapshots';
 import type { QuotaConfig } from './quotaConfigs';
 import { QuotaSection } from './QuotaSection';
 import { useQuotaLoader } from './useQuotaLoader';
@@ -531,5 +533,96 @@ describe('QuotaSection account display mode', () => {
     act(() => {
       renderer.unmount();
     });
+  });
+});
+
+describe('QuotaSection core-snapshot observed state on mount', () => {
+  beforeEach(() => {
+    mocks.fetchQuota.mockReset();
+    mocks.resetQuota.mockReset();
+    mocks.showConfirmation.mockReset();
+    mocks.showNotification.mockReset();
+    // active store 为空：display 完全由 core 快照 observed 态驱动，模拟刚进页面。
+    mocks.quotaStoreState.codexQuota = {};
+    (mocks.quotaStoreState.setCodexQuota as ReturnType<typeof vi.fn>).mockClear();
+  });
+
+  const snapshotConfig: QuotaConfig<TestQuotaState, TestQuotaData> = {
+    ...testConfig,
+    buildObservedStateFromCoreSnapshot: (_file, entry) => {
+      if (entry?.status === 'reauth_required') {
+        return { status: 'error', windows: [], error: entry.error, errorStatus: 401 };
+      }
+      if (entry?.status === 'ok') {
+        return { status: 'success', windows: [] };
+      }
+      return undefined;
+    },
+  };
+
+  const snapshotFile: AuthFileItem = {
+    name: 'snapshot@example.com.json',
+    type: 'codex',
+    auth_id: 'auth-snapshot',
+  };
+
+  const renderWithCoreSnapshot = (
+    entry: CoreQuotaSnapshotEntry,
+    onReauthAccount?: (file: AuthFileItem) => void
+  ) => {
+    const lookup = buildCoreQuotaSnapshotLookup([entry]);
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        <QuotaSection
+          config={snapshotConfig}
+          files={[snapshotFile]}
+          loading={false}
+          disabled={false}
+          accountDisplayMode="masked"
+          coreQuotaSnapshotLookup={lookup}
+          onReauthAccount={onReauthAccount}
+        />
+      );
+    });
+    return renderer;
+  };
+
+  it('renders quota from an ok core snapshot without any upstream fetch', () => {
+    const renderer = renderWithCoreSnapshot({
+      auth_id: 'auth-snapshot',
+      name: snapshotFile.name,
+      provider: 'codex',
+      status: 'ok',
+    });
+
+    const quotaItems = renderer.root
+      .findAllByType('div')
+      .filter((node) => getText(node) === 'quota loaded');
+    expect(quotaItems.length).toBeGreaterThan(0);
+    // 硬红线：进页面展示额度全程未打真实上游。
+    expect(mocks.fetchQuota).not.toHaveBeenCalled();
+  });
+
+  it('surfaces the reauth entry point from a reauth_required core snapshot without any upstream fetch', () => {
+    const onReauth = vi.fn();
+    const renderer = renderWithCoreSnapshot(
+      {
+        auth_id: 'auth-snapshot',
+        name: snapshotFile.name,
+        provider: 'codex',
+        status: 'reauth_required',
+        error: 'credential unauthorized',
+      },
+      onReauth
+    );
+
+    const reauthButton = findButtonByText(renderer, 'codex_reauth.button');
+    act(() => {
+      reauthButton.props.onClick();
+    });
+    expect(onReauth).toHaveBeenCalledTimes(1);
+    // 硬红线：mount 到显示「要求重新认证」全程未打真实上游。
+    expect(mocks.fetchQuota).not.toHaveBeenCalled();
   });
 });

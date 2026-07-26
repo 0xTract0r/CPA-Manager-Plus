@@ -42,6 +42,19 @@ export interface CoreQuotaSnapshotLookup {
   byName: Map<string, CoreQuotaSnapshotEntry>;
 }
 
+export interface BuildObservedFromCoreSnapshotOptions {
+  /**
+   * 是否把 core 快照的 `reauth_required` / `error` 状态透出为 error 展示态。
+   *
+   * 默认 false：保持认证文件页（AuthFilesPage）原行为——非 ok 状态若仍带上次成功
+   * 快照，则继续展示上次额度，不把它渲染成失败。配额管理页（QuotaPage）显式传
+   * true，用于在 mount 阶段「只读 core 持久快照、零真实上游请求」的前提下就展示
+   * 「要求重新认证 / 加载失败」；其中 `reauth_required` 会映射为 errorStatus 401，
+   * 以驱动卡片上的「重新认证」入口。
+   */
+  surfaceReauthAndError?: boolean;
+}
+
 const normalizeKey = (value: unknown): string =>
   typeof value === 'string'
     ? value.trim().toLowerCase()
@@ -162,6 +175,34 @@ export const getHighConfidenceCoreQuotaSnapshotForAuthFile = (
 const isSupportedCoreQuotaSnapshotStatus = (entry: CoreQuotaSnapshotEntry): boolean =>
   entry.status === 'ok' || Boolean(entry.snapshot && Object.keys(entry.snapshot).length > 0);
 
+type CoreQuotaReauthOrError = {
+  kind: 'reauth_required' | 'error';
+  errorStatus: number | undefined;
+  message: string | undefined;
+};
+
+/**
+ * 识别 core 快照条目里「需要处理」的状态：`reauth_required`（账号需重新 OAuth）
+ * 与 `error`（周期刷新失败，含 core 后台探测瞬时超时）。`reauth_required` 返回
+ * errorStatus 401（凭证态优先），让卡片错误分支显示「重新认证」按钮；普通 `error`
+ * 返回 `kind: 'error'` 且不带状态码，由调用方决定是否透出——仅当该 entry 没有可用
+ * last-good usage 时才展示加载失败，否则回落到陈旧额度（见构建器）。其余状态
+ * （ok / refresh_disabled / stale 等）返回 null，交由额度展示路径处理。
+ */
+const readCoreQuotaReauthOrError = (
+  entry: CoreQuotaSnapshotEntry
+): CoreQuotaReauthOrError | null => {
+  const status = normalizeStringValue(entry.status)?.toLowerCase();
+  const message = normalizeStringValue(entry.error) ?? undefined;
+  if (status === 'reauth_required') {
+    return { kind: 'reauth_required', errorStatus: 401, message };
+  }
+  if (status === 'error') {
+    return { kind: 'error', errorStatus: undefined, message };
+  }
+  return null;
+};
+
 const readCodexUsagePayload = (
   entry: CoreQuotaSnapshotEntry | undefined
 ): CodexUsagePayload | null => {
@@ -176,9 +217,32 @@ const readCodexUsagePayload = (
 export const buildObservedCodexQuotaStateFromCoreSnapshot = (
   file: AuthFileItem,
   entry: CoreQuotaSnapshotEntry | undefined,
-  t: TFunction
+  t: TFunction,
+  options: BuildObservedFromCoreSnapshotOptions = {}
 ): CodexQuotaState | undefined => {
-  if (!entry || !isSupportedCoreQuotaSnapshotStatus(entry)) return undefined;
+  if (!entry) return undefined;
+
+  // 仅当调用方显式开启时透出「需处理」状态（配额管理页），据此在 mount 阶段
+  // 「零真实上游」地显示要求重新认证 / 加载失败。reauth_required 始终优先于陈旧
+  // 成功快照（errorStatus 401 驱动重新认证入口）；普通 error（含后台探测瞬时超时）
+  // 仅在该 entry 没有可用 last-good usage 时才透出错误态，否则回落到下方成功/陈旧
+  // 额度构建（同 option-off，保证「进页面就显示额度」）。
+  const reauthOrError = readCoreQuotaReauthOrError(entry);
+  if (options.surfaceReauthAndError && reauthOrError) {
+    const lastGoodUsage =
+      reauthOrError.kind === 'error' ? readCodexUsagePayload(entry) : null;
+    if (reauthOrError.kind === 'reauth_required' || !lastGoodUsage) {
+      return {
+        status: 'error',
+        windows: [],
+        ...(reauthOrError.message ? { error: reauthOrError.message } : {}),
+        errorStatus: reauthOrError.errorStatus,
+        observedAtMs: parseCoreQuotaTimestamp(entry.last_refreshed_at)?.getTime(),
+      };
+    }
+  }
+
+  if (!isSupportedCoreQuotaSnapshotStatus(entry)) return undefined;
   const usage = readCodexUsagePayload(entry);
   if (!usage) return undefined;
 
@@ -277,9 +341,31 @@ const normalizeClaudePlanTypeFromSnapshot = (
 export const buildObservedClaudeQuotaStateFromCoreSnapshot = (
   _file: AuthFileItem,
   entry: CoreQuotaSnapshotEntry | undefined,
-  t: TFunction
+  t: TFunction,
+  options: BuildObservedFromCoreSnapshotOptions = {}
 ): ClaudeQuotaState | undefined => {
-  if (!entry || !isSupportedCoreQuotaSnapshotStatus(entry)) return undefined;
+  if (!entry) return undefined;
+
+  // Claude 无请求头 observed 源，core 快照是唯一兜底：同 codex，仅在调用方显式开启
+  // 时透出「需处理」状态（配额管理页 mount 用），零上游。reauth_required 始终优先
+  // 展示错误态（errorStatus 401 驱动重新认证入口）；普通 error 仅在该 entry 没有可用
+  // last-good usage 时才透出错误态，否则回落到下方成功/陈旧额度构建（保证「进页面
+  // 就显示额度」）。
+  const reauthOrError = readCoreQuotaReauthOrError(entry);
+  if (options.surfaceReauthAndError && reauthOrError) {
+    const lastGoodUsage =
+      reauthOrError.kind === 'error' ? readClaudeUsagePayload(entry) : null;
+    if (reauthOrError.kind === 'reauth_required' || !lastGoodUsage) {
+      return {
+        status: 'error',
+        windows: [],
+        ...(reauthOrError.message ? { error: reauthOrError.message } : {}),
+        errorStatus: reauthOrError.errorStatus,
+      };
+    }
+  }
+
+  if (!isSupportedCoreQuotaSnapshotStatus(entry)) return undefined;
   const usage = readClaudeUsagePayload(entry);
   if (!usage) return undefined;
 

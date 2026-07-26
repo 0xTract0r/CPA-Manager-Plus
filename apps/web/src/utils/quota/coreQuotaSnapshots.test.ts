@@ -136,6 +136,117 @@ describe('buildObservedCodexQuotaStateFromCoreSnapshot', () => {
       buildObservedCodexQuotaStateFromCoreSnapshot(authFile({ name: 'codex.json' }), entry, t)
     ).toBeUndefined();
   });
+
+  it('surfaces reauth_required as an error state with 401 when surfaceReauthAndError is on', () => {
+    const entry: CoreQuotaSnapshotEntry = {
+      name: 'codex.json',
+      provider: 'codex',
+      status: 'reauth_required',
+      error: 'credential unauthorized',
+      // 即便仍带上次成功快照，reauth 状态也应优先展示（不回落到陈旧额度）。
+      snapshot: {
+        usage: { rate_limit: { primary_window: { used_percent: 10, reset_at: 1_800_000_000 } } },
+      },
+    };
+
+    const state = buildObservedCodexQuotaStateFromCoreSnapshot(
+      authFile({ name: 'codex.json' }),
+      entry,
+      t,
+      { surfaceReauthAndError: true }
+    );
+
+    expect(state).toMatchObject({
+      status: 'error',
+      errorStatus: 401,
+      error: 'credential unauthorized',
+    });
+    expect(state?.windows).toHaveLength(0);
+  });
+
+  it('surfaces a generic error (no usable usage) as an error state without a 401 code when surfaceReauthAndError is on', () => {
+    const entry: CoreQuotaSnapshotEntry = {
+      name: 'codex.json',
+      provider: 'codex',
+      status: 'error',
+      error: 'timeout',
+    };
+
+    const state = buildObservedCodexQuotaStateFromCoreSnapshot(
+      authFile({ name: 'codex.json' }),
+      entry,
+      t,
+      { surfaceReauthAndError: true }
+    );
+
+    expect(state?.status).toBe('error');
+    expect(state?.errorStatus).toBeUndefined();
+    expect(state?.error).toBe('timeout');
+    expect(state?.windows).toHaveLength(0);
+  });
+
+  it('falls back to the stale snapshot quota for a generic error when last-good usage is present (surfaceReauthAndError on)', () => {
+    const entry: CoreQuotaSnapshotEntry = {
+      name: 'codex.json',
+      provider: 'codex',
+      status: 'error',
+      error: 'timeout',
+      last_refreshed_at: '2026-01-01T00:00:00Z',
+      // 后台探测瞬时超时（status=error）但仍带上次成功快照：应回落展示陈旧额度，
+      // 而不是把可用的 last-good usage 丢成「加载失败」。
+      snapshot: {
+        usage: { rate_limit: { primary_window: { used_percent: 33, reset_at: 1_800_000_000 } } },
+      },
+    };
+
+    const state = buildObservedCodexQuotaStateFromCoreSnapshot(
+      authFile({ name: 'codex.json' }),
+      entry,
+      t,
+      { surfaceReauthAndError: true }
+    );
+
+    expect(state?.status).toBe('success');
+    expect(state?.errorStatus).toBeUndefined();
+    expect(state?.observedAtMs).toBe(new Date('2026-01-01T00:00:00Z').getTime());
+    expect(state?.windows).toHaveLength(1);
+    expect(state?.windows?.[0]).toMatchObject({ usedPercent: 33 });
+  });
+
+  it('keeps the account-files behavior for reauth_required when the option is off (shows stale quota)', () => {
+    const entry: CoreQuotaSnapshotEntry = {
+      name: 'codex.json',
+      provider: 'codex',
+      status: 'reauth_required',
+      error: 'credential unauthorized',
+      last_refreshed_at: '2026-01-01T00:00:00Z',
+      snapshot: {
+        usage: { rate_limit: { primary_window: { used_percent: 10, reset_at: 1_800_000_000 } } },
+      },
+    };
+
+    const state = buildObservedCodexQuotaStateFromCoreSnapshot(
+      authFile({ name: 'codex.json' }),
+      entry,
+      t
+    );
+
+    expect(state?.status).toBe('success');
+    expect(state?.windows).toHaveLength(1);
+  });
+
+  it('returns undefined for reauth_required with no snapshot when the option is off', () => {
+    const entry: CoreQuotaSnapshotEntry = {
+      name: 'codex.json',
+      provider: 'codex',
+      status: 'reauth_required',
+      error: 'credential unauthorized',
+    };
+
+    expect(
+      buildObservedCodexQuotaStateFromCoreSnapshot(authFile({ name: 'codex.json' }), entry, t)
+    ).toBeUndefined();
+  });
 });
 
 describe('buildObservedClaudeQuotaStateFromCoreSnapshot', () => {
@@ -210,5 +321,99 @@ describe('buildObservedClaudeQuotaStateFromCoreSnapshot', () => {
     expect(
       buildObservedClaudeQuotaStateFromCoreSnapshot(authFile(), undefined, t)
     ).toBeUndefined();
+  });
+
+  it('surfaces reauth_required as an error state with 401 when surfaceReauthAndError is on', () => {
+    const entry: CoreQuotaSnapshotEntry = {
+      name: 'claude.json',
+      provider: 'claude',
+      status: 'reauth_required',
+      error: 'credential unauthorized',
+      snapshot: {
+        usage: { five_hour: { utilization: 55, resets_at: '2026-01-02T00:00:00Z' } },
+      },
+    };
+
+    const state = buildObservedClaudeQuotaStateFromCoreSnapshot(
+      authFile({ name: 'claude.json' }),
+      entry,
+      t,
+      { surfaceReauthAndError: true }
+    );
+
+    expect(state).toMatchObject({
+      status: 'error',
+      errorStatus: 401,
+      error: 'credential unauthorized',
+    });
+    expect(state?.windows).toHaveLength(0);
+  });
+
+  it('surfaces a generic error (no usable usage) as an error state without a 401 code when surfaceReauthAndError is on', () => {
+    const entry: CoreQuotaSnapshotEntry = {
+      name: 'claude.json',
+      provider: 'claude',
+      status: 'error',
+      error: 'timeout',
+    };
+
+    const state = buildObservedClaudeQuotaStateFromCoreSnapshot(
+      authFile({ name: 'claude.json' }),
+      entry,
+      t,
+      { surfaceReauthAndError: true }
+    );
+
+    expect(state?.status).toBe('error');
+    expect(state?.errorStatus).toBeUndefined();
+    expect(state?.error).toBe('timeout');
+    expect(state?.windows).toHaveLength(0);
+  });
+
+  it('falls back to the stale snapshot quota for a generic error when last-good usage is present (surfaceReauthAndError on)', () => {
+    const entry: CoreQuotaSnapshotEntry = {
+      name: 'claude.json',
+      provider: 'claude',
+      status: 'error',
+      error: 'timeout',
+      // 后台刷新失败（status=error）但仍带上次成功快照：应回落展示陈旧额度，
+      // 而不是把可用的 last-good usage 丢成「加载失败」。
+      snapshot: {
+        usage: { five_hour: { utilization: 55, resets_at: '2026-01-02T00:00:00Z' } },
+      },
+    };
+
+    const state = buildObservedClaudeQuotaStateFromCoreSnapshot(
+      authFile({ name: 'claude.json' }),
+      entry,
+      t,
+      { surfaceReauthAndError: true }
+    );
+
+    expect(state?.status).toBe('success');
+    expect(state?.errorStatus).toBeUndefined();
+    expect(state?.windows).toHaveLength(1);
+    expect(state?.windows?.[0]).toMatchObject({ id: 'five-hour', usedPercent: 55 });
+  });
+
+  it('keeps the account-files behavior for reauth_required when the option is off (shows stale quota)', () => {
+    const entry: CoreQuotaSnapshotEntry = {
+      name: 'claude.json',
+      provider: 'claude',
+      status: 'reauth_required',
+      error: 'credential unauthorized',
+      snapshot: {
+        usage: { five_hour: { utilization: 55, resets_at: '2026-01-02T00:00:00Z' } },
+      },
+    };
+
+    const state = buildObservedClaudeQuotaStateFromCoreSnapshot(
+      authFile({ name: 'claude.json' }),
+      entry,
+      t
+    );
+
+    expect(state?.status).toBe('success');
+    expect(state?.windows).toHaveLength(1);
   });
 });

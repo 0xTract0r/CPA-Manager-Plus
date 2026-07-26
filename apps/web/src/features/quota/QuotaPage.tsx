@@ -20,6 +20,7 @@ import {
   type UsageHeaderSnapshot,
 } from '@/services/api/usageService';
 import { buildUsageHeaderSnapshotLookup } from '@/utils/usageHeaderSnapshots';
+import { buildCoreQuotaSnapshotLookup } from '@/utils/quota/coreQuotaSnapshots';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Button } from '@/components/ui/Button';
@@ -367,6 +368,15 @@ export function QuotaPage() {
     [headerSnapshots]
   );
 
+  // core `GET /quota/snapshots` 只读持久快照的多键 lookup（auth_id/auth_index/name）。
+  // 直接复用顶部自动刷新面板已经拉取的 quotaSnapshotStatus.entries，把额度与
+  // reauth_required / error 状态在 mount 时下发给 codex/claude 卡片；全程只读 core
+  // 已持久化的快照，绝不在进入页面时触发任何真实上游请求（反关联风控红线）。
+  const coreQuotaSnapshotLookup = useMemo(
+    () => buildCoreQuotaSnapshotLookup(quotaSnapshotStatus?.entries ?? []),
+    [quotaSnapshotStatus]
+  );
+
   useEffect(() => {
     writeQuotaPageUiState({
       searchQuery,
@@ -496,6 +506,7 @@ export function QuotaPage() {
         accountDisplayMode={getAccountDisplayMode(CODEX_CONFIG.type)}
         onAccountDisplayModeChange={(mode) => setAccountDisplayMode(CODEX_CONFIG.type, mode)}
         headerSnapshotLookup={headerSnapshotLookup}
+        coreQuotaSnapshotLookup={coreQuotaSnapshotLookup}
       />
       <QuotaSection
         config={CLAUDE_CONFIG}
@@ -508,6 +519,7 @@ export function QuotaPage() {
         onViewModeChange={(viewMode) => setSectionViewMode(CLAUDE_CONFIG.type, viewMode)}
         accountDisplayMode={getAccountDisplayMode(CLAUDE_CONFIG.type)}
         onAccountDisplayModeChange={(mode) => setAccountDisplayMode(CLAUDE_CONFIG.type, mode)}
+        coreQuotaSnapshotLookup={coreQuotaSnapshotLookup}
       />
       <QuotaSection
         config={ANTIGRAVITY_CONFIG}

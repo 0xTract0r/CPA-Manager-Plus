@@ -15,6 +15,10 @@ import {
   getHighConfidenceUsageHeaderSnapshotForAuthFile,
   type UsageHeaderSnapshotLookup,
 } from '@/utils/usageHeaderSnapshots';
+import {
+  getHighConfidenceCoreQuotaSnapshotForAuthFile,
+  type CoreQuotaSnapshotLookup,
+} from '@/utils/quota/coreQuotaSnapshots';
 import { QuotaCard } from './QuotaCard';
 import type { QuotaStatusState } from './QuotaCard';
 import { useQuotaLoader } from './useQuotaLoader';
@@ -130,6 +134,7 @@ interface QuotaSectionProps<TState extends QuotaStatusState, TData> {
   accountDisplayMode?: QuotaAccountDisplayMode;
   onAccountDisplayModeChange?: (mode: QuotaAccountDisplayMode) => void;
   headerSnapshotLookup?: UsageHeaderSnapshotLookup;
+  coreQuotaSnapshotLookup?: CoreQuotaSnapshotLookup;
 }
 
 export function QuotaSection<TState extends QuotaStatusState, TData>({
@@ -145,6 +150,7 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
   accountDisplayMode,
   onAccountDisplayModeChange,
   headerSnapshotLookup,
+  coreQuotaSnapshotLookup,
 }: QuotaSectionProps<TState, TData>) {
   const { t } = useTranslation();
   const resolvedTheme: ResolvedTheme = useThemeStore((state) => state.resolvedTheme);
@@ -206,14 +212,27 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
   const getDisplayQuota = useCallback(
     (file: AuthFileItem): TState | undefined => {
       const activeQuota = getScopedQuota(file);
-      const observedQuota = config.buildObservedState?.(
+      const headerObservedQuota = config.buildObservedState?.(
         file,
         getHighConfidenceUsageHeaderSnapshotForAuthFile(headerSnapshotLookup, file),
         t
       );
+      const coreObservedQuota = config.buildObservedStateFromCoreSnapshot?.(
+        file,
+        getHighConfidenceCoreQuotaSnapshotForAuthFile(coreQuotaSnapshotLookup, file),
+        t
+      );
+      // 请求头 usage snapshot 是「最近一次真实请求」观测，通常比 core 周期快照更新鲜，
+      // 优先采用；但当 core 快照给出 reauth_required / error（账号需重新认证或刷新失败）
+      // 时，这类「需处理」状态优先展示，避免被过期的成功头快照掩盖。整条路径只读 core
+      // 持久快照与历史头快照，mount 阶段不触发任何真实上游请求。
+      const observedQuota =
+        coreObservedQuota?.status === 'error'
+          ? coreObservedQuota
+          : (headerObservedQuota ?? coreObservedQuota);
       return resolveQuotaDisplayState(activeQuota, observedQuota);
     },
-    [config, getScopedQuota, headerSnapshotLookup, t]
+    [config, getScopedQuota, headerSnapshotLookup, coreQuotaSnapshotLookup, t]
   );
 
   const displayFiles = useMemo(() => {
@@ -585,10 +604,14 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
                 !item.disabled &&
                 (config.canResetQuota?.(item, itemQuota) ??
                   Boolean(itemQuota && itemQuota.status === 'success'));
+              // 基于展示态（display）而非仅 active 判定：这样 mount 时从 core 快照
+              // 透出的 reauth_required（errorStatus 401）也能亮出「重新认证」入口，
+              // 而手动刷新返回 401 的 active 错误态同样覆盖（display 在无 active 时回退
+              // 到 observed，有 active 错误时即为 active 本身）。
               const canReauth =
                 config.type === 'codex' &&
-                itemQuota?.status === 'error' &&
-                itemQuota.errorStatus === 401 &&
+                displayQuota?.status === 'error' &&
+                displayQuota?.errorStatus === 401 &&
                 !disabled &&
                 !item.disabled &&
                 Boolean(onReauthAccount);

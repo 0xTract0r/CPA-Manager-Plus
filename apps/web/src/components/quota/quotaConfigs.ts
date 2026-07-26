@@ -27,7 +27,12 @@ import type {
   XaiQuotaState,
 } from '@/types';
 import type { UsageHeaderSnapshot } from '@/services/api/usageService';
+import type { CoreQuotaSnapshotEntry } from '@/services/api/quotaSnapshots';
 import type { AntigravityQuotaData, CodexQuotaData } from '@/utils/quota';
+import {
+  buildObservedClaudeQuotaStateFromCoreSnapshot,
+  buildObservedCodexQuotaStateFromCoreSnapshot,
+} from '@/utils/quota/coreQuotaSnapshots';
 import { IconInfo } from '@/components/ui/icons';
 import { apiCallApi, getApiCallErrorMessage } from '@/services/api';
 import { resetCodexQuota } from '@/services/api/codexQuota';
@@ -132,6 +137,13 @@ export interface QuotaConfig<TState, TData> {
   buildObservedState?: (
     file: AuthFileItem,
     snapshot: UsageHeaderSnapshot | undefined,
+    t: TFunction
+  ) => TState | undefined;
+  // core `GET /quota/snapshots` 只读持久快照兜底：mount 时不打真实上游即可展示额度，
+  // 并在账号异常（reauth_required / error）时展示「要求重新认证 / 加载失败」。
+  buildObservedStateFromCoreSnapshot?: (
+    file: AuthFileItem,
+    entry: CoreQuotaSnapshotEntry | undefined,
     t: TFunction
   ) => TState | undefined;
   resetQuota?: (file: AuthFileItem, t: TFunction) => Promise<TData>;
@@ -1052,6 +1064,10 @@ export const CLAUDE_CONFIG: QuotaConfig<
   controlsClassName: styles.claudeControls,
   controlClassName: styles.claudeControl,
   gridClassName: styles.claudeGrid,
+  buildObservedStateFromCoreSnapshot: (file, entry, t) =>
+    buildObservedClaudeQuotaStateFromCoreSnapshot(file, entry, t, {
+      surfaceReauthAndError: true,
+    }),
   renderQuotaItems: renderClaudeItems,
 };
 
@@ -1132,6 +1148,10 @@ export const CODEX_CONFIG: QuotaConfig<CodexQuotaState, CodexQuotaData> = {
   getSearchText: getCodexSearchText,
   getPlanSortRank: getCodexPlanSortRank,
   buildObservedState: buildObservedCodexQuotaState,
+  buildObservedStateFromCoreSnapshot: (file, entry, t) =>
+    buildObservedCodexQuotaStateFromCoreSnapshot(file, entry, t, {
+      surfaceReauthAndError: true,
+    }),
   resetQuota: resetCodexQuota,
   canResetQuota: (_file, quota) =>
     quota?.status === 'success' && (quota.rateLimitResetCreditsAvailableCount ?? 0) > 0,
