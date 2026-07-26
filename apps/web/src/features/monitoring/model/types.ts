@@ -410,8 +410,10 @@ export interface UseMonitoringDataReturn {
   eventsLoadedCount: number;
   lastRefreshedAt: Date | null;
   isTransitioningScope: boolean;
+  // 仅在「切时间窗」转场时为 true(同窗后台刷新恒 false)，供 KPI 卡片「更新中」遮罩判定。
+  overviewDataStale: boolean;
   hasPresentationSnapshot: boolean;
-  refreshMeta: (showLoading?: boolean) => Promise<void>;
+  refreshMeta: (showLoading?: boolean, options?: { forceOverview?: boolean }) => Promise<void>;
   loadMoreEvents: () => void;
 }
 

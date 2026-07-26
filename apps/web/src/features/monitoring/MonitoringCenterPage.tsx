@@ -86,6 +86,7 @@ import {
   buildRealtimeLogRows,
   buildSecondarySummaryCards,
   buildStatusOptions,
+  deriveMonitoringKpiLoadingState,
   formatAccountOverviewScopeText,
   formatDateTimeLocalValue,
   formatMonitoringCustomRangeCompactLabel,
@@ -428,6 +429,7 @@ export function MonitoringCenterPage() {
     eventsLoadedCount,
     lastRefreshedAt: monitoringLastRefreshedAt,
     isTransitioningScope: monitoringScopeTransitioning,
+    overviewDataStale: monitoringOverviewDataStale,
     hasPresentationSnapshot: hasMonitoringPresentationSnapshot,
     refreshMeta,
     loadMoreEvents,
@@ -459,9 +461,19 @@ export function MonitoringCenterPage() {
     }
   }, [managementKey, requestMonitoringAvailability.serviceBase]);
 
-  const refreshAll = useCallback(async () => {
-    await Promise.all([loadApiKeyAliases(), refreshMeta(false), loadHeaderSnapshots()]);
-  }, [loadApiKeyAliases, loadHeaderSnapshots, refreshMeta]);
+  // options.forceOverview 默认 true：所有用户主动触发的刷新(顶部刷新、手动刷新按钮、
+  // 导入/导出/同步后回刷)都强制立即重拉概览聚合。只有下方 useInterval 的同窗后台自动
+  // 刷新显式传 false，走概览降频门(events 一路不受影响，仍按 autoRefreshMs 照常刷)。
+  const refreshAll = useCallback(
+    async (options?: { forceOverview?: boolean }) => {
+      await Promise.all([
+        loadApiKeyAliases(),
+        refreshMeta(false, { forceOverview: options?.forceOverview ?? true }),
+        loadHeaderSnapshots(),
+      ]);
+    },
+    [loadApiKeyAliases, loadHeaderSnapshots, refreshMeta]
+  );
 
   const setCurrentAccountPage = useCallback(
     (page: number) => {
@@ -486,7 +498,8 @@ export function MonitoringCenterPage() {
   }, []);
   useInterval(
     () => {
-      void refreshAll().catch(() => {});
+      // 同窗后台自动刷新：概览聚合走降频门(forceOverview:false)，事件流仍每个 tick 照常刷。
+      void refreshAll({ forceOverview: false }).catch(() => {});
     },
     isCurrentLayer &&
       documentVisible &&
@@ -518,11 +531,14 @@ export function MonitoringCenterPage() {
     monitoringLoading && (!monitoringScopeTransitioning || !hasMonitoringPresentationSnapshot);
   const overallLoading =
     usageLoading || monitoringBlockingLoading || requestMonitoringAvailability.checking;
-  // KPI 卡片级 loading 反馈：区分"已有旧数据的 refetch"（变暗+更新中遮罩）与
-  // "首屏还没有任何展示快照"（骨架占位）。全页阻塞遮罩仍由 hasPresentationSnapshot
-  // 有意抑制（避免事件分页慢拖住概览首屏），这里只是把同一份信号下沉到卡片区块。
-  const kpiUpdating = monitoringLoading && hasMonitoringPresentationSnapshot;
-  const kpiFirstLoad = monitoringLoading && !hasMonitoringPresentationSnapshot;
+  // KPI 卡片级 loading 反馈：区分"切时间窗转场"（变暗+更新中遮罩）与"首屏还没有任何展示
+  // 快照"（骨架占位）。去闪烁关键：kpiUpdating 用 overviewDataStale(切窗才 true、同窗后台
+  // 刷新恒 false)而非 monitoringLoading，使同窗每次后台刷新不再变灰转圈，数值静默原地更新。
+  const { kpiUpdating, kpiFirstLoad } = deriveMonitoringKpiLoadingState({
+    monitoringLoading,
+    overviewDataStale: monitoringOverviewDataStale,
+    hasPresentationSnapshot: hasMonitoringPresentationSnapshot,
+  });
   const combinedError = monitoringUnavailable
     ? monitoringError
     : [usageError, monitoringError].filter(Boolean).join('；');

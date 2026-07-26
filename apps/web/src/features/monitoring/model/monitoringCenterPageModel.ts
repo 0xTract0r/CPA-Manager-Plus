@@ -1506,3 +1506,28 @@ export const formatMonitoringSummaryScopeText = (
   }
   return t('monitoring.summary_scope_current', { range: t(MONITORING_SUMMARY_RANGE_LABEL_KEYS[timeRange]) });
 };
+
+export interface MonitoringKpiLoadingState {
+  /** 已有旧快照、且正在为「新 scope(切时间窗)」转场：变暗 + 「更新中」遮罩。 */
+  kpiUpdating: boolean;
+  /** 首屏还没有任何展示快照：渲染骨架占位。 */
+  kpiFirstLoad: boolean;
+}
+
+// 统计卡片 loading 反馈派生（去闪烁核心）。
+// 关键：kpiUpdating 用 overviewDataStale(只在切时间窗时为 true，同窗后台刷新恒 false)而不是
+// monitoringLoading(每次后台刷新都翻 true)。这样同窗每 N 秒后台刷新不再让卡片变灰转圈，数值
+// 静默原地更新(数据层已是 SWR，旧值保留到新值到手)；只有真正切换时间窗、且已有旧概览快照
+// 可显示时，才对旧快照显示一次「更新中」。kpiFirstLoad 仍用 monitoringLoading，保持首屏骨架。
+export const deriveMonitoringKpiLoadingState = ({
+  monitoringLoading,
+  overviewDataStale,
+  hasPresentationSnapshot,
+}: {
+  monitoringLoading: boolean;
+  overviewDataStale: boolean;
+  hasPresentationSnapshot: boolean;
+}): MonitoringKpiLoadingState => ({
+  kpiUpdating: overviewDataStale && hasPresentationSnapshot,
+  kpiFirstLoad: monitoringLoading && !hasPresentationSnapshot,
+});

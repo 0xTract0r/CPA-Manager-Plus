@@ -9,6 +9,11 @@ import { buildApiKeyDisplayMap } from '../model/apiKeys';
 import { buildMonitoringAuthMetaMap } from '../model/authMeta';
 import { getRangeBounds, shouldUseHourlyTimeline } from '../model/range';
 import {
+  advanceOverviewClock,
+  createOverviewClock,
+  type OverviewClockState,
+} from '../model/overviewRefreshGate';
+import {
   buildChannelRows,
   buildFailureRows,
   buildFailureSourceRows,
@@ -316,6 +321,11 @@ export function useMonitoringData({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [analyticsNowMs, setAnalyticsNowMs] = useState(() => Date.now());
+  // 概览聚合(重的那套 stats)独立的降频时钟：与事件流共用 range/scope，但「当前时刻」锚点
+  // 只按降频门/scope 重锚前移，不随事件流每个 tick 前移，避免 7d/30d 全量每 5s 猛拉一遍。
+  const [overviewClock, setOverviewClock] = useState<OverviewClockState>(() =>
+    createOverviewClock(Date.now())
+  );
   const [eventsPageState, setEventsPageState] = useState<MonitoringEventsPageState>(() =>
     createEventsPageState()
   );
@@ -334,8 +344,24 @@ export function useMonitoringData({
     };
   }, [analyticsNowMs, customTimeRange, timeRange]);
 
+  // 概览聚合请求的时间边界：与 analyticsBounds 同构，但锚点用降频的 overviewClock.nowMs，
+  // 使概览请求在同窗后台刷新时保持稳定、不随事件流每个 tick 前移(避免 7d/30d 全量重拉)。
+  // 对 custom 档 getRangeBounds 返回固定边界(与 nowMs 无关)，故与 analyticsBounds 完全一致。
+  const overviewBounds = useMemo(() => {
+    const bounds = getRangeBounds(timeRange, overviewClock.nowMs, customTimeRange);
+    if (!bounds) return null;
+    return {
+      startMs: Number.isFinite(bounds.startMs) && bounds.startMs > 0 ? bounds.startMs : 1,
+      endMs: Math.max(bounds.endMs, 1),
+    };
+  }, [overviewClock.nowMs, customTimeRange, timeRange]);
+
   const refreshMeta = useCallback(
-    async (showLoading: boolean = true) => {
+    async (
+      showLoading: boolean = true,
+      options: { forceOverview?: boolean } = {}
+    ) => {
+      const { forceOverview = true } = options;
       if (showLoading) {
         setLoading(true);
         setError('');
@@ -351,7 +377,14 @@ export function useMonitoringData({
           ? previous
           : { ...previous, beforeMs: null, beforeId: null, loadingMore: false }
       );
-      setAnalyticsNowMs(Date.now());
+      // 事件流每次刷新都前移(贴近实时)。
+      const nextNowMs = Date.now();
+      setAnalyticsNowMs(nextNowMs);
+      // 概览聚合走降频门：手动/强制刷新(forceOverview=true)立即前移；同窗后台自动刷新
+      // (forceOverview=false)仅在距上次前移达最小间隔时才前移，未达门限时保持原时钟不重拉。
+      setOverviewClock((previous) =>
+        advanceOverviewClock(previous, { nowMs: nextNowMs, force: forceOverview })
+      );
     },
     [config]
   );
@@ -456,6 +489,14 @@ export function useMonitoringData({
     ]
   );
 
+  // 切时间窗/筛选(eventsScopeKey 变化)时不需要任何额外的"重锚"动作来触发概览重拉：
+  // 概览 useMonitoringAnalytics 实例的 request 依赖 fromMs/toMs/nowMs/filters/include/
+  // searchQuery/searchApiKeyHash，切窗会让 overviewBounds(fromMs/toMs)与 include.granularity
+  // 随 timeRange 直接变化(即使 overviewClock.nowMs 仍被降频门限住)、切筛选/搜索会让 filters/
+  // searchQuery 直接变化 → request 变 → refresh 变 → 概览请求 effect 立即重拉。降频门只作用于
+  // "同窗后台自动 tick"的 nowMs 前移；scope 变化的重拉走 request 变化这条正交路径，天然不被门挡。
+  // 首拉锚点用被门限的旧 nowMs：对滚动窗口是 ≤30s 的末端偏移(可忽略)，下次门开即刷新到最新。
+
   const activeEventsPageState = useMemo(
     () =>
       eventsPageState.scopeKey === eventsScopeKey
@@ -472,10 +513,13 @@ export function useMonitoringData({
   // 首屏概览请求：只取 KPI/图表/账号-API Key 汇总等聚合数据，不再勾 events_page /
   // recent_failures。recent_failures 在监控页当前 UI 未被任何面板消费（"最近失败"是
   // 独立的仪表盘页面 dashboard/summary 接口，与本页无关），移出首屏后无可见回归。
+  // 用降频的 overviewBounds/overviewClock.nowMs 作为请求锚点：同窗后台刷新时这两个值稳定，
+  // 概览聚合不会每 5s 重发；切窗(scope 重锚)/手动强制刷新时会前移，立即重拉。dataScopeKey
+  // 仍用共享的 eventsScopeKey，保证 dataStale 在切窗时即时翻 true(供 KPI「更新中」判定)。
   const analytics = useMonitoringAnalytics({
-    fromMs: analyticsBounds?.startMs,
-    toMs: analyticsBounds?.endMs,
-    nowMs: analyticsNowMs,
+    fromMs: overviewBounds?.startMs,
+    toMs: overviewBounds?.endMs,
+    nowMs: overviewClock.nowMs,
     dataScopeKey: eventsScopeKey,
     searchQuery,
     searchApiKeyHash,
@@ -1058,6 +1102,9 @@ export function useMonitoringData({
     eventsLoadedCount: presentationSnapshot.eventsLoadedCount,
     lastRefreshedAt: presentationSnapshot.lastRefreshedAt,
     isTransitioningScope: combinedAnalyticsDataStale,
+    // 仅在「切时间窗」转场时为 true(同窗后台刷新恒 false)：供 KPI 卡片「更新中」遮罩用，
+    // 使同窗每次后台刷新不再变灰闪烁，只有真正切窗时才对旧概览快照显示一次「更新中」。
+    overviewDataStale,
     hasPresentationSnapshot: presentationResolution.hasPresentationSnapshot,
     refreshMeta,
     loadMoreEvents,
