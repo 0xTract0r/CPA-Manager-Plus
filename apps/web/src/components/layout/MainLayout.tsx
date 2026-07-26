@@ -568,65 +568,83 @@ export function MainLayout({ routeBase = '', demoMode = false }: MainLayoutProps
         icon: <PluginSidebarIcon src={resolvePluginAssetURL(resource.pluginLogo, apiBase)} />,
       }))
     : [];
-  const navSections: NavItem[][] = [
-    [
-      dashboardNavItem,
-      ...(usageAnalyticsNavItem ? [usageAnalyticsNavItem] : []),
-      ...(monitoringNavItem ? [monitoringNavItem] : []),
-    ],
-    [
-      {
-        path: '/config',
-        label: t('nav.config_management'),
-        shortLabel: navShortLabel('nav.config_management', t('nav.config_management')),
-        icon: sidebarIcons.config,
-      },
-      {
-        path: '/ai-providers',
-        label: t('nav.ai_providers'),
-        shortLabel: navShortLabel('nav.ai_providers', t('nav.ai_providers')),
-        icon: sidebarIcons.aiProviders,
-      },
-      ...pluginControlNavItems,
-    ],
-    [
-      {
-        path: '/auth-files',
-        label: t('nav.auth_files'),
-        shortLabel: navShortLabel('nav.auth_files', t('nav.auth_files')),
-        icon: sidebarIcons.authFiles,
-      },
-      {
-        path: '/oauth',
-        label: t('nav.oauth', { defaultValue: 'OAuth' }),
-        shortLabel: navShortLabel('nav.oauth', t('nav.oauth', { defaultValue: 'OAuth' })),
-        icon: sidebarIcons.oauth,
-      },
-      {
-        path: '/quota',
-        label: t('nav.quota_management'),
-        shortLabel: navShortLabel('nav.quota_management', t('nav.quota_management')),
-        icon: sidebarIcons.quota,
-      },
-      {
-        path: '/codex-inspection',
-        label: t('nav.codex_inspection'),
-        shortLabel: navShortLabel('nav.codex_inspection', t('nav.codex_inspection')),
-        icon: sidebarIcons.codexInspection,
-      },
-    ],
-    operationNavItems,
-    pluginResourceNavItems,
-    [
-      {
-        path: '/system',
-        label: t('nav.system_info'),
-        shortLabel: navShortLabel('nav.system_info', t('nav.system_info')),
-        icon: sidebarIcons.system,
-      },
-    ],
-  ].filter((section) => section.length > 0);
-  const navItems = navSections.flat();
+  const navSections: { titleKey: string; items: NavItem[] }[] = [
+    {
+      titleKey: 'nav_groups.overview',
+      items: [
+        dashboardNavItem,
+        ...(usageAnalyticsNavItem ? [usageAnalyticsNavItem] : []),
+        ...(monitoringNavItem ? [monitoringNavItem] : []),
+      ],
+    },
+    {
+      titleKey: 'nav_groups.gateway',
+      items: [
+        {
+          path: '/config',
+          label: t('nav.config_management'),
+          shortLabel: navShortLabel('nav.config_management', t('nav.config_management')),
+          icon: sidebarIcons.config,
+        },
+        {
+          path: '/ai-providers',
+          label: t('nav.ai_providers'),
+          shortLabel: navShortLabel('nav.ai_providers', t('nav.ai_providers')),
+          icon: sidebarIcons.aiProviders,
+        },
+        ...pluginControlNavItems,
+      ],
+    },
+    {
+      titleKey: 'nav_groups.credentials',
+      items: [
+        {
+          path: '/auth-files',
+          label: t('nav.auth_files'),
+          shortLabel: navShortLabel('nav.auth_files', t('nav.auth_files')),
+          icon: sidebarIcons.authFiles,
+        },
+        {
+          path: '/oauth',
+          label: t('nav.oauth', { defaultValue: 'OAuth' }),
+          shortLabel: navShortLabel('nav.oauth', t('nav.oauth', { defaultValue: 'OAuth' })),
+          icon: sidebarIcons.oauth,
+        },
+        {
+          path: '/quota',
+          label: t('nav.quota_management'),
+          shortLabel: navShortLabel('nav.quota_management', t('nav.quota_management')),
+          icon: sidebarIcons.quota,
+        },
+        {
+          path: '/codex-inspection',
+          label: t('nav.codex_inspection'),
+          shortLabel: navShortLabel('nav.codex_inspection', t('nav.codex_inspection')),
+          icon: sidebarIcons.codexInspection,
+        },
+      ],
+    },
+    {
+      titleKey: 'nav_groups.operations',
+      items: operationNavItems,
+    },
+    {
+      titleKey: 'nav_groups.plugins',
+      items: pluginResourceNavItems,
+    },
+    {
+      titleKey: 'nav_groups.system',
+      items: [
+        {
+          path: '/system',
+          label: t('nav.system_info'),
+          shortLabel: navShortLabel('nav.system_info', t('nav.system_info')),
+          icon: sidebarIcons.system,
+        },
+      ],
+    },
+  ].filter((section) => section.items.length > 0);
+  const navItems = navSections.flatMap((section) => section.items);
   const navOrder = navItems.map((item) => item.path);
   const getRouteOrder = (pathname: string) => {
     const trimmedPath =
@@ -962,8 +980,12 @@ export function MainLayout({ routeBase = '', demoMode = false }: MainLayoutProps
           <div className="nav-section">
             {navSections.map((section, sectionIndex) => (
               <div className="nav-menu-section" key={`nav-section-${sectionIndex}`}>
-                {sectionIndex > 0 && <div className="nav-menu-divider" aria-hidden="true" />}
-                {section.map((item) => (
+                {showSidebarLabels ? (
+                  <div className="nav-group-label">{t(section.titleKey)}</div>
+                ) : (
+                  sectionIndex > 0 && <div className="nav-menu-divider" aria-hidden="true" />
+                )}
+                {section.items.map((item) => (
                   <NavLink
                     key={item.path}
                     to={prefixRouteBase(item.path, routeBase)}

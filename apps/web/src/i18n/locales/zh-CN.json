@@ -191,6 +191,14 @@
     "system_info": "系统信息",
     "system_info_short": "系统"
   },
+  "nav_groups": {
+    "overview": "总览",
+    "gateway": "网关",
+    "credentials": "凭证",
+    "operations": "运维",
+    "plugins": "插件",
+    "system": "系统"
+  },
   "account_actions": {
     "eyebrow": "账号异常",
     "title": "认证异常处理",
@@ -839,6 +847,10 @@
     "sort_priority_asc": "优先级低到高",
     "sort_plan_desc": "套餐高到低",
     "sort_plan_asc": "套餐低到高",
+    "sort_added_desc": "添加时间新到旧",
+    "sort_added_asc": "添加时间旧到新",
+    "sort_modified_desc": "修改时间新到旧",
+    "sort_modified_asc": "修改时间旧到新",
     "codex_status_filter_label": "Codex 状态",
     "codex_status_filter_all": "全部状态",
     "codex_status_filter_http_401": "需重新授权 (401)",
@@ -3051,7 +3063,6 @@
     "tab_heatmap": "用量热力图",
     "all": "全部",
     "export": "导出",
-    "export_coming_soon": "导出功能将在后续版本开放。",
     "awaiting_refresh": "等待刷新",
     "favorite_view": "收藏视图",
     "save_view": "保存视图",

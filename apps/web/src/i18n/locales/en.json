@@ -191,6 +191,14 @@
     "system_info": "System Info",
     "system_info_short": "System"
   },
+  "nav_groups": {
+    "overview": "Overview",
+    "gateway": "Gateway",
+    "credentials": "Credentials",
+    "operations": "Operations",
+    "plugins": "Plugins",
+    "system": "System"
+  },
   "account_actions": {
     "eyebrow": "Account issues",
     "title": "Auth Issue Handling",
@@ -839,6 +847,10 @@
     "sort_priority_asc": "Priority low to high",
     "sort_plan_desc": "Plan high to low",
     "sort_plan_asc": "Plan low to high",
+    "sort_added_desc": "Added newest first",
+    "sort_added_asc": "Added oldest first",
+    "sort_modified_desc": "Modified newest first",
+    "sort_modified_asc": "Modified oldest first",
     "codex_status_filter_label": "Codex status",
     "codex_status_filter_all": "All statuses",
     "codex_status_filter_http_401": "Needs reauth (401)",
@@ -3051,7 +3063,6 @@
     "tab_heatmap": "Usage Heatmap",
     "all": "All",
     "export": "Export",
-    "export_coming_soon": "Export will be available in a later version.",
     "awaiting_refresh": "Waiting for refresh",
     "favorite_view": "Favorite view",
     "save_view": "Save view",

@@ -1316,6 +1316,8 @@ export function MonitoringCenterPage() {
         lowCacheHitRateOnly={realtimeLowCacheHitRateOnly}
         lowCacheHitRateThreshold={realtimeLowCacheHitRateThreshold}
         accountDisplayMode={accountDisplayMode}
+        exportRows={realtimeLogRows}
+        hasPrices={hasPrices}
         t={t}
         onToggleFailedOnly={toggleFailedOnly}
         onToggleLowCacheHitRateOnly={toggleRealtimeLowCacheHitRateOnly}
@@ -1333,8 +1335,9 @@ export function MonitoringCenterPage() {
     changeRealtimeLowCacheHitRateThreshold,
     failedOnlyActive,
     handleAccountSortKeyChange,
+    hasPrices,
     overallLoading,
-    realtimeLogRows.length,
+    realtimeLogRows,
     realtimeLowCacheHitRateOnly,
     realtimeLowCacheHitRateThreshold,
     refreshAll,

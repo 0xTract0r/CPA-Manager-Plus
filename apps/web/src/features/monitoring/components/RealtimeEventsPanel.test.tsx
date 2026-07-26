@@ -75,6 +75,8 @@ const t = ((key: string, options?: Record<string, unknown>) => {
     'monitoring.this_call_cost': 'Cost',
     'monitoring.this_call_usage': 'Usage',
     'monitoring.ttft_short': 'TTFT',
+    'usage_stats.export_csv': 'Export CSV',
+    'usage_stats.export_json': 'Export JSON',
   };
   let message = messages[key] ?? key;
   if (options) {
@@ -193,7 +195,7 @@ const renderPanel = (row: PanelRow, overrides: PanelOverrides = {}) =>
     />
   );
 
-const renderActions = () =>
+const renderActions = (overrides: { exportRows?: PanelRow[]; hasPrices?: boolean } = {}) =>
   renderToStaticMarkup(
     <RealtimeEventsPanelActions
       rowCount={1}
@@ -202,6 +204,8 @@ const renderActions = () =>
       lowCacheHitRateOnly={false}
       lowCacheHitRateThreshold={0.3}
       accountDisplayMode="masked"
+      exportRows={overrides.exportRows ?? [baseRow()]}
+      hasPrices={overrides.hasPrices ?? false}
       t={t}
       onToggleFailedOnly={noop}
       onToggleLowCacheHitRateOnly={noop}
@@ -530,6 +534,23 @@ describe('RealtimeEventsPanel', () => {
     const lowCacheIdx = markup.indexOf('Low Cache Hit');
     expect(failedIdx).toBeGreaterThanOrEqual(0);
     expect(lowCacheIdx).toBeGreaterThan(failedIdx);
+  });
+
+  it('renders enabled CSV/JSON export buttons in the actions toolbar when rows are loaded', () => {
+    const markup = renderActions();
+
+    expect(markup).toContain('Export CSV');
+    expect(markup).toContain('Export JSON');
+    // 有数据时导出按钮不应被禁用。
+    expect(markup).not.toContain('disabled=""');
+  });
+
+  it('disables the export buttons when there are no loaded event rows', () => {
+    const markup = renderActions({ exportRows: [] });
+
+    expect(markup).toContain('Export CSV');
+    expect(markup).toContain('Export JSON');
+    expect(markup).toContain('disabled=""');
   });
 
   it('filters displayed rows to low cache hit rate when the chip is active', () => {

@@ -191,6 +191,14 @@
     "system_info": "Информация системы",
     "system_info_short": "Система"
   },
+  "nav_groups": {
+    "overview": "Обзор",
+    "gateway": "Шлюз",
+    "credentials": "Учётные данные",
+    "operations": "Операции",
+    "plugins": "Плагины",
+    "system": "Система"
+  },
   "account_actions": {
     "eyebrow": "Проблемы аккаунтов",
     "title": "Обработка проблем аутентификации",
@@ -839,6 +847,10 @@
     "sort_priority_asc": "Приоритет по возрастанию",
     "sort_plan_desc": "План от высокого к низкому",
     "sort_plan_asc": "План от низкого к высокому",
+    "sort_added_desc": "Добавлено: сначала новые",
+    "sort_added_asc": "Добавлено: сначала старые",
+    "sort_modified_desc": "Изменено: сначала новые",
+    "sort_modified_asc": "Изменено: сначала старые",
     "codex_status_filter_label": "Статус Codex",
     "codex_status_filter_all": "Все статусы",
     "codex_status_filter_http_401": "Нужна повторная авторизация (401)",
@@ -3042,7 +3054,6 @@
     "tab_heatmap": "Тепловая карта",
     "all": "Все",
     "export": "Экспорт",
-    "export_coming_soon": "Экспорт будет доступен в следующей версии.",
     "awaiting_refresh": "Ожидает обновления",
     "favorite_view": "Избранное представление",
     "save_view": "Сохранить представление",

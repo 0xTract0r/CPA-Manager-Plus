@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/Button';
 import {
   IconChevronDown,
   IconCopy,
+  IconDownload,
   IconEye,
   IconEyeOff,
   IconFileText,
@@ -38,8 +39,16 @@ import {
 } from '@/features/monitoring/monitoringCenterUiState';
 import { useNotificationStore } from '@/stores';
 import { copyToClipboard } from '@/utils/clipboard';
+import { downloadBlob } from '@/utils/download';
 import { maskSensitiveText, truncateText } from '@/utils/format';
 import { formatCompactNumber, formatUsd } from '@/utils/usage';
+import {
+  buildEventExportCsv,
+  buildEventExportFilename,
+  buildEventExportJson,
+  EVENT_EXPORT_MIME,
+  type EventExportFormat,
+} from '@/features/monitoring/model/eventExport';
 import styles from '../MonitoringCenterPage.module.scss';
 
 type RealtimeLogRow = MonitoringEventRow & {
@@ -93,6 +102,9 @@ export type RealtimeEventsPanelActionsProps = {
   lowCacheHitRateOnly: boolean;
   lowCacheHitRateThreshold: number;
   accountDisplayMode: AccountDisplayMode;
+  /** 当前已加载/筛选的事件行（buildRealtimeLogRows 的结果，1:1 对应事件），供客户端 CSV/JSON 导出。 */
+  exportRows: MonitoringEventRow[];
+  hasPrices: boolean;
   t: TFunction;
   onToggleFailedOnly: () => void;
   onToggleLowCacheHitRateOnly: () => void;
@@ -864,12 +876,29 @@ export function RealtimeEventsPanelActions({
   lowCacheHitRateOnly,
   lowCacheHitRateThreshold,
   accountDisplayMode,
+  exportRows,
+  hasPrices,
   t,
   onToggleFailedOnly,
   onToggleLowCacheHitRateOnly,
   onLowCacheHitRateThresholdChange,
   onAccountDisplayModeChange,
 }: RealtimeEventsPanelActionsProps) {
+  // 客户端导出「当前已加载/筛选的事件行」：纯前端生成 CSV/JSON Blob 后触发下载，不打服务端。
+  // 说明：failedOnly 等筛选走服务端已落进 exportRows；实时表内「仅显示低命中率」是页内当前页视觉
+  // 过滤，不改变 exportRows，因此导出的是完整筛选/加载结果（与旧版导出 filteredRows 全集口径一致）。
+  const handleExport = (format: EventExportFormat) => {
+    if (exportRows.length === 0) return;
+    const content =
+      format === 'csv'
+        ? buildEventExportCsv(exportRows, { hasPrices })
+        : buildEventExportJson(exportRows, { hasPrices });
+    downloadBlob({
+      filename: buildEventExportFilename(format),
+      blob: new Blob([content], { type: EVENT_EXPORT_MIME[format] }),
+    });
+  };
+  const exportDisabled = exportRows.length === 0;
   const nextAccountDisplayMode: AccountDisplayMode =
     accountDisplayMode === 'masked' ? 'full' : 'masked';
   const AccountDisplayIcon = accountDisplayMode === 'masked' ? IconEyeOff : IconEye;
@@ -941,6 +970,24 @@ export function RealtimeEventsPanelActions({
         onToggleActive={onToggleLowCacheHitRateOnly}
         onThresholdChange={onLowCacheHitRateThresholdChange}
       />
+      <Button
+        variant="secondary"
+        size="sm"
+        onClick={() => handleExport('csv')}
+        disabled={exportDisabled}
+      >
+        <IconDownload size={14} aria-hidden="true" />
+        {t('usage_stats.export_csv')}
+      </Button>
+      <Button
+        variant="secondary"
+        size="sm"
+        onClick={() => handleExport('json')}
+        disabled={exportDisabled}
+      >
+        <IconDownload size={14} aria-hidden="true" />
+        {t('usage_stats.export_json')}
+      </Button>
     </div>
   );
 }
@@ -1049,6 +1096,8 @@ export function RealtimeEventsPanel({
       lowCacheHitRateOnly={lowCacheHitRateOnly}
       lowCacheHitRateThreshold={lowCacheHitRateThreshold}
       accountDisplayMode={accountDisplayMode}
+      exportRows={rows}
+      hasPrices={hasPrices}
       t={t}
       onToggleFailedOnly={onToggleFailedOnly}
       onToggleLowCacheHitRateOnly={onToggleLowCacheHitRateOnly}

@@ -5,6 +5,10 @@ import {
   authFileMatchesCodexPlanFilter,
   authFileMatchesCodexStatusFilter,
   buildAuthFileCodexInspectionMap,
+  compareAuthFileCreated,
+  compareAuthFileModified,
+  getAuthFileCreatedMs,
+  getAuthFileModifiedMs,
   getAuthFileCodexInspectionKey,
   getAuthFileCodexStatus,
   getAuthFileNameFromSelectionKey,
@@ -794,5 +798,91 @@ describe('auth file Codex plan helpers', () => {
     expect(
       hasPartialSharedAuthFileSelection([first, second, single], [getAuthFileSelectionKey(single)])
     ).toBe(false);
+  });
+});
+
+describe('auth file time-based sorting helpers', () => {
+  const plainFile = (overrides: Partial<AuthFileItem> = {}): AuthFileItem => ({
+    name: 'account.json',
+    type: 'gemini',
+    ...overrides,
+  });
+
+  it('normalizes second-level epoch timestamps to milliseconds', () => {
+    // 1_700_000_000 秒 < 1e12，按秒解释并 *1000 归一到毫秒。
+    expect(getAuthFileModifiedMs(plainFile({ modtime: 1_700_000_000 }))).toBe(1_700_000_000_000);
+    expect(getAuthFileModifiedMs(plainFile({ modtime: '1700000000' }))).toBe(1_700_000_000_000);
+  });
+
+  it('passes through millisecond epoch timestamps unchanged', () => {
+    expect(getAuthFileModifiedMs(plainFile({ modtime: 1_700_000_000_000 }))).toBe(
+      1_700_000_000_000
+    );
+  });
+
+  it('falls back across modtime -> modified -> updated_at for modified time', () => {
+    expect(getAuthFileModifiedMs(plainFile({ modified: 1_700_000_000 }))).toBe(1_700_000_000_000);
+    expect(getAuthFileModifiedMs(plainFile({ updated_at: '2026-01-02T03:04:05Z' }))).toBe(
+      Date.parse('2026-01-02T03:04:05Z')
+    );
+  });
+
+  it('parses RFC3339 string timestamps', () => {
+    expect(getAuthFileCreatedMs(plainFile({ created_at: '2026-01-02T03:04:05Z' }))).toBe(
+      Date.parse('2026-01-02T03:04:05Z')
+    );
+  });
+
+  it('reads created time from created_at and falls back to modtime when created_at is missing', () => {
+    expect(getAuthFileCreatedMs(plainFile({ created_at: 1_700_000_500 }))).toBe(
+      1_700_000_500_000
+    );
+    // created_at 缺失（core omitempty）时回退到修改时间，仍给出稳定排序键。
+    expect(getAuthFileCreatedMs(plainFile({ modtime: 1_700_000_000 }))).toBe(1_700_000_000_000);
+  });
+
+  it('returns null when no created/modified timestamp is present', () => {
+    expect(getAuthFileCreatedMs(plainFile())).toBeNull();
+    expect(getAuthFileModifiedMs(plainFile())).toBeNull();
+    expect(getAuthFileModifiedMs(plainFile({ modtime: '' }))).toBeNull();
+    expect(getAuthFileModifiedMs(plainFile({ modtime: 'not-a-date' }))).toBeNull();
+  });
+
+  it('orders by modified time newest-first for desc and oldest-first for asc', () => {
+    const older = plainFile({ name: 'older.json', modtime: 1_700_000_000 });
+    const newer = plainFile({ name: 'newer.json', modtime: 1_700_000_900 });
+
+    const desc = [older, newer].sort((a, b) => compareAuthFileModified(a, b, 'desc'));
+    expect(desc.map((file) => file.name)).toEqual(['newer.json', 'older.json']);
+
+    const asc = [newer, older].sort((a, b) => compareAuthFileModified(a, b, 'asc'));
+    expect(asc.map((file) => file.name)).toEqual(['older.json', 'newer.json']);
+  });
+
+  it('orders created time using the modtime fallback when created_at is absent', () => {
+    const older = plainFile({ name: 'older.json', modtime: 1_700_000_000 });
+    const newer = plainFile({ name: 'newer.json', created_at: 1_700_000_900 });
+
+    const desc = [older, newer].sort((a, b) => compareAuthFileCreated(a, b, 'desc'));
+    expect(desc.map((file) => file.name)).toEqual(['newer.json', 'older.json']);
+  });
+
+  it('always sorts files without a timestamp to the end regardless of direction', () => {
+    const withTime = plainFile({ name: 'has-time.json', modtime: 1_700_000_000 });
+    const noTime = plainFile({ name: 'no-time.json' });
+
+    expect(compareAuthFileModified(noTime, withTime, 'desc')).toBe(1);
+    expect(compareAuthFileModified(noTime, withTime, 'asc')).toBe(1);
+    expect(compareAuthFileModified(withTime, noTime, 'desc')).toBe(-1);
+    expect(compareAuthFileModified(withTime, noTime, 'asc')).toBe(-1);
+  });
+
+  it('falls back to a stable name comparison when timestamps are equal', () => {
+    const a = plainFile({ name: 'a.json', modtime: 1_700_000_000 });
+    const b = plainFile({ name: 'b.json', modtime: 1_700_000_000 });
+
+    // 时间相同时按名称稳定排序，方向不影响 tiebreak 结果。
+    expect(compareAuthFileModified(a, b, 'desc')).toBeLessThan(0);
+    expect(compareAuthFileModified(a, b, 'asc')).toBeLessThan(0);
   });
 });

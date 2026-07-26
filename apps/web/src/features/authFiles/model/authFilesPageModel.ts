@@ -24,6 +24,7 @@ import {
   parsePriorityValue,
 } from '@/features/authFiles/constants';
 import { formatInUtc8 } from '@/utils/format';
+import { parseTimestampMs } from '@/utils/timestamp';
 
 export const easePower3Out = (progress: number) => 1 - (1 - progress) ** 4;
 export const easePower2In = (progress: number) => progress ** 3;
@@ -706,6 +707,80 @@ export const compareAuthFilePriority = (
 
   return compareAuthFileName(left, right);
 };
+
+// 将 auth file 上的时间字段归一为毫秒时间戳。
+// - core 下发的 modtime / created_at 是秒级 epoch（数字或纯数字字符串），
+//   小于 1e12 视为秒并 *1000 归一到毫秒（与 constants.ts formatModified 一致）。
+// - 兼容 RFC3339 等字符串时间，走 parseTimestampMs 解析。
+// - 无法识别时返回 null，交给调用方做稳定回退。
+const readAuthFileTimestampMs = (raw: unknown): number | null => {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw === 'string' && raw.trim() === '') return null;
+  const asNumber = Number(raw);
+  if (Number.isFinite(asNumber)) {
+    return asNumber < 1e12 ? asNumber * 1000 : asNumber;
+  }
+  const parsed = parseTimestampMs(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+// 修改时间：core 实时 stat 的文件 mtime，最可靠。
+export const getAuthFileModifiedMs = (file: AuthFileItem): number | null =>
+  readAuthFileTimestampMs(file['modtime'] ?? file.modified ?? file['updated_at']);
+
+// 添加时间（近似语义）：core 在 omitempty 下下发 created_at，近似等于文件 mtime，
+// 可能缺失（服务器重启后也可能重置）。缺失时回退到修改时间，保证仍有稳定排序键。
+export const getAuthFileCreatedMs = (file: AuthFileItem): number | null => {
+  const created = readAuthFileTimestampMs(file['created_at']);
+  return created ?? getAuthFileModifiedMs(file);
+};
+
+const compareAuthFileByTimestamp = (
+  left: AuthFileItem,
+  right: AuthFileItem,
+  leftMs: number | null,
+  rightMs: number | null,
+  direction: 'asc' | 'desc'
+) => {
+  const leftKnown = leftMs !== null;
+  const rightKnown = rightMs !== null;
+
+  if (leftKnown || rightKnown) {
+    // 缺时间戳的一律排到末尾，与 note/priority/plan 排序的处理保持一致。
+    if (!leftKnown) return 1;
+    if (!rightKnown) return -1;
+    const diff = direction === 'desc' ? rightMs - leftMs : leftMs - rightMs;
+    if (diff !== 0) return diff;
+  }
+
+  return compareAuthFileName(left, right);
+};
+
+export const compareAuthFileModified = (
+  left: AuthFileItem,
+  right: AuthFileItem,
+  direction: 'asc' | 'desc'
+) =>
+  compareAuthFileByTimestamp(
+    left,
+    right,
+    getAuthFileModifiedMs(left),
+    getAuthFileModifiedMs(right),
+    direction
+  );
+
+export const compareAuthFileCreated = (
+  left: AuthFileItem,
+  right: AuthFileItem,
+  direction: 'asc' | 'desc'
+) =>
+  compareAuthFileByTimestamp(
+    left,
+    right,
+    getAuthFileCreatedMs(left),
+    getAuthFileCreatedMs(right),
+    direction
+  );
 
 export const stringifySearchValue = (value: unknown): string[] => {
   if (value === undefined || value === null) return [];

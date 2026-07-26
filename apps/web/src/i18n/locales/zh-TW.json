@@ -191,6 +191,14 @@
     "system_info": "系統資訊",
     "system_info_short": "系統"
   },
+  "nav_groups": {
+    "overview": "總覽",
+    "gateway": "閘道",
+    "credentials": "憑證",
+    "operations": "運維",
+    "plugins": "外掛",
+    "system": "系統"
+  },
   "account_actions": {
     "eyebrow": "帳號異常",
     "title": "認證異常處理",
@@ -839,6 +847,10 @@
     "sort_priority_asc": "優先順序低到高",
     "sort_plan_desc": "方案高到低",
     "sort_plan_asc": "方案低到高",
+    "sort_added_desc": "新增時間新到舊",
+    "sort_added_asc": "新增時間舊到新",
+    "sort_modified_desc": "修改時間新到舊",
+    "sort_modified_asc": "修改時間舊到新",
     "codex_status_filter_label": "Codex 狀態",
     "codex_status_filter_all": "全部狀態",
     "codex_status_filter_http_401": "需重新授權 (401)",
@@ -3051,7 +3063,6 @@
     "tab_heatmap": "用量熱力圖",
     "all": "全部",
     "export": "匯出",
-    "export_coming_soon": "匯出功能將在後續版本開放。",
     "awaiting_refresh": "等待刷新",
     "favorite_view": "收藏視圖",
     "save_view": "儲存視圖",

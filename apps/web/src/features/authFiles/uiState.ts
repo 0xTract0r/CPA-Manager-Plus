@@ -12,6 +12,10 @@ export const AUTH_FILES_SORT_MODES = [
   'priority-asc',
   'plan-desc',
   'plan-asc',
+  'added-desc',
+  'added-asc',
+  'modified-desc',
+  'modified-asc',
 ] as const;
 
 export type AuthFilesSortMode = (typeof AUTH_FILES_SORT_MODES)[number];
