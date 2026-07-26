@@ -112,6 +112,39 @@ describe('usageAnalyticsPresentation', () => {
     expect(cards[7].meta).toContain('usage_analytics.cache_read_rate');
   });
 
+  it('缓存 token 卡片直接取后端权威 cachedTokens，不叠加 read/creation（防双计翻倍）', () => {
+    // 后端 compatCachedExpr 已把 cachedTokens 算成 cache_read + cache_creation 的权威全量，
+    // 因此 fixture 用真实语义 cachedTokens = cacheReadTokens + cacheCreationTokens（300 = 100 + 200）。
+    // 旧代码把三项再相加会得到 600（翻倍），并可能让「缓存 > 总」；修复后卡片应为 300。
+    const authoritativeCacheSummary: UsageSummaryMetrics = {
+      ...summary,
+      totalTokens: 5000,
+      cachedTokens: 300,
+      cacheReadTokens: 100,
+      cacheCreationTokens: 200,
+    };
+
+    const cards = buildUsageOverviewSummaryCards({
+      anomalyCount: 0,
+      locale: 'en',
+      reasoningTokens: 0,
+      summary: authoritativeCacheSummary,
+      summaryDelta,
+      t,
+    });
+
+    const cachedCard = cards[7];
+    expect(cachedCard.label).toBe('usage_analytics.metric_cached_tokens');
+    // 权威值 300，翻倍 bug 会是 600。
+    expect(cachedCard.value).toBe('300');
+    expect(cachedCard.value).not.toBe('600');
+    expect(cachedCard.valueTitle).toBe('300');
+    // 缓存 token 绝不应超过总 token。
+    expect(authoritativeCacheSummary.cachedTokens).toBeLessThan(
+      authoritativeCacheSummary.totalTokens
+    );
+  });
+
   it('builds trend summary cards from peak buckets and comparison deltas', () => {
     const cards = buildUsageTrendSummaryCards({
       locale: 'en',

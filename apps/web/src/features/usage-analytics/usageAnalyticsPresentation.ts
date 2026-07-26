@@ -163,7 +163,9 @@ export const buildUsageOverviewSummaryCards = ({
   summaryDelta,
   t,
 }: OverviewSummaryCardsInput): UsageSummaryCard[] => {
-  const cacheTokens = summary.cachedTokens + summary.cacheReadTokens + summary.cacheCreationTokens;
+  // 后端 summary.cachedTokens 已是 cache_read + cache_creation 的权威全量（compatCachedExpr 计算），
+  // 不能再叠加 read/creation，否则缓存 token 会翻倍（曾出现「缓存 > 总 token」的双计事故）。
+  const cacheTokens = summary.cachedTokens;
   const totalTokens = Math.max(summary.totalTokens, 0);
   const p95LatencyLabel =
     summary.p95LatencyMs === null && summary.p95TtftMs !== null

@@ -681,8 +681,9 @@ export const buildSecondarySummaryCards = (
   locale: string,
   t: TFunction
 ): SummaryCardProps[] => {
-  const totalCacheTokens =
-    summary.cachedTokens + summary.cacheCreationTokens + summary.cacheReadTokens;
+  // 后端 summary.cachedTokens 已是 cache_read + cache_creation 的权威全量（compatCachedExpr 计算），
+  // 不能再叠加 read/creation，否则缓存 token 会翻倍（曾出现「缓存 > 总 token」的双计事故）。
+  const totalCacheTokens = summary.cachedTokens;
   const cacheHitRate = computeCacheHitRate(summary) ?? 0;
 
   return [

@@ -14,6 +14,7 @@ import type { MonitoringAccountQuotaTarget } from '@/features/monitoring/account
 import type {
   MonitoringAccountRow,
   MonitoringApiKeyRow,
+  MonitoringSummary,
 } from '@/features/monitoring/hooks/useMonitoringData';
 import {
   buildAccountOptions,
@@ -23,6 +24,7 @@ import {
   buildMonitoringInitialStateFromQuery,
   buildModelOptionsFromValues,
   buildProviderOptionsFromValues,
+  buildSecondarySummaryCards,
   computeCacheHitRate,
   formatMonitoringCustomRangeCompactLabel,
   formatMonitoringSummaryScopeText,
@@ -1195,5 +1197,56 @@ describe('computeCacheHitRate', () => {
     expect(prefixed).not.toBeNull();
     expect(prefixed).toBeCloseTo(bare!, 6);
     expect(prefixed).toBeCloseTo(0.8065, 3);
+  });
+});
+
+describe('buildSecondarySummaryCards', () => {
+  const createSummary = (overrides: Partial<MonitoringSummary> = {}): MonitoringSummary => ({
+    totalCalls: 100,
+    successCalls: 100,
+    failureCalls: 0,
+    successRate: 1,
+    inputTokens: 4000,
+    outputTokens: 700,
+    reasoningTokens: 0,
+    cachedTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    totalTokens: 5000,
+    totalCost: 0,
+    averageLatencyMs: null,
+    rpm30m: 0,
+    tpm30m: 0,
+    avgDailyRequests: 0,
+    avgDailyTokens: 0,
+    approxTasks: 0,
+    approxTaskFailures: 0,
+    approxTaskSuccessRate: 1,
+    zeroTokenCalls: 0,
+    zeroTokenModels: [],
+    ...overrides,
+  });
+
+  it('缓存 token 卡片直接取后端权威 cachedTokens，不叠加 read/creation（防双计翻倍）', () => {
+    // 后端 compatCachedExpr 已把 cachedTokens 算成 cache_read + cache_creation 的权威全量，
+    // 因此 fixture 用真实语义 cachedTokens = cacheReadTokens + cacheCreationTokens（300 = 100 + 200）。
+    // 旧代码把三项再相加会得到 600（翻倍），可能让「缓存 > 总」；修复后卡片应为 300。
+    const summary = createSummary({
+      cachedTokens: 300,
+      cacheReadTokens: 100,
+      cacheCreationTokens: 200,
+      totalTokens: 5000,
+    });
+
+    const cards = buildSecondarySummaryCards(summary, 'en', t);
+    const cachedCard = cards.find((card) => card.icon === 'cache');
+
+    expect(cachedCard).toBeDefined();
+    // 权威值 300，翻倍 bug 会是 600。
+    expect(cachedCard!.value).toBe('300');
+    expect(cachedCard!.value).not.toBe('600');
+    expect(cachedCard!.valueTitle).toBe('300');
+    // 缓存 token 绝不应超过总 token。
+    expect(summary.cachedTokens).toBeLessThan(summary.totalTokens);
   });
 });

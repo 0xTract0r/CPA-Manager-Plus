@@ -98,7 +98,11 @@ describe('MonitoringCenterPage summary cards', () => {
       inputTokens: 2_783_500_000,
       outputTokens: 11_700_000,
       reasoningTokens: 5_000_000,
-      cachedTokens: 2_595_300_000,
+      // 真实语义：cachedTokens 是后端 compatCachedExpr 的权威缓存全量，等于
+      // cacheReadTokens + cacheCreationTokens（444_400_000 + 555_500_000 = 999_900_000），
+      // 且必然 <= totalTokens。此前 fixture 把 cachedTokens 设成 2_595_300_000，使「三项求和 =
+      // 3_595_200_000 > totalTokens」的不可能值成了基线，正好掩盖了缓存双计 bug。
+      cachedTokens: 999_900_000,
       cacheReadTokens: 444_400_000,
       cacheCreationTokens: 555_500_000,
       totalTokens: 2_795_200_000,
@@ -150,11 +154,12 @@ describe('MonitoringCenterPage summary cards', () => {
     expect(html).toContain('25.5K');
     expect(html).toContain('1.9K');
     expect(html).toContain('2.8B');
-    expect(html).toContain('3.6B');
+    // 缓存卡片显示权威 cachedTokens（999_900_000），不是三项相加的翻倍值（旧基线 3.6B / 3,595,200,000）。
+    expect(html).toContain('999.9M');
     expect(html).toContain('role="tooltip"');
     expect(html).toContain('2,795,200,000');
     expect(html).toContain('2,783,500,000');
-    expect(html).toContain('3,595,200,000');
+    expect(html).toContain('999,900,000');
     expect(html).toContain('$9,999,999.99');
     expect(html).toContain('Reasoning 5.0M');
     expect(html).toContain('Share 99.6%');
@@ -162,6 +167,11 @@ describe('MonitoringCenterPage summary cards', () => {
     expect(html).toContain('Hit rate 13.3%');
     expect(html).not.toContain('Create 555.5M');
     expect(html).not.toContain('Read 444.4M');
+
+    // 锁死不变量：权威缓存 = cache_read + cache_creation（真实语义），且缓存永远 < 总 token。
+    // 防止缓存卡片再退回「cachedTokens + cacheReadTokens + cacheCreationTokens」翻倍展示。
+    expect(summary.cachedTokens).toBe(summary.cacheReadTokens + summary.cacheCreationTokens);
+    expect(summary.cachedTokens).toBeLessThan(summary.totalTokens);
   });
 
   it('renders a scope caption stating the current stats window when scopeText is provided', () => {
