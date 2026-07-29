@@ -28,6 +28,9 @@ import { formatDateTime, formatFileSize, formatUnixTimestamp } from '@/utils/for
 import {
   QUOTA_PROVIDER_TYPES,
   formatModified,
+  getAuthFileAutoQuarantined,
+  getAuthFileQuarantineReason,
+  getAuthFileQuarantinedAt,
   getAuthFileStatusMessage,
   getTypeColor,
   getTypeLabel,
@@ -211,6 +214,30 @@ export function AuthFileCard(props: AuthFileCardProps) {
   const rawStatusMessage = getAuthFileStatusMessage(file);
   const hasStatusWarning =
     Boolean(rawStatusMessage) && !HEALTHY_STATUS_MESSAGES.has(rawStatusMessage.toLowerCase());
+
+  // 自动隔离态（同款迁移自 apps/web telemetry-farm-ux-hardening T3）：优先按
+  // file.auto_quarantined 布尔判定，不单独按 status_message 文本分支——core 侧
+  // 复核指出该字段与 status_message/unavailable 可能短暂不一致（清隔离锁与
+  // status 落库非原子），布尔更稳，且徽标此前完全没读这个字段，会显示假绿。
+  const isAutoQuarantined = getAuthFileAutoQuarantined(file);
+  const quarantineReasonRaw = getAuthFileQuarantineReason(file);
+  const quarantineReasonLabel = quarantineReasonRaw
+    ? t(`auth_files.quarantine_reason_${quarantineReasonRaw}`, {
+        defaultValue: quarantineReasonRaw,
+      })
+    : t('auth_files.quarantine_reason_unknown', { defaultValue: 'unknown reason' });
+  const quarantinedAtRaw = getAuthFileQuarantinedAt(file);
+  const quarantinedAtLabel = quarantinedAtRaw
+    ? formatDateTime(quarantinedAtRaw)
+    : t('auth_files.quarantine_time_unknown', { defaultValue: 'unknown time' });
+  const quarantineBadgeTitle = isAutoQuarantined
+    ? t('auth_files.quarantine_badge_title', {
+        reason: quarantineReasonLabel,
+        at: quarantinedAtLabel,
+        defaultValue:
+          'Auto-quarantined: {{reason}} · {{at}}. Please re-authenticate to restore this account.',
+      })
+    : '';
   // 无健康数据（成功/失败均为 0）时不占整块 HEALTH 面板，改成一行紧凑占位。
   const hasStatusData = statusData.totalSuccess + statusData.totalFailure > 0;
 
@@ -313,22 +340,29 @@ export function AuthFileCard(props: AuthFileCardProps) {
     !isRuntimeOnly &&
     !subscriptionBadgeLabel &&
     Boolean(onRefreshAntigravitySubscription);
+  // isAutoQuarantined 优先级高于 disabled/hasStatusWarning 等健康兜底判定
+  // （仅次于 isRuntimeOnly 虚拟占位卡）：被隔离的账号即使 status_message 仍是
+  // 健康文案，也必须显示「已隔离」而不是假绿，这正是本次要修的 bug。
   const stateLabel = isRuntimeOnly
     ? t('auth_files.type_virtual') || '虚拟认证文件'
-    : file.disabled
-      ? t('auth_files.health_status_disabled')
-      : hasStatusWarning
-        ? t('auth_files.health_status_warning')
-        : rawStatusMessage
-          ? t('auth_files.health_status_healthy')
-          : t('auth_files.status_toggle_label');
+    : isAutoQuarantined
+      ? t('auth_files.health_status_quarantined', { defaultValue: 'Quarantined' })
+      : file.disabled
+        ? t('auth_files.health_status_disabled')
+        : hasStatusWarning
+          ? t('auth_files.health_status_warning')
+          : rawStatusMessage
+            ? t('auth_files.health_status_healthy')
+            : t('auth_files.status_toggle_label');
   const stateBadgeClass = isRuntimeOnly
     ? styles.stateBadgeVirtual
-    : file.disabled
-      ? styles.stateBadgeDisabled
-      : hasStatusWarning
-        ? styles.stateBadgeWarning
-        : styles.stateBadgeActive;
+    : isAutoQuarantined
+      ? styles.stateBadgeQuarantined
+      : file.disabled
+        ? styles.stateBadgeDisabled
+        : hasStatusWarning
+          ? styles.stateBadgeWarning
+          : styles.stateBadgeActive;
   const codexStatusBadgeClassByTone = {
     danger: styles.codexStatusBadgeDanger,
     warning: styles.codexStatusBadgeWarning,
@@ -374,7 +408,12 @@ export function AuthFileCard(props: AuthFileCardProps) {
                 >
                   {typeLabel}
                 </span>
-                <span className={`${styles.stateBadge} ${stateBadgeClass}`}>{stateLabel}</span>
+                <span
+                  className={`${styles.stateBadge} ${stateBadgeClass}`}
+                  title={isAutoQuarantined ? quarantineBadgeTitle : undefined}
+                >
+                  {stateLabel}
+                </span>
                 {missingProxyUrl && (
                   <span
                     className={`${styles.stateBadge} ${styles.stateBadgeWarning}`}
@@ -606,6 +645,17 @@ export function AuthFileCard(props: AuthFileCardProps) {
               </div>
             )}
 
+          {isAutoQuarantined && (
+            <div
+              className={styles.healthStatusMessage}
+              title={quarantineBadgeTitle}
+              data-testid={`auth-file-quarantine-notice-${file.name}`}
+            >
+              <IconShield className={styles.messageIcon} size={14} />
+              <span>{quarantineBadgeTitle}</span>
+            </div>
+          )}
+
           {rawStatusMessage && hasStatusWarning && (
             <div className={styles.healthStatusMessage} title={rawStatusMessage}>
               <IconInfo className={styles.messageIcon} size={14} />
@@ -748,7 +798,7 @@ export function AuthFileCard(props: AuthFileCardProps) {
                       ) : null}
                       {canReauthenticate && (
                         <Button
-                          variant={hasStatusWarning ? 'primary' : 'secondary'}
+                          variant={hasStatusWarning || isAutoQuarantined ? 'primary' : 'secondary'}
                           size="sm"
                           onClick={() => onReauthenticate?.(file)}
                           className={styles.iconButton}
