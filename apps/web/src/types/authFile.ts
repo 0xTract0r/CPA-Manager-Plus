@@ -218,6 +218,21 @@ export interface AuthFileItem {
   status_history?: AuthFileStatusHistoryEntry[];
   cyber_policy_flag_count?: number;
   last_cyber_policy_at?: string;
+  /**
+   * 账号是否被 core 自动隔离（终态认证失败等不可重试错误触发，见 core
+   * sdk/cliproxy/auth/conductor.go markAutoQuarantine）。core 恒下发该字段
+   * （无条件写入），是判定「已隔离」的唯一权威字段，优先级高于
+   * unavailable/status/status_message 等健康态判定（同款迁移自 apps/web
+   * telemetry-farm-ux-hardening T3：清隔离锁与 status 落库非原子，可能短暂
+   * 不一致，隔离态一律优先信这个布尔）。
+   */
+  auto_quarantined?: boolean;
+  /** 隔离原因（仅 auto_quarantined=true 时存在），当前固定值 "terminal_auth_failure"。 */
+  quarantine_reason?: string;
+  /** 隔离发生时间，RFC3339（仅 auto_quarantined=true 时存在）。 */
+  quarantined_at?: string;
+  /** 重新认证入口 URL（部分 provider，如 anthropic/claude，才会下发）。 */
+  reauth_url?: string;
   success?: unknown;
   failed?: unknown;
   project_id?: string;

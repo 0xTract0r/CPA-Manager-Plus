@@ -1072,6 +1072,15 @@
   border: 1px dashed color-mix(in srgb, var(--border-subtle-dashed) 90%, transparent);
 }
 
+// 账号被 core 自动隔离（auto_quarantined=true）：红色徽标，明确区别于
+// stateBadgeWarning 的琥珀色告警，避免和普通告警混淆——隔离态需要用户重新
+// 认证才能恢复，比一般 warning 更严重。
+.stateBadgeQuarantined {
+  color: var(--danger-color);
+  background: color-mix(in srgb, var(--danger-color) 12%, var(--bg-primary));
+  border: 1px solid color-mix(in srgb, var(--danger-color) 42%, transparent);
+}
+
 .codexStatusBadge {
   display: inline-flex;
   align-items: center;

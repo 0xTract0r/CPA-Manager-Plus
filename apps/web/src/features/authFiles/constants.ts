@@ -187,6 +187,33 @@ export const getAuthFileUnavailable = (file: AuthFileItem): boolean | undefined 
 };
 
 /**
+ * 归一 core 顶层 `auto_quarantined`(boolean) 字段，兼容字符串布尔。
+ * 账号被自动隔离时该字段恒为 true（core 侧无条件写入），是判定「已隔离」的唯一
+ * 权威字段，优先级高于 unavailable/status/status_message 等健康态判定——同款
+ * 迁移自 apps/web telemetry-farm-ux-hardening T3：清隔离锁与 status 落库非
+ * 原子，两者可能短暂不一致，隔离态一律优先信这个布尔，不单独按 status 字符串
+ * 或 status_message 文本分支。
+ */
+export const getAuthFileAutoQuarantined = (file: AuthFileItem): boolean => {
+  const raw = file.auto_quarantined ?? file['autoQuarantined'];
+  if (typeof raw === 'boolean') return raw;
+  if (typeof raw === 'string') return TRUTHY_TEXT_VALUES.has(raw.trim().toLowerCase());
+  return false;
+};
+
+/** 隔离原因（仅 auto_quarantined=true 时存在），供徽标 tooltip 展示。 */
+export const getAuthFileQuarantineReason = (file: AuthFileItem): string => {
+  const raw = file.quarantine_reason ?? file['quarantineReason'];
+  return typeof raw === 'string' ? raw.trim() : '';
+};
+
+/** 隔离发生时间（RFC3339，仅 auto_quarantined=true 时存在），供徽标 tooltip 展示。 */
+export const getAuthFileQuarantinedAt = (file: AuthFileItem): string => {
+  const raw = file.quarantined_at ?? file['quarantinedAt'];
+  return typeof raw === 'string' ? raw.trim() : '';
+};
+
+/**
  * 健康态 `status` 值白名单（用于「core 下发了 status 但未下发 unavailable」的兼容判断）。
  * 仅作为结构化 status 字段的判定，不再用 status_message 自由文本做关键字匹配。
  */
@@ -220,13 +247,18 @@ const hasLegacyStatusMessageWarning = (file: AuthFileItem): boolean => {
 };
 
 /**
- * 是否处于「告警 / 不可用」态。判定优先级（迁移自 cpa fork T047 改造）：
+ * 是否处于「告警 / 不可用」态。判定优先级（迁移自 cpa fork T047 改造 +
+ * auto_quarantined 加固）：
+ *  0. core 顶层结构化 `auto_quarantined`(boolean)：显式 true 直接判定告警，
+ *     优先级高于以下所有健康兜底判定（隔离态一律优先信这个布尔）。
  *  1. core 顶层结构化 `unavailable`(boolean)：显式 true=告警，显式 false=健康。
  *  2. core 顶层结构化 `status`：非健康白名单值即告警。
  *  3. 两者都缺时，回退旧 status_message 文本白名单（兼容历史 payload）。
  * status_message 退化为纯展示文案，不再作为判定真源。
  */
 export const hasAuthFileStatusWarning = (file: AuthFileItem): boolean => {
+  if (getAuthFileAutoQuarantined(file)) return true;
+
   const unavailable = getAuthFileUnavailable(file);
   if (unavailable !== undefined) return unavailable;
 
