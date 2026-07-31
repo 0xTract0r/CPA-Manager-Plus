@@ -17,7 +17,6 @@ import {
 import {
   getAuthFileStatusMessage,
   getTypeLabel,
-  hasAuthFileStatusMessage,
   hasAuthFileStatusWarning,
   isHealthyAuthFile,
   isRuntimeOnlyAuthFile,
@@ -514,7 +513,10 @@ export function useAuthFilesData(
                       ) {
                         return false;
                       }
-                      if (isProblemOnly && !hasAuthFileStatusMessage(file)) return false;
+                      // 与 AuthFilesPage 的 problemOnly 卡片筛选口径保持一致：
+                      // 改用结构化 hasAuthFileStatusWarning（含 auto_quarantined
+                      // 最高优先级），避免"删除有问题账号"漏删隔离号。
+                      if (isProblemOnly && !hasAuthFileStatusWarning(file)) return false;
                       if (isDisabledOnly && file.disabled !== true) return false;
                       if (isHealthyOnly && !isHealthyAuthFile(file)) return false;
                       return true;

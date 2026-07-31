@@ -1348,6 +1348,20 @@
   word-break: break-word;
 }
 
+// 隔离原因/status_message 常驻可见文本的两级层次（原因 + 最近失败次数），
+// 让原因行与失败计数分行展示，而不是挤在同一行 flex item 里。
+.healthStatusMessageBody {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.healthStatusMessageMeta {
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+
 .messageIcon {
   flex-shrink: 0;
   margin-top: 1px;

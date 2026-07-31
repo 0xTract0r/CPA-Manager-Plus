@@ -41,7 +41,6 @@ import {
   getAuthFileIcon,
   getTypeColor,
   getTypeLabel,
-  hasAuthFileStatusMessage,
   hasAuthFileStatusWarning,
   isHealthyAuthFile,
   isRuntimeOnlyAuthFile,
@@ -1263,7 +1262,11 @@ export function AuthFilesPage() {
         const codexStatus = codexStatusByAuthFileKey.get(
           getAuthFileCodexInspectionKeyForFile(file)
         );
-        if (problemOnly && !hasAuthFileStatusMessage(file) && !codexStatus?.badges.length) {
+        // 「仅显示有问题账号」判定改用结构化 hasAuthFileStatusWarning：
+        // auto_quarantined 最高优先级，涵盖此前基于纯文本 status_message
+        // 会漏判的隔离号（隔离锁清除与 status_message 落库非原子，隔离号可能
+        // 暂时仍带健康文案）。
+        if (problemOnly && !hasAuthFileStatusWarning(file) && !codexStatus?.badges.length) {
           return false;
         }
         if (codexStatus && !authFileMatchesCodexStatusFilter(codexStatus, codexStatusFilter)) {
