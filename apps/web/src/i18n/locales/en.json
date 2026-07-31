@@ -799,7 +799,6 @@
     "quarantine_time_unknown": "unknown time",
     "quarantine_reason_terminal_auth_failure": "Terminal authentication failure (non-retryable)",
     "recent_failure_count": "Recent failures: {{failures}}",
-    "status_toggle_quarantined_label": "Enabled toggle disabled: this account is auto-quarantined and read-only until re-authenticated",
     "last_refresh_label": "Last Refresh",
     "refresh_not_available": "N/A",
     "refresh_just_now": "Just now",

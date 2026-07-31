@@ -799,7 +799,6 @@
     "quarantine_time_unknown": "时间未知",
     "quarantine_reason_terminal_auth_failure": "终端认证失败（不可重试的终态错误）",
     "recent_failure_count": "最近失败次数：{{failures}}",
-    "status_toggle_quarantined_label": "启用开关已禁用：该账号已被自动隔离，需重新认证后才能恢复，当前为只读状态",
     "last_refresh_label": "最近刷新",
     "refresh_not_available": "暂无",
     "refresh_just_now": "刚刚",

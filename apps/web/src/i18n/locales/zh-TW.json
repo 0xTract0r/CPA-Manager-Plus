@@ -799,7 +799,6 @@
     "quarantine_time_unknown": "時間未知",
     "quarantine_reason_terminal_auth_failure": "終端認證失敗（不可重試的終態錯誤）",
     "recent_failure_count": "最近失敗次數：{{failures}}",
-    "status_toggle_quarantined_label": "啟用開關已停用：該帳號已被自動隔離，需重新認證後才能恢復，目前為唯讀狀態",
     "last_refresh_label": "最近重新整理",
     "refresh_not_available": "暫無",
     "refresh_just_now": "剛剛",
