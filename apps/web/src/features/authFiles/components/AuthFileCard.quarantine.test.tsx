@@ -97,9 +97,10 @@ describe('AuthFileCard auto_quarantined badge', () => {
     expect(String(badgeSpan.props.title || '')).toContain('terminal_auth_failure');
   });
 
-  // Path B（如实反映）：隔离账号「启用」开关必须显关且只读，绝不能让用户误以为
-  // 还能一键切回启用，也绝不能因为这里的展示态触发对 core 的 disable 请求。
-  it('shows the enabled toggle as OFF and read-only for a quarantined account', () => {
+  // Path B（开关回归可点，2026-07-31 反转后行为）：开关只反映 file.disabled
+  // 本身的 operator 意图，不再因 isAutoQuarantined 被强制显示为「关」或只读；
+  // 隔离状态改由上方徽标（quarantineBadgeTitle）独立呈现，两者解耦。
+  it('reflects disabled intent (checked, since disabled=false) and stays interactive for a quarantined account; quarantine is surfaced via the badge, not by making the toggle read-only', () => {
     let renderer!: ReactTestRenderer;
     const onToggleStatus = vi.fn();
     act(() => {
@@ -113,8 +114,10 @@ describe('AuthFileCard auto_quarantined badge', () => {
     });
     const toggleInput = toggleContainer.findByType('input');
 
-    expect(toggleInput.props.checked).toBe(false);
-    expect(toggleInput.props.disabled).toBe(true);
+    // quarantinedFile.disabled === false ⇒ checked=true（!file.disabled），
+    // 且不因隔离态被强制 disabled=true。
+    expect(toggleInput.props.checked).toBe(true);
+    expect(toggleInput.props.disabled).toBe(false);
   });
 
   it('shows the enabled toggle as ON and interactive for a healthy account', () => {
@@ -144,7 +147,7 @@ describe('AuthFileCard auto_quarantined badge', () => {
     });
     const toggleInput = toggleContainer.findByType('input');
 
-    // 普通停用（非隔离）账号的开关仍应可交互，只是当前显关；只有隔离态才强制只读。
+    // 普通停用（非隔离）账号的开关可交互、当前显关；隔离态开关也已回退为可交互（反转 Path B），不再强制只读，隔离信息由徽标独立呈现。
     expect(toggleInput.props.checked).toBe(false);
     expect(toggleInput.props.disabled).toBe(false);
   });

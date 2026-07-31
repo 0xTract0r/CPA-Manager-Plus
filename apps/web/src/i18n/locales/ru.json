@@ -799,7 +799,6 @@
     "quarantine_time_unknown": "время неизвестно",
     "quarantine_reason_terminal_auth_failure": "Необратимая ошибка аутентификации (без возможности повтора)",
     "recent_failure_count": "Недавние сбои: {{failures}}",
-    "status_toggle_quarantined_label": "Переключатель «Включено» отключён: аккаунт на автокарантине и доступен только для чтения до повторной аутентификации",
     "last_refresh_label": "Последнее обновление",
     "refresh_not_available": "Н/Д",
     "refresh_just_now": "Только что",

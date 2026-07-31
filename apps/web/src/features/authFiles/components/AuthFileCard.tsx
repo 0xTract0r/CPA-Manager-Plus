@@ -897,21 +897,16 @@ export function AuthFileCard(props: AuthFileCardProps) {
                   {t('auth_files.status_toggle_label')}
                 </span>
                 <ToggleSwitch
-                  ariaLabel={
-                    isAutoQuarantined
-                      ? t('auth_files.status_toggle_quarantined_label', {
-                          defaultValue:
-                            'Enabled toggle disabled: this account is auto-quarantined and read-only until re-authenticated',
-                        })
-                      : t('auth_files.status_toggle_label')
-                  }
-                  // Path B（如实反映）：账号被自动隔离时，「启用」开关必须显示成
-                  // 「关」且只读——绝不因此对 core 发出 disable 请求，也绝不改动
-                  // file.disabled 底层数据；isAutoQuarantined 只影响这里的展示态。
-                  checked={!file.disabled && !isAutoQuarantined}
-                  disabled={
-                    disableControls || statusUpdating[file.name] === true || isAutoQuarantined
-                  }
+                  // ariaLabel 始终用中性的 status_toggle_label：开关现在总是可点
+                  // （见下方 checked/disabled），不再有「隔离态只读」这回事，所以
+                  // 不应该继续按 isAutoQuarantined 切到「已禁用/只读」的错误文案。
+                  ariaLabel={t('auth_files.status_toggle_label')}
+                  // Path B（开关回归可点）：开关只反映/操作 file.disabled 本身的
+                  // operator 意图，不再因 isAutoQuarantined 被强制显示为「关」或
+                  // 禁用；隔离状态改由上方徽标（quarantineBadgeTitle）独立呈现。
+                  // 这样「停用」操作不会误清隔离标记，「启用」也不会被隔离态挡住。
+                  checked={!file.disabled}
+                  disabled={disableControls || statusUpdating[file.name] === true}
                   onChange={(value) => onToggleStatus(file, value)}
                 />
               </div>
