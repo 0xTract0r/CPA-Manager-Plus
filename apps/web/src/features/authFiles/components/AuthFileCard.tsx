@@ -241,6 +241,19 @@ export function AuthFileCard(props: AuthFileCardProps) {
   // 无健康数据（成功/失败均为 0）时不占整块 HEALTH 面板，改成一行紧凑占位。
   const hasStatusData = statusData.totalSuccess + statusData.totalFailure > 0;
 
+  // 隔离/异常原因常驻可见文本的第二行：接线 recent_requests 的 Failed 计数
+  // （与卡片下方 HEALTH 面板同一数据源 statusData.totalFailure，避免展示口径
+  // 不一致）。core 未投影具体 last_error 码，这里只做「原因 + 失败次数」两级，
+  // 不臆造更细的错误码。
+  const recentFailureCount = statusData.totalFailure;
+  const recentFailureCountLabel =
+    recentFailureCount > 0
+      ? t('auth_files.recent_failure_count', {
+          failures: recentFailureCount,
+          defaultValue: 'Recent failures: {{failures}}',
+        })
+      : '';
+
   // 缺失 proxy_url（住宅代理）告警：core#26/#27 把空 proxy_url 账号标为不可用并下发 warnings。
   // 对照旧版卡片，用醒目橙色徽标 + tooltip 提示，避免请求直连暴露真实 IP。
   const missingProxyUrl = isAuthFileMissingProxyUrl(file);
@@ -652,14 +665,34 @@ export function AuthFileCard(props: AuthFileCardProps) {
               data-testid={`auth-file-quarantine-notice-${file.name}`}
             >
               <IconShield className={styles.messageIcon} size={14} />
-              <span>{quarantineBadgeTitle}</span>
+              <div className={styles.healthStatusMessageBody}>
+                <span>{quarantineBadgeTitle}</span>
+                {recentFailureCountLabel && (
+                  <span
+                    className={styles.healthStatusMessageMeta}
+                    data-testid={`auth-file-recent-failure-count-${file.name}`}
+                  >
+                    {recentFailureCountLabel}
+                  </span>
+                )}
+              </div>
             </div>
           )}
 
-          {rawStatusMessage && hasStatusWarning && (
+          {rawStatusMessage && hasStatusWarning && !isAutoQuarantined && (
             <div className={styles.healthStatusMessage} title={rawStatusMessage}>
               <IconInfo className={styles.messageIcon} size={14} />
-              <span>{rawStatusMessage}</span>
+              <div className={styles.healthStatusMessageBody}>
+                <span>{rawStatusMessage}</span>
+                {recentFailureCountLabel && (
+                  <span
+                    className={styles.healthStatusMessageMeta}
+                    data-testid={`auth-file-recent-failure-count-${file.name}`}
+                  >
+                    {recentFailureCountLabel}
+                  </span>
+                )}
+              </div>
             </div>
           )}
 
@@ -855,14 +888,30 @@ export function AuthFileCard(props: AuthFileCardProps) {
               )}
             </div>
             {!isRuntimeOnly && (
-              <div className={styles.statusToggle}>
+              <div
+                className={styles.statusToggle}
+                title={isAutoQuarantined ? quarantineBadgeTitle : undefined}
+                data-testid={`auth-file-status-toggle-${file.name}`}
+              >
                 <span className={styles.statusToggleLabel}>
                   {t('auth_files.status_toggle_label')}
                 </span>
                 <ToggleSwitch
-                  ariaLabel={t('auth_files.status_toggle_label')}
-                  checked={!file.disabled}
-                  disabled={disableControls || statusUpdating[file.name] === true}
+                  ariaLabel={
+                    isAutoQuarantined
+                      ? t('auth_files.status_toggle_quarantined_label', {
+                          defaultValue:
+                            'Enabled toggle disabled: this account is auto-quarantined and read-only until re-authenticated',
+                        })
+                      : t('auth_files.status_toggle_label')
+                  }
+                  // Path B（如实反映）：账号被自动隔离时，「启用」开关必须显示成
+                  // 「关」且只读——绝不因此对 core 发出 disable 请求，也绝不改动
+                  // file.disabled 底层数据；isAutoQuarantined 只影响这里的展示态。
+                  checked={!file.disabled && !isAutoQuarantined}
+                  disabled={
+                    disableControls || statusUpdating[file.name] === true || isAutoQuarantined
+                  }
                   onChange={(value) => onToggleStatus(file, value)}
                 />
               </div>

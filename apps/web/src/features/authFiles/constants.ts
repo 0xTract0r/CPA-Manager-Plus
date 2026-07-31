@@ -145,17 +145,9 @@ export const getAuthFileStatusMessage = (file: AuthFileItem): string => {
   return String(raw).trim();
 };
 
-export const hasAuthFileStatusMessage = (file: AuthFileItem): boolean =>
-  getAuthFileStatusMessage(file).length > 0;
-
-export const isHealthyAuthFile = (file: AuthFileItem): boolean =>
-  file.disabled !== true && !hasAuthFileStatusMessage(file);
-
 // --- 迁移自 cpa fork：身份隔离/账号设置相关的结构化状态判定 ---
-// 与上面基于 status_message 文本的 isHealthyAuthFile 并存，不替换：
-// isHealthyAuthFile 是既有卡片健康态判定的既有入口，继续保留；
-// hasAuthFileStatusWarning 是 cpa 新增的更细粒度判定（结构化 unavailable/status
-// 优先，legacy status_message 白名单兜底），供 Phase 2 身份隔离弹窗/审计面板使用。
+// hasAuthFileStatusWarning 是 cpa 新增的更细粒度判定（auto_quarantined 最高优先级，
+// 结构化 unavailable/status 次之，legacy status_message 白名单兜底），供筛选/审计面板使用。
 
 /**
  * 归一 core 顶层 `status` 字段（snake/camel 都从同名字段读，core 实际是顶层 `status`）。
@@ -267,6 +259,17 @@ export const hasAuthFileStatusWarning = (file: AuthFileItem): boolean => {
 
   return hasLegacyStatusMessageWarning(file);
 };
+
+/**
+ * 「正常账号」判定：未停用 且 无告警（含 auto_quarantined/unavailable/status/
+ * status_message 任一命中 hasAuthFileStatusWarning）。
+ * 修复：此前基于 hasAuthFileStatusMessage（纯文本）判定时，若账号已被
+ * auto_quarantined 但 status_message 仍是健康文案（清隔离锁与 status 落库非
+ * 原子），会被这里误判为「正常」，导致「仅显示正常账号」筛选漏出隔离号。
+ * 改用结构化的 hasAuthFileStatusWarning 后，隔离号一律不算正常。
+ */
+export const isHealthyAuthFile = (file: AuthFileItem): boolean =>
+  file.disabled !== true && !hasAuthFileStatusWarning(file);
 
 /**
  * 解析账号视图的 warnings（core#26/#27 在 account 视图 `warnings []string` 下发，
