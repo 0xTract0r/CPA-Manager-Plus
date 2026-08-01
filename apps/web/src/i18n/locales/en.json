@@ -792,6 +792,7 @@
     "health_status_warning": "Warning",
     "health_status_disabled": "Disabled",
     "health_status_quarantined": "Quarantined",
+    "health_status_reauth_required": "Re-authentication required",
     "health_status_unknown": "Unknown",
     "health_status_no_message": "No status message",
     "quarantine_badge_title": "Auto-quarantined: {{reason}} · {{at}}. Please re-authenticate to restore this account.",

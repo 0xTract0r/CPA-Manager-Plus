@@ -792,6 +792,7 @@
     "health_status_warning": "警告",
     "health_status_disabled": "已停用",
     "health_status_quarantined": "已隔離",
+    "health_status_reauth_required": "需重新認證",
     "health_status_unknown": "未知",
     "health_status_no_message": "暫無狀態說明",
     "quarantine_badge_title": "自動隔離原因：{{reason}} · {{at}}。請重新認證以恢復該帳號。",

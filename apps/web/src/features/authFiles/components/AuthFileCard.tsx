@@ -35,6 +35,7 @@ import {
   getTypeColor,
   getTypeLabel,
   isAuthFileMissingProxyUrl,
+  isAuthFileReauthRequired,
   isRuntimeOnlyAuthFile,
   normalizeProviderKey,
   parsePriorityValue,
@@ -220,6 +221,11 @@ export function AuthFileCard(props: AuthFileCardProps) {
   // 复核指出该字段与 status_message/unavailable 可能短暂不一致（清隔离锁与
   // status 落库非原子），布尔更稳，且徽标此前完全没读这个字段，会显示假绿。
   const isAutoQuarantined = getAuthFileAutoQuarantined(file);
+  // 「需重新认证」纵深防御信号（reauth_url / reauth_required）：即便账号未被隔离、
+  // unavailable 尚未置 true，只要带 reauth 信号也必须显式呈现「需重新认证」而非假绿。
+  // 本卡片的 hasStatusWarning 仅由 status_message 文本推导，不含结构化 reauth 信号，
+  // 故这里单独接线，避免带 reauth_url 的死 token 账号在卡片上仍显绿色启用态。
+  const isReauthRequired = isAuthFileReauthRequired(file);
   const quarantineReasonRaw = getAuthFileQuarantineReason(file);
   const quarantineReasonLabel = quarantineReasonRaw
     ? t(`auth_files.quarantine_reason_${quarantineReasonRaw}`, {
@@ -360,22 +366,28 @@ export function AuthFileCard(props: AuthFileCardProps) {
     ? t('auth_files.type_virtual') || '虚拟认证文件'
     : isAutoQuarantined
       ? t('auth_files.health_status_quarantined', { defaultValue: 'Quarantined' })
-      : file.disabled
-        ? t('auth_files.health_status_disabled')
-        : hasStatusWarning
-          ? t('auth_files.health_status_warning')
-          : rawStatusMessage
-            ? t('auth_files.health_status_healthy')
-            : t('auth_files.status_toggle_label');
+      : isReauthRequired
+        ? t('auth_files.health_status_reauth_required', {
+            defaultValue: 'Re-authentication required',
+          })
+        : file.disabled
+          ? t('auth_files.health_status_disabled')
+          : hasStatusWarning
+            ? t('auth_files.health_status_warning')
+            : rawStatusMessage
+              ? t('auth_files.health_status_healthy')
+              : t('auth_files.status_toggle_label');
   const stateBadgeClass = isRuntimeOnly
     ? styles.stateBadgeVirtual
     : isAutoQuarantined
       ? styles.stateBadgeQuarantined
-      : file.disabled
-        ? styles.stateBadgeDisabled
-        : hasStatusWarning
-          ? styles.stateBadgeWarning
-          : styles.stateBadgeActive;
+      : isReauthRequired
+        ? styles.stateBadgeWarning
+        : file.disabled
+          ? styles.stateBadgeDisabled
+          : hasStatusWarning
+            ? styles.stateBadgeWarning
+            : styles.stateBadgeActive;
   const codexStatusBadgeClassByTone = {
     danger: styles.codexStatusBadgeDanger,
     warning: styles.codexStatusBadgeWarning,
@@ -424,6 +436,13 @@ export function AuthFileCard(props: AuthFileCardProps) {
                 <span
                   className={`${styles.stateBadge} ${stateBadgeClass}`}
                   title={isAutoQuarantined ? quarantineBadgeTitle : undefined}
+                  data-testid={
+                    isAutoQuarantined
+                      ? 'auth-file-quarantined-badge'
+                      : isReauthRequired
+                        ? 'auth-file-reauth-required-badge'
+                        : undefined
+                  }
                 >
                   {stateLabel}
                 </span>
@@ -831,7 +850,11 @@ export function AuthFileCard(props: AuthFileCardProps) {
                       ) : null}
                       {canReauthenticate && (
                         <Button
-                          variant={hasStatusWarning || isAutoQuarantined ? 'primary' : 'secondary'}
+                          variant={
+                            hasStatusWarning || isAutoQuarantined || isReauthRequired
+                              ? 'primary'
+                              : 'secondary'
+                          }
                           size="sm"
                           onClick={() => onReauthenticate?.(file)}
                           className={styles.iconButton}

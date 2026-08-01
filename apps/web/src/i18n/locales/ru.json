@@ -792,6 +792,7 @@
     "health_status_warning": "Предупреждение",
     "health_status_disabled": "Отключено",
     "health_status_quarantined": "На карантине",
+    "health_status_reauth_required": "Требуется повторная авторизация",
     "health_status_unknown": "Неизвестно",
     "health_status_no_message": "Нет сообщения о статусе",
     "quarantine_badge_title": "Причина автокарантина: {{reason}} · {{at}}. Пройдите повторную аутентификацию, чтобы восстановить аккаунт.",

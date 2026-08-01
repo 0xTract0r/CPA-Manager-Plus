@@ -233,6 +233,12 @@ export interface AuthFileItem {
   quarantined_at?: string;
   /** 重新认证入口 URL（部分 provider，如 anthropic/claude，才会下发）。 */
   reauth_url?: string;
+  /**
+   * 需重新认证标记（纵深防御信号）：core 顶层或 metadata 可能下发此布尔；即便
+   * reauth_url 缺失、unavailable 尚未置 true，只要为真也应判为异常（见
+   * constants.ts isAuthFileReauthRequired）。
+   */
+  reauth_required?: boolean;
   success?: unknown;
   failed?: unknown;
   project_id?: string;

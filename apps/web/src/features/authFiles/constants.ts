@@ -238,11 +238,43 @@ const hasLegacyStatusMessageWarning = (file: AuthFileItem): boolean => {
   );
 };
 
+/** 归一「需重新认证」布尔信号（兼容原生 boolean / 数字 / 字符串布尔）。 */
+const isTruthyReauthFlag = (raw: unknown): boolean => {
+  if (typeof raw === 'boolean') return raw;
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw !== 0;
+  if (typeof raw === 'string') return TRUTHY_TEXT_VALUES.has(raw.trim().toLowerCase());
+  return false;
+};
+
+/**
+ * 是否带「需重新认证」信号（纵深防御兜底 / defense-in-depth）：
+ * core 判定账号需重新授权时会在 buildAuthFileEntry 条件下发顶层 `reauth_url`
+ * （目前主要是 anthropic/claude 等 provider），或在顶层 / `metadata` 里标记
+ * `reauth_required`。core 另有一条切片会把这类账号置 `unavailable=true` 从而
+ * 自动转告警；本判定是兜底纵深防御——即便那步缺失（unavailable 未下发、甚至
+ * 显式 `unavailable=false` / status 健康），只要账号仍带 reauth 信号，也必须判为
+ * 异常，绝不能把「需重新认证」的死 token 账号渲染成绿色正常。
+ */
+export const isAuthFileReauthRequired = (file: AuthFileItem): boolean => {
+  const reauthUrl = file.reauth_url ?? file['reauthUrl'];
+  if (typeof reauthUrl === 'string' && reauthUrl.trim() !== '') return true;
+  if (isTruthyReauthFlag(file.reauth_required ?? file['reauthRequired'])) return true;
+  const metadata = file.metadata;
+  if (metadata && typeof metadata === 'object') {
+    const meta = metadata as Record<string, unknown>;
+    if (isTruthyReauthFlag(meta.reauth_required ?? meta.reauthRequired)) return true;
+  }
+  return false;
+};
+
 /**
  * 是否处于「告警 / 不可用」态。判定优先级（迁移自 cpa fork T047 改造 +
- * auto_quarantined 加固）：
+ * auto_quarantined 加固 + reauth 纵深防御）：
  *  0. core 顶层结构化 `auto_quarantined`(boolean)：显式 true 直接判定告警，
  *     优先级高于以下所有健康兜底判定（隔离态一律优先信这个布尔）。
+ *  0.5 `isAuthFileReauthRequired`：带 reauth_url / reauth_required 信号即判告警。
+ *     必须先于下面的 unavailable 短路——否则 core 尚未把 reauth 账号置
+ *     unavailable=true（甚至显式 false）时，死 token 账号会被漏判成绿色正常。
  *  1. core 顶层结构化 `unavailable`(boolean)：显式 true=告警，显式 false=健康。
  *  2. core 顶层结构化 `status`：非健康白名单值即告警。
  *  3. 两者都缺时，回退旧 status_message 文本白名单（兼容历史 payload）。
@@ -250,6 +282,7 @@ const hasLegacyStatusMessageWarning = (file: AuthFileItem): boolean => {
  */
 export const hasAuthFileStatusWarning = (file: AuthFileItem): boolean => {
   if (getAuthFileAutoQuarantined(file)) return true;
+  if (isAuthFileReauthRequired(file)) return true;
 
   const unavailable = getAuthFileUnavailable(file);
   if (unavailable !== undefined) return unavailable;

@@ -58,6 +58,16 @@ const quarantinedFile: AuthFileItem = {
   quarantined_at: '2026-07-01T00:00:00Z',
 };
 
+// 需重新认证账号（纵深防御）：未被隔离、显式 unavailable=false、status_message 健康，
+// 但带 reauth_url —— 徽标必须显示「需重新认证」而不是绿色启用态。
+const reauthRequiredFile: AuthFileItem = {
+  ...healthyFile,
+  name: 'qwen-acct-reauth.json',
+  status_message: 'ok',
+  unavailable: false,
+  reauth_url: 'https://claude.ai/oauth/reauthorize?x=1',
+};
+
 function findByText(root: ReactTestInstance, text: string): ReactTestInstance[] {
   return root.findAll(
     (node) => typeof node.type === 'string' && node.children.some((child) => child === text)
@@ -185,5 +195,35 @@ describe('AuthFileCard auto_quarantined badge', () => {
       'data-testid': `auth-file-recent-failure-count-${quarantinedWithFailures.name}`,
     });
     expect(failureCountNode.children.join('')).toContain('5');
+  });
+});
+
+describe('AuthFileCard reauth-required badge (defense-in-depth)', () => {
+  it('renders the "Re-authentication required" badge, not a healthy green badge, when reauth_url is present and unavailable=false', () => {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(<AuthFileCard {...baseProps} file={reauthRequiredFile} />);
+    });
+
+    const root = renderer.root;
+
+    // 状态徽标通过专用 testid 定位，文案走 t() mock 的 defaultValue 原样返回。
+    const badge = root.findByProps({ 'data-testid': 'auth-file-reauth-required-badge' });
+    expect(badge.children.join('')).toContain('Re-authentication required');
+
+    // 绝不能退化成绿色健康态（假绿回归点）；也不应误判为隔离态。
+    expect(findByText(root, 'auth_files.health_status_healthy')).toHaveLength(0);
+    expect(findByText(root, 'Quarantined')).toHaveLength(0);
+  });
+
+  it('does not render the reauth-required badge for a healthy account without any reauth signal', () => {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(<AuthFileCard {...baseProps} file={healthyFile} />);
+    });
+
+    expect(
+      renderer.root.findAllByProps({ 'data-testid': 'auth-file-reauth-required-badge' })
+    ).toHaveLength(0);
   });
 });
