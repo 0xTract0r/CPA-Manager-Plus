@@ -16,6 +16,18 @@ export const CACHE_EXPIRY_MS = 30 * 1000; // 与基线保持一致，减少管�
 export const DEFAULT_API_PORT = 8317;
 export const MANAGEMENT_API_PREFIX = '/v0/management';
 export const REQUEST_TIMEOUT_MS = 30 * 1000;
+
+// 农场编排器（Device Farm）独立后端配置（独立 base URL + 独立 admin key，
+// 不复用 CPA 管理会话，因此单独存一份配置，不并入 CPA 的 auth 存储）。
+export const STORAGE_KEY_FARM = 'cli-proxy-farm';
+// 农场编排器请求超时（绑定/解绑涉及远端 docker run/stop，放宽于常规管理请求）
+export const FARM_REQUEST_TIMEOUT_MS = 30 * 1000;
+// 容器池轮询间隔：够快看到状态变化，又不至于把编排器打爆
+export const FARM_CONTAINERS_POLL_INTERVAL_MS = 15 * 1000;
+// 概览带 / 告警面板轮询间隔：KPI 聚合和跨容器告警是对既有数据的二次聚合，
+// 不需要像容器池那样 15s 一刷（Poller 巡检本身 60s 一轮，刷太快没有新信息）。
+export const FARM_OVERVIEW_POLL_INTERVAL_MS = 30 * 1000;
+export const FARM_ALERTS_POLL_INTERVAL_MS = 30 * 1000;
 export const VERSION_HEADER_KEYS = ['x-cpa-version', 'x-server-version'];
 export const BUILD_DATE_HEADER_KEYS = ['x-cpa-build-date', 'x-server-build-date'];
 export const CPA_SUPPORT_PLUGIN_HEADER_KEYS = ['x-cpa-support-plugin'];
