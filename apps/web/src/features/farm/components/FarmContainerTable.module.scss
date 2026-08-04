@@ -1,0 +1,175 @@
+@use '../../../styles/variables' as *;
+@use '../../../styles/mixins' as *;
+
+.filterBar {
+  display: flex;
+  align-items: center;
+  gap: $spacing-sm;
+  margin-bottom: $spacing-md;
+  flex-wrap: wrap;
+}
+
+.filterLabel {
+  font-size: 13px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.filterSelect {
+  width: 160px;
+}
+
+.deviceCell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.containerId {
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 240px;
+}
+
+.deviceIdMasked {
+  font-family: $font-mono;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.mono {
+  font-family: $font-mono;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.bindingCell {
+  display: flex;
+  align-items: center;
+  gap: $spacing-sm;
+  min-width: 0;
+}
+
+.bindingAccount {
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-md, $radius-md);
+  border: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+// 表头与状态徽标一律单行，消除窄视口下逐字竖排（如「运/行/中」「已/禁/用」）。
+// 列多导致的超宽由 Table 内建的 .scroll 横向滚动兜底，不强制 min-width，
+// 以免 1440 桌面主视图触发不必要的横滚。
+.tableWrap th {
+  white-space: nowrap;
+}
+
+.tableWrap :global(.status-badge) {
+  white-space: nowrap;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: $spacing-sm;
+}
+
+// 行点击打开详情抽屉（P0-9）：只在传了 onSelectContainer 时才加，保持未接入
+// 场景（如未来复用本表格但不需要下钻）行为不变。
+.clickableRow {
+  cursor: pointer;
+
+  &:hover {
+    background: var(--bg-tertiary);
+  }
+}
+
+// 窄屏（≤768 平板/手机）响应式降级：把宽表整表改成堆叠卡片。每行渲染成一张
+// 卡片，字段以「标签（列头）+ 值」纵向排列，标签取自各单元格的 data-label
+// （复用现有列头 i18n key，无新增文案），彻底消除横向溢出与右缘半裁——之前
+// 窄屏靠 Table 内建 .scroll 横滚才够到「重新授权链接 / 操作」列、状态胶囊贴右缘
+// 被切一半的问题不再出现。桌面（≥769）维持原表格布局不变。
+@include mobile {
+  .filterSelect {
+    width: 100%;
+  }
+
+  .tableWrap {
+    table {
+      display: block;
+      width: 100%;
+    }
+
+    thead {
+      display: none;
+    }
+
+    tbody {
+      display: block;
+    }
+
+    // 卡片四周留均匀间距，与 Table 外层 .wrap 边框之间形成一致的内凹留白，
+    // 呈现「框内悬浮卡片」而非贴边双线。
+    tbody tr {
+      display: block;
+      padding: $spacing-sm $spacing-md;
+      margin: $spacing-sm;
+      border: 1px solid var(--border-color);
+      border-radius: $radius-md;
+      background: var(--bg-primary);
+    }
+
+    tbody td {
+      display: block;
+      padding: 6px 0;
+      border-bottom: none;
+      text-align: left;
+      white-space: normal;
+
+      &::before {
+        content: attr(data-label);
+        display: block;
+        margin-bottom: 3px;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+        color: var(--text-secondary);
+      }
+    }
+  }
+
+  // 卡片里每个字段独占整行，容器 id / 绑定账号允许换行显示完整值，不再省略号截断。
+  .containerId,
+  .bindingAccount {
+    max-width: 100%;
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+    word-break: break-all;
+  }
+
+  // 关键可点操作在卡片里左对齐、完整可点，不再贴右缘。
+  .actions {
+    justify-content: flex-start;
+  }
+}

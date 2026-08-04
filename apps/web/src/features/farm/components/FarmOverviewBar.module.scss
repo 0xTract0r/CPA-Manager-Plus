@@ -1,0 +1,123 @@
+@use '../../../styles/variables' as *;
+
+.bar {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+  padding: $spacing-lg;
+  border: 1px solid var(--border-color);
+  border-radius: $radius-lg;
+  background: var(--bg-primary, var(--bg-primary));
+}
+
+.kpiRow {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: $spacing-md;
+}
+
+// 481–1180px（含 768）：3×2；≤480：2×3；>1180：基础 6 列（1440 桌面按设计
+// 走这条）。
+//
+// 这里刻意不用共享 `tablet` mixin（mixins.scss 定义为
+// `min-width: $breakpoint-mobile + 1`，即 769px），因为该 mixin 精确排除了
+// 768px 边界本身：768 视口会落空到桌面 6 列布局，KPI 行溢出裁切第 6 张卡
+// （真机门禁 farm-first-screen scrollWidth 728px 溢出 8px 到 736px 才发现）。
+//
+// 第一版修复只把下界移到 $breakpoint-mobile（768px），只堵住了 768 这一个
+// 点——767px 往下、直到 481px（不含）这段区间仍落回下面 480px 才生效的 2
+// 列规则和这里 3 列规则之间的空隙，即基础 repeat(6)，同款问题只是被
+// `.dashboard { overflow-x: clip }` 静默裁切、越窄越严重。改用固定下界
+// 481px 补齐后，复测发现共享 `tablet` mixin 原本的上界
+// `max-width: $breakpoint-tablet`（1024px）本身也是同款边界缺陷（此前就
+// 存在，非本次改动引入）：1025–1114px 这段区间会落回基础 6 列，但视口还没
+// 宽到能装下 6 列不溢出——实测 1025px 处 farm-first-screen
+// scrollWidth-clientWidth 溢出达 12px，1115px 才归零。因此把 3 列区间上界
+// 从 $breakpoint-tablet 改成固定 1180px（在实测零溢出临界值 1115px 上留
+// ~65px 安全余量，抵御不同浏览器/缩放下的取整误差），与桌面 6 列（>1180px）
+// 首尾相接，不再有任何宽度落回未经验证的基础 6 列。不改共享 mixin（避免
+// 波及其余同样 `@include tablet` 的 farm 组件，见 FarmDashboard.module.scss
+// 的 operationsGrid 同款修复，各自 scoped；operationsGrid 只有 4 张更宽的
+// 操作卡，实测同一区间不溢出，故其上界不需要同样下调）。
+@media (min-width: 481px) and (max-width: 1180px) {
+  .kpiRow {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 480px) {
+  .kpiRow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.kpiTile {
+  display: flex;
+  align-items: center;
+  gap: $spacing-sm;
+  padding: $spacing-sm $spacing-md;
+  border: 1px solid var(--border-color);
+  border-radius: $radius-md;
+  background: var(--bg-primary);
+  min-width: 0;
+}
+
+// 语义色三重编码（色 + 图标 + 文案）：图标本身已随 tone 变化含义，边框色再
+// 强化一层，不单靠颜色传达（design.md 决策6 a11y 要求）。
+.ok {
+  color: var(--color-success);
+  border-color: color-mix(in srgb, var(--color-success) 35%, var(--border-color));
+}
+
+.warn {
+  color: var(--color-warning);
+  border-color: color-mix(in srgb, var(--color-warning) 35%, var(--border-color));
+}
+
+.err {
+  color: var(--color-danger);
+  border-color: color-mix(in srgb, var(--color-danger) 35%, var(--border-color));
+}
+
+.idle {
+  color: var(--text-tertiary);
+}
+
+.kpiText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.kpiValue {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+
+.kpiLabel {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.generatedAt {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.generatedAtNote {
+  // AA 对比度修复（farm-observability 真机 axe 扫描抓出的 serious 违规）：
+  // 0.75 opacity 把 --text-secondary（浅色 #6d6760 / 深色 #c9c3bb）进一步
+  // 冲淡，实测对比度仅 3.28（低于 WCAG AA 小字要求的 4.5）。去掉 opacity，
+  // 直接复用 --text-secondary token 本身（与同文件 .generatedAt 一致，不
+  // 新造颜色）：浅色 ≈5.30:1、深色 ≈10.53:1，两套主题都清晰高于门槛。
+  color: var(--text-secondary);
+}

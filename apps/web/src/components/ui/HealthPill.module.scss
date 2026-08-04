@@ -1,0 +1,60 @@
+@use '../../styles/variables' as *;
+
+// <HealthPill>：16px 图标 + 短文案 + 语义色（design.md 决策6 状态栏双列
+// 「账号健康」/「容器健康」共用）。颜色只吃 themes.scss 的
+// --color-success/warn/err/idle 四个 token，不在组件里写死色值，保证浅色/纯白/
+// 深色三套主题自动跟随。
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px 3px 8px;
+  border-radius: $radius-full;
+  font-size: 13px;
+  line-height: 1.2;
+  border: 1px solid;
+  white-space: nowrap;
+}
+
+.icon {
+  flex: 0 0 auto;
+  display: block;
+}
+
+.label {
+  font-weight: 600;
+}
+
+.ok {
+  color: var(--color-success);
+  border-color: color-mix(in srgb, var(--color-success) 35%, transparent);
+  background: color-mix(in srgb, var(--color-success) 10%, transparent);
+
+  // 图标保留明亮 success 语义色，普通字号标签改用主题化 success badge 文本色；
+  // 在浅色/纯白/深色三套 pill 底色上分别约 6.1/7.0/9.7:1，满足 WCAG AA。
+  .label {
+    color: var(--success-badge-text, #065f46);
+  }
+}
+
+.warn {
+  color: var(--color-warning);
+  border-color: color-mix(in srgb, var(--color-warning) 35%, transparent);
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+}
+
+.err {
+  color: var(--color-danger);
+  border-color: color-mix(in srgb, var(--color-danger) 35%, transparent);
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+
+  .label {
+    color: var(--failure-badge-text, #8a3a30);
+  }
+}
+
+.idle {
+  color: var(--text-tertiary);
+  border-color: color-mix(in srgb, var(--text-tertiary) 30%, transparent);
+  background: color-mix(in srgb, var(--text-tertiary) 8%, transparent);
+}

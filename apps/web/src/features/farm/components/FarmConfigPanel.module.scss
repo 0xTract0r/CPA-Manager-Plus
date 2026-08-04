@@ -1,0 +1,70 @@
+@use '../../../styles/variables' as *;
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-md;
+  padding: $spacing-lg;
+  border: 1px solid var(--border-color);
+  border-radius: $radius-lg;
+  background: var(--bg-primary, var(--bg-primary));
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-md;
+}
+
+.title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.desc {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: $spacing-md;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.toggleVisibility {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 2px;
+
+  &:hover {
+    color: var(--text-primary);
+  }
+}
+
+// AA 对比度修复（farm-observability 真机 axe 扫描抓出的 serious 违规）：全局
+// `.status-badge.success`（src/styles/components.scss）用 $success-color 文字 +
+// 8% 透明度背景，在本面板 'Configured' 徽标实测对比度仅 2.34（远低于 WCAG AA
+// 小字要求的 4.5）。不改全局类（全站徽标共用，改了会波及其它页面），只对本
+// 面板内的徽标做 scoped 覆盖：换用 providerStatusBar / UsagePage 等处已复用的
+// --success-badge-text / --success-badge-bg / --success-badge-border 高对比
+// 语义色 token（浅色 #065f46 on #d1fae5 ≈ 6.78:1，深色 #6ee7b7 on 实际合成
+// 背景 ≈ 10.5:1，两套主题都清晰高于 4.5 门槛）。
+.header > :global(.status-badge.success) {
+  color: var(--success-badge-text, #065f46);
+  background: var(--success-badge-bg, #d1fae5);
+  border-color: var(--success-badge-border, #6ee7b7);
+}

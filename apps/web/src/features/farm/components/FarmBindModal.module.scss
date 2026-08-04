@@ -1,0 +1,11 @@
+@use '../../../styles/variables' as *;
+
+.modal {
+  width: 480px;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-md;
+}

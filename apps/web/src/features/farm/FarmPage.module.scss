@@ -1,10 +1,10 @@
-// 农场页（Device Farm）迁移到 cpamp 的第一刀最小版布局。
-// 精修留后续切片，这里只保证连接状态条 + 配置表单 + 容器列表能读得清。
+// 农场页宿主布局：标题 + 副标题 + FarmDashboard 主体。
+// 具体的连接条 / KPI 带 / 操作卡 / 抽屉样式都在 components/ 下各自的 module 里。
 
 .container {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-lg, 20px);
+  gap: var(--app-gap, 20px);
 }
 
 .header {
@@ -24,123 +24,4 @@
   margin: 0;
   font-size: 13px;
   color: var(--text-secondary);
-}
-
-// 连接状态条
-.statusBar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md, 10px);
-  background: var(--bg-primary);
-  font-size: 13px;
-  flex-wrap: wrap;
-}
-
-.statusDot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  background: var(--text-secondary);
-}
-
-.statusConnected {
-  background: #16a34a;
-}
-
-.statusError {
-  background: #dc2626;
-}
-
-.statusConnecting {
-  background: #d97706;
-}
-
-.statusText {
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.statusDetail {
-  color: var(--text-secondary);
-}
-
-.statusSpacer {
-  flex: 1 1 auto;
-}
-
-// 最小配置表单
-.configForm {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  align-items: end;
-}
-
-.configActions {
-  grid-column: 1 / -1;
-  display: flex;
-  gap: 10px;
-}
-
-// 容器列表
-.table {
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md, 10px);
-  overflow-x: auto;
-}
-
-.tableHeader,
-.tableRow {
-  display: grid;
-  grid-template-columns: minmax(160px, 1.4fr) 110px minmax(140px, 1fr) minmax(120px, 1fr) minmax(160px, 1fr);
-  gap: 12px;
-  padding: 10px 14px;
-  align-items: center;
-  min-width: 720px;
-}
-
-.tableHeader {
-  background: var(--surface-subtle-strong, var(--bg-secondary));
-  font-weight: 700;
-  font-size: 12px;
-  color: var(--text-primary);
-}
-
-.tableRow {
-  border-top: 1px solid var(--border-color);
-  font-size: 13px;
-  color: var(--text-primary);
-}
-
-.cell {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mono {
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-}
-
-.badge {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 600;
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
-  border: 1px solid var(--border-color);
-}
-
-@media (max-width: 768px) {
-  .configForm {
-    grid-template-columns: 1fr;
-  }
 }
