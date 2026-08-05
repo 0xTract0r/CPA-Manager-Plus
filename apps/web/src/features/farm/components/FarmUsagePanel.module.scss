@@ -62,6 +62,173 @@
   color: var(--text-secondary);
 }
 
+// C6 双时钟卡：外层与口径正名 callout 观感一致（中性底 + 边框），内部两钟并列。
+.clockCard {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+  padding: $spacing-md;
+  border: 1px solid var(--border-color);
+  border-radius: $radius-md;
+  background: var(--bg-secondary, var(--bg-tertiary));
+}
+
+.clockCardHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+// 非可加性横幅：用 warning 语义色轻量底，强调「不可相加/替代」不被忽略。
+.clockBanner {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: $radius-sm;
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.clockGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: $spacing-md;
+}
+
+.clock {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: $spacing-sm $spacing-md;
+  border: 1px solid var(--border-color);
+  border-radius: $radius-md;
+  background: var(--bg-primary);
+  min-width: 0;
+}
+
+.clockTitle {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.clockDesc {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.clockChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.clockReadings {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 2px 0 0;
+}
+
+.clockReadingRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: $spacing-sm;
+
+  dt {
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  dd {
+    margin: 0;
+    font-size: 13px;
+  }
+}
+
+// 口径徽标：中性 muted 底色，不借用语义色误导成健康态（对齐 FarmContainerDetail
+// 的 .scopeBadge 口径）。
+.scopeBadge {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 2px 8px;
+  border-radius: var(--radius-md, $radius-md);
+  border: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  // 双列布局下口径名较长（含英文 scope 常量），允许换行而非 nowrap 溢出列宽，
+  // 消除窄列横向溢出（scope 名不截断，保持可读）。
+  white-space: normal;
+  word-break: break-word;
+}
+
+// 随机抖动徽标（C7 ② 机制性不存在）：唤醒时刻本就无精确值，用 info/主色轻底提示，
+// 不是错误态。
+.jitterChip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 2px 8px;
+  border-radius: var(--radius-md, $radius-md);
+  background: rgba($primary-color, 0.1);
+  border: 1px solid rgba($primary-color, 0.3);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+// 中性 chip（C7 ③ 待实现/非本层占位、C7 ① 空态指路）：替代裸横杠，纯中性底色，
+// 不承载任何健康/告警语义。
+.neutralChip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 2px 8px;
+  border-radius: var(--radius-md, $radius-md);
+  border: 1px dashed var(--border-color);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+// C6 账号备注/别名主行徽标：运营者主要靠它认账号，视觉上比 account_id 更显眼
+// （主色轻底 + 主文字色），下面的 account_id 降级为副标识。
+.noteBadge {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  padding: 2px 8px;
+  border-radius: $radius-sm;
+  background: rgba($primary-color, 0.12);
+  border: 1px solid rgba($primary-color, 0.3);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 700;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+// 有备注时 account_id 降级为副标识（次要色、略小），保留可查但不抢主视觉。
+.accountIdSub {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
 .mono {
   font-family: $font-mono;
   font-size: 13px;
@@ -106,6 +273,11 @@
 // 列的问题不再出现，所有 token 明细字段都完整可见（不再靠折叠列隐藏数据）。
 // 桌面（≥769）维持原表格布局。
 @include mobile {
+  // 双时钟卡窄屏改上下堆叠，避免两钟并列被挤到列内溢出/文字截断。
+  .clockGrid {
+    grid-template-columns: 1fr;
+  }
+
   .panel {
     table {
       display: block;

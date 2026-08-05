@@ -84,24 +84,6 @@
   min-width: 0;
 }
 
-.createContainerBar {
-  display: flex;
-  align-items: center;
-  gap: $spacing-sm;
-  flex-wrap: wrap;
-  max-width: 100%;
-
-  :global(.form-group) {
-    flex: 1 1 200px;
-    min-width: 0;
-    margin-bottom: 0;
-  }
-
-  :global(.btn) {
-    white-space: nowrap;
-  }
-}
-
 .drawerDescription {
   margin: 0 0 $spacing-md;
   font-size: 13px;
@@ -129,17 +111,6 @@
 
   .connectionBar :global(.btn) {
     width: 100%;
-  }
-
-  .createContainerBar {
-    align-items: stretch;
-    flex-direction: column;
-
-    :global(.form-group),
-    :global(.btn) {
-      width: 100%;
-      flex-basis: auto;
-    }
   }
 }
 

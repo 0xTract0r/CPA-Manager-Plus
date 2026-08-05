@@ -319,6 +319,11 @@ export function FarmDashboard() {
         open={activeDrawer === 'accounts'}
         title={t('farm.accounts.title')}
         onClose={closeDrawer}
+        // 账号健康表 7 列信息密度高，desktop-1440 下内容约 1181px 宽，超过默认
+        // 1120px 抽屉的滚动区（约 1068px）会在抽屉内产生横向滚动。加宽到 1280px
+        // （滚动区约 1228px）容纳整表，消除该横向滚动；窄视口仍由 Modal 的
+        // max-width:100% 与抽屉 tablet/mobile 断点收敛，不会溢出视口。
+        width={1280}
       >
         <div data-testid="farm-accounts-drawer">
           {activeDrawer === 'accounts' ? <FarmAccountsPanel containers={containers} /> : null}

@@ -3997,7 +3997,30 @@
       "statusPendingNoProxy": "Waiting for residential proxy",
       "statusPendingCapacity": "Capacity exhausted",
       "statusEligible": "Eligible · queued",
-      "statusIneligible": "Not applicable"
+      "statusIneligible": "Not applicable",
+      "remainingSlotsLabel": "Open slots",
+      "remainingUnknown": "Unknown",
+      "remainingExhausted": "Full",
+      "bottleneck_containers": "Capped by container limit",
+      "bottleneck_memory": "Capped by host memory",
+      "proxyCoverageLabel": "Proxy coverage",
+      "proxyCoverageUnavailable": "Unavailable",
+      "proxyCoverageUncovered": "{{count}} without proxy",
+      "ctaConfigureProxyTitle": "Configure residential proxy",
+      "ctaConfigureProxyHint": "{{count}} authenticated account(s) still lack a residential proxy. Once configured they are auto-provisioned next round — fail-closed never exposes a real IP.",
+      "ctaExpandCapacityTitle": "Expand capacity or retire idle containers",
+      "ctaExpandCapacityHint": "Capacity is at its limit. Expand it or retire idle containers so waiting accounts can be auto-provisioned.",
+      "ctaAwaitNextRoundTitle": "Waiting for the next round",
+      "ctaAwaitNextRoundHint": "{{count}} candidate account(s) already have a proxy and capacity and will be auto-provisioned on the next reconcile — no action needed.",
+      "funnelTitle": "Supply funnel",
+      "funnelStageAuthenticated": "Authenticated",
+      "funnelStageHasProxy": "Has proxy",
+      "funnelStageHasCapacity": "Has capacity",
+      "funnelStageOnboarded": "Onboarded",
+      "funnelBlockedProxy": "{{count}} waiting on proxy",
+      "funnelBlockedCapacity": "{{count}} waiting on capacity",
+      "funnelAwaitOnboard": "{{count}} awaiting onboard",
+      "funnelNotApplicable": "{{count}} not applicable"
     },
     "accounts": {
       "title": "Account Health",
@@ -4010,7 +4033,12 @@
       "status_disabled": "Disabled",
       "status_pending": "Pending",
       "status_error": "Error",
-      "status_quarantined": "Quarantined"
+      "status_quarantined": "Quarantined",
+      "filter_auth_state_label": "Filter by account auth state",
+      "filter_auth_state_all": "All auth states",
+      "filter_search_label": "Search accounts by note or name",
+      "filter_search_placeholder": "Search note / account…",
+      "filter_no_match": "No accounts match the current filter."
     },
     "containers": {
       "title": "Container Pool",
@@ -4088,7 +4116,25 @@
       "sinceNote": "Since the last CPA restart (in-memory only)",
       "attributionTitle": "Usage attribution",
       "attributionBody": "The token/request numbers below are this account's cumulative usage on CPA, including real historical serving from before it joined the farm — not \"new calls since binding to this container\". This is a different metric from the farm probe's keepalive heartbeat count (see container detail); the two are not directly comparable.",
-      "empty": "No usage data yet"
+      "empty": "No usage data yet",
+      "clockCardTitle": "Two clocks: independent metrics, not additive / interchangeable",
+      "clockBanner": "Probe keepalive cadence and account API cumulative usage are two completely independent metrics: one counts \"how often the machine's keepalive probe arrives\", the other counts \"how much the account has cumulatively consumed on CPA\". They cannot be added together, nor can one replace the other.",
+      "probeClockTitle": "Probe keepalive cadence",
+      "probeClockScopeBadge": "Scope: probe inter-arrival (farm_probe_cadence)",
+      "probeClockDesc": "Machine rhythm: the interval between consecutive keepalive probe arrivals (inter-arrival), with random jitter. It measures \"how often it heartbeats\", not business call volume.",
+      "probeClockJitterChip": "Random jitter · no exact next time",
+      "probeClockReadingChip": "Per-container intervals in \"Container detail\"",
+      "accountClockTitle": "Account API cumulative usage",
+      "accountClockScopeBadge": "Scope: account CPA cumulative (cpa_account_cumulative)",
+      "accountClockDesc": "Business axis: the account's cumulative usage on CPA, accumulated since the last CPA restart, including real business traffic beyond the probe.",
+      "accountClockEmpty": "No cumulative account usage yet (see unlock conditions in the empty state below)",
+      "accountClockRequests": "Cumulative requests",
+      "accountClockTokens": "Cumulative tokens",
+      "accountClockCost": "Cumulative cost (USD)",
+      "accountClockCoverage": "Coverage",
+      "accountClockCoverageValue": "{{accounts}} accounts / {{containers}} containers",
+      "noteBadgeTitle": "Account note / alias",
+      "emptyUnlock": "Unlock conditions: this environment needs a healthy container bound to an account, and the account must have produced requests since the last CPA restart. Once met, cumulative usage will be listed here by account/container. The test side may currently have no healthy container, or the account has produced no traffic."
     },
     "resources": {
       "title": "Resource Usage",
@@ -4192,7 +4238,9 @@
       "probeCost": "Probe Cost (24h)",
       "pendingP1": "—/Pending P1",
       "generatedAt": "Data as of",
-      "generatedAtNote": "(API response generation time, not an exact last poller run timestamp)"
+      "generatedAtNote": "(API response generation time, not an exact last poller run timestamp)",
+      "probeCostNotWired": "Not wired",
+      "probeCostNotWiredHint": "Probe token cost aggregation is pending P1; no honest data source yet."
     },
     "alerts": {
       "title": "Farm Alerts",

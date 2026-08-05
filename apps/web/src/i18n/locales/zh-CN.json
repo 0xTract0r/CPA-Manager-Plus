@@ -3997,7 +3997,30 @@
       "statusPendingNoProxy": "待住宅代理",
       "statusPendingCapacity": "容量已满",
       "statusEligible": "候选·排队中",
-      "statusIneligible": "不适用"
+      "statusIneligible": "不适用",
+      "remainingSlotsLabel": "还能接入",
+      "remainingUnknown": "未知",
+      "remainingExhausted": "已满",
+      "bottleneck_containers": "受限于容器数上限",
+      "bottleneck_memory": "受限于宿主内存",
+      "proxyCoverageLabel": "代理覆盖",
+      "proxyCoverageUnavailable": "不可用",
+      "proxyCoverageUncovered": "{{count}} 个待配代理",
+      "ctaConfigureProxyTitle": "去配住宅代理",
+      "ctaConfigureProxyHint": "{{count}} 个已认证账号还没配住宅代理，配好后下一轮自动接入（fail-closed 不会暴露真实 IP）。",
+      "ctaExpandCapacityTitle": "扩容或退役闲置容器",
+      "ctaExpandCapacityHint": "容量已封顶，扩容或退役闲置容器后，等待中的候选账号将自动接入。",
+      "ctaAwaitNextRoundTitle": "等待下一轮自动接入",
+      "ctaAwaitNextRoundHint": "{{count}} 个候选账号已具备代理与容量，将在下一轮巡检自动接入，无需手动操作。",
+      "funnelTitle": "供给漏斗",
+      "funnelStageAuthenticated": "认证",
+      "funnelStageHasProxy": "有代理",
+      "funnelStageHasCapacity": "有容量",
+      "funnelStageOnboarded": "已接入",
+      "funnelBlockedProxy": "{{count}} 待代理",
+      "funnelBlockedCapacity": "{{count}} 待容量",
+      "funnelAwaitOnboard": "{{count}} 待接入",
+      "funnelNotApplicable": "{{count}} 不适用"
     },
     "accounts": {
       "title": "账号健康",
@@ -4010,7 +4033,12 @@
       "status_disabled": "已禁用",
       "status_pending": "待处理",
       "status_error": "错误",
-      "status_quarantined": "已隔离"
+      "status_quarantined": "已隔离",
+      "filter_auth_state_label": "按账号认证态筛选",
+      "filter_auth_state_all": "全部认证态",
+      "filter_search_label": "按备注或账号名搜索",
+      "filter_search_placeholder": "搜索备注 / 账号…",
+      "filter_no_match": "没有账号匹配当前筛选条件。"
     },
     "containers": {
       "title": "容器池",
@@ -4088,7 +4116,25 @@
       "sinceNote": "自 CPA 上次重启起（内存态）",
       "attributionTitle": "用量口径说明",
       "attributionBody": "以下 Token / 请求数是该账号在 CPA 的账号级累计用量，包含账号加入农场之前的真实历史 serving，并非「绑定容器后新增的调用量」。它与农场探针保活心跳次数（容器详情可查看）是两个独立口径，不能直接对比。",
-      "empty": "暂无用量数据"
+      "empty": "暂无用量数据",
+      "clockCardTitle": "两个时钟：口径独立，不可相加 / 替代",
+      "clockBanner": "探针保活节奏与账号 API 累计用量是两个完全独立的口径：一个数「机器保活探针多久到达一次」，一个数「账号在 CPA 侧累计消费了多少」。两者不能相加，也不能互相替代。",
+      "probeClockTitle": "探针保活节奏",
+      "probeClockScopeBadge": "口径：探针到达间隔（farm_probe_cadence）",
+      "probeClockDesc": "机器节奏：保活探针相邻两次到达的间隔（inter-arrival），带随机抖动，衡量「多久心跳一次」，不是业务调用量。",
+      "probeClockJitterChip": "随机抖动 · 无精确下次时刻",
+      "probeClockReadingChip": "逐容器到达间隔见「容器详情」",
+      "accountClockTitle": "账号 API 累计用量",
+      "accountClockScopeBadge": "口径：账号 CPA 累计（cpa_account_cumulative）",
+      "accountClockDesc": "业务轴：账号在 CPA 侧的累计用量，自 CPA 上次重启起累计，含探针之外的真实业务流量。",
+      "accountClockEmpty": "暂无账号累计用量（解锁条件见下方空态说明）",
+      "accountClockRequests": "累计请求",
+      "accountClockTokens": "累计 Token",
+      "accountClockCost": "累计费用（USD）",
+      "accountClockCoverage": "覆盖范围",
+      "accountClockCoverageValue": "{{accounts}} 账号 / {{containers}} 容器",
+      "noteBadgeTitle": "账号备注 / 别名",
+      "emptyUnlock": "解锁条件：该环境需有健康容器绑定账号，且账号自 CPA 上次重启后产生过请求；满足后此处会按账号/容器列出累计用量。当前测试端可能尚无健康容器或账号未产生流量。"
     },
     "resources": {
       "title": "资源占用",
@@ -4192,7 +4238,9 @@
       "probeCost": "探针 cost (24h)",
       "pendingP1": "—/待P1",
       "generatedAt": "数据截至",
-      "generatedAtNote": "（本次 API 响应生成时间，非精确的 Poller 最近巡检时刻）"
+      "generatedAtNote": "（本次 API 响应生成时间，非精确的 Poller 最近巡检时刻）",
+      "probeCostNotWired": "未接入",
+      "probeCostNotWiredHint": "探针 token cost 聚合待 P1 接入，当前无诚实数据来源"
     },
     "alerts": {
       "title": "农场告警",

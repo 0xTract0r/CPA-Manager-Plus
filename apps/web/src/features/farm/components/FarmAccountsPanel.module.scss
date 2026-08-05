@@ -59,8 +59,33 @@
   color: var(--text-primary);
 }
 
-.envSelect {
-  width: 140px;
+// C8 筛选控件（认证态下拉 + 备注/账号搜索）：与标题同排、右对齐，窄屏换行堆叠。
+.filterControls {
+  display: flex;
+  align-items: center;
+  gap: $spacing-sm;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+
+  .filterSelect {
+    width: 160px;
+  }
+
+  // 搜索框复用全局 `.input` 外观；`.input` 默认 width:100%，这里用
+  // `.filterControls .filterSearch` 两类选择器提升特异性，确保桌面固定 200px
+  // 不被全局规则覆盖成满宽（否则搜索框会在筛选行里撑满一整行）。
+  .filterSearch {
+    width: 200px;
+    flex: 0 0 auto;
+  }
+}
+
+// 筛选后无匹配的占位文案（区别于「本环境没有任何账号」的整表空态）。
+.filterEmpty {
+  display: block;
+  padding: $spacing-sm 0;
+  font-size: 13px;
+  color: var(--text-secondary);
 }
 
 .desc {
@@ -417,8 +442,18 @@
 // 被切一半（active→activ、幽灵态→幽灵）的问题不再出现，重新授权链接完整可点。
 // 桌面（≥769）维持原表格布局。
 @include mobile {
-  .envSelect {
+  // 窄屏：筛选控件占满宽度并纵向堆叠，避免下拉/搜索框在小屏被挤成极窄。
+  // 宽度规则同样嵌在 .filterControls 下（两类特异性），才能盖过上面桌面的
+  // .filterControls .filterSearch 固定宽度。
+  .filterControls {
     width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+
+    .filterSelect,
+    .filterSearch {
+      width: 100%;
+    }
   }
 
   .panel {

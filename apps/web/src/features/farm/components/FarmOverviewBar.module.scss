@@ -96,6 +96,23 @@
   line-height: 1.2;
 }
 
+// 「未接入」占位 chip（探针 cost 等本轮无诚实聚合路径的 KPI）：中性 muted 标签，
+// 复用站内 chip 视觉语言（边框 + tertiary 底 + secondary 文字，三套主题均 AA），
+// 取代此前的裸横杠数值——避免首屏把"没测出来"读成半成品或"确认为 0"。
+.kpiPlaceholderChip {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: $radius-sm;
+  border: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .kpiLabel {
   font-size: 12px;
   color: var(--text-secondary);

@@ -78,6 +78,120 @@
   opacity: 0.85;
 }
 
+// 指标下方独立说明行（瓶颈标注 / 未覆盖代理数）：小字次要色，另起一行。
+.metricNote {
+  align-self: flex-start;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+// 可执行 CTA 提示块：左侧 tone 色条 + 标题 + 说明；tone 随 pending 语义变色。
+.cta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: $spacing-sm $spacing-md;
+  border: 1px solid var(--border-color);
+  border-left-width: 3px;
+  border-radius: $radius-md;
+  background: var(--bg-tertiary);
+}
+
+.cta_warning {
+  border-left-color: var(--color-warning-light-5);
+  background: var(--color-warning-light-9);
+}
+
+.cta_error {
+  border-left-color: var(--color-danger-light-5);
+  background: var(--color-danger-light-9);
+}
+
+.cta_success {
+  border-left-color: var(--color-success-light-5);
+  background: var(--color-success-light-9);
+}
+
+.cta_muted {
+  border-left-color: var(--border-color);
+}
+
+.ctaTitle {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.ctaHint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+// D2 供给漏斗：标题 + 四段横排 tile（窄屏折行）+ 各闸门掉队 chip 行。
+.funnel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: $spacing-sm;
+  border-top: 1px solid var(--border-color);
+}
+
+.funnelTitle {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.funnelStages {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: $spacing-sm;
+}
+
+.funnelStage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  flex: 1 1 96px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: $radius-md;
+  background: var(--bg-secondary, var(--bg-tertiary));
+}
+
+.funnelStageCount {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.funnelStageLabel {
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+.funnelDrops {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.funnelDrop {
+  margin-bottom: 0;
+  white-space: nowrap;
+}
+
 // 自动供给开关小节：标题 + 状态徽标同排，说明另起一行。
 .autoProvision {
   display: flex;

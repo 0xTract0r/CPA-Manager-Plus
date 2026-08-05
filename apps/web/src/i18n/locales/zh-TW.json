@@ -3997,7 +3997,30 @@
       "statusPendingNoProxy": "待住宅代理",
       "statusPendingCapacity": "容量已滿",
       "statusEligible": "候選·排隊中",
-      "statusIneligible": "不適用"
+      "statusIneligible": "不適用",
+      "remainingSlotsLabel": "還能接入",
+      "remainingUnknown": "未知",
+      "remainingExhausted": "已滿",
+      "bottleneck_containers": "受限於容器數上限",
+      "bottleneck_memory": "受限於主機記憶體",
+      "proxyCoverageLabel": "代理覆蓋",
+      "proxyCoverageUnavailable": "不可用",
+      "proxyCoverageUncovered": "{{count}} 個待配代理",
+      "ctaConfigureProxyTitle": "去配住宅代理",
+      "ctaConfigureProxyHint": "{{count}} 個已驗證帳號還沒配住宅代理，配好後下一輪自動接入（fail-closed 不會暴露真實 IP）。",
+      "ctaExpandCapacityTitle": "擴容或退役閒置容器",
+      "ctaExpandCapacityHint": "容量已封頂，擴容或退役閒置容器後，等待中的候選帳號將自動接入。",
+      "ctaAwaitNextRoundTitle": "等待下一輪自動接入",
+      "ctaAwaitNextRoundHint": "{{count}} 個候選帳號已具備代理與容量，將在下一輪巡檢自動接入，無需手動操作。",
+      "funnelTitle": "供給漏斗",
+      "funnelStageAuthenticated": "認證",
+      "funnelStageHasProxy": "有代理",
+      "funnelStageHasCapacity": "有容量",
+      "funnelStageOnboarded": "已接入",
+      "funnelBlockedProxy": "{{count}} 待代理",
+      "funnelBlockedCapacity": "{{count}} 待容量",
+      "funnelAwaitOnboard": "{{count}} 待接入",
+      "funnelNotApplicable": "{{count}} 不適用"
     },
     "accounts": {
       "title": "帳號健康",
@@ -4010,7 +4033,12 @@
       "status_disabled": "已停用",
       "status_pending": "待處理",
       "status_error": "錯誤",
-      "status_quarantined": "已隔離"
+      "status_quarantined": "已隔離",
+      "filter_auth_state_label": "依帳號認證態篩選",
+      "filter_auth_state_all": "全部認證態",
+      "filter_search_label": "依備註或帳號名搜尋",
+      "filter_search_placeholder": "搜尋備註 / 帳號…",
+      "filter_no_match": "沒有帳號符合目前的篩選條件。"
     },
     "containers": {
       "title": "容器池",
@@ -4088,7 +4116,25 @@
       "sinceNote": "自 CPA 上次重新啟動起（記憶體態）",
       "attributionTitle": "用量口徑說明",
       "attributionBody": "以下 Token / 請求數是該帳號在 CPA 的帳號級累計用量，包含帳號加入農場之前的真實歷史 serving，並非「綁定容器後新增的呼叫量」。它與農場探針保活心跳次數（容器詳情可查看）是兩個獨立口徑，不能直接比較。",
-      "empty": "尚無用量資料"
+      "empty": "尚無用量資料",
+      "clockCardTitle": "兩個時鐘：口徑獨立，不可相加 / 替代",
+      "clockBanner": "探針保活節奏與帳號 API 累計用量是兩個完全獨立的口徑：一個數「機器保活探針多久到達一次」，一個數「帳號在 CPA 側累計消費了多少」。兩者不能相加，也不能互相替代。",
+      "probeClockTitle": "探針保活節奏",
+      "probeClockScopeBadge": "口徑：探針到達間隔（farm_probe_cadence）",
+      "probeClockDesc": "機器節奏：保活探針相鄰兩次到達的間隔（inter-arrival），帶隨機抖動，衡量「多久心跳一次」，不是業務呼叫量。",
+      "probeClockJitterChip": "隨機抖動 · 無精確下次時刻",
+      "probeClockReadingChip": "逐容器到達間隔見「容器詳情」",
+      "accountClockTitle": "帳號 API 累計用量",
+      "accountClockScopeBadge": "口徑：帳號 CPA 累計（cpa_account_cumulative）",
+      "accountClockDesc": "業務軸：帳號在 CPA 側的累計用量，自 CPA 上次重啟起累計，含探針之外的真實業務流量。",
+      "accountClockEmpty": "暫無帳號累計用量（解鎖條件見下方空態說明）",
+      "accountClockRequests": "累計請求",
+      "accountClockTokens": "累計 Token",
+      "accountClockCost": "費用（USD）累計",
+      "accountClockCoverage": "覆蓋範圍",
+      "accountClockCoverageValue": "{{accounts}} 帳號 / {{containers}} 容器",
+      "noteBadgeTitle": "帳號備註 / 別名",
+      "emptyUnlock": "解鎖條件：該環境需有健康容器綁定帳號，且帳號自 CPA 上次重啟後產生過請求；滿足後此處會按帳號/容器列出累計用量。當前測試端可能尚無健康容器或帳號未產生流量。"
     },
     "resources": {
       "title": "資源佔用",
@@ -4192,7 +4238,9 @@
       "probeCost": "探針 cost (24h)",
       "pendingP1": "—/待P1",
       "generatedAt": "資料截至",
-      "generatedAtNote": "（本次 API 回應生成時間，非精確的 Poller 最近巡檢時刻）"
+      "generatedAtNote": "（本次 API 回應生成時間，非精確的 Poller 最近巡檢時刻）",
+      "probeCostNotWired": "未接入",
+      "probeCostNotWiredHint": "探針 token cost 匯總待 P1 接入，目前無誠實資料來源"
     },
     "alerts": {
       "title": "農場告警",

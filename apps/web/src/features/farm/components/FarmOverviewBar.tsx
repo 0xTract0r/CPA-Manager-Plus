@@ -32,6 +32,9 @@ interface FarmOverviewKpiItem {
   label: string;
   value: string;
   testId: string;
+  // 「未接入」占位态（后端本轮无诚实非零聚合路径的 KPI，如探针 cost）：置位时
+  // 不渲染裸数值/裸横杠，改用中性 chip 明示「未接入」，避免首屏被误读成半成品。
+  placeholder?: { chipLabel: string; title: string };
 }
 
 /**
@@ -39,9 +42,12 @@ interface FarmOverviewKpiItem {
  * 活跃告警、绑定账号、探针 cost、最近数据截至时间。前端聚合
  * GET /api/farm/overview + 本地容器列表统计。
  *
- * 占位 KPI（探针 cost / device_id 漂移，后端本轮恒空/恒 0 占位）明确显示
- * "—/待P1"而非 0——design.md 决策4 与 dto.go 注释都强调这两个字段目前没有
- * 诚实的非零聚合路径，UI 不应该把"没测出来"渲染成"确认为 0"。
+ * 诚实占位口径（design.md 决策4 + dto.go 注释：这些字段目前没有诚实的非零
+ * 聚合路径，UI 不应把"没测出来"渲染成"确认为 0"）：
+ * - 探针 cost：后端本轮恒 undefined。不渲染裸横杠数值（会被读作半成品），改用
+ *   中性「未接入」chip + tooltip 说明待 P1 接入。
+ * - device_id 漂移：后端本轮恒 0 占位、无可查询漂移历史。这里**不渲染**该 KPI
+ *   （隐藏优于摆一个恒 0 的假确定值）；待 P1 有真实漂移历史时再加回。
  */
 export function FarmOverviewBar({ containers }: FarmOverviewBarProps) {
   const { t, i18n } = useTranslation();
@@ -56,10 +62,12 @@ export function FarmOverviewBar({ containers }: FarmOverviewBarProps) {
   const degradedCount = overview?.containers_by_status?.degraded ?? 0;
   const downCount = overview?.containers_by_status?.down ?? 0;
   const activeAlerts = overview?.active_alerts ?? 0;
-  const probeCostText =
-    typeof overview?.probe_token_cost_total_24h === 'number'
-      ? overview.probe_token_cost_total_24h.toLocaleString()
-      : t('farm.overview.pendingP1', { defaultValue: '—/待P1' });
+  // 探针 cost 本轮后端恒 undefined（无诚实聚合路径）：wired=false 时不渲染裸数值，
+  // 走「未接入」中性 chip 占位；未来后端补上聚合后自然回退到数值展示。
+  const probeCostWired = typeof overview?.probe_token_cost_total_24h === 'number';
+  const probeCostValue = probeCostWired
+    ? (overview?.probe_token_cost_total_24h as number).toLocaleString()
+    : '';
   const generatedAtText = overview?.generated_at
     ? formatDateTimeUtc8(overview.generated_at, i18n.language)
     : '—';
@@ -110,8 +118,16 @@ export function FarmOverviewBar({ containers }: FarmOverviewBarProps) {
       icon: IconDollarSign,
       tone: 'idle',
       label: t('farm.overview.probeCost', { defaultValue: '探针 cost (24h)' }),
-      value: probeCostText,
+      value: probeCostValue,
       testId: 'farm-overview-kpi-probe-cost',
+      placeholder: probeCostWired
+        ? undefined
+        : {
+            chipLabel: t('farm.overview.probeCostNotWired', { defaultValue: '未接入' }),
+            title: t('farm.overview.probeCostNotWiredHint', {
+              defaultValue: '探针 token cost 聚合待 P1 接入，当前无诚实数据来源',
+            }),
+          },
     },
   ];
 
@@ -136,7 +152,17 @@ export function FarmOverviewBar({ containers }: FarmOverviewBarProps) {
               >
                 <Icon size={18} />
                 <div className={styles.kpiText}>
-                  <span className={styles.kpiValue}>{item.value}</span>
+                  {item.placeholder ? (
+                    <span
+                      className={styles.kpiPlaceholderChip}
+                      title={item.placeholder.title}
+                      data-testid={`${item.testId}-placeholder`}
+                    >
+                      {item.placeholder.chipLabel}
+                    </span>
+                  ) : (
+                    <span className={styles.kpiValue}>{item.value}</span>
+                  )}
                   <span className={styles.kpiLabel}>{item.label}</span>
                 </div>
               </div>

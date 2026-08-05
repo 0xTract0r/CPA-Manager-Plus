@@ -22,6 +22,7 @@ import { useFarmOnboard } from '../hooks/useFarmOnboard';
 import { useFarmProbeCadenceSeries } from '../hooks/useFarmProbeCadenceSeries';
 import { CadenceSparkline } from './CadenceSparkline';
 import {
+  FARM_ACCOUNT_AUTH_STATES,
   accountAuthStateToFarmHealthVariant,
   classifyContainerLifecycle,
   containerLifecycleToFarmHealthVariant,
@@ -33,7 +34,10 @@ import {
   provisioningStateToFarmHealthVariant,
 } from '../utils/health';
 import {
-  FARM_ENVS,
+  matchesFarmAccountFilter,
+  type FarmAccountAuthFilter,
+} from '../utils/accountFilter';
+import {
   type FarmContainerView,
   type FarmDeviceIDSource,
   type FarmEnv,
@@ -98,7 +102,12 @@ interface FarmAccountsPanelProps {
 
 export function FarmAccountsPanel({ containers: sharedContainers }: FarmAccountsPanelProps = {}) {
   const { t, i18n } = useTranslation();
-  const [env, setEnv] = useState<FarmEnv>('test');
+  // C8「筛选维度改造」：环境（test/prod）对本部署无意义——编排器当前只服务 test，
+  // 生产账号不会出现在这个列表里。env 固定为 test 仅用于底层拉取，不再作为可见
+  // 筛选维度；对 operator 有意义的「账号认证态」+「备注/账号名搜索」改为客户端筛选。
+  const env: FarmEnv = 'test';
+  const [authFilter, setAuthFilter] = useState<FarmAccountAuthFilter>('all');
+  const [query, setQuery] = useState('');
   const { accounts, loading, error, reload } = useFarmAccounts(env);
   const { onboardingAccountId, onboard } = useFarmOnboard({ reload });
   // 两平面徽标的数据源：containers 列表带 account_auth_status/account_auth_reason
@@ -134,7 +143,44 @@ export function FarmAccountsPanel({ containers: sharedContainers }: FarmAccounts
   }, [accounts, containersById]);
   const { seriesById: cadenceSeriesById } = useFarmProbeCadenceSeries(cadenceContainerIds);
 
-  const envOptions = FARM_ENVS.map((value) => ({ value, label: t(`farm.env.${value}`) }));
+  // C8 认证态筛选下拉选项：'all' + 5 态，态标签复用 C1-C5 已有的 authState_* 文案。
+  const authFilterOptions = useMemo(
+    () => [
+      {
+        value: 'all',
+        label: t('farm.accounts.filter_auth_state_all', { defaultValue: '全部认证态' }),
+      },
+      ...FARM_ACCOUNT_AUTH_STATES.map((state) => ({
+        value: state,
+        label: t(`farm.accountHealth.authState_${state}`, { defaultValue: state }),
+      })),
+    ],
+    [t]
+  );
+
+  // C8 客户端筛选：认证态用与徽标同源的 deriveAccountAuthState 派生（此处独立再算
+  // 一次仅供筛选，不改动下方每行徽标/节奏的既有内联计算，保持 C1-C5 逻辑不动）；
+  // 关键词在 note/account/name 三处做大小写不敏感子串匹配。
+  const filteredAccounts = useMemo(() => {
+    return accounts.filter((account) => {
+      const normalizedStatus = (account.status || 'active').trim().toLowerCase();
+      const joined =
+        account.farm_bound && account.farm_container_id
+          ? containersById.get(account.farm_container_id)
+          : undefined;
+      const authState = deriveAccountAuthState({
+        authStatus: joined?.account_auth_status,
+        authReason: joined?.account_auth_reason,
+        autoQuarantined: Boolean(account.auto_quarantined),
+        disabled: account.disabled || normalizedStatus === 'disabled',
+        hasReauthUrl: Boolean(account.reauth_url),
+      });
+      return matchesFarmAccountFilter(
+        { note: account.note, account: account.account, name: account.name, authState },
+        { authState: authFilter, query }
+      );
+    });
+  }, [accounts, containersById, authFilter, query]);
 
   // 双列列头文案同时复用为徽标 dimension 值（拼进 aria-label），保证可见列头与
   // 朗读维度语义一致，只算一次而非每行重复 t() 调用。
@@ -165,15 +211,34 @@ export function FarmAccountsPanel({ containers: sharedContainers }: FarmAccounts
 
       <div className={styles.header}>
         <div className={styles.title}>{t('farm.accounts.title')}</div>
-        <div data-testid="farm-accounts-env-select">
-          <Select
-            value={env}
-            options={envOptions}
-            onChange={(value) => setEnv(value as FarmEnv)}
-            ariaLabel={t('farm.bind_modal.env_label')}
-            fullWidth={false}
-            className={styles.envSelect}
-            id="farm-accounts-env-select-control"
+        {/* C8：把无意义的 test/prod 环境下拉换成「账号认证态」筛选 + 「备注/账号名」
+            搜索这两个对 operator 真正有用的客户端筛选维度。 */}
+        <div className={styles.filterControls} data-testid="farm-accounts-filters">
+          <div data-testid="farm-accounts-auth-filter">
+            <Select
+              value={authFilter}
+              options={authFilterOptions}
+              onChange={(value) => setAuthFilter(value as FarmAccountAuthFilter)}
+              ariaLabel={t('farm.accounts.filter_auth_state_label', {
+                defaultValue: '按账号认证态筛选',
+              })}
+              fullWidth={false}
+              className={styles.filterSelect}
+              id="farm-accounts-auth-filter-control"
+            />
+          </div>
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={t('farm.accounts.filter_search_placeholder', {
+              defaultValue: '搜索备注 / 账号…',
+            })}
+            aria-label={t('farm.accounts.filter_search_label', {
+              defaultValue: '按备注或账号名搜索',
+            })}
+            className={`input ${styles.filterSearch}`}
+            data-testid="farm-accounts-search"
           />
         </div>
       </div>
@@ -229,7 +294,18 @@ export function FarmAccountsPanel({ containers: sharedContainers }: FarmAccounts
             </TableRow>
           </TableHeader>
           <TableBody>
-            {accounts.map((account) => {
+            {filteredAccounts.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={7} data-testid="farm-accounts-filter-empty">
+                  <span className={styles.filterEmpty}>
+                    {t('farm.accounts.filter_no_match', {
+                      defaultValue: '没有账号匹配当前筛选条件。',
+                    })}
+                  </span>
+                </TableCell>
+              </TableRow>
+            ) : null}
+            {filteredAccounts.map((account) => {
               const normalizedStatus = (account.status || 'active').trim().toLowerCase();
               const isAutoQuarantined = Boolean(account.auto_quarantined);
               const isDisabled = account.disabled || normalizedStatus === 'disabled';

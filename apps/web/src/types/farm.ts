@@ -289,6 +289,12 @@ export interface FarmUsageItem {
   // 绑定账号邮箱（CPA AuthFileEntry 透传），非农场绑定或账号无邮箱信息时可能
   // 是空字符串，前端按空值不渲染处理，不臆造占位邮箱。
   account_email: string;
+  // 账号备注/别名（P2-A5，usageItemView.account_note，源自 CPA auth-files 的
+  // cpa.AuthFileEntry.Note，如「农场容器 c1 专用」/「AC04」）。仅在该账号确有
+  // note 时出现（后端 omitempty），走邮箱兜底路径或无 note 时缺失，前端按空值
+  // 回退显示 account_id/email，不伪造。运营者通常只记备注不记邮箱，用量明细
+  // 主行优先展示该字段（P2-C6）。
+  account_note?: string;
   env: FarmEnv;
   auth_index: number;
   tokens: FarmUsageTokens;
@@ -377,6 +383,26 @@ export interface FarmAccountProvisioningView {
   auto_provisioned: boolean;
 }
 
+// 「还能接入 N 个」被哪条护栏封顶的机器码（capacityResponse.bottleneck 取值，
+// 与后端 capacityBottleneck* 一一对应）：
+//   - containers：活跃容器数上限（max_active_containers）当前更紧。
+//   - memory：宿主可用内存水位当前更紧。
+// 两条护栏都无法判定（remaining_slots 同时为 null）时后端回空串并 omitempty，
+// 前端表现为字段缺失（undefined）。
+export const FARM_CAPACITY_BOTTLENECKS = ['containers', 'memory'] as const;
+export type FarmCapacityBottleneck = (typeof FARM_CAPACITY_BOTTLENECKS)[number];
+
+// claude-managed 账号的住宅代理配置覆盖率快照（capacityResponse.proxy_coverage，
+// handlers.go proxyCoverageView）。configured_accounts <= total_accounts，差值即
+// 「还没配 proxy_url、无法 fail-closed 接入农场」的账号数。所有 env 的 auth-files
+// 都拉取失败时后端回 null（诚实「未知」，不谎称 0/0），前端据此判空。
+export interface FarmProxyCoverageView {
+  // 有非空 proxy_url 的 claude-managed 账号数。
+  configured_accounts: number;
+  // claude-managed 账号总数（跨成功读到的 env 聚合）。
+  total_accounts: number;
+}
+
 // GET /api/farm/capacity 响应体（handlers.go capacityResponse）。
 export interface FarmCapacityResponse {
   // 当前 docker 层真正在跑（starting/running/degraded）的容器数；注册表读取
@@ -393,12 +419,23 @@ export interface FarmCapacityResponse {
   // 是否有余量：true 表示下一次真正起容器大概率通过两条护栏（非强保证，只是
   // 查询那一刻的快照）。
   has_headroom: boolean;
+  // 把 has_headroom 的布尔升级成「还能再接入多少个容器」的具体数字 =
+  // min(容器槽位余量, 内存槽位余量) 两条护栏里更紧的那条。两条护栏都无法判定
+  // （未配 max 且宿主内存信号不可用）时为 null——诚实「未知」，前端不得把它当 0
+  // （会误读成「满了」）或大数（会误读成「随便接」）展示。
+  remaining_slots: number | null;
+  // remaining_slots 由哪条护栏封顶；两条都无法判定时后端 omitempty 省略字段，
+  // 前端表现为 undefined。
+  bottleneck?: FarmCapacityBottleneck;
   // 反映 FARM_AUTO_PROVISION_ENABLED 灰度开关（默认 false）。关闭时 provisioning
   // 恒为空数组。
   auto_provision_enabled: boolean;
   // 每个 claude-managed 账号最近一轮自动供给判定；开关关闭或尚未跑过一轮
   // reconcile 时为空数组（后端显式回 [] 而非 null，前端可直接判空）。
   provisioning: FarmAccountProvisioningView[];
+  // claude-managed 账号住宅代理配置覆盖率（configured M / total N）；所有 env 的
+  // auth-files 都拉取失败时后端回 null，前端据此判「未知」不谎称 0/0。
+  proxy_coverage: FarmProxyCoverageView | null;
 }
 
 // ---------------------------------------------------------------------------
