@@ -1,0 +1,103 @@
+@use '../../styles/variables' as *;
+
+// 账号认证态徽标（P2-C1 身份平面）：证件/盾牌质感——方角卡片 + 左侧语义色实心
+// 色标 + 认证图标 + 加宽字距标签。颜色只吃 --color-success/warning/danger 与
+// --text-tertiary 四态 token，浅色/纯白/深色三套主题自动跟随，不写死色值。
+.badge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  // 左内边距给色标腾位（色标 3px 贴左缘 + 5px 间隙）。
+  padding: 3px 10px 3px 12px;
+  // 方角卡片：与运行态徽标的全圆胶囊在「形状」维度拉开区分。
+  border-radius: $radius-sm;
+  font-size: 12px;
+  line-height: 1.25;
+  border: 1px solid;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+// 左侧 3px 语义色实心竖条（ID 卡色标观感）。
+.accent {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+}
+
+.icon {
+  flex: 0 0 auto;
+  display: block;
+}
+
+.trailIcon {
+  flex: 0 0 auto;
+  display: block;
+  opacity: 0.9;
+}
+
+.label {
+  // 加宽字距 + 强字重，呈现「凭证标签」排版，与运行态徽标常规字重区分。
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.ok {
+  color: var(--color-success);
+  border-color: color-mix(in srgb, var(--color-success) 35%, transparent);
+  background: color-mix(in srgb, var(--color-success) 8%, transparent);
+
+  .accent {
+    background: var(--color-success);
+  }
+
+  // 图标保留明亮语义色，文字改用主题化 success badge 文本色（三套主题均满足 AA）。
+  .label {
+    color: var(--success-badge-text, #065f46);
+  }
+}
+
+.warn {
+  color: var(--color-warning);
+  border-color: color-mix(in srgb, var(--color-warning) 35%, transparent);
+  background: color-mix(in srgb, var(--color-warning) 8%, transparent);
+
+  .accent {
+    background: var(--color-warning);
+  }
+
+  .label {
+    color: var(--warning-text, #8a6d1a);
+  }
+}
+
+.err {
+  color: var(--color-danger);
+  border-color: color-mix(in srgb, var(--color-danger) 35%, transparent);
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+
+  .accent {
+    background: var(--color-danger);
+  }
+
+  .label {
+    color: var(--failure-badge-text, #8a3a30);
+  }
+}
+
+.idle {
+  color: var(--text-tertiary);
+  border-color: color-mix(in srgb, var(--text-tertiary) 30%, transparent);
+  background: color-mix(in srgb, var(--text-tertiary) 6%, transparent);
+
+  .accent {
+    background: var(--text-tertiary);
+  }
+
+  .label {
+    color: var(--text-secondary);
+  }
+}

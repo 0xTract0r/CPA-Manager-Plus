@@ -69,6 +69,24 @@
   color: var(--text-secondary);
 }
 
+// C5 常驻心智模型说明（保活探针指数分布随机、无精确倒计时）：中性 info 语气，
+// 复用 --text-secondary（三套主题均 ≥4.5:1 AA），左侧计时图标点题。始终可见，
+// 防止「请求节奏」列默认区间被误读成精确倒计时。
+.cadenceModelNote {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+
+  svg {
+    flex-shrink: 0;
+    margin-top: 2px;
+    color: var(--text-secondary);
+  }
+}
+
 // 账号名主/副行（P7-2）：主行 note（或回退 email/文件名）+ 「已禁用」中性
 // tag 同排；note 非空时副行用 mono 小字展示 email/文件名，帮助 operator 在
 // 一眼认出"AC04"这类简短备注的同时，仍能核对回真实账号标识。
@@ -134,6 +152,31 @@
   font-size: 11px;
 }
 
+// C2 账号态副行详情：可为句子级长度（如「凭证已失效——请在认证文件页重新授权」），
+// 用可换行的 muted 文本承载而非 nowrap 徽标，避免长文案撑宽账号认证态列。严重度
+// 由上方 <AccountAuthBadge> 的语义色承载，这里详情文本只做次级补充着色。
+.authDetailText {
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: normal;
+  max-width: 240px;
+}
+
+// 详情文本按账号态语义色轻着色（复用主题化 badge 文本色 token，三套主题均 AA）：
+// err（隔离终态）用失败文本色、warn（需重认证）用告警文本色、idle/ok 用次级文字色。
+.authDetail_err {
+  color: var(--failure-badge-text, #8a3a30);
+}
+
+.authDetail_warn {
+  color: var(--warning-text, #8a6d1a);
+}
+
+.authDetail_idle,
+.authDetail_ok {
+  color: var(--text-secondary);
+}
+
 .asOfInline {
   color: var(--text-secondary);
 }
@@ -141,6 +184,22 @@
 .staleBadge {
   font-size: 10px;
   white-space: nowrap;
+}
+
+// C3 供给态徽标（供给中·等住宅代理/容量）：复用站内 status-badge 着色，与容器
+// 运行态徽标同格纵向堆叠，让「不是建不了、是正在排队供给」对 operator 可见。
+.provisioningBadge {
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+// C4 账号→容器因果叙事：muted 小字，明确根因在账号侧（隔离/需重认证）导致容器
+// 停保活，避免 operator 误把容器降级当成容器自身故障去排查。
+.causalNarrative {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-secondary);
 }
 
 .mono {
@@ -233,6 +292,48 @@
   font-size: 11px;
 }
 
+// C5 实测均值（实标）：强调层——主文字色 + 稍强字重，这是真实观测值。
+.cadenceMeasuredLabel {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.cadenceMeasuredValue {
+  font-family: $font-mono;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+// C5 默认区间（灰标）：弱化层——次级/三级文字色，明确是默认配置、非精确预测，
+// 与实测均值在视觉层级上分开，防默认值被误读成真实预测。
+.cadenceDefaultLabel {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.cadenceDefaultValue {
+  font-family: $font-mono;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+// C5 intervals sparkline 行：折线图 + 「最近 N 次间隔」说明，中性小字。
+.cadenceSparklineRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cadenceSparklineCaption {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
 // scope 口径徽标：与 FarmContainerDetail.module.scss .scopeBadge 同一视觉语言
 // （中性 muted，不借用健康语义色——这是数据口径标注，不是"警告/正常"），各
 // 组件各自维护一份，不跨文件耦合导出。标注「探针保活到达」，与账号 CPA 累计
@@ -295,39 +396,8 @@
   font-variant-numeric: tabular-nums;
 }
 
-// 重新授权格（P7-4）：不再内嵌 OAuth 回调状态机（原
-// starting/polling/callback 轮询 + 手动回调 URL 表单已整体移除，改为静态
-// 「需要重新授权」badge + 深链按钮跳到账号管理页），本格只剩隔离提示
-// （可选）+ badge + 按钮三者纵向堆叠。
-.reauthCell {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-}
-
-// 自动隔离态引导重新认证提示（T3 telemetry-farm-ux-hardening）：
-// --failure-badge-text 在浅色/纯白/深色三套主题下均 ≥4.5:1 WCAG AA 对比度，
-// 与账号认证态列 err 档 HealthPill 视觉呼应，突出"需要立即处理"而非普通提示。
-.quarantineNotice {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--failure-badge-text, #8a3a30);
-}
-
-// 「需要重新授权」静态 badge（P7-4）：复用站内 status-badge warning 着色，
-// 与下方深链按钮同排堆叠，明确告知 operator"这里需要处理"而不直接内嵌操作。
-.reauthNeededBadge {
-  white-space: nowrap;
-}
-
-// 隔离但当前账号未提供 reauth_url（非 anthropic provider）时的兜底文案：不是
-// 错误本身，只是暂无一键入口，用中性 muted 文案而非错误色，与
-// --text-secondary 三套主题均 ≥4.5:1 对比度结论一致。
-.quarantineNoticeMuted {
-  font-size: 12px;
-  color: var(--text-secondary);
-}
+// C2：reauth 动作已移出账号健康面板（状态由账号认证态徽标承载，重新授权动作
+// 留「认证文件」页），原重新授权格 / 隔离提示 / 静态 badge 样式随之删除。
 
 // 表头一律单行，避免窄视口下逐字竖排（如「已/禁/用」）。
 .panel th {

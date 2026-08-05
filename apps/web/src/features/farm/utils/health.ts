@@ -206,3 +206,164 @@ export function isAccountStateStale(
   if (!Number.isFinite(observedMs)) return true;
   return now.getTime() - observedMs > ACCOUNT_STATE_STALE_THRESHOLD_MS;
 }
+
+// ---------------------------------------------------------------------------
+// P2-C2「账号态 5 态」：把后端已判定好的 account_auth_status（alive/dead/
+// unknown）+ dead 具体原因（account_auth_reason）+ 账号自带权威布尔
+// （auto_quarantined/disabled/reauth_url）折算成前端展示用的 5 态。
+//
+// **不在前端重算健康判定**：token 是否存活这件事一律信后端 account_auth_status，
+// 前端从不自己判 token 活死。这里只做「展示态」派生——把后端 dead 态里被
+// 归并的三个终态原因拆开、并对未绑定/未知账号回退读账号自带的权威布尔
+// （auto_quarantined 是 core 侧隔离判定的唯一权威字段，disabled 是 operator
+// 主动关闭的直接事实，reauth_url 由后端派生），据此给出更精确的可读态。
+// ---------------------------------------------------------------------------
+
+/**
+ * 账号认证态 5 态（design.md P2 用户点2）：
+ * - healthy：已认证健康（后端 account_auth_status='alive'）。
+ * - needs_reauth：需重新认证（凭证失效可恢复，dead+account_token_dead 或有
+ *   reauth_url）。**可恢复态，映射 warn 而非 err**——它需要人处理但不是终态。
+ * - auto_quarantined：已自动隔离（core 终态认证失败触发，auto_quarantined 布尔
+ *   优先，映射 err 终态）。
+ * - operator_disabled：operator 主动停用（disabled 布尔，映射 idle 中性——是
+ *   人为意图关闭，不是故障）。
+ * - unknown：未知/陈旧（后端 unknown 且账号无隔离/停用/reauth 信号，映射 idle
+ *   中性——「根本不知道」既非健康也非故障，不默认绿也不默认红）。
+ */
+export const FARM_ACCOUNT_AUTH_STATES = [
+  'healthy',
+  'needs_reauth',
+  'auto_quarantined',
+  'operator_disabled',
+  'unknown',
+] as const;
+export type FarmAccountAuthState = (typeof FARM_ACCOUNT_AUTH_STATES)[number];
+
+export interface AccountAuthStateInput {
+  /** 后端两平面判定结果（仅已绑定账号有），alive/dead/unknown。 */
+  authStatus?: string;
+  /** dead 态具体原因（account_disabled/account_auto_quarantined/account_token_dead）。 */
+  authReason?: string;
+  /** core 隔离判定唯一权威字段。 */
+  autoQuarantined?: boolean;
+  /** operator 主动停用（account.disabled 或 status='disabled' 皆可）。 */
+  disabled?: boolean;
+  /** 后端派生的重新授权入口是否存在（存在即代表可/需重新授权）。 */
+  hasReauthUrl?: boolean;
+}
+
+/**
+ * 派生账号认证态 5 态。优先级（从最终态到最不确定）：隔离 > 停用 > alive >
+ * 需重认证 > 未知。auto_quarantined/disabled 用账号自带权威布尔（不依赖是否
+ * 已绑定容器，故未绑定的隔离/停用账号也能被正确标注，而非一律 unknown）。
+ */
+export function deriveAccountAuthState(input: AccountAuthStateInput): FarmAccountAuthState {
+  if (input.autoQuarantined) return 'auto_quarantined';
+  if (input.disabled) return 'operator_disabled';
+  if (input.authStatus === 'alive') return 'healthy';
+  // 后端明确 dead 且原因是 token 失效，或后端给了 reauth 入口 → 需重新认证。
+  if (input.authReason === 'account_token_dead' || input.hasReauthUrl) return 'needs_reauth';
+  // dead 但原因不明（理论上已被上面的隔离/停用/token 三分支覆盖）也按需重认证兜底，
+  // 避免把一个后端确证 dead 的账号误显示成 unknown。
+  if (input.authStatus === 'dead') return 'needs_reauth';
+  return 'unknown';
+}
+
+/** 5 态 → HealthPill 四态色（healthy=ok / needs_reauth=warn / auto_quarantined=err /
+ * operator_disabled=idle / unknown=idle）。见 FARM_ACCOUNT_AUTH_STATES 各态注释。 */
+const ACCOUNT_AUTH_STATE_VARIANT: Record<FarmAccountAuthState, FarmHealthVariant> = {
+  healthy: 'ok',
+  needs_reauth: 'warn',
+  auto_quarantined: 'err',
+  operator_disabled: 'idle',
+  unknown: 'idle',
+};
+
+export function accountAuthStateToFarmHealthVariant(
+  state: FarmAccountAuthState
+): FarmHealthVariant {
+  return ACCOUNT_AUTH_STATE_VARIANT[state];
+}
+
+// ---------------------------------------------------------------------------
+// P2-C3「容器态补 pending/退役/幽灵区分」：容器运行态生命周期分类。旧
+// CONTAINER_HEALTH_STATUS 把 created/starting/retired 都压成 idle、
+// orphaned 与 degraded 同为 warn，视觉上无法区分「供给中」「已退役归档」
+// 「幽灵态待收敛」三种性质完全不同的态。这里把 store.Status 字面值折算成更细
+// 的生命周期分类，供 <ContainerRuntimeBadge> 的运行态点样式区分。
+// ---------------------------------------------------------------------------
+
+/**
+ * 容器运行态生命周期分类：
+ * - running：进程健康运行（ok）。
+ * - pending：created/starting，容器进程正在起（供给/启动中，非故障）。
+ * - degraded：异常降级但进程仍在（warn）。
+ * - down：已停止/退出（err）。
+ * - retired：软删归档终态（idle 中性，非故障）。
+ * - ghost：orphaned 幽灵态，注册表在但容器/绑定异常，待 operator 收敛（warn）。
+ * - unbound：账号未接入农场，无容器（idle 中性）。
+ */
+export const FARM_CONTAINER_LIFECYCLES = [
+  'running',
+  'pending',
+  'degraded',
+  'down',
+  'retired',
+  'ghost',
+  'unbound',
+] as const;
+export type FarmContainerLifecycle = (typeof FARM_CONTAINER_LIFECYCLES)[number];
+
+const CONTAINER_LIFECYCLE_BY_STATUS: Record<string, FarmContainerLifecycle> = {
+  running: 'running',
+  created: 'pending',
+  starting: 'pending',
+  degraded: 'degraded',
+  down: 'down',
+  retired: 'retired',
+  orphaned: 'ghost',
+};
+
+/** 容器状态字面值 → 生命周期分类；undefined（未绑定）→ unbound，未知值 → pending 兜底。 */
+export function classifyContainerLifecycle(status: string | undefined): FarmContainerLifecycle {
+  if (!status) return 'unbound';
+  return CONTAINER_LIFECYCLE_BY_STATUS[status] ?? 'pending';
+}
+
+/** 生命周期分类 → HealthPill 四态色（用于运行态徽标的语义色）。 */
+const CONTAINER_LIFECYCLE_VARIANT: Record<FarmContainerLifecycle, FarmHealthVariant> = {
+  running: 'ok',
+  pending: 'idle',
+  degraded: 'warn',
+  down: 'err',
+  retired: 'idle',
+  ghost: 'warn',
+  unbound: 'idle',
+};
+
+export function containerLifecycleToFarmHealthVariant(
+  lifecycle: FarmContainerLifecycle
+): FarmHealthVariant {
+  return CONTAINER_LIFECYCLE_VARIANT[lifecycle];
+}
+
+// ---------------------------------------------------------------------------
+// P2-C3「provisioning_state join」：自动供给派生态 → 展示语义色。pending_* 是
+// 「正在排队供给、正常等待」而非故障，用 warn（需要关注但非错误）；eligible/
+// provisioned 是中性/正向信息，用 idle/ok。
+// ---------------------------------------------------------------------------
+
+const PROVISIONING_STATE_VARIANT: Record<string, FarmHealthVariant> = {
+  eligible: 'idle',
+  pending_no_proxy: 'warn',
+  pending_capacity_exhausted: 'warn',
+  provisioned: 'ok',
+};
+
+export function provisioningStateToFarmHealthVariant(
+  state: string | undefined
+): FarmHealthVariant {
+  if (!state) return 'idle';
+  return PROVISIONING_STATE_VARIANT[state] ?? 'idle';
+}

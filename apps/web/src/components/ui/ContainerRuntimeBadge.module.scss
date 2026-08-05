@@ -1,0 +1,171 @@
+@use '../../styles/variables' as *;
+
+// 容器运行态徽标（P2-C1 运行时平面）：全圆胶囊 + 领头运行态点 + 常规字重标签。
+// 颜色只吃 --color-success/warning/danger 与 --text-tertiary 四态 token，三套主题
+// 自动跟随，不写死色值。与账号认证态徽标（方角证件卡 + 盾/钥匙图标 + 加宽字距）
+// 在形状/图标/排版三维度全面区分。
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 11px 3px 9px;
+  // 全圆胶囊：与身份平面的方角卡片在「形状」维度拉开区分。
+  border-radius: $radius-full;
+  font-size: 13px;
+  line-height: 1.2;
+  border: 1px solid;
+  white-space: nowrap;
+}
+
+.label {
+  // 常规字重、无加宽字距，与身份平面的加宽强字重凭证标签区分。
+  font-weight: 600;
+}
+
+// 运行态点：8px 圆，样式随生命周期分类变化（实心/脉冲/空心/环/叉）。
+.dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: $radius-full;
+  background: currentColor;
+  position: relative;
+}
+
+// running：实心 + 呼吸脉冲光晕，强调「活着的运行进程」。
+.dot_running {
+  background: var(--color-success);
+
+  &::after {
+    content: '';
+    position: absolute;
+    inset: -3px;
+    border-radius: $radius-full;
+    border: 1px solid var(--color-success);
+    opacity: 0.55;
+    animation: containerRuntimePulse 1.8s ease-out infinite;
+  }
+}
+
+@keyframes containerRuntimePulse {
+  0% {
+    transform: scale(0.7);
+    opacity: 0.6;
+  }
+  100% {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}
+
+// 降级动作性偏好：动画尊重用户 reduce-motion 设置。
+@media (prefers-reduced-motion: reduce) {
+  .dot_running::after {
+    animation: none;
+  }
+}
+
+// pending（created/starting）：空心中性点 + 慢闪，示意「正在起/供给中」。
+.dot_pending {
+  background: transparent;
+  border: 2px solid var(--text-tertiary);
+  animation: containerRuntimeBlink 1.6s ease-in-out infinite;
+}
+
+@keyframes containerRuntimeBlink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dot_pending {
+    animation: none;
+  }
+}
+
+// degraded：实心 warning。
+.dot_degraded {
+  background: var(--color-warning);
+}
+
+// down：实心 danger + 中央一道横杠，呈现「已停止」符号感。
+.dot_down {
+  background: var(--color-danger);
+
+  &::after {
+    content: '';
+    position: absolute;
+    left: 1px;
+    right: 1px;
+    top: 50%;
+    height: 2px;
+    transform: translateY(-50%);
+    background: var(--bg-primary, #fff);
+  }
+}
+
+// retired：空心归档灰环，示意「已退役归档终态」（非故障）。
+.dot_retired {
+  background: transparent;
+  border: 2px solid var(--text-tertiary);
+  opacity: 0.75;
+}
+
+// ghost（orphaned）：双环警示，示意「幽灵态待收敛」，与 degraded 实心点区分。
+.dot_ghost {
+  background: transparent;
+  border: 2px solid var(--color-warning);
+
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 1px;
+    border-radius: $radius-full;
+    border: 1px solid var(--color-warning);
+    opacity: 0.55;
+  }
+}
+
+// unbound：空心极淡灰点，示意「未接入农场、无容器」。
+.dot_unbound {
+  background: transparent;
+  border: 2px solid var(--text-tertiary);
+  opacity: 0.5;
+}
+
+.ok {
+  color: var(--color-success);
+  border-color: color-mix(in srgb, var(--color-success) 35%, transparent);
+  background: color-mix(in srgb, var(--color-success) 10%, transparent);
+
+  .label {
+    color: var(--success-badge-text, #065f46);
+  }
+}
+
+.warn {
+  color: var(--color-warning);
+  border-color: color-mix(in srgb, var(--color-warning) 35%, transparent);
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+}
+
+.err {
+  color: var(--color-danger);
+  border-color: color-mix(in srgb, var(--color-danger) 35%, transparent);
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+
+  .label {
+    color: var(--failure-badge-text, #8a3a30);
+  }
+}
+
+.idle {
+  color: var(--text-tertiary);
+  border-color: color-mix(in srgb, var(--text-tertiary) 30%, transparent);
+  background: color-mix(in srgb, var(--text-tertiary) 8%, transparent);
+}

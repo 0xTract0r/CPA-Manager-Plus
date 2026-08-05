@@ -244,7 +244,30 @@ export interface FarmAccountEntry {
   pinned_device_id_masked?: string;
   // device_id 展示口径来源标注，恒有值。
   device_id_source: FarmDeviceIDSource;
+  // 该账号最近一轮「认证即自动供」判定派生态（P2-A5，dto.go accountView.
+  // ProvisioningState，复用 GET /api/farm/capacity 的 provisioning[] 同一份
+  // 内存态）。取值见 FARM_PROVISIONING_STATES：eligible（供给候选）/
+  // pending_no_proxy（等住宅代理）/ pending_capacity_exhausted（等容量）/
+  // provisioned（已自动接入）。仅在自动供给开启且该账号被最近一轮 reconcile
+  // 观察到、判定出非空态时出现（omitempty）；开关关闭 / 从未 reconcile / 不在
+  // 判定范围内时缺失。前端据此让「供给中·等住宅代理/容量」对 operator 可见，
+  // 对冲「以为新建不了容器」的误解——真相往往是正在排队供给。
+  provisioning_state?: string;
 }
+
+// accountView.provisioning_state 取值（handlers.go provisioningState* 常量）。
+// eligible=已认证合格但尚未接入的供给候选；pending_no_proxy=候选但缺可用住宅
+// 代理，fail-closed 不建容器（防真实 IP 泄露），proxy 就绪后自动接入；
+// pending_capacity_exhausted=proxy 就绪但活跃容器/内存护栏当前不满足，容量释放
+// 后自动接入；provisioned=本进程运行期间已由自动供给成功接入过。未知值前端按
+// 中性回退处理，不臆造语义。
+export const FARM_PROVISIONING_STATES = [
+  'eligible',
+  'pending_no_proxy',
+  'pending_capacity_exhausted',
+  'provisioned',
+] as const;
+export type FarmProvisioningState = (typeof FARM_PROVISIONING_STATES)[number];
 
 // GET /api/farm/usage 单条记录（services/farm-orchestrator 新增 usage 端点：
 // 按容器/账号聚合 CPA GET /v0/management/usage?include_details=true 的
