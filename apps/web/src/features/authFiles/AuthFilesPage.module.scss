@@ -244,6 +244,13 @@
 }
 
 .filterControlsPanel {
+  // 容器查询上下文：.filterControls 是固定列数的 grid，各列都有 minmax 下限，
+  // 当这个面板的实际渲染宽度（而非整页视口宽度）小于各列 minmax 下限之和时，
+  // grid 轨道不会再收缩，会把 .filterControls 撑宽、进而撑破祖先容器
+  // ——例如侧栏占用了部分宽度导致内容区比视口窄，此时 @include tablet /
+  // @include mobile 这类纯视口断点不会触发。这里改用 inline-size 容器
+  // 查询，让列数折叠只看这个面板自己的可用宽度。
+  container: auth-files-filter-controls / inline-size;
   min-width: 0;
 }
 
@@ -278,6 +285,22 @@
   }
 
   @include mobile {
+    grid-template-columns: 1fr;
+  }
+}
+
+// 容器查询版本的列数折叠：与上面 @include tablet / @include mobile 的目标
+// grid-template-columns 一致，但触发条件是 .filterControlsPanel 自身的渲染
+// 宽度，能覆盖"整页视口够宽、但内容区被侧栏挤窄"这类纯视口断点覆盖不到的场景。
+// 两组断点可能同时命中，属性值相同、互不冲突。
+@container auth-files-filter-controls (max-width: 860px) {
+  .filterControls {
+    grid-template-columns: minmax(220px, 1fr) minmax(120px, 0.45fr) minmax(160px, 0.55fr);
+  }
+}
+
+@container auth-files-filter-controls (max-width: 480px) {
+  .filterControls {
     grid-template-columns: 1fr;
   }
 }
@@ -830,6 +853,13 @@
 
 // 单个认证文件卡片
 .fileCard {
+  // 容器查询上下文：卡片操作区（.cardActions / .cardActionsMain）需要按
+  // "卡片自身宽度"响应，而不只是整页视口宽度——宽视口下的多列网格（尤其
+  // fileGridCompact 的 minmax(min(100%,280px),1fr)）仍会把单张卡片压得很窄，
+  // 此时只按视口宽度判断的 @include mobile 不会触发，但卡片内部按钮仍需要
+  // 与真机窄屏一致的换行/收窄处理，否则会溢出卡片边界。只做 inline-size
+  // containment，不影响卡片本身依赖网格拉伸的高度。
+  container: auth-file-card / inline-size;
   position: relative;
   overflow: hidden;
   background: var(--bg-primary);
@@ -1783,6 +1813,10 @@
 .cardActionsMain {
   display: flex;
   align-items: center;
+  // 无条件 flex-wrap 兜底：即便容器查询在极端场景下不适用（例如极旧内核 webview），
+  // 按钮组也只会换行而不会横向撑破卡片/祖先容器。宽卡片下按钮本就一行放得下，
+  // 不会因为允许换行而触发换行，对正常桌面视觉零影响。
+  flex-wrap: wrap;
   gap: 6px;
   min-width: 0;
   flex: 1;
@@ -1856,6 +1890,49 @@
 }
 
 @include mobile {
+  .cardActions {
+    flex-wrap: wrap;
+  }
+
+  .cardActionsMain {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .primaryActionButton:global(.btn.btn-sm) {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .modelsActionButton:global(.btn.btn-sm) {
+    flex: 0 0 32px;
+    width: 32px;
+    min-width: 32px;
+  }
+
+  .statusToggle {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .cardMetaAction {
+    width: 100%;
+    margin-left: 0;
+    justify-content: flex-start;
+  }
+
+  .cardMetaActionList {
+    justify-content: flex-start;
+  }
+}
+
+// 容器查询版本的窄卡片兜底：与上面 @include mobile 断点内容一致，但触发条件
+// 是"卡片自身渲染宽度"（.fileCard 的 container: auth-file-card / inline-size），
+// 而不是整页视口宽度。宽视口下的多列网格仍可能把单张卡片压得很窄（尤其
+// fileGridCompact），此时视口断点不会触发，这里按容器宽度独立判断，
+// 保证任意视口下卡片操作区都不会溢出卡片、撑破祖先。
+// 两个断点可能同时命中（真机窄屏下容器宽度也小），属性值相同、互不冲突。
+@container auth-file-card (max-width: 340px) {
   .cardActions {
     flex-wrap: wrap;
   }
