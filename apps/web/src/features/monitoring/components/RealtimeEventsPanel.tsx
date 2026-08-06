@@ -118,6 +118,9 @@ const FAILURE_TOOLTIP_OFFSET = 8;
 const FAILURE_TOOLTIP_MAX_WIDTH = 420;
 const FAILURE_TOOLTIP_MAX_HEIGHT = 240;
 const FAILURE_TOOLTIP_CLOSE_DELAY_MS = 120;
+// "强度/等级"列缺值时的中性占位：只用一个 em dash 字符，不落成裸的 "-"（在等宽字体/
+// 部分渲染环境下容易被读成叉号），也不是任何需要按语言翻译的文案。
+const REASONING_TIER_PLACEHOLDER = '—';
 
 type FailureTooltipPlacement = 'above' | 'below';
 
@@ -622,6 +625,101 @@ function RealtimeFailureStatus({ details, tooltipId, t, onCopy }: RealtimeFailur
   );
 }
 
+type RealtimeModelCellProps = {
+  model: string;
+  resolvedModel?: string;
+  tooltipId: string;
+};
+
+// 模型名单元格：与 RealtimeFailureStatus 同一套 portal + fixed 定位 tooltip 手法
+// (而不是 authFiles 的 CSS-only :hover 浮层)——因为本单元格位于 .tableWrapper /
+// .dataPanel 的 overflow 裁切祖先内，纯 CSS 绝对定位浮层会被祖先裁掉；且必须放进
+// 独立组件才能在 displayedRows.map 循环里各自持有 hooks(每行一份 open/position 状态)。
+// 悬浮/聚焦即时展开，不走浏览器原生 title（原生 tooltip 有约 0.5-1s 不可控延迟）。
+function RealtimeModelCell({ model, resolvedModel, tooltipId }: RealtimeModelCellProps) {
+  const triggerRef = useRef<HTMLDivElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [tooltipPosition, setTooltipPosition] = useState<FailureTooltipPosition | null>(null);
+  const isBrowser = typeof document !== 'undefined';
+
+  const updateTooltipPosition = useCallback(() => {
+    if (!triggerRef.current) return;
+    const nextPosition = resolveFailureTooltipPosition(triggerRef.current);
+    if (nextPosition) setTooltipPosition(nextPosition);
+  }, []);
+
+  const showTooltip = useCallback(() => {
+    updateTooltipPosition();
+    setOpen(true);
+  }, [updateTooltipPosition]);
+
+  const hideTooltip = useCallback(() => setOpen(false), []);
+
+  const handleBlur = useCallback(
+    (event: FocusEvent<HTMLElement>) => {
+      if (isNodeInside(triggerRef.current, event.relatedTarget)) return;
+      hideTooltip();
+    },
+    [hideTooltip]
+  );
+
+  useEffect(() => {
+    if (!open || typeof window === 'undefined') return undefined;
+    updateTooltipPosition();
+    window.addEventListener('resize', updateTooltipPosition);
+    window.addEventListener('scroll', updateTooltipPosition, true);
+    return () => {
+      window.removeEventListener('resize', updateTooltipPosition);
+      window.removeEventListener('scroll', updateTooltipPosition, true);
+    };
+  }, [open, updateTooltipPosition]);
+
+  const placement = tooltipPosition?.placement ?? 'below';
+  const tooltipClassName = [
+    styles.realtimeModelTooltip,
+    placement === 'above' ? styles.realtimeModelTooltipAbove : styles.realtimeModelTooltipBelow,
+    open ? styles.realtimeModelTooltipOpen : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  const tooltip = (
+    <span
+      id={tooltipId}
+      role="tooltip"
+      className={tooltipClassName}
+      style={isBrowser ? tooltipPosition?.style : undefined}
+    >
+      <span className={`${styles.realtimeModelTooltipPrimary} ${styles.monoCell}`}>{model}</span>
+      {resolvedModel ? (
+        <span className={`${styles.realtimeModelTooltipSecondary} ${styles.monoCell}`}>
+          {resolvedModel}
+        </span>
+      ) : null}
+    </span>
+  );
+
+  return (
+    <div
+      ref={triggerRef}
+      className={`${styles.primaryCell} ${styles.realtimeModelCell}`}
+      tabIndex={0}
+      aria-describedby={tooltipId}
+      onMouseEnter={showTooltip}
+      onMouseLeave={hideTooltip}
+      onFocus={showTooltip}
+      onBlur={handleBlur}
+    >
+      <span className={`${styles.monoCell} ${styles.realtimeModelText}`}>{model}</span>
+      {resolvedModel ? (
+        <small className={`${styles.monoCell} ${styles.realtimeModelText}`}>{resolvedModel}</small>
+      ) : null}
+      {!isBrowser ? tooltip : null}
+      {isBrowser && open ? createPortal(tooltip, document.body) : null}
+    </div>
+  );
+}
+
 // 每个 "标签 数值" 段必须作为不可断整体渲染（见下方 realtimeUsageSegment 样式），
 // 否则窄列 + word-break:break-word 会把紧凑数字（如 "200.0K"）从中间断行。
 // 段落之间允许在 " · " 分隔符处换行，因此分隔符本身不进入 nowrap span。
@@ -1040,6 +1138,13 @@ export function RealtimeEventsPanel({
     'monitoring.reasoning_effort_short',
     'monitoring.reasoning_effort'
   );
+  // 服务等级(service_tier)行内标签：与表头 reasoningEffortLabel 同法在行外一次性求值，
+  // 不再放进 displayedRows.map 内逐行重复调用 shortLabel。
+  const serviceTierRowLabel = shortLabel(
+    t,
+    'monitoring.service_tier_short',
+    'monitoring.service_tier'
+  );
   const recentStatusLabel = shortLabel(
     t,
     'monitoring.recent_status_short',
@@ -1222,32 +1327,31 @@ export function RealtimeEventsPanel({
                     </div>
                   </td>
                   <td>
-                    <div
-                      className={`${styles.primaryCell} ${styles.realtimeModelCell}`}
-                      title={[row.model, showResolvedModel ? row.resolvedModel : '']
-                        .filter(Boolean)
-                        .join('\n')}
-                    >
-                      <span className={`${styles.monoCell} ${styles.realtimeModelText}`}>
-                        {row.model}
-                      </span>
-                      {showResolvedModel ? (
-                        <small className={`${styles.monoCell} ${styles.realtimeModelText}`}>
-                          {row.resolvedModel}
-                        </small>
-                      ) : null}
-                    </div>
+                    {/* 模型名较长时被 .realtimeModelText 的 12% 列宽 nowrap 省略号截断；
+                        全名展示改走即时浮层(见 RealtimeModelCell)，不再用原生 title=
+                        (浏览器原生 tooltip 有 ~0.5-1s 不可控延迟)。 */}
+                    <RealtimeModelCell
+                      model={row.model}
+                      resolvedModel={showResolvedModel ? row.resolvedModel : undefined}
+                      tooltipId={`${tooltipIdPrefix}-model-tooltip-${row.id}`}
+                    />
                   </td>
                   <td>
+                    {/* "强度"列实际同时承载 reasoning_effort(强度) + service_tier(等级)两个字段，
+                        但只有一个表头。两行都显式带标签，避免裸值堆叠(尤其两者都可能是
+                        "auto"时无法区分是哪一个)；缺失值用中性占位而非裸 "-"。不新增列/
+                        不改列宽，两行都收在既有 .primaryCell 容器内，照顾窄屏。 */}
                     <div className={styles.primaryCell}>
-                      {reasoningEffort !== '-' ? (
-                        <span className={styles.realtimeReasoningBadge}>{reasoningEffort}</span>
-                      ) : (
-                        <span className={styles.mutedCell}>-</span>
-                      )}
-                      {serviceTier !== '-' ? (
-                        <small>{`${shortLabel(t, 'monitoring.service_tier_short', 'monitoring.service_tier')}: ${serviceTier}`}</small>
-                      ) : null}
+                      <span className={styles.realtimeReasoningBadge}>
+                        {`${reasoningEffortLabel}: ${
+                          reasoningEffort !== '-' ? reasoningEffort : REASONING_TIER_PLACEHOLDER
+                        }`}
+                      </span>
+                      <small>
+                        {`${serviceTierRowLabel}: ${
+                          serviceTier !== '-' ? serviceTier : REASONING_TIER_PLACEHOLDER
+                        }`}
+                      </small>
                     </div>
                   </td>
                   <td>
