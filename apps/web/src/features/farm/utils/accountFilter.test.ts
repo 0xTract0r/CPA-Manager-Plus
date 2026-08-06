@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  isNormalFarmAccountRow,
   matchesFarmAccountFilter,
   type FarmAccountFilterRow,
 } from './accountFilter';
@@ -11,6 +12,7 @@ const baseRow: FarmAccountFilterRow = {
   account: 'acct1@example.com',
   name: 'claude-acct1@example.com.json',
   authState: 'healthy',
+  farmBound: true,
 };
 
 describe('matchesFarmAccountFilter', () => {
@@ -95,5 +97,45 @@ describe('matchesFarmAccountFilter', () => {
     expect(
       matchesFarmAccountFilter(baseRow, { authState: 'healthy', query: 'AC04' })
     ).toBe(true);
+  });
+
+  // --- 'normal' 复合筛选（= 绑定 + 健康）关键回归护栏（用户点4）---
+  it("'normal'：绑定 + healthy → 命中", () => {
+    expect(matchesFarmAccountFilter(baseRow, { authState: 'normal', query: '' })).toBe(true);
+  });
+
+  it("'normal'：unprovisioned（未绑定）→ 过滤", () => {
+    const row: FarmAccountFilterRow = { ...baseRow, authState: 'unprovisioned', farmBound: false };
+    expect(matchesFarmAccountFilter(row, { authState: 'normal', query: '' })).toBe(false);
+  });
+
+  it("'normal'：逐一排除 needs_reauth/auto_quarantined/operator_disabled/unknown", () => {
+    for (const state of [
+      'needs_reauth',
+      'auto_quarantined',
+      'operator_disabled',
+      'unknown',
+    ] as const) {
+      const row: FarmAccountFilterRow = { ...baseRow, authState: state };
+      expect(matchesFarmAccountFilter(row, { authState: 'normal', query: '' })).toBe(false);
+    }
+  });
+
+  it("'normal'：healthy 但 farmBound=false → 过滤（防御后端口径不一致）", () => {
+    const row: FarmAccountFilterRow = { ...baseRow, authState: 'healthy', farmBound: false };
+    expect(matchesFarmAccountFilter(row, { authState: 'normal', query: '' })).toBe(false);
+  });
+
+  it("'normal' + 关键词：两维「与」——正常但关键词不命中 → 过滤", () => {
+    expect(matchesFarmAccountFilter(baseRow, { authState: 'normal', query: 'zzz' })).toBe(false);
+    expect(matchesFarmAccountFilter(baseRow, { authState: 'normal', query: 'AC04' })).toBe(true);
+  });
+
+  it('isNormalFarmAccountRow：healthy 且未显式 unbound 视为正常（healthy 已隐含绑定）', () => {
+    expect(isNormalFarmAccountRow({ authState: 'healthy' })).toBe(true);
+    expect(isNormalFarmAccountRow({ authState: 'healthy', farmBound: true })).toBe(true);
+    expect(isNormalFarmAccountRow({ authState: 'healthy', farmBound: false })).toBe(false);
+    expect(isNormalFarmAccountRow({ authState: 'unprovisioned', farmBound: false })).toBe(false);
+    expect(isNormalFarmAccountRow({ authState: 'unknown' })).toBe(false);
   });
 });

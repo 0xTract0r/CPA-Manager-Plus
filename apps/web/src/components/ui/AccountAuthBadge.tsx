@@ -6,6 +6,7 @@ import {
   IconX,
   IconEyeOff,
   IconInfo,
+  IconAlertTriangle,
   type IconProps,
 } from './icons';
 import type { FarmAccountAuthState } from '@/features/farm/utils/health';
@@ -33,6 +34,8 @@ const AUTH_STATE_ICON: Record<FarmAccountAuthState, (props: IconProps) => ReactE
   needs_reauth: IconKey,
   auto_quarantined: IconX,
   operator_disabled: IconEyeOff,
+  // unprovisioned：未绑定·不可出站——用告警三角强调「异常，但可通过接入农场恢复」。
+  unprovisioned: IconAlertTriangle,
   unknown: IconInfo,
 };
 
@@ -46,6 +49,7 @@ const AUTH_STATE_TRAILING_ICON: Record<
   needs_reauth: null,
   auto_quarantined: null,
   operator_disabled: null,
+  unprovisioned: null,
   unknown: null,
 };
 

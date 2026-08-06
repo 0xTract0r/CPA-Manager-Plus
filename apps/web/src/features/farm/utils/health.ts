@@ -220,22 +220,28 @@ export function isAccountStateStale(
 // ---------------------------------------------------------------------------
 
 /**
- * 账号认证态 5 态（design.md P2 用户点2）：
- * - healthy：已认证健康（后端 account_auth_status='alive'）。
+ * 账号认证态 6 态（design.md P2 用户点2 + 点4「未绑定容器=异常态」）：
+ * - healthy：已认证健康（后端 account_auth_status='alive'）**且已绑定容器**——
+ *   用户拍板：只有「绑定 + 健康」才算正常。
  * - needs_reauth：需重新认证（凭证失效可恢复，dead+account_token_dead 或有
  *   reauth_url）。**可恢复态，映射 warn 而非 err**——它需要人处理但不是终态。
  * - auto_quarantined：已自动隔离（core 终态认证失败触发，auto_quarantined 布尔
  *   优先，映射 err 终态）。
  * - operator_disabled：operator 主动停用（disabled 布尔，映射 idle 中性——是
  *   人为意图关闭，不是故障）。
- * - unknown：未知/陈旧（后端 unknown 且账号无隔离/停用/reauth 信号，映射 idle
- *   中性——「根本不知道」既非健康也非故障，不默认绿也不默认红）。
+ * - unprovisioned：**未绑定容器的 Claude 账号**（farm_bound=false 且 provider=
+ *   claude）。用户拍板「未绑定 = 异常态，不算正常」——账号没有容器就无法从住宅
+ *   代理出站，语义是「未绑定·不可出站」，映射 err（不可用），不再回退成
+ *   healthy/unknown 假绿/中性。
+ * - unknown：未知/陈旧（后端 unknown 且账号无隔离/停用/reauth/未绑定信号，映射
+ *   idle 中性——「根本不知道」既非健康也非故障，不默认绿也不默认红）。
  */
 export const FARM_ACCOUNT_AUTH_STATES = [
   'healthy',
   'needs_reauth',
   'auto_quarantined',
   'operator_disabled',
+  'unprovisioned',
   'unknown',
 ] as const;
 export type FarmAccountAuthState = (typeof FARM_ACCOUNT_AUTH_STATES)[number];
@@ -251,12 +257,38 @@ export interface AccountAuthStateInput {
   disabled?: boolean;
   /** 后端派生的重新授权入口是否存在（存在即代表可/需重新授权）。 */
   hasReauthUrl?: boolean;
+  /**
+   * 该账号是否已绑定农场容器（契约字段 farm_bound）。仅当显式传入 false 时才
+   * 触发 unprovisioned 判定；缺省（undefined）时防御式回退旧行为（不臆造未绑定），
+   * 保证后端 AG1 尚未下发该字段的过渡期不误标。
+   */
+  farmBound?: boolean;
+  /**
+   * 账号 provider（契约配套：未绑定异常态只针对 Claude，用户「只管 Claude」）。
+   * 缺省时按 Claude 处理——农场当前只服务 Claude 账号，缺省不漏标未绑定异常。
+   */
+  provider?: string;
 }
 
 /**
- * 派生账号认证态 5 态。优先级（从最终态到最不确定）：隔离 > 停用 > alive >
- * 需重认证 > 未知。auto_quarantined/disabled 用账号自带权威布尔（不依赖是否
- * 已绑定容器，故未绑定的隔离/停用账号也能被正确标注，而非一律 unknown）。
+ * 是否 Claude provider。农场只管 Claude：provider 缺省（后端未下发）按 Claude
+ * 处理，避免过渡期漏标「未绑定·不可出站」异常；显式为其它 provider 时才排除。
+ */
+function isClaudeProviderValue(provider: string | undefined): boolean {
+  if (!provider) return true;
+  const p = provider.trim().toLowerCase();
+  return p === 'claude' || p === 'anthropic';
+}
+
+/**
+ * 派生账号认证态 6 态。优先级（从最终态到最不确定）：隔离 > 停用 > alive(绑定) >
+ * 需重认证 > 未绑定(Claude) > 未知。
+ * - auto_quarantined/disabled 用账号自带权威布尔（不依赖是否已绑定容器，故未绑定
+ *   的隔离/停用账号也能被正确标注，而非一律 unprovisioned/unknown）。
+ * - unprovisioned 只在 farm_bound 显式为 false 且是 Claude 时命中，且排在隔离/停用/
+ *   需重认证之后——这些更具体/更可操作的异常原因优先展示。alive 只可能来自已绑定
+ *   容器的 account_auth_status，故 alive 分支天然不会与未绑定并存（保留旧
+ *   「alive 优先于需重认证」不变量，兼容既有用例）。
  */
 export function deriveAccountAuthState(input: AccountAuthStateInput): FarmAccountAuthState {
   if (input.autoQuarantined) return 'auto_quarantined';
@@ -267,16 +299,20 @@ export function deriveAccountAuthState(input: AccountAuthStateInput): FarmAccoun
   // dead 但原因不明（理论上已被上面的隔离/停用/token 三分支覆盖）也按需重认证兜底，
   // 避免把一个后端确证 dead 的账号误显示成 unknown。
   if (input.authStatus === 'dead') return 'needs_reauth';
+  // 未绑定容器的 Claude 账号：不可出站，异常态（用户拍板「绑定 + 健康才算正常」）。
+  if (input.farmBound === false && isClaudeProviderValue(input.provider)) return 'unprovisioned';
   return 'unknown';
 }
 
-/** 5 态 → HealthPill 四态色（healthy=ok / needs_reauth=warn / auto_quarantined=err /
- * operator_disabled=idle / unknown=idle）。见 FARM_ACCOUNT_AUTH_STATES 各态注释。 */
+/** 6 态 → HealthPill 四态色（healthy=ok / needs_reauth=warn / auto_quarantined=err /
+ * operator_disabled=idle / unprovisioned=err / unknown=idle）。unprovisioned 映射 err
+ * 与「未绑定·不可出站」红警口径一致（见 FARM_ACCOUNT_AUTH_STATES 各态注释）。 */
 const ACCOUNT_AUTH_STATE_VARIANT: Record<FarmAccountAuthState, FarmHealthVariant> = {
   healthy: 'ok',
   needs_reauth: 'warn',
   auto_quarantined: 'err',
   operator_disabled: 'idle',
+  unprovisioned: 'err',
   unknown: 'idle',
 };
 

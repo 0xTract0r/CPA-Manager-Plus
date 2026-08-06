@@ -383,6 +383,13 @@
   min-width: 0;
 }
 
+// 未绑定 Claude 红警：不撑满整行，左对齐自适应宽度。
+.deviceIdUnprovisionedWarning {
+  align-self: flex-start;
+  max-width: 100%;
+  white-space: normal;
+}
+
 .managedHeaderPlainHeader {
   display: flex;
   align-items: center;

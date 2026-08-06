@@ -94,6 +94,13 @@ export type AccountSettingsEditorState = {
   managedHeaderState: AuthFileManagedHeaderState | null;
   /** 只读脱敏合成 device_id；为空表示后端未派生（omitempty 缺省）。 */
   syntheticDeviceId: string;
+  /**
+   * 农场契约字段（后端 AG1 同步实现中）：是否已绑定农场容器。undefined = 后端
+   * 尚未下发该字段，前端防御式回退旧的合成假名展示，不臆造绑定。
+   */
+  farmBound: boolean | undefined;
+  /** 农场契约字段：device_id 展示口径来源（container_synced/synthetic/drift/unknown）。 */
+  deviceIdSource: string | undefined;
   clientVersionObservations: AuthFileClientVersionObservation[];
   runtimeProfileText: string;
   runtimeIdentityText: string;
@@ -313,6 +320,9 @@ export function useAuthFilesAccountSettings(
       managedHeaderState: settings?.managed_header_state || null,
       syntheticDeviceId:
         typeof settings?.synthetic_device_id === 'string' ? settings.synthetic_device_id : '',
+      farmBound: typeof settings?.farm_bound === 'boolean' ? settings.farm_bound : undefined,
+      deviceIdSource:
+        typeof settings?.device_id_source === 'string' ? settings.device_id_source : undefined,
       clientVersionObservations: Array.isArray(settings?.client_version_observations)
         ? settings.client_version_observations
         : [],
@@ -360,6 +370,12 @@ export function useAuthFilesAccountSettings(
         typeof inlineSettings?.synthetic_device_id === 'string'
           ? inlineSettings.synthetic_device_id
           : '',
+      farmBound:
+        typeof inlineSettings?.farm_bound === 'boolean' ? inlineSettings.farm_bound : undefined,
+      deviceIdSource:
+        typeof inlineSettings?.device_id_source === 'string'
+          ? inlineSettings.device_id_source
+          : undefined,
       clientVersionObservations: Array.isArray(inlineSettings?.client_version_observations)
         ? inlineSettings.client_version_observations
         : [],

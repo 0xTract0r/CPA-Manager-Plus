@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useInterval } from '@/hooks/useInterval';
 import {
@@ -37,6 +37,13 @@ import {
   matchesFarmAccountFilter,
   type FarmAccountAuthFilter,
 } from '../utils/accountFilter';
+import {
+  compareFarmAccountRows,
+  type FarmAccountSortKey,
+  type FarmAccountSortRow,
+  type FarmAccountSortState,
+  type SortDirection,
+} from '../utils/accountSort';
 import {
   type FarmContainerView,
   type FarmDeviceIDSource,
@@ -106,8 +113,12 @@ export function FarmAccountsPanel({ containers: sharedContainers }: FarmAccounts
   // 生产账号不会出现在这个列表里。env 固定为 test 仅用于底层拉取，不再作为可见
   // 筛选维度；对 operator 有意义的「账号认证态」+「备注/账号名搜索」改为客户端筛选。
   const env: FarmEnv = 'test';
-  const [authFilter, setAuthFilter] = useState<FarmAccountAuthFilter>('all');
+  // 默认筛选改为「正常」（绑定 + 健康）——用户拍板：账号面板默认只看正常账号，
+  // 异常/未绑定的按需切筛选查看，避免正常态被一堆异常淹没。
+  const [authFilter, setAuthFilter] = useState<FarmAccountAuthFilter>('normal');
   const [query, setQuery] = useState('');
+  // 列排序：默认按认证态严重度降序（异常优先），operator 一眼看到最需处理的账号。
+  const [sort, setSort] = useState<FarmAccountSortState>({ key: 'authState', direction: 'desc' });
   const { accounts, loading, error, reload } = useFarmAccounts(env);
   const { onboardingAccountId, onboard } = useFarmOnboard({ reload });
   // 两平面徽标的数据源：containers 列表带 account_auth_status/account_auth_reason
@@ -143,9 +154,14 @@ export function FarmAccountsPanel({ containers: sharedContainers }: FarmAccounts
   }, [accounts, containersById]);
   const { seriesById: cadenceSeriesById } = useFarmProbeCadenceSeries(cadenceContainerIds);
 
-  // C8 认证态筛选下拉选项：'all' + 5 态，态标签复用 C1-C5 已有的 authState_* 文案。
+  // C8 认证态筛选下拉选项：'正常'(复合) + 'all' + 6 态，态标签复用 C1-C5 已有的
+  // authState_* 文案。'正常' 置顶——它是默认筛选，也是最常用视图。
   const authFilterOptions = useMemo(
     () => [
+      {
+        value: 'normal',
+        label: t('farm.accounts.filter_auth_state_normal', { defaultValue: '正常（绑定+健康）' }),
+      },
       {
         value: 'all',
         label: t('farm.accounts.filter_auth_state_all', { defaultValue: '全部认证态' }),
@@ -158,11 +174,12 @@ export function FarmAccountsPanel({ containers: sharedContainers }: FarmAccounts
     [t]
   );
 
-  // C8 客户端筛选：认证态用与徽标同源的 deriveAccountAuthState 派生（此处独立再算
-  // 一次仅供筛选，不改动下方每行徽标/节奏的既有内联计算，保持 C1-C5 逻辑不动）；
-  // 关键词在 note/account/name 三处做大小写不敏感子串匹配。
-  const filteredAccounts = useMemo(() => {
-    return accounts.filter((account) => {
+  // 每账号排序/筛选描述子（认证态用与徽标同源的 deriveAccountAuthState 派生，此处
+  // 集中算一次供筛选 + 排序共用，不改动下方每行徽标/节奏的既有内联计算，保持
+  // C1-C5 逻辑不动）。契约字段 farm_bound / device_id_source 在此消费。
+  const sortRowByName = useMemo(() => {
+    const map = new Map<string, FarmAccountSortRow>();
+    for (const account of accounts) {
       const normalizedStatus = (account.status || 'active').trim().toLowerCase();
       const joined =
         account.farm_bound && account.farm_container_id
@@ -174,13 +191,78 @@ export function FarmAccountsPanel({ containers: sharedContainers }: FarmAccounts
         autoQuarantined: Boolean(account.auto_quarantined),
         disabled: account.disabled || normalizedStatus === 'disabled',
         hasReauthUrl: Boolean(account.reauth_url),
+        // 契约字段：farm_bound=false 的 Claude 账号 → unprovisioned 异常态。
+        farmBound: account.farm_bound,
       });
+      const sortName = account.note?.trim() || account.account?.trim() || account.name;
+      // 用量近似：农场 accounts 端点无 token 用量，取请求活跃度（近期请求量与
+      // 成功/失败计数的较大者）作为「用量」排序代理。
+      const usage = Math.max(
+        account.recent_requests ?? 0,
+        (account.success ?? 0) + (account.failed ?? 0)
+      );
+      map.set(account.name, {
+        name: sortName,
+        authState,
+        farmBound: account.farm_bound,
+        deviceIdSource: account.device_id_source,
+        usage,
+        lastRefresh: account.last_refresh,
+      });
+    }
+    return map;
+  }, [accounts, containersById]);
+
+  // C8 客户端筛选：认证态复用 sortRowByName 的派生态；关键词在 note/account/name
+  // 三处做大小写不敏感子串匹配。'normal' 复合筛选（绑定 + 健康）由 matchesFarmAccountFilter 承载。
+  const filteredAccounts = useMemo(() => {
+    return accounts.filter((account) => {
+      const derived = sortRowByName.get(account.name);
       return matchesFarmAccountFilter(
-        { note: account.note, account: account.account, name: account.name, authState },
+        {
+          note: account.note,
+          account: account.account,
+          name: account.name,
+          authState: derived?.authState ?? 'unknown',
+          farmBound: account.farm_bound,
+        },
         { authState: authFilter, query }
       );
     });
-  }, [accounts, containersById, authFilter, query]);
+  }, [accounts, sortRowByName, authFilter, query]);
+
+  // 按当前列排序（纯函数比较，稳定次序 tiebreak 见 accountSort.ts）。
+  const sortedAccounts = useMemo(() => {
+    const fallback: FarmAccountSortRow = {
+      name: '',
+      authState: 'unknown',
+      usage: 0,
+    };
+    return [...filteredAccounts].sort((a, b) =>
+      compareFarmAccountRows(
+        sortRowByName.get(a.name) ?? fallback,
+        sortRowByName.get(b.name) ?? fallback,
+        sort
+      )
+    );
+  }, [filteredAccounts, sortRowByName, sort]);
+
+  // 列头点击切换排序：同列翻转方向；换列时用该列的默认方向（严重度/用量类默认降序，
+  // 名称/来源/时间类默认升序）。
+  const handleSort = (key: FarmAccountSortKey) => {
+    setSort((prev) => {
+      if (prev.key === key) {
+        return { key, direction: prev.direction === 'asc' ? 'desc' : 'asc' };
+      }
+      const descFirst: FarmAccountSortKey[] = ['authState', 'usage', 'lastRefresh'];
+      const direction: SortDirection = descFirst.includes(key) ? 'desc' : 'asc';
+      return { key, direction };
+    });
+  };
+  const ariaSortFor = (key: FarmAccountSortKey): 'ascending' | 'descending' | 'none' =>
+    sort.key === key ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none';
+  const sortIndicatorFor = (key: FarmAccountSortKey): string =>
+    sort.key === key ? (sort.direction === 'asc' ? '▲' : '▼') : '↕';
 
   // 双列列头文案同时复用为徽标 dimension 值（拼进 aria-label），保证可见列头与
   // 朗读维度语义一致，只算一次而非每行重复 t() 调用。
@@ -192,6 +274,28 @@ export function FarmAccountsPanel({ containers: sharedContainers }: FarmAccounts
   });
   const cadenceColumnLabel = t('farm.accountHealth.cadenceColumn', { defaultValue: '请求节奏' });
   const actionsColumnLabel = t('farm.accountHealth.actionsColumn', { defaultValue: '操作' });
+
+  // 可排序列头：把列文案（可含图标）包进一个 button，点击切换排序；aria-sort 落在
+  // th 上供辅助技术朗读当前排序方向。
+  const renderSortHead = (key: FarmAccountSortKey, label: ReactNode, testKey: string) => (
+    <TableHead aria-sort={ariaSortFor(key)}>
+      <button
+        type="button"
+        className={`${styles.sortHeaderButton} ${sort.key === key ? styles.sortHeaderActive : ''}`}
+        onClick={() => handleSort(key)}
+        data-testid={`farm-accounts-sort-${testKey}`}
+        aria-label={t('farm.accounts.sort_by_column', {
+          column: typeof label === 'string' ? label : testKey,
+          defaultValue: '点击按此列排序',
+        })}
+      >
+        <span className={styles.sortHeaderLabel}>{label}</span>
+        <span className={styles.sortIndicator} aria-hidden="true">
+          {sortIndicatorFor(key)}
+        </span>
+      </button>
+    </TableHead>
+  );
 
   return (
     <div className={styles.panel} data-testid="farm-accounts-panel">
@@ -267,29 +371,36 @@ export function FarmAccountsPanel({ containers: sharedContainers }: FarmAccounts
         <Table data-testid="farm-accounts-table">
           <TableHeader>
             <TableRow>
-              <TableHead>{t('farm.accounts.column_name')}</TableHead>
-              <TableHead>
-                {/* C1：账号认证态列头配盾牌图标（身份语义）。图标纯装饰
-                    （aria-hidden），列语义由可见文字承载。 */}
+              {renderSortHead('name', t('farm.accounts.column_name'), 'name')}
+              {/* C1：账号认证态列头配盾牌图标（身份语义）。图标纯装饰
+                  （aria-hidden），列语义由可见文字承载。按认证态严重度排序。 */}
+              {renderSortHead(
+                'authState',
                 <span className={styles.columnHeadWithIcon}>
                   <IconShield size={14} aria-hidden="true" />
                   {accountHealthColumnLabel}
-                </span>
-              </TableHead>
-              <TableHead>
-                {/* C1：容器运行态列头配运行时图标，与身份平面盾牌区分。 */}
+                </span>,
+                'auth-state'
+              )}
+              {/* C1：容器运行态列头配运行时图标，与身份平面盾牌区分。按绑定态排序。 */}
+              {renderSortHead(
+                'bind',
                 <span className={styles.columnHeadWithIcon}>
                   <IconBot size={14} aria-hidden="true" />
                   {containerHealthColumnLabel}
-                </span>
-              </TableHead>
-              <TableHead>{cadenceColumnLabel}</TableHead>
-              <TableHead>
-                {t('farm.accountHealth.deviceIdSourceColumn', {
+                </span>,
+                'bind'
+              )}
+              {/* 请求节奏列：按用量（请求活跃度）排序。 */}
+              {renderSortHead('usage', cadenceColumnLabel, 'usage')}
+              {renderSortHead(
+                'deviceIdSource',
+                t('farm.accountHealth.deviceIdSourceColumn', {
                   defaultValue: 'Device ID source',
-                })}
-              </TableHead>
-              <TableHead>{t('farm.accountHealth.lastRefresh')}</TableHead>
+                }),
+                'device-id-source'
+              )}
+              {renderSortHead('lastRefresh', t('farm.accountHealth.lastRefresh'), 'last-refresh')}
               <TableHead>{actionsColumnLabel}</TableHead>
             </TableRow>
           </TableHeader>
@@ -305,7 +416,7 @@ export function FarmAccountsPanel({ containers: sharedContainers }: FarmAccounts
                 </TableCell>
               </TableRow>
             ) : null}
-            {filteredAccounts.map((account) => {
+            {sortedAccounts.map((account) => {
               const normalizedStatus = (account.status || 'active').trim().toLowerCase();
               const isAutoQuarantined = Boolean(account.auto_quarantined);
               const isDisabled = account.disabled || normalizedStatus === 'disabled';
@@ -340,6 +451,8 @@ export function FarmAccountsPanel({ containers: sharedContainers }: FarmAccounts
                 autoQuarantined: isAutoQuarantined,
                 disabled: isDisabled,
                 hasReauthUrl: reauthNeeded,
+                // 契约字段：未绑定 Claude 账号 → unprovisioned（不可出站异常态）。
+                farmBound: account.farm_bound,
               });
               const authVariant = accountAuthStateToFarmHealthVariant(authState);
               const authLabel = t(`farm.accountHealth.authState_${authState}`, {
@@ -368,6 +481,10 @@ export function FarmAccountsPanel({ containers: sharedContainers }: FarmAccounts
               } else if (authState === 'needs_reauth') {
                 authDetailLabel = t('farm.accountHealth.reauthHint', {
                   defaultValue: '凭证已失效——请在「认证文件」页对该账号重新授权',
+                });
+              } else if (authState === 'unprovisioned') {
+                authDetailLabel = t('farm.accountHealth.unprovisionedHint', {
+                  defaultValue: '未绑定容器·不可出站——接入农场后才能经住宅代理请求',
                 });
               }
               // 账号态副行详情只在非健康态展示（healthy 的 label 已够）。

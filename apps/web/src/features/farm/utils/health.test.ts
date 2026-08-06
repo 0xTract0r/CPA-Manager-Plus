@@ -52,6 +52,39 @@ describe('deriveAccountAuthState', () => {
     expect(deriveAccountAuthState({ authStatus: 'unknown' })).toBe('unknown');
   });
 
+  // --- 未绑定容器的 Claude 账号 → unprovisioned（用户点4「绑定+健康才算正常」）---
+  it('farmBound=false + Claude（无其它信号）→ unprovisioned', () => {
+    expect(deriveAccountAuthState({ farmBound: false })).toBe('unprovisioned');
+    expect(deriveAccountAuthState({ farmBound: false, provider: 'claude' })).toBe('unprovisioned');
+    expect(deriveAccountAuthState({ farmBound: false, provider: 'anthropic' })).toBe(
+      'unprovisioned'
+    );
+  });
+
+  it('farmBound=false 但非 Claude provider → 回退 unknown（农场只管 Claude）', () => {
+    expect(deriveAccountAuthState({ farmBound: false, provider: 'codex' })).toBe('unknown');
+    expect(deriveAccountAuthState({ farmBound: false, provider: 'gemini' })).toBe('unknown');
+  });
+
+  it('farmBound 缺省（undefined）不触发 unprovisioned（后端过渡期防御式回退旧行为）', () => {
+    expect(deriveAccountAuthState({})).toBe('unknown');
+    expect(deriveAccountAuthState({ authStatus: 'alive' })).toBe('healthy');
+  });
+
+  it('冲突：farmBound=false + quarantined → auto_quarantined（隔离终态优先于未绑定）', () => {
+    expect(deriveAccountAuthState({ farmBound: false, autoQuarantined: true })).toBe(
+      'auto_quarantined'
+    );
+  });
+
+  it('冲突：farmBound=false + disabled → operator_disabled（停用优先于未绑定）', () => {
+    expect(deriveAccountAuthState({ farmBound: false, disabled: true })).toBe('operator_disabled');
+  });
+
+  it('冲突：farmBound=false + reauth_url → needs_reauth（需重认证优先于未绑定）', () => {
+    expect(deriveAccountAuthState({ farmBound: false, hasReauthUrl: true })).toBe('needs_reauth');
+  });
+
   // --- 冲突时的优先级（关键回归护栏）---
   it('冲突：quarantined + disabled 同时命中 → quarantined（隔离优先于停用）', () => {
     expect(
@@ -107,7 +140,7 @@ describe('deriveAccountAuthState', () => {
     ).toBe('auto_quarantined');
   });
 
-  it('派生结果始终落在 5 态枚举内（无越界值）', () => {
+  it('派生结果始终落在 6 态枚举内（无越界值）', () => {
     const inputs = [
       { autoQuarantined: true },
       { disabled: true },
@@ -115,6 +148,8 @@ describe('deriveAccountAuthState', () => {
       { authReason: 'account_token_dead' },
       { hasReauthUrl: true },
       { authStatus: 'dead' },
+      { farmBound: false },
+      { farmBound: false, provider: 'codex' },
       {},
     ];
     for (const input of inputs) {
@@ -194,6 +229,7 @@ describe('accountAuthStateToFarmHealthVariant', () => {
     needs_reauth: 'warn',
     auto_quarantined: 'err',
     operator_disabled: 'idle',
+    unprovisioned: 'err',
     unknown: 'idle',
   };
 

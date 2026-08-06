@@ -172,6 +172,18 @@ export interface AuthFileAccountSettings {
   client_version_observations?: AuthFileClientVersionObservation[];
   activation: AuthFileAccountSettingsActivation;
   warnings: string[];
+  /**
+   * 农场契约字段（后端 AG1 同步实现中，见 farm accounts 端点同名字段）：
+   * 该账号是否已绑定农场容器。加法式向后兼容——缺失时前端防御式回退旧的
+   * 「合成假名 / 尚未派生」展示，不臆造绑定关系。
+   */
+  farm_bound?: boolean;
+  /**
+   * 农场契约字段（后端 AG1 同步实现中）：device_id 展示口径来源
+   * （container_synced=已绑定容器写入真实 device_id / synthetic=未绑定用合成 /
+   * drift=历史漂移 / unknown=无法判定）。缺失时前端回退旧行为。
+   */
+  device_id_source?: string;
 }
 
 export interface AuthFileAccountSettingsResponse {
