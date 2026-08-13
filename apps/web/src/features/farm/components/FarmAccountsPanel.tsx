@@ -27,11 +27,15 @@ import {
   classifyContainerLifecycle,
   containerLifecycleToFarmHealthVariant,
   deriveAccountAuthState,
+  farmBoundToOutboundPlatform,
+  farmEnrolledToBadgeVariant,
   farmHealthVariantToBadgeVariant,
   findAccountStateForAccount,
   healthReasonToFarmHealthVariant,
   isAccountStateStale,
+  normalizeFarmTelemetryAliveState,
   provisioningStateToFarmHealthVariant,
+  telemetryAliveStateToBadgeVariant,
 } from '../utils/health';
 import {
   matchesFarmAccountFilter,
@@ -423,6 +427,25 @@ export function FarmAccountsPanel({ containers: sharedContainers }: FarmAccounts
               const showDisabledTag = account.disabled && normalizedStatus !== 'disabled';
               const reauthNeeded = Boolean(account.reauth_url);
 
+              // ---------------------------------------------------------
+              // TR8「农场纳管开关 + 出站平台标识 + 遥测存活展示」：
+              //  - farmEnrolled 只在契约字段确有值（非 undefined）时才渲染徽标——
+              //    编排器尚未透传该字段前保持沉默，不臆造"未纳管"。真正的开关
+              //    动作留在「认证文件」页账号设置弹窗（仿 refresh_enabled PATCH），
+              //    本面板只做只读展示。
+              //  - outboundPlatform 只由既有 farm_bound 派生，与 device_id 来源
+              //    徽标同源不冲突。
+              //  - telemetryAliveState 经归一化函数兜底，缺字段/非法值一律显
+              //    unknown，不崩、不误判。
+              // ---------------------------------------------------------
+              const showFarmEnrolledBadge = typeof account.farm_enrolled === 'boolean';
+              const farmEnrolledBadgeVariant = showFarmEnrolledBadge
+                ? farmEnrolledToBadgeVariant(account.farm_enrolled === true)
+                : undefined;
+              const outboundPlatform = farmBoundToOutboundPlatform(account.farm_bound);
+              const telemetryAliveState = normalizeFarmTelemetryAliveState(account.telemetry_alive);
+              const telemetryAliveBadgeVariant = telemetryAliveStateToBadgeVariant(telemetryAliveState);
+
               // 主行显示 note（如 "AC04"），email/文件名降为副行小字；note 为空
               // 时回退显示 account（CPA 邮箱）或 name（auth 文件名）。
               const trimmedNote = account.note?.trim();
@@ -607,6 +630,22 @@ export function FarmAccountsPanel({ containers: sharedContainers }: FarmAccounts
                             data-testid={`farm-account-disabled-tag-${account.name}`}
                           >
                             {t('farm.accountHealth.disabledBadge', { defaultValue: 'Disabled' })}
+                          </span>
+                        ) : null}
+                        {/* TR8：农场纳管态徽标。只在编排器已透传 farm_enrolled 字段时
+                            渲染——过渡期字段缺失时保持沉默，不臆造"未纳管"。 */}
+                        {showFarmEnrolledBadge ? (
+                          <span
+                            className={`status-badge ${farmEnrolledBadgeVariant} ${styles.disabledTag}`}
+                            data-testid={`farm-account-enrolled-tag-${account.name}`}
+                          >
+                            {account.farm_enrolled
+                              ? t('farm.accountHealth.farmEnrolledBadge_enrolled', {
+                                  defaultValue: 'Enrolled',
+                                })
+                              : t('farm.accountHealth.farmEnrolledBadge_notEnrolled', {
+                                  defaultValue: 'Not enrolled · immune to farm governance',
+                                })}
                           </span>
                         ) : null}
                       </div>
@@ -900,6 +939,43 @@ export function FarmAccountsPanel({ containers: sharedContainers }: FarmAccounts
                           ) : null}
                         </div>
                       ) : null}
+                      {/* TR8：出站平台标识（据既有 farm_bound 派生，不重算）+ 遥测
+                          存活三态（telemetry_alive 归一化兜底，缺失/未知一律显 unknown，
+                          附悬浮提示说明这是采集平面 TR6 未落时的正常态）。 */}
+                      <div
+                        className={styles.deviceSourceMeta}
+                        data-testid={`farm-account-outbound-platform-${account.name}`}
+                      >
+                        <span
+                          className={styles.chip}
+                          data-testid={`farm-account-outbound-platform-chip-${account.name}`}
+                          data-outbound-platform={outboundPlatform}
+                        >
+                          {t(`farm.accountHealth.outboundPlatform_${outboundPlatform}`, {
+                            defaultValue:
+                              outboundPlatform === 'linux'
+                                ? 'Outbound Linux · matches container telemetry'
+                                : 'Outbound Mac',
+                          })}
+                        </span>
+                        <span
+                          className={`status-badge ${telemetryAliveBadgeVariant}`}
+                          data-testid={`farm-account-telemetry-alive-${account.name}`}
+                          data-telemetry-alive={telemetryAliveState}
+                          title={
+                            telemetryAliveState === 'unknown'
+                              ? t('farm.accountHealth.telemetryAlive_unknownHint', {
+                                  defaultValue:
+                                    'The telemetry collection plane is not wired up yet; this is expected, not an anomaly.',
+                                })
+                              : undefined
+                          }
+                        >
+                          {t(`farm.accountHealth.telemetryAlive_${telemetryAliveState}`, {
+                            defaultValue: telemetryAliveState,
+                          })}
+                        </span>
+                      </div>
                     </div>
                   </TableCell>
 

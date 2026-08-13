@@ -1418,6 +1418,54 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
                       })}
                     </div>
                   </div>
+
+                  {/* TR8：账号级农场纳管开关（farm_enrolled）。老号默认 false（未纳管·
+                      免疫农场治理，不受咬合门/自动供给/平台分流管辖），operator 显式
+                      开启后才纳入管辖。仿 refreshEnabled 同款 PATCH account-settings
+                      调用，不新增独立保存路径。 */}
+                  <div
+                    className={`${styles.toggleCard} ${styles.toggleCardWide}`}
+                    data-testid="account-settings-farm-enrolled-card"
+                  >
+                    <div className={styles.toggleCardTop}>
+                      <label>
+                        {t('auth_files.account_settings_farm_enrolled', {
+                          defaultValue: 'Farm enrollment',
+                        })}
+                      </label>
+                      <ToggleSwitch
+                        checked={editor.farmEnrolled}
+                        disabled={disableControls || editor.saving}
+                        ariaLabel={t('auth_files.account_settings_farm_enrolled', {
+                          defaultValue: 'Farm enrollment',
+                        })}
+                        onChange={(value) => onChange('farmEnrolled', value)}
+                      />
+                    </div>
+                    <div
+                      className={styles.farmEnrolledStatusRow}
+                      data-testid="account-settings-farm-enrolled-status"
+                    >
+                      <span
+                        className={`status-badge ${editor.farmEnrolled ? 'success' : 'muted'}`}
+                        data-testid="account-settings-farm-enrolled-status-badge"
+                      >
+                        {editor.farmEnrolled
+                          ? t('auth_files.account_settings_farm_enrolled_on_badge', {
+                              defaultValue: 'Enrolled',
+                            })
+                          : t('auth_files.account_settings_farm_enrolled_off_badge', {
+                              defaultValue: 'Not enrolled · immune to farm governance',
+                            })}
+                      </span>
+                    </div>
+                    <div className="hint">
+                      {t('auth_files.account_settings_farm_enrolled_hint', {
+                        defaultValue:
+                          'Legacy accounts default to not enrolled and stay immune to farm governance (bite gate, auto-provisioning, platform routing). Turning this on subjects the account to those rules.',
+                      })}
+                    </div>
+                  </div>
                 </div>
 
                 <Input

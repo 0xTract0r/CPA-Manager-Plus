@@ -11,7 +11,11 @@
  * CSS token 里再重复放运行时用不上的纯数字阈值。
  */
 
-import type { FarmAccountStateView } from '@/types/farm';
+import {
+  FARM_TELEMETRY_ALIVE_STATES,
+  type FarmAccountStateView,
+  type FarmTelemetryAliveState,
+} from '@/types/farm';
 
 /** 与 --health-ok/warn/err/idle 一一对应的健康四态。 */
 export type FarmHealthVariant = 'ok' | 'warn' | 'err' | 'idle';
@@ -402,4 +406,62 @@ export function provisioningStateToFarmHealthVariant(
 ): FarmHealthVariant {
   if (!state) return 'idle';
   return PROVISIONING_STATE_VARIANT[state] ?? 'idle';
+}
+
+// ---------------------------------------------------------------------------
+// TR8「农场纳管开关 + 出站平台标识 + 遥测存活展示」：账号级治理/出站展示态
+// 纯函数。三个函数都只做"已有契约字段 -> 展示态"的映射，不重新判定/不臆造
+// 新的健康逻辑；farm_enrolled / telemetry_alive 目前后端投影尚未完全落地
+// （见 types/farm.ts FarmAccountEntry 同名字段注释），因此每个函数都必须在
+// 缺失/未知输入下给出安全、非崩溃的中性回退。
+// ---------------------------------------------------------------------------
+
+/**
+ * 纳管态 → status-badge 变体。只处理「字段已存在」时如何着色，存在性判断
+ * （是否渲染这枚徽标）留给调用方——后端尚未投影 farm_enrolled 时应整体不
+ * 渲染，而不是把 undefined 强制当 false 显示"未纳管"（那是臆造）。
+ */
+export function farmEnrolledToBadgeVariant(enrolled: boolean): StatusBadgeVariant {
+  return enrolled ? 'success' : 'muted';
+}
+
+/**
+ * 出站平台标识（design.md 决策：农场号出站 Linux 对齐容器遥测，普通号出站
+ * Mac）。唯一权威输入是既有契约字段 farm_bound——不读 device_id_source 或
+ * 其它信号重算，避免出现"平台标识"和"device_id 来源徽标"两处口径打架。
+ * farm_bound 缺省（undefined，理论上不应发生，恒有值字段）按未绑定的普通号
+ * 处理，不假造已绑定。
+ */
+export type FarmOutboundPlatform = 'linux' | 'mac';
+
+export function farmBoundToOutboundPlatform(farmBound: boolean | undefined): FarmOutboundPlatform {
+  return farmBound === true ? 'linux' : 'mac';
+}
+
+const TELEMETRY_ALIVE_STATE_SET: ReadonlySet<string> = new Set(FARM_TELEMETRY_ALIVE_STATES);
+
+/**
+ * 归一化 telemetry_alive 原始值到三态枚举内：非三态之一的任何输入（含
+ * undefined——采集平面 TR6 尚未落地或编排器还没透传这个字段时的当前实际
+ * 情况——以及后端未来可能出现的未知字面值）一律回退 unknown，绝不误判成
+ * alive/silent，也绝不因缺字段而抛错/崩溃。
+ */
+export function normalizeFarmTelemetryAliveState(
+  value: string | undefined
+): FarmTelemetryAliveState {
+  if (value && TELEMETRY_ALIVE_STATE_SET.has(value)) {
+    return value as FarmTelemetryAliveState;
+  }
+  return 'unknown';
+}
+
+/** telemetry_alive 三态 → status-badge 变体：alive=success（遥测在报）/
+ * silent=warning（曾采集到过，近期静默，值得关注）/unknown=muted（中性，
+ * 不是故障，只是还不知道）。 */
+export function telemetryAliveStateToBadgeVariant(
+  state: FarmTelemetryAliveState
+): StatusBadgeVariant {
+  if (state === 'alive') return 'success';
+  if (state === 'silent') return 'warning';
+  return 'muted';
 }

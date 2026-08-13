@@ -191,6 +191,12 @@ export interface FarmRetireContainerResponse {
 export const FARM_DEVICE_ID_SOURCES = ['container_synced', 'drift', 'synthetic', 'unknown'] as const;
 export type FarmDeviceIDSource = (typeof FARM_DEVICE_ID_SOURCES)[number];
 
+// telemetry_alive 三态字面值（TR7「编排器遥测存活投影」契约，与
+// FarmAccountEntry.telemetry_alive 逐字对应；归一化/兜底逻辑见
+// utils/health.ts normalizeFarmTelemetryAliveState）。
+export const FARM_TELEMETRY_ALIVE_STATES = ['alive', 'silent', 'unknown'] as const;
+export type FarmTelemetryAliveState = (typeof FARM_TELEMETRY_ALIVE_STATES)[number];
+
 // GET /api/farm/accounts?env=<env> 单条记录（cpa/client.go AuthFileEntry，
 // 编排器透传 CPA GET /auth-files 账号健康列表，字段是骨架，未来可能扩充）
 // 农场绑定溯源字段（dto.go accountView 内嵌 cpa.AuthFileEntry + 以下字段）：
@@ -253,6 +259,20 @@ export interface FarmAccountEntry {
   // 判定范围内时缺失。前端据此让「供给中·等住宅代理/容量」对 operator 可见，
   // 对冲「以为新建不了容器」的误解——真相往往是正在排队供给。
   provisioning_state?: string;
+  // TR8「农场纳管开关 + 出站平台 + 遥测存活」契约字段（编排器透传 CPA
+  // GET /auth-files 顶层投影 `entry["farm_enrolled"]`，core 侧 TR1 已实现，
+  // 见 core `authFileAccountSettingsView.FarmEnrolled`）。截至本次交付，
+  // 编排器 `internal/cpa/client.go` 的 `AuthFileEntry` struct 尚未透传这个
+  // 字段（透传是独立后端改动，不在 apps/cpamp 范围内）——因此当前恒为
+  // undefined，前端必须防御式兜底（不展示/不臆造，等编排器补上再自然生效）。
+  farm_enrolled?: boolean;
+  // TR7「编排器遥测存活投影」契约字段（accounts DTO 新增，尚未在编排器落地，
+  // 同上恒为 undefined 的过渡态）。三态：alive=遥测在报/silent=遥测静默（曾
+  // 采集到过，近期无上报）/unknown=从未采集或采集平面 TR6 未落时的正常态。
+  // 前端不得把 undefined 误判为 silent（那是"确认曾活过现在没声"的更强结论），
+  // 一律归一到 unknown 展示，见 utils/health.ts
+  // normalizeFarmTelemetryAliveState。
+  telemetry_alive?: FarmTelemetryAliveState;
 }
 
 // accountView.provisioning_state 取值（handlers.go provisioningState* 常量）。

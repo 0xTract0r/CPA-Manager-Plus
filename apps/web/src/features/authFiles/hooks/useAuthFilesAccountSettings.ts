@@ -8,8 +8,8 @@
  * 身份只读字段（synthetic_device_id / managed_header_state /
  * client_version_observations / warnings 等）只用于展示，不进 PATCH 请求体；
  * 可编辑字段见 `AuthFileAccountSettingsPatchRequest` 白名单
- * （proxy_url / note / disabled / refresh_enabled / extra_headers /
- * transport_profile / tls_profile）。
+ * （proxy_url / note / disabled / refresh_enabled / farm_enrolled /
+ * extra_headers / transport_profile / tls_profile）。
  */
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -34,6 +34,7 @@ export type AccountSettingsEditorField =
   | 'note'
   | 'disabled'
   | 'refreshEnabled'
+  | 'farmEnrolled'
   | 'extraHeadersText'
   | 'transportProfileText'
   | 'tlsProfileText';
@@ -90,6 +91,12 @@ export type AccountSettingsEditorState = {
   note: string;
   disabled: boolean;
   refreshEnabled: boolean;
+  /**
+   * 农场契约字段（TR8）：账号级农场纳管开关（`farm_enrolled`）。老号默认
+   * false（免疫农场治理：不受咬合门/自动供给/平台分流管辖），operator 显式
+   * 开启后才纳入管辖。可写，随本编辑器一起 PATCH。
+   */
+  farmEnrolled: boolean;
   managedHeaders: AuthFileHeaders;
   managedHeaderState: AuthFileManagedHeaderState | null;
   /** 只读脱敏合成 device_id；为空表示后端未派生（omitempty 缺省）。 */
@@ -233,6 +240,9 @@ const normalizeSettings = (
   note: (settings?.note || '').trim() || null,
   disabled: settings?.disabled === true,
   refresh_enabled: settings?.refresh_enabled !== false,
+  // farm_enrolled 默认 false（老号免疫农场治理），与 refresh_enabled 的默认
+  // true 语义相反——不能复用同一套「!== false」判断。
+  farm_enrolled: settings?.farm_enrolled === true,
   extra_headers: settings?.extra_headers || {},
   transport_profile: settings?.transport_profile || null,
   tls_profile: settings?.tls_profile || null,
@@ -264,6 +274,7 @@ const buildPatchRequest = (
       note: editor.note.trim() || null,
       disabled: editor.disabled,
       refresh_enabled: editor.refreshEnabled,
+      farm_enrolled: editor.farmEnrolled,
       extra_headers: parsedHeaders.value || {},
       transport_profile: parsedTransportProfile.value,
       tls_profile: parsedTLSProfile.value,
@@ -316,6 +327,7 @@ export function useAuthFilesAccountSettings(
       note: settings?.note || '',
       disabled: settings?.disabled === true,
       refreshEnabled: settings?.refresh_enabled !== false,
+      farmEnrolled: settings?.farm_enrolled === true,
       managedHeaders: settings?.managed_headers || {},
       managedHeaderState: settings?.managed_header_state || null,
       syntheticDeviceId:
@@ -364,6 +376,7 @@ export function useAuthFilesAccountSettings(
       note: inlineSettings?.note || '',
       disabled: inlineSettings?.disabled === true,
       refreshEnabled: inlineSettings?.refresh_enabled !== false,
+      farmEnrolled: inlineSettings?.farm_enrolled === true,
       managedHeaders: inlineSettings?.managed_headers || {},
       managedHeaderState: inlineSettings?.managed_header_state || null,
       syntheticDeviceId:
@@ -424,6 +437,7 @@ export function useAuthFilesAccountSettings(
       if (field === 'note') return { ...prev, note: String(value) };
       if (field === 'disabled') return { ...prev, disabled: Boolean(value) };
       if (field === 'refreshEnabled') return { ...prev, refreshEnabled: Boolean(value) };
+      if (field === 'farmEnrolled') return { ...prev, farmEnrolled: Boolean(value) };
       if (field === 'extraHeadersText') {
         const extraHeadersText = String(value);
         const { errorKey } = parseHeadersText(extraHeadersText);

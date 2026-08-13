@@ -184,6 +184,15 @@ export interface AuthFileAccountSettings {
    * drift=历史漂移 / unknown=无法判定）。缺失时前端回退旧行为。
    */
   device_id_source?: string;
+  /**
+   * 农场契约字段（TR1 telemetry-device-farm，core `authFileAccountSettingsView.
+   * FarmEnrolled`，恒有值非 omitempty）：该账号是否已纳入农场治理（咬合门/
+   * 自动供给/平台分流）。与只读的 `farm_bound`（是否已绑定容器）是两个独立
+   * 概念——账号可以「已纳管但尚未绑定」（排队供给中）或「已绑定但纳管字段缺省」
+   * （历史记录）。老号默认 false（免疫农场治理），operator 显式开启后才受管。
+   * 可写字段，随本白名单一起 PATCH。
+   */
+  farm_enrolled?: boolean;
 }
 
 export interface AuthFileAccountSettingsResponse {
@@ -194,8 +203,13 @@ export interface AuthFileAccountSettingsResponse {
 
 /**
  * PATCH `/auth-files/account-settings` 请求体：只包含白名单可编辑字段
- * （name/proxy_url/note/disabled/extra_headers/refresh_enabled/transport_profile/tls_profile）。
- * 身份只读字段（synthetic_device_id 等）不在此结构中，避免被误写。
+ * （name/proxy_url/note/disabled/extra_headers/refresh_enabled/farm_enrolled/
+ * transport_profile/tls_profile）。身份只读字段（synthetic_device_id 等）不
+ * 在此结构中，避免被误写。
+ *
+ * `farm_enrolled` 后端为 `*bool`（省略即保留原值），但与既有 `refresh_enabled`
+ * 同款约定一致：前端编辑器状态恒有值，每次保存都显式回传当前值，不依赖后端的
+ * 省略保留语义。
  */
 export interface AuthFileAccountSettingsPatchRequest {
   name: string;
@@ -204,6 +218,7 @@ export interface AuthFileAccountSettingsPatchRequest {
   disabled: boolean;
   extra_headers: AuthFileHeaderMap;
   refresh_enabled: boolean;
+  farm_enrolled: boolean;
   transport_profile: string | Record<string, unknown> | null;
   tls_profile: string | Record<string, unknown> | null;
 }

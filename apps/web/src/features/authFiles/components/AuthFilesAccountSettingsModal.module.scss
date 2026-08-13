@@ -875,6 +875,20 @@
   }
 }
 
+// TR8「农场纳管开关」：占满两列——治理说明文案比其它开关更长，独占一行更
+// 不易被挤压折行。
+.toggleCardWide {
+  grid-column: 1 / -1;
+}
+
+// 纳管态徽标行：紧跟开关下方，独立于底部 hint 说明，讲清楚「当前到底是不是
+// 纳管态」这一眼可见的事实，不用读完整段 hint 才知道。
+.farmEnrolledStatusRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 // ====== 身份模型：A/B 类字段成对展示 ======
 
 .identityClassCard {

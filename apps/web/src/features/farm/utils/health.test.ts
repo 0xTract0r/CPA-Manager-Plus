@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { FARM_TELEMETRY_ALIVE_STATES, type FarmTelemetryAliveState } from '@/types/farm';
 import {
   FARM_ACCOUNT_AUTH_STATES,
   FARM_CONTAINER_LIFECYCLES,
@@ -7,7 +8,11 @@ import {
   classifyContainerLifecycle,
   containerLifecycleToFarmHealthVariant,
   deriveAccountAuthState,
+  farmBoundToOutboundPlatform,
+  farmEnrolledToBadgeVariant,
+  normalizeFarmTelemetryAliveState,
   provisioningStateToFarmHealthVariant,
+  telemetryAliveStateToBadgeVariant,
   type FarmAccountAuthState,
   type FarmContainerLifecycle,
   type FarmHealthVariant,
@@ -215,6 +220,86 @@ describe('provisioningStateToFarmHealthVariant', () => {
   for (const [state, expected] of cases) {
     it(`${state === undefined ? '(undefined)' : state === '' ? '(empty)' : state} → ${expected}`, () => {
       expect(provisioningStateToFarmHealthVariant(state)).toBe(expected);
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// TR8：farmEnrolledToBadgeVariant / farmBoundToOutboundPlatform /
+// normalizeFarmTelemetryAliveState / telemetryAliveStateToBadgeVariant。
+// 重点是"字段缺失/非法值时安全兜底，不崩、不误判"——farm_enrolled 和
+// telemetry_alive 目前后端投影都还没完全落地，前端在生产中会长期收到
+// undefined，这条防线比"正常值映射对不对"更重要。
+// ---------------------------------------------------------------------------
+describe('farmEnrolledToBadgeVariant', () => {
+  it('true → success（已纳管）', () => {
+    expect(farmEnrolledToBadgeVariant(true)).toBe('success');
+  });
+
+  it('false → muted（未纳管·免疫农场治理，中性非异常）', () => {
+    expect(farmEnrolledToBadgeVariant(false)).toBe('muted');
+  });
+});
+
+describe('farmBoundToOutboundPlatform', () => {
+  it('farmBound=true（农场号）→ linux（对齐容器遥测）', () => {
+    expect(farmBoundToOutboundPlatform(true)).toBe('linux');
+  });
+
+  it('farmBound=false（普通号）→ mac', () => {
+    expect(farmBoundToOutboundPlatform(false)).toBe('mac');
+  });
+
+  it('farmBound 缺省（undefined，理论不应发生的防御分支）→ mac 兜底，不假造已绑定', () => {
+    expect(farmBoundToOutboundPlatform(undefined)).toBe('mac');
+  });
+});
+
+describe('normalizeFarmTelemetryAliveState', () => {
+  for (const state of FARM_TELEMETRY_ALIVE_STATES) {
+    it(`合法三态值 '${state}' 原样透传`, () => {
+      expect(normalizeFarmTelemetryAliveState(state)).toBe(state);
+    });
+  }
+
+  it('undefined（编排器尚未透传该字段的当前实际情况）→ unknown，不崩', () => {
+    expect(normalizeFarmTelemetryAliveState(undefined)).toBe('unknown');
+  });
+
+  it('空字符串 → unknown', () => {
+    expect(normalizeFarmTelemetryAliveState('')).toBe('unknown');
+  });
+
+  it('未知/非法字面值 → unknown 兜底，不误判为 alive/silent', () => {
+    expect(normalizeFarmTelemetryAliveState('totally_bogus_value')).toBe('unknown');
+    expect(normalizeFarmTelemetryAliveState('ALIVE')).toBe('unknown'); // 大小写敏感，不做归一
+  });
+
+  it('归一化结果始终落在三态枚举内', () => {
+    const inputs: Array<string | undefined> = [
+      'alive',
+      'silent',
+      'unknown',
+      undefined,
+      '',
+      'bogus',
+    ];
+    for (const input of inputs) {
+      expect(FARM_TELEMETRY_ALIVE_STATES).toContain(normalizeFarmTelemetryAliveState(input));
+    }
+  });
+});
+
+describe('telemetryAliveStateToBadgeVariant', () => {
+  const expectedByState: Record<FarmTelemetryAliveState, string> = {
+    alive: 'success',
+    silent: 'warning',
+    unknown: 'muted',
+  };
+
+  for (const state of FARM_TELEMETRY_ALIVE_STATES) {
+    it(`${state} → ${expectedByState[state]}`, () => {
+      expect(telemetryAliveStateToBadgeVariant(state)).toBe(expectedByState[state]);
     });
   }
 });
