@@ -8,8 +8,8 @@
  * 身份只读字段（synthetic_device_id / managed_header_state /
  * client_version_observations / warnings 等）只用于展示，不进 PATCH 请求体；
  * 可编辑字段见 `AuthFileAccountSettingsPatchRequest` 白名单
- * （proxy_url / note / disabled / refresh_enabled / extra_headers /
- * transport_profile / tls_profile）。
+ * （proxy_url / note / disabled / refresh_enabled / farm_enrolled /
+ * extra_headers / transport_profile / tls_profile）。
  */
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -35,6 +35,7 @@ export type AccountSettingsEditorField =
   | 'disabled'
   | 'refreshEnabled'
   | 'fast'
+  | 'farmEnrolled'
   | 'extraHeadersText'
   | 'transportProfileText'
   | 'tlsProfileText';
@@ -93,10 +94,23 @@ export type AccountSettingsEditorState = {
   refreshEnabled: boolean;
   /** 该账号是否启用 codex `fast`（service_tier=priority）；仅对 codex 账号生效。 */
   fast: boolean;
+  /**
+   * 农场契约字段（TR8）：账号级农场纳管开关（`farm_enrolled`）。老号默认
+   * false（免疫农场治理：不受咬合门/自动供给/平台分流管辖），operator 显式
+   * 开启后才纳入管辖。可写，随本编辑器一起 PATCH。
+   */
+  farmEnrolled: boolean;
   managedHeaders: AuthFileHeaders;
   managedHeaderState: AuthFileManagedHeaderState | null;
   /** 只读脱敏合成 device_id；为空表示后端未派生（omitempty 缺省）。 */
   syntheticDeviceId: string;
+  /**
+   * 农场契约字段（后端 AG1 同步实现中）：是否已绑定农场容器。undefined = 后端
+   * 尚未下发该字段，前端防御式回退旧的合成假名展示，不臆造绑定。
+   */
+  farmBound: boolean | undefined;
+  /** 农场契约字段：device_id 展示口径来源（container_synced/synthetic/drift/unknown）。 */
+  deviceIdSource: string | undefined;
   clientVersionObservations: AuthFileClientVersionObservation[];
   runtimeProfileText: string;
   runtimeIdentityText: string;
@@ -230,6 +244,9 @@ const normalizeSettings = (
   disabled: settings?.disabled === true,
   refresh_enabled: settings?.refresh_enabled !== false,
   fast: settings?.fast === true,
+  // farm_enrolled 默认 false（老号免疫农场治理），与 refresh_enabled 的默认
+  // true 语义相反——不能复用同一套「!== false」判断。
+  farm_enrolled: settings?.farm_enrolled === true,
   extra_headers: settings?.extra_headers || {},
   transport_profile: settings?.transport_profile || null,
   tls_profile: settings?.tls_profile || null,
@@ -262,6 +279,7 @@ const buildPatchRequest = (
       disabled: editor.disabled,
       refresh_enabled: editor.refreshEnabled,
       fast: editor.fast,
+      farm_enrolled: editor.farmEnrolled,
       extra_headers: parsedHeaders.value || {},
       transport_profile: parsedTransportProfile.value,
       tls_profile: parsedTLSProfile.value,
@@ -315,10 +333,14 @@ export function useAuthFilesAccountSettings(
       disabled: settings?.disabled === true,
       refreshEnabled: settings?.refresh_enabled !== false,
       fast: settings?.fast === true,
+      farmEnrolled: settings?.farm_enrolled === true,
       managedHeaders: settings?.managed_headers || {},
       managedHeaderState: settings?.managed_header_state || null,
       syntheticDeviceId:
         typeof settings?.synthetic_device_id === 'string' ? settings.synthetic_device_id : '',
+      farmBound: typeof settings?.farm_bound === 'boolean' ? settings.farm_bound : undefined,
+      deviceIdSource:
+        typeof settings?.device_id_source === 'string' ? settings.device_id_source : undefined,
       clientVersionObservations: Array.isArray(settings?.client_version_observations)
         ? settings.client_version_observations
         : [],
@@ -361,12 +383,19 @@ export function useAuthFilesAccountSettings(
       disabled: inlineSettings?.disabled === true,
       refreshEnabled: inlineSettings?.refresh_enabled !== false,
       fast: inlineSettings?.fast === true,
+      farmEnrolled: inlineSettings?.farm_enrolled === true,
       managedHeaders: inlineSettings?.managed_headers || {},
       managedHeaderState: inlineSettings?.managed_header_state || null,
       syntheticDeviceId:
         typeof inlineSettings?.synthetic_device_id === 'string'
           ? inlineSettings.synthetic_device_id
           : '',
+      farmBound:
+        typeof inlineSettings?.farm_bound === 'boolean' ? inlineSettings.farm_bound : undefined,
+      deviceIdSource:
+        typeof inlineSettings?.device_id_source === 'string'
+          ? inlineSettings.device_id_source
+          : undefined,
       clientVersionObservations: Array.isArray(inlineSettings?.client_version_observations)
         ? inlineSettings.client_version_observations
         : [],
@@ -416,6 +445,7 @@ export function useAuthFilesAccountSettings(
       if (field === 'disabled') return { ...prev, disabled: Boolean(value) };
       if (field === 'refreshEnabled') return { ...prev, refreshEnabled: Boolean(value) };
       if (field === 'fast') return { ...prev, fast: Boolean(value) };
+      if (field === 'farmEnrolled') return { ...prev, farmEnrolled: Boolean(value) };
       if (field === 'extraHeadersText') {
         const extraHeadersText = String(value);
         const { errorKey } = parseHeadersText(extraHeadersText);

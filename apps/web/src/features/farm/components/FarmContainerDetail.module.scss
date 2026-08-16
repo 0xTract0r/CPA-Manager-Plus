@@ -1,0 +1,318 @@
+@use '../../../styles/variables' as *;
+@use '../../../styles/mixins' as *;
+
+// 复用既有 <Modal>（设计系统当前没有独立 Drawer 基础组件），通过覆盖
+// .modal-overlay/.modal 全局类把它从「居中弹窗」改造成「贴右侧、占满高度」
+// 的抽屉视觉，交互（ESC 关闭/焦点陷阱/滚动锁定）完全沿用 Modal 既有实现，
+// 不重新发明。
+// .drawer 类实际挂在 <Modal> 内层 .modal 元素上（Modal.tsx 的 className prop
+// 只透传给 .modal，不透传给外层 .modal-overlay），用 :has() 从子元素反向选中
+// overlay 容器改水平对齐，让抽屉贴右而不是居中——不需要改 Modal.tsx 本身。
+:global(.modal-overlay):has(.drawer) {
+  justify-content: flex-end;
+}
+
+// 保留 Modal 默认的 max-height: 90vh + overlay padding，不强推 100vh/margin:0
+// ——那样会在 overlay 现有 padding 之上让抽屉溢出视口，反而制造新的溢出/裁切
+// 问题。这里只做「更高更窄、贴右对齐」的视觉调整，几何边界仍由 Modal 既有
+// 规则兜底。
+.drawer {
+  align-self: stretch;
+  max-height: calc(100vh - #{$spacing-lg} * 2);
+
+  :global(.modal-body) {
+    max-height: calc(100vh - #{$spacing-lg} * 2 - 120px);
+  }
+}
+
+@include tablet {
+  .drawer {
+    width: 90vw !important;
+  }
+}
+
+@include mobile {
+  :global(.modal-overlay):has(.drawer) {
+    padding: $spacing-sm;
+  }
+
+  .drawer {
+    width: 100% !important;
+    max-height: calc(100vh - #{$spacing-sm} * 2);
+  }
+
+  @supports (height: 100dvh) {
+    .drawer {
+      max-height: calc(100dvh - #{$spacing-sm} * 2);
+    }
+  }
+}
+
+.titleRow {
+  display: flex;
+  align-items: baseline;
+  gap: $spacing-sm;
+  flex-wrap: wrap;
+}
+
+.titleId {
+  font-weight: 700;
+}
+
+.titleMasked {
+  font-family: $font-mono;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-md;
+  min-width: 0;
+}
+
+.drawerActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-sm;
+  flex-wrap: wrap;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+  padding-bottom: $spacing-md;
+  border-bottom: 1px solid var(--border-color);
+
+  &:last-child {
+    border-bottom: none;
+  }
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.healthRow {
+  display: flex;
+  align-items: center;
+  gap: $spacing-sm;
+  flex-wrap: wrap;
+}
+
+.reasonText {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.chartRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: $spacing-md;
+}
+
+@include mobile {
+  .chartRow {
+    grid-template-columns: 1fr;
+  }
+}
+
+.chartCol {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.chartLabel {
+  font-size: 12px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.chartValueBadge {
+  font-family: $font-mono;
+  font-weight: 600;
+  color: var(--text-primary);
+
+  &[data-variant='ok'] {
+    color: var(--color-success);
+  }
+
+  &[data-variant='warn'] {
+    color: var(--color-warning);
+  }
+
+  &[data-variant='err'] {
+    color: var(--color-danger);
+  }
+
+  &[data-variant='idle'] {
+    color: var(--text-tertiary);
+  }
+}
+
+.chartSvg {
+  width: 100%;
+  height: 64px;
+  max-width: 100%;
+  border: 1px solid var(--border-color);
+  border-radius: $radius-sm;
+  background: var(--bg-primary);
+}
+
+.sparklineStroke {
+  stroke: var(--primary-color);
+  stroke-width: 1.6;
+  vector-effect: non-scaling-stroke;
+}
+
+.areaFill {
+  fill: color-mix(in srgb, var(--color-success) 28%, transparent);
+  stroke: var(--color-success);
+  stroke-width: 1.2;
+  vector-effect: non-scaling-stroke;
+}
+
+.chartSvg[data-variant='warn'] .areaFill {
+  fill: color-mix(in srgb, var(--color-warning) 28%, transparent);
+  stroke: var(--color-warning);
+}
+
+.chartSvg[data-variant='err'] .areaFill {
+  fill: color-mix(in srgb, var(--color-danger) 28%, transparent);
+  stroke: var(--color-danger);
+}
+
+.chartSvg[data-variant='idle'] .areaFill {
+  fill: color-mix(in srgb, var(--text-tertiary) 28%, transparent);
+  stroke: var(--text-tertiary);
+}
+
+.estimateBox {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.hintText {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  opacity: 0.85;
+}
+
+.deviceIdRow {
+  display: flex;
+  align-items: center;
+  gap: $spacing-sm;
+  flex-wrap: wrap;
+}
+
+.mono {
+  font-family: $font-mono;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+// 探针 token「≠账单」标注：意图上是需要显眼的免责声明，用 warning 语义色的
+// 轻量背景而非仅靠一句灰字，防止被忽略而误当账单。
+.probeTokenBadge {
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: $radius-sm;
+  background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+  color: var(--color-warning);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.eventList {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.eventItem {
+  display: flex;
+  align-items: center;
+  gap: $spacing-sm;
+  flex-wrap: wrap;
+}
+
+// 用户④「请求间隔 DTO」：口径徽标（"口径：探针到达间隔" / "口径：账号 CPA
+// 累计"），复用站内 status-badge 视觉但用中性 muted 底色——这不是健康状态，
+// 只是标注数据来源/统计口径，不该借用语义色误导成"警告/正常"。
+.scopeBadge {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  padding: 2px 8px;
+  border-radius: var(--radius-md, $radius-md);
+  border: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+// 探针到达间隔直方图：默认 8 桶，等宽条形 + 底部计数，用纯 CSS 高度百分比
+// 渲染（见 FarmContainerDetail.tsx HistogramBar 顶部注释，不引入额外 SVG
+// 几何计算）。
+.histogramRow {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 64px;
+  padding: 4px;
+  border: 1px solid var(--border-color);
+  border-radius: $radius-sm;
+  background: var(--bg-primary);
+}
+
+.histogramBarCol {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+}
+
+.histogramBarTrack {
+  display: flex;
+  align-items: flex-end;
+  width: 100%;
+  height: 100%;
+}
+
+.histogramBar {
+  width: 100%;
+  min-height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--primary-color);
+}
+
+.histogramBarCount {
+  font-size: 10px;
+  color: var(--text-secondary);
+}
