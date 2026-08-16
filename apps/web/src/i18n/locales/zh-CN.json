@@ -4387,6 +4387,7 @@
       "fieldColumn": "指纹字段",
       "declaredColumn": "自报 (declared)",
       "onWireColumn": "出站实测 (on-wire)",
+      "onWireBanner": "on-wire 出站抓取管道尚未接入，以下 on-wire 列均为占位 / 声明态，不代表已完成实测。",
       "field_device_id": "device_id",
       "field_entrypoint": "entrypoint",
       "field_api_base_url_host": "api_base_url_host",

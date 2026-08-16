@@ -11,10 +11,10 @@ import {
 import { formatDateTimeUtc8 } from '@/utils/datetime';
 import { formatFileSize } from '@/utils/format';
 import { useFarmContainerBeacons } from '../hooks/useFarmContainerBeacons';
-// 复用容器详情抽屉既有的结构类（section/sectionTitle/hintText/mono/scopeBadge/
-// estimateBox/eventList/eventItem/probeTokenBadge），不新增 .module.scss——本切片
-// 只被允许改列出的 .tsx 文件，样式全部复用既有类 + 全局 status-badge 类。
-import styles from './FarmContainerDetail.module.scss';
+// E3：改为自有 module.scss（不再借用 FarmContainerDetail.module.scss），见该
+// 文件顶部注释——结构类取值与 FarmContainerDetail 对应同名类保持一致，纯样式
+// 来源迁移，视觉不变；新增的自洽卡网格类 / on-wire 横幅类是本次重做新增。
+import styles from './FarmTelemetryPanel.module.scss';
 
 // 前端展示用遥测新鲜度门槛：仅作 UI 陈旧标记的启发式阈值，**不是**后端精确
 // 定义的 telemetry_silence 判据。beacon 是自报上报、间隔本身不固定，这里取
@@ -56,6 +56,13 @@ function declaredFieldValue(
   return latest[field] ?? '';
 }
 
+// 出站实测（on-wire）取值：真实抓取管道尚未落地，因此这里恒定返回 null。
+// 独立抽成函数（而非在渲染里直接写字面量 null）是为了在抓取管道接入后，只需
+// 替换这一处实现——撞红判定、面板级横幅可见性、单元格渲染分支都无需改动。
+function onWireFieldValue(_field: FarmTelemetryFingerprintField): string | null {
+  return null;
+}
+
 /**
  * 每容器遥测面板（用户⑤「每容器遥测内容抓取」）：declared vs on-wire 两列
  * 指纹自洽卡 + beacon 时间线 + 通道分布 + 新鲜度。插在 <FarmContainerDetail>
@@ -64,10 +71,13 @@ function declaredFieldValue(
  * **诚实边界（贯穿整个 UI）**：这些 beacon 是容器「自报 / 声明」内容
  * （source ∈ declared/self-report/unknown），只证明上报管道连通与容器声明了
  * 什么，**不构成反关联证明**。自洽卡的 on-wire 一列是「真实出站抓取」值，
- * 抓取管道尚未落地，因此该列一律灰置标注「待抓取管道，尚未证明」，绝不用
- * 已有的 declared 值去填充 on-wire 列冒充实测。declared 与 on-wire 不一致时
- * 才撞红——由于 on-wire 目前恒为空，撞红逻辑已实现但处于休眠（永不误红），
- * 待真实抓取管道接入后自然生效。
+ * 抓取管道尚未落地，因此 on-wire 列一律显示中性占位符。E3 起，这个「未接入」
+ * 状态不再逐单元格重复标注「待抓取管道 · 尚未证明」灰底徽标（避免整表灰墙），
+ * 改成自洽卡顶部一条面板级横幅统一说明，绝不用已有的 declared 值去填充
+ * on-wire 列冒充实测。declared 与 on-wire 不一致时才撞红——由于 on-wire 目前
+ * 恒为空，撞红逻辑已实现但处于休眠（永不误红），待真实抓取管道接入后（届时
+ * 某些字段会有真实 on-wire 值、横幅按「是否已有任意字段被实测」自动收起）
+ * 自然生效。
  *
  * 取数走 useFarmContainerBeacons（GET .../beacons，裸数组、captured_at 降序）：
  * 失败态经 AsyncPanel 如实呈现，不吞不伪造；空容器（后端返回 []）在数据态内
@@ -93,6 +103,12 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
     if (!Number.isFinite(ms)) return false;
     return nowMs - ms > FARM_BEACON_STALE_THRESHOLD_MS;
   }, [latestCapturedAt, nowMs]);
+
+  // on-wire 采集管道是否已对任意指纹字段产生过实测值。onWireFieldValue 目前
+  // 恒为 null，因此这里恒为 false、面板级横幅恒定可见；管道接入后自然收敛。
+  const onWireCaptured = FARM_TELEMETRY_FINGERPRINT_FIELDS.some(
+    (field) => onWireFieldValue(field) !== null
+  );
 
   if (!container) return null;
 
@@ -125,17 +141,9 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
         loadingTestId="farm-telemetry-loading"
         errorTestId="farm-telemetry-error"
       >
-        {/* 指纹自洽卡：declared（自报，现在能填）vs on-wire（待抓取，灰置）。 */}
+        {/* 指纹自洽卡：declared（自报，现在能填）vs on-wire（待抓取，占位）。 */}
         <div className={styles.estimateBox} data-testid="farm-telemetry-consistency">
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'minmax(110px, 140px) 1fr 1fr',
-              gap: '0 12px',
-              alignItems: 'center',
-              padding: '2px 0',
-            }}
-          >
+          <div className={`${styles.consistencyGrid} ${styles.consistencyHeaderRow}`}>
             <span className={styles.chartLabel}>
               {t('farm.telemetry.fieldColumn', { defaultValue: '指纹字段' })}
             </span>
@@ -146,44 +154,52 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
               {t('farm.telemetry.onWireColumn', { defaultValue: '出站实测 (on-wire)' })}
             </span>
           </div>
+
+          {/* E3：面板级横幅——替代此前逐单元格「待抓取管道 · 尚未证明」灰墙。
+              仅当没有任何字段被实测过 on-wire 值时展示；真正接入抓取管道、
+              个别字段开始有 on-wire 真值后自动收起。 */}
+          {!onWireCaptured && (
+            <p className={styles.onWireBanner} data-testid="farm-telemetry-onwire-banner">
+              {t('farm.telemetry.onWireBanner', {
+                defaultValue:
+                  'on-wire 出站抓取管道尚未接入，以下 on-wire 列均为占位 / 声明态，不代表已完成实测。',
+              })}
+            </p>
+          )}
+
           {FARM_TELEMETRY_FINGERPRINT_FIELDS.map((field) => {
             const declared = declaredFieldValue(latestBeacon, field);
-            // on-wire 目前恒为空（待抓取管道）；撞红逻辑保留但休眠：只有 on-wire
-            // 有值且与 declared 不一致才置红。onWire 为空 → 永不误红。
-            const onWire: string | null = null;
+            // 撞红逻辑保留但休眠：只有 on-wire 有值且与 declared 不一致才置红。
+            // onWireFieldValue 目前恒返回 null → 永不误红。
+            const onWire = onWireFieldValue(field);
             const clash = onWire !== null && declared !== onWire;
+            const declaredClassName = `${styles.mono} ${styles.consistencyValue}${
+              clash ? ` ${styles.consistencyValueClash}` : ''
+            }`;
+            const onWirePending = onWire === null;
+            const onWireClassName = onWirePending
+              ? `${styles.mono} ${styles.onWirePlaceholder}`
+              : declaredClassName;
             return (
               <div
                 key={field}
                 data-testid={`farm-telemetry-consistency-row-${field}`}
                 data-field={field}
                 data-clash={clash ? 'true' : 'false'}
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'minmax(110px, 140px) 1fr 1fr',
-                  gap: '0 12px',
-                  alignItems: 'center',
-                  padding: '4px 0',
-                  borderTop: '1px solid var(--border-color)',
-                }}
+                className={`${styles.consistencyGrid} ${styles.consistencyRow}`}
               >
                 <span className={styles.mono}>
                   {t(`farm.telemetry.field_${field}`, { defaultValue: field })}
                 </span>
-                <span
-                  data-testid={`farm-telemetry-declared-${field}`}
-                  className={styles.mono}
-                  style={{
-                    wordBreak: 'break-all',
-                    color: clash ? 'var(--color-danger)' : undefined,
-                  }}
-                >
+                <span data-testid={`farm-telemetry-declared-${field}`} className={declaredClassName}>
                   {declared || '—'}
                 </span>
-                <span data-testid={`farm-telemetry-onwire-${field}`} data-pending="true">
-                  <span className="status-badge muted">
-                    {t('farm.telemetry.onWirePending', { defaultValue: '待抓取管道 · 尚未证明' })}
-                  </span>
+                <span
+                  data-testid={`farm-telemetry-onwire-${field}`}
+                  data-pending={onWirePending ? 'true' : 'false'}
+                  className={onWireClassName}
+                >
+                  {onWirePending ? '—' : onWire || '—'}
                 </span>
               </div>
             );
@@ -222,10 +238,7 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
           <span className={styles.chartLabel}>
             {t('farm.telemetry.channelDistribution', { defaultValue: '通道分布' })}
           </span>
-          <div
-            data-testid="farm-telemetry-channels"
-            style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}
-          >
+          <div data-testid="farm-telemetry-channels" className={styles.channelList}>
             {channelDistribution.length === 0 ? (
               <span className={styles.hintText}>
                 {t('farm.telemetry.noBeacons', { defaultValue: '窗口内暂无 beacon 上报。' })}

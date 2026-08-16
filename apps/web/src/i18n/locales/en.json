@@ -4387,6 +4387,7 @@
       "fieldColumn": "Fingerprint field",
       "declaredColumn": "Declared",
       "onWireColumn": "On-wire",
+      "onWireBanner": "The on-wire outbound capture pipeline is not wired yet; the On-wire column below is placeholder / declared state only and does not represent a completed capture.",
       "field_device_id": "device_id",
       "field_entrypoint": "entrypoint",
       "field_api_base_url_host": "api_base_url_host",

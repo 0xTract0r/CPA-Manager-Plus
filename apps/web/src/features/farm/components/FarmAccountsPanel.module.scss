@@ -29,7 +29,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: $fs-2xs;
   font-weight: 700;
   color: var(--text-primary);
 }
@@ -40,7 +40,7 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 12px;
+  font-size: $fs-2xs;
   line-height: 1.5;
   color: var(--text-secondary);
 }
@@ -54,7 +54,7 @@
 }
 
 .title {
-  font-size: 16px;
+  font-size: $fs-md;
   font-weight: 700;
   color: var(--text-primary);
 }
@@ -84,13 +84,13 @@
 .filterEmpty {
   display: block;
   padding: $spacing-sm 0;
-  font-size: 13px;
+  font-size: $fs-xs;
   color: var(--text-secondary);
 }
 
 .desc {
   margin: 0;
-  font-size: 13px;
+  font-size: $fs-xs;
   color: var(--text-secondary);
 }
 
@@ -101,7 +101,7 @@
   display: flex;
   align-items: flex-start;
   gap: 6px;
-  font-size: 12px;
+  font-size: $fs-2xs;
   line-height: 1.5;
   color: var(--text-secondary);
 
@@ -129,7 +129,7 @@
 }
 
 .nameCellSecondary {
-  font-size: 12px;
+  font-size: $fs-2xs;
 }
 
 .disabledTag {
@@ -192,7 +192,7 @@
 
 .sortIndicator {
   flex-shrink: 0;
-  font-size: 10px;
+  font-size: $fs-2xs;
   line-height: 1;
   color: var(--text-tertiary, var(--text-secondary));
 }
@@ -214,21 +214,21 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: $fs-2xs;
 }
 
 // 风险 reason 可见 badge（用户②）：复用站内 status-badge error/warning 着色，
 // 不新造颜色 token；与下方 .panel :global(.status-badge) 的 nowrap 规则一致，
 // 本列 reason 文案控制在短语级别，nowrap 不会造成裁切。
 .reasonBadge {
-  font-size: 11px;
+  font-size: $fs-2xs;
 }
 
 // C2 账号态副行详情：可为句子级长度（如「凭证已失效——请在认证文件页重新授权」），
 // 用可换行的 muted 文本承载而非 nowrap 徽标，避免长文案撑宽账号认证态列。严重度
 // 由上方 <AccountAuthBadge> 的语义色承载，这里详情文本只做次级补充着色。
 .authDetailText {
-  font-size: 11px;
+  font-size: $fs-2xs;
   line-height: 1.4;
   white-space: normal;
   max-width: 240px;
@@ -254,14 +254,14 @@
 }
 
 .staleBadge {
-  font-size: 10px;
+  font-size: $fs-2xs;
   white-space: nowrap;
 }
 
 // C3 供给态徽标（供给中·等住宅代理/容量）：复用站内 status-badge 着色，与容器
 // 运行态徽标同格纵向堆叠，让「不是建不了、是正在排队供给」对 operator 可见。
 .provisioningBadge {
-  font-size: 11px;
+  font-size: $fs-2xs;
   white-space: nowrap;
 }
 
@@ -269,14 +269,14 @@
 // 停保活，避免 operator 误把容器降级当成容器自身故障去排查。
 .causalNarrative {
   margin: 0;
-  font-size: 11px;
+  font-size: $fs-2xs;
   line-height: 1.4;
   color: var(--text-secondary);
 }
 
 .mono {
   font-family: $font-mono;
-  font-size: 13px;
+  font-size: $fs-xs;
   color: var(--text-secondary);
 }
 
@@ -322,7 +322,7 @@
   // 环境 chip 是农场自有中性标签；muted 前景/背景在默认浅色主题仅约 4.48:1。
   // 改用主题主文字色后仍保持中性底色，浅色/纯白/深色均远高于 AA（≥11.46:1）。
   color: var(--text-primary);
-  font-size: 12px;
+  font-size: $fs-2xs;
   white-space: nowrap;
 }
 
@@ -356,24 +356,24 @@
   flex-wrap: wrap;
   align-items: baseline;
   gap: 4px;
-  font-size: 12px;
+  font-size: $fs-2xs;
 }
 
 .cadenceLabel {
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: $fs-2xs;
 }
 
 // C5 实测均值（实标）：强调层——主文字色 + 稍强字重，这是真实观测值。
 .cadenceMeasuredLabel {
-  font-size: 11px;
+  font-size: $fs-2xs;
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .cadenceMeasuredValue {
   font-family: $font-mono;
-  font-size: 13px;
+  font-size: $fs-xs;
   font-weight: 600;
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
@@ -382,13 +382,13 @@
 // C5 默认区间（灰标）：弱化层——次级/三级文字色，明确是默认配置、非精确预测，
 // 与实测均值在视觉层级上分开，防默认值被误读成真实预测。
 .cadenceDefaultLabel {
-  font-size: 11px;
+  font-size: $fs-2xs;
   color: var(--text-tertiary);
 }
 
 .cadenceDefaultValue {
   font-family: $font-mono;
-  font-size: 12px;
+  font-size: $fs-2xs;
   color: var(--text-tertiary);
   font-variant-numeric: tabular-nums;
 }
@@ -401,7 +401,7 @@
 }
 
 .cadenceSparklineCaption {
-  font-size: 10px;
+  font-size: $fs-2xs;
   color: var(--text-tertiary);
   white-space: nowrap;
 }
@@ -419,7 +419,7 @@
   border: 1px solid var(--border-color);
   background: var(--bg-tertiary);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: $fs-2xs;
   font-weight: 600;
   white-space: nowrap;
 }
@@ -432,19 +432,19 @@
   border-radius: $radius-sm;
   background: color-mix(in srgb, var(--color-warning) 14%, transparent);
   color: var(--color-warning);
-  font-size: 10px;
+  font-size: $fs-2xs;
   font-weight: 600;
   white-space: nowrap;
 }
 
 .cadenceHint {
   margin: 0;
-  font-size: 11px;
+  font-size: $fs-2xs;
   color: var(--text-secondary);
 }
 
 .cadenceMuted {
-  font-size: 12px;
+  font-size: $fs-2xs;
   color: var(--text-secondary);
 }
 
@@ -453,7 +453,7 @@
   flex-wrap: wrap;
   align-items: baseline;
   gap: 6px;
-  font-size: 12px;
+  font-size: $fs-2xs;
 }
 
 // 成功/失败沿用本文件 device_id 列与隔离提示已在用的主题化前景色 token
@@ -483,11 +483,10 @@
   white-space: nowrap;
 }
 
-// 窄屏（≤768 平板/手机）响应式降级：账号健康表整表改成堆叠卡片。每行一张卡片，
-// 字段用列头标签（data-label，复用现有 i18n key）纵向排列，彻底消除横向溢出与
-// 右缘半裁——之前平板下「重新授权链接」列被面板右缘裁切、手机下状态胶囊贴右缘
-// 被切一半（active→activ、幽灵态→幽灵）的问题不再出现，重新授权链接完整可点。
-// 桌面（≥769）维持原表格布局。
+// 窄屏（≤768 平板/手机）响应式降级：整表→堆叠卡片的结构降级已收敛到共享原语
+// <ResponsiveTable>（ResponsiveTable.module.scss），本面板在 .tsx 里用它包住
+// <Table>。这里只保留 FarmAccountsPanel 专有的筛选控件窄屏堆叠微调。桌面（≥769）
+// 维持原表格布局。
 @include mobile {
   // 窄屏：筛选控件占满宽度并纵向堆叠，避免下拉/搜索框在小屏被挤成极窄。
   // 宽度规则同样嵌在 .filterControls 下（两类特异性），才能盖过上面桌面的
@@ -500,51 +499,6 @@
     .filterSelect,
     .filterSearch {
       width: 100%;
-    }
-  }
-
-  .panel {
-    table {
-      display: block;
-      width: 100%;
-    }
-
-    thead {
-      display: none;
-    }
-
-    tbody {
-      display: block;
-    }
-
-    // 卡片四周留均匀间距，与 Table 外层 .wrap 边框之间形成一致的内凹留白，
-    // 呈现「框内悬浮卡片」而非贴边双线。
-    tbody tr {
-      display: block;
-      padding: $spacing-sm $spacing-md;
-      margin: $spacing-sm;
-      border: 1px solid var(--border-color);
-      border-radius: $radius-md;
-      background: var(--bg-primary);
-    }
-
-    tbody td {
-      display: block;
-      padding: 6px 0;
-      border-bottom: none;
-      text-align: left;
-      white-space: normal;
-
-      &::before {
-        content: attr(data-label);
-        display: block;
-        margin-bottom: 3px;
-        font-size: 11px;
-        font-weight: 600;
-        letter-spacing: 0.03em;
-        text-transform: uppercase;
-        color: var(--text-secondary);
-      }
     }
   }
 }

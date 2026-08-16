@@ -50,6 +50,14 @@ $breakpoint-mobile: 768px;
 $breakpoint-tablet: 1024px;
 $breakpoint-desktop: 1280px;
 
+// 中等（tablet）布局区间边界（farm 设计系统收敛 E2）：
+// - 下界含 768（$breakpoint-tablet-min 与 mobile 共享 768 边界；768 仍由 mobile
+//   收口，各消费文件 tablet 块均声明在 mobile 之前、按源序让位，观感不变）。
+// - 上界扩到 1180，补齐 1025–1180「回退基础/桌面布局仍溢出」死区，与 desktop
+//   起点首尾相接。详见 mixins.scss @mixin tablet 注释。
+$breakpoint-tablet-min: $breakpoint-mobile;
+$breakpoint-tablet-max: 1180px;
+
 // Z-index
 $z-dropdown: 1000;
 $z-modal: 2000;
@@ -60,3 +68,18 @@ $font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
   'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
 
 $font-mono: 'Courier New', Courier, monospace;
+
+// 字号 scale（farm 设计系统收敛 E1）：统一排版档位，farm 组件裸 px 字号一律引用
+// 本 scale，不再散落魔法值；10–11px 微字统一抬到最小合规档 $fs-2xs(12px)，满足
+// 小字可读性下限。覆盖 12–24px。
+$fs-2xs: 12px; // 最小合规档：辅助标签 / 徽标 / data-label / 微字下限
+$fs-xs: 13px; // 次级正文：表格单元格 / 说明文字 / 时间戳
+$fs-sm: 14px; // 正文
+$fs-md: 16px; // 面板标题 / 小标题
+$fs-lg: 20px; // KPI 数值等强调数字
+$fs-xl: 24px; // 大标题（补齐 scale 上界）
+
+// elevation scale（farm 设计系统收敛 E1）：语义化抬升档位，复用既有 $shadow-*
+// 原子阴影收敛散落 box-shadow，不再造第二套阴影常量。
+$elevation-1: $shadow-sm; // 卡片 / 浮层轻抬升
+$elevation-2: $shadow-md; // 抽屉 / 弹层中抬升

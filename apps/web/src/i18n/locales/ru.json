@@ -4378,6 +4378,7 @@
       "fieldColumn": "Поле отпечатка",
       "declaredColumn": "Заявлено",
       "onWireColumn": "On-wire",
+      "onWireBanner": "Канал захвата исходящего трафика on-wire ещё не подключён; колонка On-wire ниже — только заглушка / декларируемое состояние и не означает завершённый захват.",
       "field_device_id": "device_id",
       "field_entrypoint": "entrypoint",
       "field_api_base_url_host": "api_base_url_host",

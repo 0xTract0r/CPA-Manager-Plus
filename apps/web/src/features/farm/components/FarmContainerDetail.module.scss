@@ -61,7 +61,7 @@
 
 .titleMasked {
   font-family: $font-mono;
-  font-size: 13px;
+  font-size: $fs-xs;
   color: var(--text-secondary);
 }
 
@@ -94,7 +94,7 @@
 
 .sectionTitle {
   margin: 0;
-  font-size: 13px;
+  font-size: $fs-xs;
   font-weight: 700;
   color: var(--text-primary);
   text-transform: uppercase;
@@ -109,7 +109,7 @@
 }
 
 .reasonText {
-  font-size: 13px;
+  font-size: $fs-xs;
   color: var(--text-secondary);
 }
 
@@ -133,7 +133,7 @@
 }
 
 .chartLabel {
-  font-size: 12px;
+  font-size: $fs-2xs;
   color: var(--text-secondary);
   display: flex;
   align-items: center;
@@ -204,13 +204,13 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 13px;
+  font-size: $fs-xs;
   color: var(--text-primary);
 }
 
 .hintText {
   margin: 0;
-  font-size: 12px;
+  font-size: $fs-2xs;
   color: var(--text-secondary);
   opacity: 0.85;
 }
@@ -224,7 +224,7 @@
 
 .mono {
   font-family: $font-mono;
-  font-size: 12px;
+  font-size: $fs-2xs;
   color: var(--text-secondary);
 }
 
@@ -236,7 +236,7 @@
   border-radius: $radius-sm;
   background: color-mix(in srgb, var(--color-warning) 14%, transparent);
   color: var(--color-warning);
-  font-size: 12px;
+  font-size: $fs-2xs;
   font-weight: 600;
 }
 
@@ -268,7 +268,7 @@
   border: 1px solid var(--border-color);
   background: var(--bg-tertiary);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: $fs-2xs;
   font-weight: 600;
   white-space: nowrap;
 }
@@ -313,6 +313,6 @@
 }
 
 .histogramBarCount {
-  font-size: 10px;
+  font-size: $fs-2xs;
   color: var(--text-secondary);
 }
