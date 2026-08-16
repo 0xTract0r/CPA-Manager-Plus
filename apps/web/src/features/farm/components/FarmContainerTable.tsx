@@ -16,6 +16,7 @@ import type { FarmContainerView } from '@/types/farm';
 import { formatDateTimeUtc8 } from '@/utils/datetime';
 import { formatDurationMs } from '@/utils/usage/latency';
 import { useFarmRetiredContainers } from '../hooks/useFarmRetiredContainers';
+import { ResponsiveTable } from './ResponsiveTable';
 import {
   deviceAlignmentToBadgeVariant,
   farmHealthVariantToBadgeVariant,
@@ -180,6 +181,7 @@ export function FarmContainerTable({
           testId: 'farm-containers-empty',
         }}
       >
+        <ResponsiveTable>
         <Table data-testid="farm-container-table">
           <TableHeader>
             <TableRow>
@@ -379,6 +381,7 @@ export function FarmContainerTable({
             })}
           </TableBody>
         </Table>
+        </ResponsiveTable>
       </AsyncPanel>
     </div>
   );

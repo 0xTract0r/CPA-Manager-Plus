@@ -20,7 +20,7 @@
 }
 
 .title {
-  font-size: 16px;
+  font-size: $fs-md;
   font-weight: 700;
   color: var(--text-primary);
 }
@@ -31,7 +31,7 @@
 
 .desc {
   margin: 0;
-  font-size: 13px;
+  font-size: $fs-xs;
   color: var(--text-secondary);
 }
 
@@ -83,7 +83,7 @@
 }
 
 .reason {
-  font-size: 13px;
+  font-size: $fs-xs;
   color: var(--text-secondary);
 }
 
@@ -92,7 +92,7 @@
   align-items: center;
   gap: $spacing-md;
   flex-wrap: wrap;
-  font-size: 12px;
+  font-size: $fs-2xs;
   color: var(--text-secondary);
 }
 
@@ -111,7 +111,7 @@
   justify-content: space-between;
   gap: $spacing-sm;
   padding-top: $spacing-sm;
-  font-size: 13px;
+  font-size: $fs-xs;
   color: var(--text-secondary);
 }
 

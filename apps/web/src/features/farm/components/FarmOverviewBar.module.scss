@@ -16,30 +16,20 @@
   gap: $spacing-md;
 }
 
-// 481–1180px（含 768）：3×2；≤480：2×3；>1180：基础 6 列（1440 桌面按设计
-// 走这条）。
+// KPI 网格列数按视口分档：481–1180px：3×2；≤480：2×3；>1180：基础 6 列
+// （1440 桌面按设计走这条）。
 //
-// 这里刻意不用共享 `tablet` mixin（mixins.scss 定义为
-// `min-width: $breakpoint-mobile + 1`，即 769px），因为该 mixin 精确排除了
-// 768px 边界本身：768 视口会落空到桌面 6 列布局，KPI 行溢出裁切第 6 张卡
-// （真机门禁 farm-first-screen scrollWidth 728px 溢出 8px 到 736px 才发现）。
-//
-// 第一版修复只把下界移到 $breakpoint-mobile（768px），只堵住了 768 这一个
-// 点——767px 往下、直到 481px（不含）这段区间仍落回下面 480px 才生效的 2
-// 列规则和这里 3 列规则之间的空隙，即基础 repeat(6)，同款问题只是被
-// `.dashboard { overflow-x: clip }` 静默裁切、越窄越严重。改用固定下界
-// 481px 补齐后，复测发现共享 `tablet` mixin 原本的上界
-// `max-width: $breakpoint-tablet`（1024px）本身也是同款边界缺陷（此前就
-// 存在，非本次改动引入）：1025–1114px 这段区间会落回基础 6 列，但视口还没
-// 宽到能装下 6 列不溢出——实测 1025px 处 farm-first-screen
-// scrollWidth-clientWidth 溢出达 12px，1115px 才归零。因此把 3 列区间上界
-// 从 $breakpoint-tablet 改成固定 1180px（在实测零溢出临界值 1115px 上留
-// ~65px 安全余量，抵御不同浏览器/缩放下的取整误差），与桌面 6 列（>1180px）
-// 首尾相接，不再有任何宽度落回未经验证的基础 6 列。不改共享 mixin（避免
-// 波及其余同样 `@include tablet` 的 farm 组件，见 FarmDashboard.module.scss
-// 的 operationsGrid 同款修复，各自 scoped；operationsGrid 只有 4 张更宽的
-// 操作卡，实测同一区间不溢出，故其上界不需要同样下调）。
-@media (min-width: 481px) and (max-width: 1180px) {
+// 本网格仍用自己 scoped 的 @media 而非任何共享 mixin：3 列区间下界要到
+// 481px（≤480 才切 2 列），而共享 `tablet` / 农场 `farm-tablet` mixin 下界都是
+// 769，覆盖不到 481–767 这段——若改用 mixin，481–767 会落回基础 6 列被
+// `.dashboard { overflow-x: clip }` 静默裁切。上界取 $breakpoint-tablet-max(1180)，
+// 与农场专用 `farm-tablet` mixin 一致：实测 1025px 处 farm-first-screen
+// scrollWidth−clientWidth 溢出 12px、1115px 才归零，1180 在临界值上留安全
+// 余量并与桌面 6 列（>1180）首尾相接，不再落回未经验证的基础 6 列。
+// （农场 1025–1180 死区由农场专用 `farm-tablet` mixin(769–1180) 覆盖；共享
+// `tablet` mixin 保持 main 原值 769–1024 不动，以免影响非农场页 Logs/AuthFiles；
+// 本网格因需要更低的 481 下界，继续保留 scoped @media。）
+@media (min-width: 481px) and (max-width: #{$breakpoint-tablet-max}) {
   .kpiRow {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -90,7 +80,7 @@
 }
 
 .kpiValue {
-  font-size: 20px;
+  font-size: $fs-lg;
   font-weight: 700;
   color: var(--text-primary);
   line-height: 1.2;
@@ -108,13 +98,13 @@
   border: 1px solid var(--border-color);
   background: var(--bg-tertiary);
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: $fs-2xs;
   font-weight: 600;
   white-space: nowrap;
 }
 
 .kpiLabel {
-  font-size: 12px;
+  font-size: $fs-2xs;
   color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
@@ -126,7 +116,7 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 6px;
-  font-size: 12px;
+  font-size: $fs-2xs;
   color: var(--text-secondary);
 }
 

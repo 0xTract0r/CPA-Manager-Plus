@@ -1,0 +1,174 @@
+@use '../../../styles/variables' as *;
+@use '../../../styles/mixins' as *;
+
+// E3：FarmTelemetryPanel 从「借用 FarmContainerDetail.module.scss」收敛为自有
+// module.scss（对齐仓库内其余 Farm 面板一律「自己文件自己类」的惯例，见
+// FarmUsagePanel/FarmAccountsPanel 等——即便个别类名/取值相同，也各自独立
+// 定义，不跨组件共享类名，避免隐式耦合）。以下结构类与 FarmContainerDetail
+// .module.scss 里对应同名类取值保持一致，确保本组件作为 <FarmContainerDetail>
+// 内嵌 section 时，跟相邻 section 的间距/分隔线视觉节奏不变（纯样式来源迁移，
+// 非视觉变更）。全部只复用 variables.scss / mixins.scss 里已有的 token，不新增
+// token，避免跟并行改动 token 定义的切片冲突。
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+  padding-bottom: $spacing-md;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.scopeBadge {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  padding: 2px 8px;
+  border-radius: var(--radius-md, $radius-md);
+  border: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: $fs-2xs;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+// 探针 token「≠账单」同款免责声明底色：显眼警示，防止被当成反关联实测证据。
+.probeTokenBadge {
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: $radius-sm;
+  background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+  color: var(--color-warning);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.estimateBox {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+// 指纹自洽卡表头 / 数据行共享的三栏网格：字段名 | 自报 declared | 出站实测
+// on-wire。E3 前是每行各自内联 style={{ display:'grid', ... }}（表头行、数据
+// 行各写一遍），这里收敛成「网格几何」+「各行独有的 padding/分隔线」两个组合
+// 类，替代内联写法。
+.consistencyGrid {
+  display: grid;
+  grid-template-columns: minmax(110px, 140px) 1fr 1fr;
+  gap: 0 12px;
+  align-items: center;
+}
+
+.consistencyHeaderRow {
+  padding: 2px 0;
+}
+
+.consistencyRow {
+  padding: 4px 0;
+  border-top: 1px solid var(--border-color);
+}
+
+.consistencyValue {
+  word-break: break-all;
+}
+
+// 撞红态：declared 与 on-wire 不一致时统一用 danger 语义色标出（目前 on-wire
+// 恒为空、撞红逻辑处于休眠，见 FarmTelemetryPanel.tsx 顶部注释与
+// onWireFieldValue 实现）。
+.consistencyValueClash {
+  color: var(--color-danger);
+}
+
+// E3：on-wire 未接入时的单元格中性占位——面板级横幅（.onWireBanner）已经
+// 统一说明「以下为占位/声明态」，这里不再重复逐格「待抓取管道 · 尚未证明」
+// 灰底徽标，只保留一个不抢视觉的中性占位符，消除此前「整表灰墙」的观感。
+.onWirePlaceholder {
+  color: var(--text-tertiary);
+}
+
+// E3 核心改动：on-wire 采集管道未接入时的面板级横幅，替代此前的「逐单元格
+// 占位」灰墙。视觉上对齐既有「中性 info 提示」惯例（FarmAccountsPanel
+// .capacityNotice / FarmUsagePanel .attributionNotice 同款：主色低透明度
+// tint + 边框），因为这是「管道尚未接入」的中性说明，不是告警/错误态，不
+// 借用 warning/danger 语义色误导成异常。
+.onWireBanner {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: $radius-sm;
+  background-color: rgba($primary-color, 0.08);
+  border: 1px solid rgba($primary-color, 0.35);
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.hintText {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  opacity: 0.85;
+}
+
+.deviceIdRow {
+  display: flex;
+  align-items: center;
+  gap: $spacing-sm;
+  flex-wrap: wrap;
+}
+
+.mono {
+  font-family: $font-mono;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.chartCol {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.chartLabel {
+  font-size: 12px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+// 通道分布 chip 容器：E3 前内联 style={{ display:'flex', flexWrap:'wrap', gap:'6px' }}。
+.channelList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.eventList {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.eventItem {
+  display: flex;
+  align-items: center;
+  gap: $spacing-sm;
+  flex-wrap: wrap;
+}

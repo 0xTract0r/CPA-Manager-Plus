@@ -17,6 +17,20 @@
   }
 }
 
+// farm 中等视口区间（farm 设计系统收敛，scoped 覆盖，不改共享 @mixin tablet）：
+// - 下界与 @mixin tablet 一致，用 `$breakpoint-mobile + 1`(769)，不改农场组件既有行为。
+// - 上界扩到 $breakpoint-tablet-max(1180)：补齐 1025–1180 死区——此前该区间落回
+//   桌面布局，但视口还没宽到能无溢出容纳（实测 1025px 处 farm 首屏
+//   scrollWidth−clientWidth 溢出 12px，1115px 才归零），1180 上界在临界值上留安全
+//   余量并与 desktop 起点首尾相接。
+// 仅农场组件 @include farm-tablet；非农场页继续用共享 @mixin tablet（≤1024），
+// 互不影响，因此 LogsPage/AuthFilesPage 与 main 逐字节等价。
+@mixin farm-tablet {
+  @media (min-width: #{$breakpoint-mobile + 1}) and (max-width: #{$breakpoint-tablet-max}) {
+    @content;
+  }
+}
+
 @mixin desktop {
   @media (min-width: #{$breakpoint-tablet + 1}) {
     @content;

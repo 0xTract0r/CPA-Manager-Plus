@@ -21,6 +21,7 @@ import { useFarmContainers } from '../hooks/useFarmContainers';
 import { useFarmOnboard } from '../hooks/useFarmOnboard';
 import { useFarmProbeCadenceSeries } from '../hooks/useFarmProbeCadenceSeries';
 import { CadenceSparkline } from './CadenceSparkline';
+import { ResponsiveTable } from './ResponsiveTable';
 import {
   FARM_ACCOUNT_AUTH_STATES,
   accountAuthStateToFarmHealthVariant,
@@ -372,6 +373,7 @@ export function FarmAccountsPanel({ containers: sharedContainers }: FarmAccounts
           testId: 'farm-accounts-empty',
         }}
       >
+        <ResponsiveTable>
         <Table data-testid="farm-accounts-table">
           <TableHeader>
             <TableRow>
@@ -1020,6 +1022,7 @@ export function FarmAccountsPanel({ containers: sharedContainers }: FarmAccounts
             })}
           </TableBody>
         </Table>
+        </ResponsiveTable>
       </AsyncPanel>
     </div>
   );
