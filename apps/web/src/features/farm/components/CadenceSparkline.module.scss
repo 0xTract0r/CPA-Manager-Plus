@@ -1,0 +1,13 @@
+// 探针到达间隔 sparkline（P2-C5）：中性描边，不借用健康语义色——这是节奏形状
+// 的中性展示，不是「好/坏」判定。描边色用主题次级文字色，三套主题自动跟随。
+.sparkline {
+  display: block;
+  overflow: visible;
+}
+
+.stroke {
+  stroke: var(--text-secondary);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}

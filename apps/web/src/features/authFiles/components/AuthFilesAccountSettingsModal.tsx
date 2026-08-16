@@ -1109,6 +1109,13 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
   };
   const isClaudeManagedPolicy =
     isClaudeProvider || (editor?.clientVersionObservations || []).length > 0;
+  // 农场契约字段消费（后端 AG1 同步实现中）：device_id 卡按绑定态区分展示——
+  // 已绑定容器显「容器同步」而非「合成假名」；未绑定 Claude 显红警「未绑定·不可
+  // 出站」；字段缺失（undefined）时防御式回退旧的「合成假名 / 尚未派生」展示。
+  const farmBound = editor?.farmBound;
+  const deviceIdSource = editor?.deviceIdSource;
+  const isFarmContainerSynced = farmBound === true || deviceIdSource === 'container_synced';
+  const isFarmUnprovisionedClaude = farmBound === false && isClaudeProvider;
   const identityModelStrategy = isClaudeManagedPolicy
     ? t('auth_files.account_settings_identity_strategy_claude', {
         defaultValue: 'Claude per-account identity binding',
@@ -1464,6 +1471,54 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
                       </div>
                     </div>
                   )}
+
+                  {/* TR8：账号级农场纳管开关（farm_enrolled）。老号默认 false（未纳管·
+                      免疫农场治理，不受咬合门/自动供给/平台分流管辖），operator 显式
+                      开启后才纳入管辖。仿 refreshEnabled 同款 PATCH account-settings
+                      调用，不新增独立保存路径。 */}
+                  <div
+                    className={`${styles.toggleCard} ${styles.toggleCardWide}`}
+                    data-testid="account-settings-farm-enrolled-card"
+                  >
+                    <div className={styles.toggleCardTop}>
+                      <label>
+                        {t('auth_files.account_settings_farm_enrolled', {
+                          defaultValue: 'Farm enrollment',
+                        })}
+                      </label>
+                      <ToggleSwitch
+                        checked={editor.farmEnrolled}
+                        disabled={disableControls || editor.saving}
+                        ariaLabel={t('auth_files.account_settings_farm_enrolled', {
+                          defaultValue: 'Farm enrollment',
+                        })}
+                        onChange={(value) => onChange('farmEnrolled', value)}
+                      />
+                    </div>
+                    <div
+                      className={styles.farmEnrolledStatusRow}
+                      data-testid="account-settings-farm-enrolled-status"
+                    >
+                      <span
+                        className={`status-badge ${editor.farmEnrolled ? 'success' : 'muted'}`}
+                        data-testid="account-settings-farm-enrolled-status-badge"
+                      >
+                        {editor.farmEnrolled
+                          ? t('auth_files.account_settings_farm_enrolled_on_badge', {
+                              defaultValue: 'Enrolled',
+                            })
+                          : t('auth_files.account_settings_farm_enrolled_off_badge', {
+                              defaultValue: 'Not enrolled · immune to farm governance',
+                            })}
+                      </span>
+                    </div>
+                    <div className="hint">
+                      {t('auth_files.account_settings_farm_enrolled_hint', {
+                        defaultValue:
+                          'Legacy accounts default to not enrolled and stay immune to farm governance (bite gate, auto-provisioning, platform routing). Turning this on subjects the account to those rules.',
+                      })}
+                    </div>
+                  </div>
                 </div>
 
                 <Input
@@ -1673,11 +1728,23 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
                               <code className={styles.managedHeaderValue} title={editor.syntheticDeviceId}>
                                 {editor.syntheticDeviceId}
                               </code>{' '}
-                              <span className={styles.managedHeaderChip}>
-                                {t('auth_files.account_settings_synthetic_device_id_synthetic_badge', {
-                                  defaultValue: 'Synthetic pseudonym',
-                                })}
-                              </span>
+                              {isFarmContainerSynced ? (
+                                // 已绑定容器：device_id 是容器写入的真实值，标「容器同步」而非合成。
+                                <span
+                                  className="status-badge success"
+                                  data-testid="account-settings-device-id-container-synced-badge"
+                                >
+                                  {t('auth_files.account_settings_device_id_source_container_synced', {
+                                    defaultValue: 'Container-synced',
+                                  })}
+                                </span>
+                              ) : (
+                                <span className={styles.managedHeaderChip}>
+                                  {t('auth_files.account_settings_synthetic_device_id_synthetic_badge', {
+                                    defaultValue: 'Synthetic pseudonym',
+                                  })}
+                                </span>
+                              )}
                             </strong>
                           ) : (
                             <strong data-testid="account-settings-synthetic-device-id-placeholder">
@@ -1688,6 +1755,18 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
                           )}
                         </div>
                       </div>
+                      {isFarmUnprovisionedClaude ? (
+                        // 未绑定容器的 Claude 账号：不可出站，红警（用户拍板「绑定+健康才正常」）。
+                        <div
+                          className={`status-badge error ${styles.deviceIdUnprovisionedWarning}`}
+                          data-testid="account-settings-device-id-unprovisioned-warning"
+                          role="alert"
+                        >
+                          {t('auth_files.account_settings_device_id_unprovisioned_warning', {
+                            defaultValue: '未绑定容器·不可出站——接入农场后才能经住宅代理请求',
+                          })}
+                        </div>
+                      ) : null}
                     </div>
                     <div className="hint">
                       {t('auth_files.account_settings_synthetic_device_id_hint', {

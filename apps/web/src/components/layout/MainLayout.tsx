@@ -65,6 +65,8 @@ const sidebarIcons: Record<string, ReactNode> = {
   usageAnalytics: <IconSidebarUsage size={SIDEBAR_ICON_SIZE} />,
   codexInspection: <IconSidebarInspection size={SIDEBAR_ICON_SIZE} />,
   monitoring: <IconSidebarMonitor size={SIDEBAR_ICON_SIZE} />,
+  // 农场（Device Farm）迁移第一刀：暂复用监控图标，专属图标留后续精修切片。
+  farm: <IconSidebarMonitor size={SIDEBAR_ICON_SIZE} />,
   plugins: <IconSidebarPlugins size={SIDEBAR_ICON_SIZE} />,
   config: <IconSidebarConfig size={SIDEBAR_ICON_SIZE} />,
   logs: <IconSidebarLogs size={SIDEBAR_ICON_SIZE} />,
@@ -539,6 +541,12 @@ export function MainLayout({ routeBase = '', demoMode = false }: MainLayoutProps
       }
     : null;
   const operationNavItems: NavItem[] = [
+    {
+      path: '/farm',
+      label: t('nav.farm', { defaultValue: '农场' }),
+      shortLabel: navShortLabel('nav.farm', t('nav.farm', { defaultValue: '农场' })),
+      icon: sidebarIcons.farm,
+    },
     ...(fileLogsAvailable
       ? [
           {

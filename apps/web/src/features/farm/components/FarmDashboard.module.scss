@@ -1,0 +1,121 @@
+@use '../../../styles/variables' as *;
+@use '../../../styles/mixins' as *;
+
+.dashboard,
+.configuredContent,
+.firstScreen {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.dashboard {
+  gap: $spacing-xl;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: clip;
+}
+
+.configuredContent,
+.firstScreen {
+  gap: $spacing-xl;
+}
+
+.connectionBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-md;
+  min-width: 0;
+  padding: $spacing-md $spacing-lg;
+  border: 1px solid var(--border-color);
+  border-radius: $radius-lg;
+  background: var(--bg-primary, var(--bg-primary));
+}
+
+.connectionCopy {
+  display: flex;
+  align-items: center;
+  gap: $spacing-sm;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.connectionLabel {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.connectionBadge {
+  margin-bottom: 0;
+  white-space: nowrap;
+}
+
+.connectionBar :global(.status-badge.success) {
+  color: var(--success-badge-text, #065f46);
+  background: var(--success-badge-bg, #d1fae5);
+  border-color: var(--success-badge-border, #6ee7b7);
+}
+
+.notConfiguredCard {
+  min-width: 0;
+}
+
+.sectionHeading {
+  margin-bottom: $spacing-md;
+
+  h2 {
+    margin: 0 0 $spacing-xs;
+    font-size: 18px;
+    color: var(--text-primary);
+  }
+
+  p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+  }
+}
+
+.operationsGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: $spacing-md;
+  min-width: 0;
+}
+
+.drawerDescription {
+  margin: 0 0 $spacing-md;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+// 同款边界缺陷（见 FarmOverviewBar.module.scss 顶部注释）：共享 `tablet`
+// mixin 是 min-width 769px，精确排除 768px 本身；768 及 481–768 这段区间
+// 会落回上面的基础 repeat(4)。这里 minmax(0,1fr)+min-width:0 大概率不会
+// 硬溢出，但 4 列会把卡片压得比 2 列窄很多、跟设计意图相反，且此前完全没
+// 测过这段区间。改用本组件 scoped 的 481–1024px 媒体查询，与下方
+// ≤480px 的 1 列规则首尾相接，不留空隙；不改共享 mixin。
+@media (min-width: 481px) and (max-width: $breakpoint-tablet) {
+  .operationsGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@include mobile {
+  .connectionBar {
+    align-items: stretch;
+    flex-direction: column;
+    padding: $spacing-md;
+  }
+
+  .connectionBar :global(.btn) {
+    width: 100%;
+  }
+}
+
+@media (max-width: 480px) {
+  .operationsGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
