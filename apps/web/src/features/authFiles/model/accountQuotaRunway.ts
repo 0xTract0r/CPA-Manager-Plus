@@ -36,9 +36,16 @@ export interface QuotaRunwayResult {
 }
 
 export interface ComputeQuotaRunwayOptions {
-  /** 认定「有上升趋势」的最小斜率（pct/ms）。默认极小正数，防浮点噪声被当成趋势。 */
+  /**
+   * 认定「有上升趋势、值得外推 runway」的最小斜率（pct/ms）。默认按「100% / 14 天」，
+   * 即消耗慢于「两周才用满」就视为 flat：周窗每 7 天重置，慢于此则重置永远先于耗尽到来，
+   * runway 无实际意义（否则微小正斜率会外推出几十/几百年的荒诞 runway，观感差）。
+   */
   minSlopePctPerMs?: number;
 }
+
+/** 默认最小趋势斜率：100% / 14 天（pct per ms）。慢于此按 flat 处理（周窗重置主导）。 */
+const DEFAULT_MIN_SLOPE_PCT_PER_MS = 100 / (14 * 24 * 60 * 60 * 1000);
 
 interface UsedSample {
   ts: number;
@@ -53,7 +60,7 @@ export function computeQuotaRunway(
   const minSlope =
     typeof options.minSlopePctPerMs === 'number' && options.minSlopePctPerMs > 0
       ? options.minSlopePctPerMs
-      : 1e-12;
+      : DEFAULT_MIN_SLOPE_PCT_PER_MS;
 
   const samples: UsedSample[] = [];
   for (const point of series ?? []) {

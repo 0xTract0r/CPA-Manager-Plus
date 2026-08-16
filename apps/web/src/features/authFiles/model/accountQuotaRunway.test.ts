@@ -77,6 +77,19 @@ describe('computeQuotaRunway', () => {
     expect(result.resetsBeforeExhaustion).toBe(true);
   });
 
+  it('degrades a negligibly-slow rise to flat instead of a multi-decade runway', () => {
+    // used% 每小时仅 +0.001%（慢于 100%/14天下限）：旧实现会外推出数千年 runway，
+    // 现按 flat 处理（周窗每周重置早已主导），不给出荒诞数字。
+    const result = computeQuotaRunway([
+      point({ ts: 0, usedPercent: 40 }),
+      point({ ts: HOUR, usedPercent: 40.001 }),
+      point({ ts: 2 * HOUR, usedPercent: 40.002 }),
+    ]);
+    expect(result.status).toBe('flat');
+    expect(result.runwayMs).toBeNull();
+    expect(result.latestUsedPercent).toBeCloseTo(40.002, 5);
+  });
+
   it('flags resetsBeforeExhaustion=false when exhaustion precedes the reset', () => {
     // 陡峭上升：约 1h 内耗尽，但重置要 50h 后 → 不安全
     const result = computeQuotaRunway([

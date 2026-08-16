@@ -1477,6 +1477,7 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
                           非加载态时挂载并一次性拉取数据。 */}
                       <AccountFastImpactPanel
                         accountName={editor.fileName}
+                        authIndex={editor.authIndex}
                         enabled={!editor.loading}
                       />
                     </>
