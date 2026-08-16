@@ -403,6 +403,11 @@ export function AuthFileCard(props: AuthFileCardProps) {
     typeof file.last_cyber_policy_at === 'string' ? file.last_cyber_policy_at.trim() : '';
   const lastCyberPolicyAtLabel = lastCyberPolicyAtRaw ? formatDateTime(lastCyberPolicyAtRaw) : '';
 
+  // codex `fast`（service_tier=priority）已开启徽标：只读内联 account_settings.fast，
+  // 仅对 codex 账号展示；复用现有 codexStatusBadge/info pill 样式，不新造样式体系。
+  const inlineAccountSettings = file.account_settings ?? file.accountSettings;
+  const isFastEnabled = resolvedProvider === 'codex' && inlineAccountSettings?.fast === true;
+
   return (
     <div
       className={`${styles.fileCard} ${compact ? styles.fileCardCompact : ''} ${providerCardClass} ${selected ? styles.fileCardSelected : ''} ${file.disabled ? styles.fileCardDisabled : ''}`}
@@ -499,6 +504,18 @@ export function AuthFileCard(props: AuthFileCardProps) {
                     </span>
                   );
                 })}
+                {isFastEnabled && (
+                  <span
+                    className={`${styles.codexStatusBadge} ${styles.codexStatusBadgeInfo}`}
+                    title={t('auth_files.account_settings_fast_badge_title', {
+                      defaultValue:
+                        'Codex fast mode is enabled for this account: about 1.5x faster generation at about 2.2x weekly quota consumption.',
+                    })}
+                    data-testid="auth-file-fast-badge"
+                  >
+                    {t('auth_files.account_settings_fast_badge', { defaultValue: 'Fast on' })}
+                  </span>
+                )}
                 {quotaCooldown && (
                   <span
                     className={`${styles.codexStatusBadge} ${styles.codexStatusBadgeInfo} ${styles.quotaCooldownBadge}`}

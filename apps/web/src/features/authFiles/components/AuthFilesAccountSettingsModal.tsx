@@ -37,7 +37,7 @@ import type {
   AuthFileHeaderMap,
   AuthFileManagedHeaderHistoryEntry,
 } from '@/types/authFile';
-import { useThemeStore } from '@/stores';
+import { useNotificationStore, useThemeStore } from '@/stores';
 import { formatInUtc8 } from '@/utils/format';
 import styles from './AuthFilesAccountSettingsModal.module.scss';
 
@@ -1070,6 +1070,7 @@ function IdentityAuditEntry({
 export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsModalProps) {
   const { t } = useTranslation();
   const resolvedTheme = useThemeStore((state) => state.resolvedTheme);
+  const showConfirmation = useNotificationStore((state) => state.showConfirmation);
   const { disableControls, editor, updatedText, dirty, onClose, onCopyText, onSave, onChange } =
     props;
 
@@ -1081,6 +1082,31 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
   const editorProvider = (editor?.provider || '').toLowerCase();
   const isClaudeProvider = editorProvider === 'claude' || managedHeaderPolicyProvider === 'claude';
   const isCodexProvider = editorProvider === 'codex' || managedHeaderPolicyProvider === 'codex';
+  // codex `fast` 开关：关→开有额度权衡（约 2.2x 周额度换约 1.5x 速度），复用全局
+  // 确认弹窗（useNotificationStore.showConfirmation），确认后才真正写入 fast=true；
+  // 关闭不需要确认，直接写 fast=false。
+  const handleFastToggle = (nextEnabled: boolean) => {
+    if (!nextEnabled) {
+      onChange('fast', false);
+      return;
+    }
+    if (editor?.fast) return;
+    showConfirmation({
+      title: t('auth_files.account_settings_fast_confirm_title', {
+        defaultValue: 'Enable fast mode?',
+      }),
+      message: t('auth_files.account_settings_fast_confirm_message', {
+        defaultValue:
+          'Enabling fast mode consumes this account’s weekly quota about 2.2x faster in exchange for about 1.5x faster generation and quicker first-token response. Enable it?',
+      }),
+      confirmText: t('auth_files.account_settings_fast_confirm_ok', {
+        defaultValue: 'Enable fast mode',
+      }),
+      cancelText: t('common.cancel'),
+      variant: 'primary',
+      onConfirm: () => onChange('fast', true),
+    });
+  };
   const isClaudeManagedPolicy =
     isClaudeProvider || (editor?.clientVersionObservations || []).length > 0;
   const identityModelStrategy = isClaudeManagedPolicy
@@ -1411,6 +1437,33 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
                       })}
                     </div>
                   </div>
+
+                  {/* codex `fast`（service_tier=priority）开关：仅对 codex 账号渲染。 */}
+                  {isCodexProvider && (
+                    <div className={styles.toggleCard} data-testid="account-settings-fast-card">
+                      <div className={styles.toggleCardTop}>
+                        <label>
+                          {t('auth_files.account_settings_fast_label', {
+                            defaultValue: 'Fast mode',
+                          })}
+                        </label>
+                        <ToggleSwitch
+                          checked={editor.fast}
+                          disabled={disableControls || editor.saving}
+                          ariaLabel={t('auth_files.account_settings_fast_label', {
+                            defaultValue: 'Fast mode',
+                          })}
+                          onChange={handleFastToggle}
+                        />
+                      </div>
+                      <div className="hint">
+                        {t('auth_files.account_settings_fast_hint', {
+                          defaultValue:
+                            'Codex fast mode (service_tier=priority) trades roughly 2.2x weekly quota consumption for roughly 1.5x faster generation and quicker first-token response. Leave off unless this account can afford the higher burn.',
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <Input

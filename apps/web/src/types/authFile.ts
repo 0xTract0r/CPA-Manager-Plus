@@ -158,6 +158,11 @@ export interface AuthFileAccountSettings {
   managed_headers: AuthFileHeaderMap;
   extra_headers: AuthFileHeaderMap;
   refresh_enabled: boolean;
+  /**
+   * 迁移自 cpa fork：该账号是否启用 codex `fast`（service_tier=priority）。
+   * `fast:true` = 以约 2.2x 的周额度消耗换约 1.5x 的生成速度；仅对 codex 账号有意义。
+   */
+  fast?: boolean;
   transport_profile: string | Record<string, unknown> | null;
   tls_profile: string | Record<string, unknown> | null;
   runtime_profile?: Record<string, unknown> | null;
@@ -192,6 +197,8 @@ export interface AuthFileAccountSettingsPatchRequest {
   disabled: boolean;
   extra_headers: AuthFileHeaderMap;
   refresh_enabled: boolean;
+  /** 该账号是否启用 codex `fast`（service_tier=priority）；仅对 codex 账号有意义。 */
+  fast?: boolean;
   transport_profile: string | Record<string, unknown> | null;
   tls_profile: string | Record<string, unknown> | null;
 }
