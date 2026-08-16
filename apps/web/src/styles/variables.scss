@@ -50,12 +50,10 @@ $breakpoint-mobile: 768px;
 $breakpoint-tablet: 1024px;
 $breakpoint-desktop: 1280px;
 
-// 中等（tablet）布局区间边界（farm 设计系统收敛 E2）：
-// - 下界含 768（$breakpoint-tablet-min 与 mobile 共享 768 边界；768 仍由 mobile
-//   收口，各消费文件 tablet 块均声明在 mobile 之前、按源序让位，观感不变）。
-// - 上界扩到 1180，补齐 1025–1180「回退基础/桌面布局仍溢出」死区，与 desktop
-//   起点首尾相接。详见 mixins.scss @mixin tablet 注释。
-$breakpoint-tablet-min: $breakpoint-mobile;
+// farm 中等视口上界（farm 设计系统收敛）：farm 组件 @include farm-tablet 与
+// FarmOverviewBar 的 scoped @media 用它把覆盖上界扩到 1180，补齐 1025–1180
+// 「回退桌面布局仍溢出」死区，与 desktop 起点首尾相接。共享 @mixin tablet 仍用
+// $breakpoint-tablet(1024)，非农场页不受影响。详见 mixins.scss @mixin farm-tablet 注释。
 $breakpoint-tablet-max: 1180px;
 
 // Z-index

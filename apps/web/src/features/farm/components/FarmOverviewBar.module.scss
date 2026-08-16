@@ -19,15 +19,16 @@
 // KPI 网格列数按视口分档：481–1180px：3×2；≤480：2×3；>1180：基础 6 列
 // （1440 桌面按设计走这条）。
 //
-// 本网格仍用自己 scoped 的 @media 而非共享 `tablet` mixin：3 列区间下界要到
-// 481px（≤480 才切 2 列），而共享 mixin 下界是 768（$breakpoint-tablet-min），
-// 覆盖不到 481–767 这段——若改用 mixin，481–767 会落回基础 6 列被
-// `.dashboard { overflow-x: clip }` 静默裁切。上界与共享 mixin 一致取
-// $breakpoint-tablet-max(1180)：实测 1025px 处 farm-first-screen
+// 本网格仍用自己 scoped 的 @media 而非任何共享 mixin：3 列区间下界要到
+// 481px（≤480 才切 2 列），而共享 `tablet` / 农场 `farm-tablet` mixin 下界都是
+// 769，覆盖不到 481–767 这段——若改用 mixin，481–767 会落回基础 6 列被
+// `.dashboard { overflow-x: clip }` 静默裁切。上界取 $breakpoint-tablet-max(1180)，
+// 与农场专用 `farm-tablet` mixin 一致：实测 1025px 处 farm-first-screen
 // scrollWidth−clientWidth 溢出 12px、1115px 才归零，1180 在临界值上留安全
 // 余量并与桌面 6 列（>1180）首尾相接，不再落回未经验证的基础 6 列。
-// （E2 已把这条上界死区在共享 mixin 源头一并修掉，见 mixins.scss @mixin
-// tablet；本网格因需要更低的 481 下界，继续保留 scoped @media。）
+// （农场 1025–1180 死区由农场专用 `farm-tablet` mixin(769–1180) 覆盖；共享
+// `tablet` mixin 保持 main 原值 769–1024 不动，以免影响非农场页 Logs/AuthFiles；
+// 本网格因需要更低的 481 下界，继续保留 scoped @media。）
 @media (min-width: 481px) and (max-width: #{$breakpoint-tablet-max}) {
   .kpiRow {
     grid-template-columns: repeat(3, minmax(0, 1fr));

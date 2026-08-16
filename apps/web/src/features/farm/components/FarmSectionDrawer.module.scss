@@ -59,7 +59,7 @@
   }
 }
 
-@include tablet {
+@include farm-tablet {
   .drawer {
     width: min(94vw, calc(100vw - #{$spacing-lg} * 2));
   }
