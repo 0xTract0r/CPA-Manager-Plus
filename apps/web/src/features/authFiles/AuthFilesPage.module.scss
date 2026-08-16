@@ -1454,6 +1454,96 @@
   font-variant-numeric: tabular-nums;
 }
 
+// Phase 2 账号级速度读数（中位首 token · 耗时 · TPS）。复用卡片既有 meta/status 视觉语言，
+// 不新造样式框架：label 用 tertiary、value 用 secondary + tabular-nums，窄卡换行不横向溢出。
+.speedReadings {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.speedReadingsCompact {
+  gap: 2px;
+}
+
+.speedReadingsHeader {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.speedReadingsLabel {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.speedReadingsWindow {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.speedReadingsGrid {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 12px;
+  min-width: 0;
+}
+
+.speedReadingsCompact .speedReadingsGrid {
+  gap: 4px 8px;
+}
+
+.speedReadingItem {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+}
+
+.speedReadingItemLabel {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.speedReadingItemValue {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.speedReadingUnit {
+  margin-left: 2px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+}
+
+.speedReadingsNote {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.speedReadingsEmpty {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+}
+
 .statusPanelCompact {
   gap: 3px;
 }

@@ -1,0 +1,192 @@
+@use '../../../styles/variables' as *;
+
+// Phase 3「极速模式收益与代价」面板：跨 fast 开关卡片下方全宽展示，与 toggleCard 同
+// 视觉语言（边框/圆角/半透明底），但独占一整行（信息密集：对比表 + runway + sparkline）。
+.panel {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 65%, transparent);
+  border-radius: $radius-sm;
+  background-color: color-mix(in srgb, var(--bg-primary) 70%, transparent);
+}
+
+.panelHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: $spacing-sm;
+
+  strong {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 600;
+  }
+}
+
+.panelWindow {
+  color: var(--text-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px dashed color-mix(in srgb, var(--border-color) 45%, transparent);
+
+  &:first-of-type {
+    border-top: none;
+    padding-top: 0;
+  }
+}
+
+.blockTitle {
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.emptyLine {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+// ===== A. 对比表 =====
+.compareGrid {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.compareHead,
+.compareRow {
+  display: grid;
+  grid-template-columns: minmax(72px, 1.1fr) minmax(56px, 1fr) minmax(56px, 1fr) minmax(96px, 1.3fr);
+  gap: $spacing-sm;
+  align-items: center;
+  min-width: 0;
+}
+
+.compareHead {
+  color: var(--text-secondary);
+  font-size: 11px;
+  padding-bottom: 2px;
+
+  span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.compareRow {
+  padding: 3px 0;
+  color: var(--text-primary);
+
+  span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  & + .compareRow {
+    border-top: 1px solid color-mix(in srgb, var(--border-color) 30%, transparent);
+  }
+}
+
+.compareMetric,
+.compareMetricHead {
+  color: var(--text-secondary);
+}
+
+.compareFastValue {
+  color: var(--primary-color, #409eff);
+  font-weight: 600;
+}
+
+.deltaGood {
+  color: var(--success-color, #67c23a);
+  font-weight: 600;
+}
+
+.deltaBad {
+  color: var(--danger-color, #f56c6c);
+  font-weight: 600;
+}
+
+.deltaNeutral {
+  color: var(--text-secondary);
+}
+
+.deltaWord {
+  color: var(--text-secondary);
+  font-weight: 400;
+  font-size: 11px;
+}
+
+// ===== B. runway =====
+.runwayBody {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.runwayHeadline {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.runwayMeta {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.runwaySafe {
+  color: var(--success-color, #67c23a);
+  font-size: 12px;
+}
+
+// ===== C. sparkline =====
+.sparklineBody {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sparklineCaption {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+// ===== 单段回退 =====
+.singleSegment {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.singleSegmentReadings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $spacing-sm;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.singleSegmentTag {
+  color: var(--primary-color, #409eff);
+  font-weight: 600;
+}

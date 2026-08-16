@@ -51,6 +51,7 @@ import {
   supportsAuthFileReauthCallback,
   type AuthFileReauthState,
 } from '@/features/authFiles/hooks/useAuthFilesReauth';
+import { AccountSpeedReadings } from '@/features/authFiles/components/AccountSpeedReadings';
 import { AuthFileQuotaSection } from '@/features/authFiles/components/AuthFileQuotaSection';
 import { AuthFilesReauthHistoryPanel } from '@/features/authFiles/components/AuthFilesReauthHistoryPanel';
 import { AuthFilesStatusHistoryPanel } from '@/features/authFiles/components/AuthFilesStatusHistoryPanel';
@@ -407,6 +408,13 @@ export function AuthFileCard(props: AuthFileCardProps) {
   // 仅对 codex 账号展示；复用现有 codexStatusBadge/info pill 样式，不新造样式体系。
   const inlineAccountSettings = file.account_settings ?? file.accountSettings;
   const isFastEnabled = resolvedProvider === 'codex' && inlineAccountSettings?.fast === true;
+
+  // Phase 2 账号级速度读数（中位首 token · 耗时 · TPS）。codex 账号优先展示；其它 provider
+  // 只要有近期成功请求（success 计数或 HEALTH 面板成功数）也展示，从而把 per-account
+  // analytics 拉取限制在「可能有数据」的活跃账号上，避免对全部账号盲发请求。
+  const isCodexAccount = resolvedProvider === 'codex';
+  const hasRecentActivity = fileStats.success > 0 || statusData.totalSuccess > 0;
+  const showSpeedReadings = !isRuntimeOnly && (isCodexAccount || hasRecentActivity);
 
   return (
     <div
@@ -783,6 +791,14 @@ export function AuthFileCard(props: AuthFileCardProps) {
                       ? (claudeDisplayQuota ?? null)
                       : undefined
                 }
+              />
+            )}
+
+            {showSpeedReadings && (
+              <AccountSpeedReadings
+                accountName={file.name}
+                authIndex={authIndexKey}
+                compact={compact}
               />
             )}
           </div>

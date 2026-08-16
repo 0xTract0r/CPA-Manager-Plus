@@ -39,6 +39,7 @@ import type {
 } from '@/types/authFile';
 import { useNotificationStore, useThemeStore } from '@/stores';
 import { formatInUtc8 } from '@/utils/format';
+import { AccountFastImpactPanel } from './AccountFastImpactPanel';
 import styles from './AuthFilesAccountSettingsModal.module.scss';
 
 /**
@@ -1447,29 +1448,38 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
 
                   {/* codex `fast`（service_tier=priority）开关：仅对 codex 账号渲染。 */}
                   {isCodexProvider && (
-                    <div className={styles.toggleCard} data-testid="account-settings-fast-card">
-                      <div className={styles.toggleCardTop}>
-                        <label>
-                          {t('auth_files.account_settings_fast_label', {
-                            defaultValue: 'Fast mode',
+                    <>
+                      <div className={styles.toggleCard} data-testid="account-settings-fast-card">
+                        <div className={styles.toggleCardTop}>
+                          <label>
+                            {t('auth_files.account_settings_fast_label', {
+                              defaultValue: 'Fast mode',
+                            })}
+                          </label>
+                          <ToggleSwitch
+                            checked={editor.fast}
+                            disabled={disableControls || editor.saving}
+                            ariaLabel={t('auth_files.account_settings_fast_label', {
+                              defaultValue: 'Fast mode',
+                            })}
+                            onChange={handleFastToggle}
+                          />
+                        </div>
+                        <div className="hint">
+                          {t('auth_files.account_settings_fast_hint', {
+                            defaultValue:
+                              'Codex fast mode (service_tier=priority) trades roughly 2.2x weekly quota consumption for roughly 1.5x faster generation and quicker first-token response. Leave off unless this account can afford the higher burn.',
                           })}
-                        </label>
-                        <ToggleSwitch
-                          checked={editor.fast}
-                          disabled={disableControls || editor.saving}
-                          ariaLabel={t('auth_files.account_settings_fast_label', {
-                            defaultValue: 'Fast mode',
-                          })}
-                          onChange={handleFastToggle}
-                        />
+                        </div>
                       </div>
-                      <div className="hint">
-                        {t('auth_files.account_settings_fast_hint', {
-                          defaultValue:
-                            'Codex fast mode (service_tier=priority) trades roughly 2.2x weekly quota consumption for roughly 1.5x faster generation and quicker first-token response. Leave off unless this account can afford the higher burn.',
-                        })}
-                      </div>
-                    </div>
+                      {/* Phase 3：fast vs default 前后对比 + 配额 runway + TTFT 切换点
+                          sparkline。就摆在决策点（fast 开关）旁；仅 codex、弹窗打开且
+                          非加载态时挂载并一次性拉取数据。 */}
+                      <AccountFastImpactPanel
+                        accountName={editor.fileName}
+                        enabled={!editor.loading}
+                      />
+                    </>
                   )}
 
                   {/* TR8：账号级农场纳管开关（farm_enrolled）。老号默认 false（未纳管·

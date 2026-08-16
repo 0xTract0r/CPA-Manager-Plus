@@ -1,0 +1,42 @@
+// TTFT 切换点 sparkline（Phase 3-C）描边：
+//  - 中性/default 段用次级文字色（无 fast 切换或切换前）
+//  - priority 段用主题强调色（开 fast 后，视觉上「变色 + 下降」）
+//  - 切换点竖线 + 圆点用强调色标注「开 fast 那一刻」
+.sparkline {
+  display: block;
+  overflow: visible;
+}
+
+.strokeNeutral {
+  stroke: var(--text-secondary);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.strokeDefault {
+  stroke: color-mix(in srgb, var(--text-secondary) 85%, transparent);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.strokePriority {
+  stroke: var(--primary-color, #409eff);
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.markerLine {
+  stroke: var(--primary-color, #409eff);
+  stroke-width: 1;
+  stroke-dasharray: 3 2;
+  opacity: 0.75;
+}
+
+.markerDot {
+  fill: var(--primary-color, #409eff);
+  stroke: var(--bg-primary, #fff);
+  stroke-width: 1;
+}
