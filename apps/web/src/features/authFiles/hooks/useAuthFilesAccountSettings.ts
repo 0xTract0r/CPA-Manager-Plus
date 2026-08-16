@@ -34,6 +34,7 @@ export type AccountSettingsEditorField =
   | 'note'
   | 'disabled'
   | 'refreshEnabled'
+  | 'fast'
   | 'extraHeadersText'
   | 'transportProfileText'
   | 'tlsProfileText';
@@ -90,6 +91,8 @@ export type AccountSettingsEditorState = {
   note: string;
   disabled: boolean;
   refreshEnabled: boolean;
+  /** 该账号是否启用 codex `fast`（service_tier=priority）；仅对 codex 账号生效。 */
+  fast: boolean;
   managedHeaders: AuthFileHeaders;
   managedHeaderState: AuthFileManagedHeaderState | null;
   /** 只读脱敏合成 device_id；为空表示后端未派生（omitempty 缺省）。 */
@@ -226,6 +229,7 @@ const normalizeSettings = (
   note: (settings?.note || '').trim() || null,
   disabled: settings?.disabled === true,
   refresh_enabled: settings?.refresh_enabled !== false,
+  fast: settings?.fast === true,
   extra_headers: settings?.extra_headers || {},
   transport_profile: settings?.transport_profile || null,
   tls_profile: settings?.tls_profile || null,
@@ -257,6 +261,7 @@ const buildPatchRequest = (
       note: editor.note.trim() || null,
       disabled: editor.disabled,
       refresh_enabled: editor.refreshEnabled,
+      fast: editor.fast,
       extra_headers: parsedHeaders.value || {},
       transport_profile: parsedTransportProfile.value,
       tls_profile: parsedTLSProfile.value,
@@ -309,6 +314,7 @@ export function useAuthFilesAccountSettings(
       note: settings?.note || '',
       disabled: settings?.disabled === true,
       refreshEnabled: settings?.refresh_enabled !== false,
+      fast: settings?.fast === true,
       managedHeaders: settings?.managed_headers || {},
       managedHeaderState: settings?.managed_header_state || null,
       syntheticDeviceId:
@@ -354,6 +360,7 @@ export function useAuthFilesAccountSettings(
       note: inlineSettings?.note || '',
       disabled: inlineSettings?.disabled === true,
       refreshEnabled: inlineSettings?.refresh_enabled !== false,
+      fast: inlineSettings?.fast === true,
       managedHeaders: inlineSettings?.managed_headers || {},
       managedHeaderState: inlineSettings?.managed_header_state || null,
       syntheticDeviceId:
@@ -408,6 +415,7 @@ export function useAuthFilesAccountSettings(
       if (field === 'note') return { ...prev, note: String(value) };
       if (field === 'disabled') return { ...prev, disabled: Boolean(value) };
       if (field === 'refreshEnabled') return { ...prev, refreshEnabled: Boolean(value) };
+      if (field === 'fast') return { ...prev, fast: Boolean(value) };
       if (field === 'extraHeadersText') {
         const extraHeadersText = String(value);
         const { errorKey } = parseHeadersText(extraHeadersText);
