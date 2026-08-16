@@ -166,7 +166,7 @@
   border: 1px solid var(--border-color);
   background: var(--bg-tertiary);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: $fs-2xs;
   font-weight: 600;
   // 双列布局下口径名较长（含英文 scope 常量），允许换行而非 nowrap 溢出列宽，
   // 消除窄列横向溢出（scope 名不截断，保持可读）。
@@ -185,7 +185,7 @@
   background: rgba($primary-color, 0.1);
   border: 1px solid rgba($primary-color, 0.3);
   color: var(--text-primary);
-  font-size: 11px;
+  font-size: $fs-2xs;
   font-weight: 600;
 }
 
@@ -200,7 +200,7 @@
   border: 1px dashed var(--border-color);
   background: var(--bg-tertiary);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: $fs-2xs;
   font-weight: 500;
 }
 
@@ -314,7 +314,7 @@
         content: attr(data-label);
         display: block;
         margin-bottom: 3px;
-        font-size: 11px;
+        font-size: $fs-2xs;
         font-weight: 600;
         letter-spacing: 0.03em;
         text-transform: uppercase;

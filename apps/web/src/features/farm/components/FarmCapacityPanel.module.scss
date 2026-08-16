@@ -60,7 +60,7 @@
 }
 
 .metricLabel {
-  font-size: 11px;
+  font-size: $fs-2xs;
   font-weight: 600;
   letter-spacing: 0.03em;
   text-transform: uppercase;
@@ -81,7 +81,7 @@
 // 指标下方独立说明行（瓶颈标注 / 未覆盖代理数）：小字次要色，另起一行。
 .metricNote {
   align-self: flex-start;
-  font-size: 11px;
+  font-size: $fs-2xs;
   line-height: 1.4;
   color: var(--text-secondary);
 }
@@ -175,7 +175,7 @@
 }
 
 .funnelStageLabel {
-  font-size: 11px;
+  font-size: $fs-2xs;
   font-weight: 600;
   text-align: center;
   color: var(--text-secondary);
@@ -268,7 +268,7 @@
   border: 1px solid var(--border-color);
   background: var(--bg-tertiary);
   color: var(--text-primary);
-  font-size: 11px;
+  font-size: $fs-2xs;
   white-space: nowrap;
 }
 
