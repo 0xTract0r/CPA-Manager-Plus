@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { farmApi, type FarmAlertsQuery } from '@/services/api/farm';
-import { useFarmStore } from '@/stores';
 import type { FarmAlertEntry } from '@/types/farm';
 import { FARM_ALERTS_POLL_INTERVAL_MS } from '@/utils/constants';
 import { useInterval } from '@/hooks/useInterval';
@@ -24,18 +23,11 @@ export interface UseFarmAlertsResult {
  */
 export function useFarmAlerts(query?: FarmAlertsQuery): UseFarmAlertsResult {
   const { t } = useTranslation();
-  const isConfigured = useFarmStore((state) => state.isConfigured);
   const [alerts, setAlerts] = useState<FarmAlertEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   const reload = useCallback(async () => {
-    if (!isConfigured) {
-      setAlerts([]);
-      setError('');
-      setLoading(false);
-      return;
-    }
     setError('');
     try {
       const data = await farmApi.getAlerts(query);
@@ -47,7 +39,7 @@ export function useFarmAlerts(query?: FarmAlertsQuery): UseFarmAlertsResult {
       setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConfigured, t, query?.window, query?.status]);
+  }, [t, query?.window, query?.status]);
 
   useEffect(() => {
     setLoading(true);
@@ -56,7 +48,7 @@ export function useFarmAlerts(query?: FarmAlertsQuery): UseFarmAlertsResult {
 
   useInterval(() => {
     reload();
-  }, isConfigured ? FARM_ALERTS_POLL_INTERVAL_MS : null);
+  }, FARM_ALERTS_POLL_INTERVAL_MS);
 
   return { alerts, loading, error, reload };
 }

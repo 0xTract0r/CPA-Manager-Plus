@@ -17,6 +17,8 @@ import (
 
 type Service struct {
 	managerConfigService *managerconfig.Service
+	farmOrchestratorURL  string
+	farmOrchestratorKey  string
 }
 
 const cpaPluginResourcePrefix = "/v0/resource/plugins"
@@ -43,8 +45,12 @@ var cpaBuiltinManagementPathHeads = map[string]struct{}{
 	"usage-statistics-enabled":  {},
 }
 
-func New(managerConfigService *managerconfig.Service) *Service {
-	return &Service{managerConfigService: managerConfigService}
+func New(managerConfigService *managerconfig.Service, farmOrchestratorURL string, farmOrchestratorKey string) *Service {
+	return &Service{
+		managerConfigService: managerConfigService,
+		farmOrchestratorURL:  farmOrchestratorURL,
+		farmOrchestratorKey:  farmOrchestratorKey,
+	}
 }
 
 func (s *Service) ProxyManagement(w http.ResponseWriter, r *http.Request, writeError func(http.ResponseWriter, int, error)) {
@@ -266,6 +272,44 @@ func (s *Service) ProxyModelList(w http.ResponseWriter, r *http.Request, writeEr
 		req.URL.Scheme = target.Scheme
 		req.URL.Host = target.Host
 		req.Host = target.Host
+	}
+	proxy.ModifyResponse = stripUpstreamCORSHeadersResponse
+	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
+		writeError(w, http.StatusBadGateway, err)
+	}
+	proxy.ServeHTTP(w, r)
+}
+
+// ProxyFarm 把 /api/farm/* 反向代理到农场编排器。农场 key 只在服务端 Director
+// 里注入，绝不进浏览器；调用方(cpamp admin key)鉴权由上层控制器完成，本方法
+// 只负责在已鉴权前提下转发并注入 farm 凭据。
+//
+// 目标 URL 来自 config(farmOrchestratorURL)，若为空说明本实例未接入农场编排器，
+// 直接返回 503 而非 panic。路径不做 rewrite：两端前缀都是 /api/farm/，保持
+// req.URL.Path 原样透传。上游自带的 CORS 头由 ModifyResponse 剥离，避免和
+// manager-server 中间件已写入的 CORS 头重复叠加。
+func (s *Service) ProxyFarm(w http.ResponseWriter, r *http.Request, writeError func(http.ResponseWriter, int, error)) {
+	if strings.TrimSpace(s.farmOrchestratorURL) == "" {
+		writeError(w, http.StatusServiceUnavailable, errors.New("farm proxy not configured"))
+		return
+	}
+	target, err := url.Parse(s.farmOrchestratorURL)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	originalDirector := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		originalDirector(req)
+		req.URL.Scheme = target.Scheme
+		req.URL.Host = target.Host
+		req.Host = target.Host
+		// 先删除调用方传入的任何 Authorization(cpamp admin key)，再注入服务端
+		// 持有的 farm key，防止把 cpamp 凭据透传给农场编排器，也防止 farm key
+		// 被调用方伪造覆盖。
+		req.Header.Del("Authorization")
+		req.Header.Set("Authorization", "Bearer "+s.farmOrchestratorKey)
 	}
 	proxy.ModifyResponse = stripUpstreamCORSHeadersResponse
 	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {

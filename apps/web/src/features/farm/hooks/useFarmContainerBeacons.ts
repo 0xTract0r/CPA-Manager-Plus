@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { farmApi } from '@/services/api/farm';
-import { useFarmStore } from '@/stores';
 import type { FarmContainerBeaconView } from '@/types/farm';
 
 // 详情抽屉遥测时间线默认拉取条数：后端上限 500、默认 50，这里显式取 50 与
@@ -19,11 +18,11 @@ export interface UseFarmContainerBeaconsResult {
 /**
  * 每容器遥测 beacon 数据源（用户⑤「每容器遥测内容抓取」）：
  * GET /api/farm/containers/{id}/beacons?limit=。containerId=null（抽屉未打开）
- * 或农场未配置时不发请求、返回空列表。
+ * 时不发请求、返回空列表。
  *
- * 与 useFarmContainerDetail 一致的取舍：只在 containerId / isConfigured 变化时
- * 拉取一次（抽屉是短生命周期视图，不常驻），不接入轮询——遥测 beacon 不是
- * 高频刷新的运行态指标，需要最新数据时用户重开抽屉或调用 reload 即可。
+ * 与 useFarmContainerDetail 一致的取舍：只在 containerId 变化时拉取一次（抽屉是
+ * 短生命周期视图，不常驻），不接入轮询——遥测 beacon 不是高频刷新的运行态指标，
+ * 需要最新数据时用户重开抽屉或调用 reload 即可。
  *
  * **诚实边界**：这些 beacon 是容器「自报 / 声明」内容（source ∈
  * declared/self-report/unknown），只证明上报管道连通，不构成反关联 on-wire
@@ -38,13 +37,12 @@ export function useFarmContainerBeacons(
   limit: number = FARM_CONTAINER_BEACONS_DEFAULT_LIMIT
 ): UseFarmContainerBeaconsResult {
   const { t } = useTranslation();
-  const isConfigured = useFarmStore((state) => state.isConfigured);
   const [beacons, setBeacons] = useState<FarmContainerBeaconView[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   const reload = useCallback(async () => {
-    if (!isConfigured || !containerId) {
+    if (!containerId) {
       setBeacons([]);
       setError('');
       setLoading(false);
@@ -63,12 +61,12 @@ export function useFarmContainerBeacons(
     } finally {
       setLoading(false);
     }
-  }, [containerId, isConfigured, limit, t]);
+  }, [containerId, limit, t]);
 
   useEffect(() => {
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [containerId, isConfigured, limit]);
+  }, [containerId, limit]);
 
   return { beacons, loading, error, reload };
 }

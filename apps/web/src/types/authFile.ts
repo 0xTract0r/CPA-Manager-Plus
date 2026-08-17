@@ -225,7 +225,11 @@ export interface AuthFileAccountSettingsPatchRequest {
   refresh_enabled: boolean;
   /** 该账号是否启用 codex `fast`（service_tier=priority）；仅对 codex 账号有意义。 */
   fast?: boolean;
-  farm_enrolled: boolean;
+  /**
+   * 农场纳管开关；农场是 Claude 专属能力，仅对 provider=claude 账号有意义。
+   * 非 claude 账号省略该字段（后端 `*bool` 指针 nil=不改），避免写入无意义值。
+   */
+  farm_enrolled?: boolean;
   transport_profile: string | Record<string, unknown> | null;
   tls_profile: string | Record<string, unknown> | null;
 }

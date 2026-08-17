@@ -40,6 +40,8 @@ const DRAWER_TRANSITION_MS = 370;
 export function FarmDashboard() {
   const { t } = useTranslation();
   const isConfigured = useFarmStore((state) => state.isConfigured);
+  const orchestratorBaseUrl = useFarmStore((state) => state.orchestratorBaseUrl);
+  const farmAdminKey = useFarmStore((state) => state.farmAdminKey);
   const { containers, setContainers, loading, error, reload } = useFarmContainers();
   const { bindingPending, unbindingContainerId, bind, unbind } = useFarmBindings({
     setContainers,
@@ -47,9 +49,35 @@ export function FarmDashboard() {
   });
   const { retiringContainerId, retire } = useFarmRetire({ setContainers, reload });
 
+  // 默认零配置模式（未设置高级覆盖）下农场页始终可用，不再需要"未配置"空态。
+  // 只有 operator 显式填了高级覆盖（连别的编排器）但配置无效或连不上时，才
+  // 用"未就绪"卡片替换整页内容并引导去检查设置。
+  const hasOverride = Boolean(orchestratorBaseUrl || farmAdminKey);
+  const overrideUnhealthy = hasOverride && (!isConfigured || Boolean(error));
+
+  // 头部连接徽标必须如实反映后端真实健康，不再在同源模式下恒显绿色（去假绿）。
+  // 同源模式从主容器查询（useFarmContainers）已有的 loading/error 状态派生，不新发请求：
+  //   - loading（首次加载未回）                                   → 连接中（中性 muted）
+  //   - error（服务端反代 503 / 编排器 502 / 鉴权 401 / 网络失败）→ 代理不可用（红），原因经 title 暴露
+  //   - 成功                                                     → 同源代理已连通（绿）
+  // 高级覆盖模式（override）沿用既有 ready/error 逻辑不变。
+  const connectionBadge: {
+    variant: 'success' | 'warning' | 'error' | 'muted';
+    label: string;
+    reason?: string;
+  } = hasOverride
+    ? overrideUnhealthy
+      ? { variant: 'warning', label: t('farm.config.status_override_error') }
+      : { variant: 'success', label: t('farm.config.status_override_ready') }
+    : error
+      ? { variant: 'error', label: t('farm.config.status_same_origin_error'), reason: error }
+      : loading
+        ? { variant: 'muted', label: t('farm.config.status_same_origin_loading') }
+        : { variant: 'success', label: t('farm.config.status_same_origin') };
+
   const [activeDrawer, setActiveDrawer] = useState<FarmSection | null>(null);
   const [selectedContainer, setSelectedContainer] = useState<FarmContainerView | null>(null);
-  const [containerFilter, setContainerFilter] = useState<FarmContainerFilter>('active');
+  const [containerFilter, setContainerFilter] = useState<FarmContainerFilter>('all');
   const [containerScrollTop, setContainerScrollTop] = useState(0);
   const [lastContainerId, setLastContainerId] = useState<string | null>(null);
   const [bindModalOpen, setBindModalOpen] = useState(false);
@@ -201,14 +229,15 @@ export function FarmDashboard() {
         <div className={styles.connectionCopy}>
           <span className={styles.connectionLabel}>{t('farm.ia.connectionStatus')}</span>
           <span
-            className={`status-badge ${isConfigured ? 'success' : 'warning'} ${styles.connectionBadge}`}
+            className={`status-badge ${connectionBadge.variant} ${styles.connectionBadge}`}
             data-testid="farm-header-config-status"
+            title={connectionBadge.reason}
           >
-            {isConfigured ? t('farm.config.status_ready') : t('farm.config.status_missing')}
+            {connectionBadge.label}
           </span>
         </div>
         <Button
-          variant={isConfigured ? 'secondary' : 'primary'}
+          variant={overrideUnhealthy ? 'primary' : 'secondary'}
           size="sm"
           onClick={() => openDrawer('config')}
           aria-haspopup="dialog"
@@ -216,11 +245,11 @@ export function FarmDashboard() {
           data-testid="farm-config-trigger"
         >
           <IconSettings size={16} />
-          {isConfigured ? t('farm.ia.connectionSettings') : t('farm.ia.configureNow')}
+          {t('farm.ia.connectionSettings')}
         </Button>
       </section>
 
-      {!isConfigured ? (
+      {overrideUnhealthy ? (
         <Card className={styles.notConfiguredCard}>
           <div data-testid="farm-not-configured">
             <EmptyState

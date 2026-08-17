@@ -2,9 +2,11 @@
  * 农场编排器（Device Farm）类型定义
  *
  * 字段名照抄 services/farm-orchestrator/internal/httpapi/dto.go 与
- * internal/cpa/client.go 的 JSON 契约，不臆造字段。农场编排器是独立后端，
- * 走独立 base URL + 独立 admin key（见 farmClient.ts / useFarmStore.ts），
- * 不复用 CPA 的 /v0/management 契约。
+ * internal/cpa/client.go 的 JSON 契约，不臆造字段。农场编排器是独立后端服务，
+ * 默认零配置走同源 `/api/farm/*` 反代 + cpamp 会话身份，只有显式设置了高级
+ * 覆盖（见 farmClient.ts / useFarmStore.ts）才会改用独立 base URL + 独立
+ * admin key 直连另一个编排器实例；两种模式下响应体本身都不复用 CPA 的
+ * /v0/management 契约。
  */
 
 // GET /api/farm/containers 单条记录的 binding 子结构（dto.go bindingView）

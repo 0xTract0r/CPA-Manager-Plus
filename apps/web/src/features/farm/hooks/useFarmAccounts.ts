@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { farmApi } from '@/services/api/farm';
-import { useFarmStore } from '@/stores';
 import type { FarmAccountEntry, FarmEnv } from '@/types/farm';
 
 export interface UseFarmAccountsResult {
@@ -18,17 +17,11 @@ export interface UseFarmAccountsResult {
  */
 export function useFarmAccounts(env: FarmEnv): UseFarmAccountsResult {
   const { t } = useTranslation();
-  const isConfigured = useFarmStore((state) => state.isConfigured);
   const [accounts, setAccounts] = useState<FarmAccountEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   const reload = useCallback(async () => {
-    if (!isConfigured) {
-      setAccounts([]);
-      setError('');
-      return;
-    }
     setLoading(true);
     setError('');
     try {
@@ -40,7 +33,7 @@ export function useFarmAccounts(env: FarmEnv): UseFarmAccountsResult {
     } finally {
       setLoading(false);
     }
-  }, [env, isConfigured, t]);
+  }, [env, t]);
 
   useEffect(() => {
     reload();

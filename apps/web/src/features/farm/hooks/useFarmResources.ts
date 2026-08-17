@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { farmApi } from '@/services/api/farm';
-import { useFarmStore } from '@/stores';
 import type { FarmResourceContainer, FarmResourceHost } from '@/types/farm';
 
 export interface UseFarmResourcesResult {
@@ -20,20 +19,12 @@ export interface UseFarmResourcesResult {
  */
 export function useFarmResources(): UseFarmResourcesResult {
   const { t } = useTranslation();
-  const isConfigured = useFarmStore((state) => state.isConfigured);
   const [containers, setContainers] = useState<FarmResourceContainer[]>([]);
   const [host, setHost] = useState<FarmResourceHost | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   const reload = useCallback(async () => {
-    if (!isConfigured) {
-      setContainers([]);
-      setHost(null);
-      setError('');
-      setLoading(false);
-      return;
-    }
     setLoading(true);
     setError('');
     try {
@@ -46,7 +37,7 @@ export function useFarmResources(): UseFarmResourcesResult {
     } finally {
       setLoading(false);
     }
-  }, [isConfigured, t]);
+  }, [t]);
 
   useEffect(() => {
     reload();

@@ -38,6 +38,21 @@ func (h *Handler) ModelList(w http.ResponseWriter, r *http.Request) {
 	h.App.ProxyService.ProxyModelList(w, r, response.Error, response.MethodNotAllowed)
 }
 
+// Farm 先验调用方的 cpamp admin key，通过后才把请求交给服务端注入 farm key 的
+// 反向代理。鉴权失败直接 401，请求绝不到达农场编排器，农场 key 也绝不进浏览器。
+func (h *Handler) Farm(w http.ResponseWriter, r *http.Request) {
+	ok, err := h.App.AdminAuthService.VerifyHeader(r.Context(), r.Header.Get("Authorization"))
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, errors.New("invalid admin key"))
+		return
+	}
+	h.App.ProxyService.ProxyFarm(w, r, response.Error)
+}
+
 func (h *Handler) CPAResource(w http.ResponseWriter, r *http.Request) {
 	useSavedManagementKey := true
 	switch r.Method {
