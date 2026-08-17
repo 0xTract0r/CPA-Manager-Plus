@@ -77,6 +77,17 @@ export function AccountSpeedReadings({
         {t('auth_files.speed_readings_label', { defaultValue: 'Speed' })}
       </span>
       <span className={styles.speedReadingsWindow}>{windowLabel}</span>
+      {/* 样本注记只在真正展示读数（ok 态）时随窗口标注同排内联；header 为三态共用，
+          若仅用 sampleCount>0 守卫会在 insufficient 态（有事件但算不出中位）渲染成
+          「数据不足 · N次」的自相矛盾文案，故必须再限定 status==='ok'。 */}
+      {status === 'ok' && sampleCount > 0 && (
+        <span className={styles.speedReadingsNote}>
+          {t('auth_files.speed_readings_sample_note', {
+            count: sampleCount,
+            defaultValue: '· {{count}} reqs',
+          })}
+        </span>
+      )}
     </div>
   );
 
@@ -152,14 +163,6 @@ export function AccountSpeedReadings({
           </span>
         </div>
       </div>
-      {sampleCount > 0 && (
-        <span className={styles.speedReadingsNote}>
-          {t('auth_files.speed_readings_sample_note', {
-            count: sampleCount,
-            defaultValue: '· {{count}} reqs',
-          })}
-        </span>
-      )}
     </div>
   );
 }
