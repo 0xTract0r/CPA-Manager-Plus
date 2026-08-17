@@ -396,7 +396,7 @@ function ClaudeHeaderStrategyPanel({ t }: { t: TranslateFn }) {
       <div className="hint">
         {t('auth_files.account_settings_claude_header_strategy_hint', {
           defaultValue:
-            'Claude does not pin one managed version on the account page. Multiple clients may use the same CPA instance, so concrete versions are shown below as recent current-process observations.',
+            "Claude does not pin one managed version on the account page. Concrete versions are shown below as this account's recent observations, with a shared baseline used only before this account has one of its own.",
         })}
       </div>
     </div>
@@ -439,7 +439,7 @@ function ClaudeClientVersionObservationsPanel({
         <div className={styles.managedHeaderPlainHeader}>
           <span>
             {t('auth_files.account_settings_claude_client_observations_runtime_title', {
-              defaultValue: 'Observed by the current core process',
+              defaultValue: 'Observed for this account (falls back to a shared baseline)',
             })}
           </span>
           <span className={styles.managedHeaderMeta}>
@@ -548,7 +548,7 @@ function ClaudeClientVersionObservationsPanel({
           >
             {t('auth_files.account_settings_claude_client_observations_empty', {
               defaultValue:
-                'No real Claude CLI request has been observed by this core process yet.',
+                'No real Claude CLI request has been observed for this account yet, and no shared baseline is available.',
             })}
           </div>
         )}
@@ -556,7 +556,7 @@ function ClaudeClientVersionObservationsPanel({
       <div className="hint">
         {t('auth_files.account_settings_claude_client_observations_hint', {
           defaultValue:
-            'Claude runtime resolves request version markers from real incoming Claude CLI requests first. This list is recent in-memory observation for this core process, not a fixed per-account managed version and not a complete audit log of every client.',
+            "Claude runtime resolves version markers from real incoming Claude CLI requests first, and records observations separately per account. This list shows this account's own observations by default; it only falls back to a shared cross-account baseline when this account has no observation of its own yet — which is why different accounts can show the same entry before either has a real request, switching to the account's own data as soon as one arrives. It is not a fixed managed version, and not a complete audit log of every client.",
         })}
       </div>
     </div>
