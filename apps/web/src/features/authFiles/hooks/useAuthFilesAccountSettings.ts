@@ -239,7 +239,8 @@ const parseProfileText = (
 
 const normalizeSettings = (
   fileName: string,
-  settings: Partial<AuthFileAccountSettings> | null | undefined
+  settings: Partial<AuthFileAccountSettings> | null | undefined,
+  provider: string
 ): AuthFileAccountSettingsPatchRequest => ({
   name: fileName,
   proxy_url: (settings?.proxy_url || '').trim() || null,
@@ -247,9 +248,12 @@ const normalizeSettings = (
   disabled: settings?.disabled === true,
   refresh_enabled: settings?.refresh_enabled !== false,
   fast: settings?.fast === true,
+  // 农场是 Claude 专属能力：仅对 claude 账号带 farm_enrolled 字段。这里必须与
+  // buildPatchRequest 的省略逻辑保持一致，否则「原始序列化」与「当前序列化」
+  // 会因该字段有无而恒不相等，导致非 claude 账号误判为 dirty。
   // farm_enrolled 默认 false（老号免疫农场治理），与 refresh_enabled 的默认
   // true 语义相反——不能复用同一套「!== false」判断。
-  farm_enrolled: settings?.farm_enrolled === true,
+  ...(provider === 'claude' ? { farm_enrolled: settings?.farm_enrolled === true } : {}),
   extra_headers: settings?.extra_headers || {},
   transport_profile: settings?.transport_profile || null,
   tls_profile: settings?.tls_profile || null,
@@ -274,6 +278,12 @@ const buildPatchRequest = (
     return { request: null, error: parsedTLSProfile.error };
   }
 
+  // 农场是 Claude 专属能力：仅对 claude 账号在保存请求体里带 farm_enrolled；
+  // 非 claude 账号省略该字段（后端 `*bool` 指针 nil=不改），避免给 codex 等
+  // 写入无意义的 farm_enrolled。editor.provider 已由 resolveAuthFileProvider
+  // 归一化为小写。必须与 normalizeSettings 的省略逻辑一致以避免误判 dirty。
+  const isClaudeProvider = editor.provider === 'claude';
+
   return {
     request: {
       name: editor.fileName,
@@ -282,7 +292,7 @@ const buildPatchRequest = (
       disabled: editor.disabled,
       refresh_enabled: editor.refreshEnabled,
       fast: editor.fast,
-      farm_enrolled: editor.farmEnrolled,
+      ...(isClaudeProvider ? { farm_enrolled: editor.farmEnrolled } : {}),
       extra_headers: parsedHeaders.value || {},
       transport_profile: parsedTransportProfile.value,
       tls_profile: parsedTLSProfile.value,
@@ -322,11 +332,12 @@ export function useAuthFilesAccountSettings(
     file: AuthFileItem,
     settings: Partial<AuthFileAccountSettings> | null | undefined
   ) => {
-    const normalizedRequest = normalizeSettings(name, settings);
+    const provider = resolveAuthFileProvider(file, settings);
+    const normalizedRequest = normalizeSettings(name, settings, provider);
     setAccountSettingsEditor({
       fileName: name,
       authIndex: normalizeAuthIndex(file['auth_index'] ?? file.authIndex),
-      provider: resolveAuthFileProvider(file, settings),
+      provider,
       fileInfoText: JSON.stringify(file, null, 2),
       loading: false,
       saving: false,
