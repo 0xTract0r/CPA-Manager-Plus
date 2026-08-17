@@ -364,6 +364,13 @@ export function FarmDashboard() {
         open={activeDrawer === 'containers'}
         title={t('farm.containers.title')}
         onClose={closeDrawer}
+        // 容器池表 10 列，比账号健康表（7 列，见下方 accounts 抽屉注释）更宽，
+        // 默认 1120px 抽屉会把右三列（下次探测预估/绑定账号/操作）横向裁出
+        // 可视区且无明显滚动提示，操作列的绑定/解绑/退役按钮默认不可见不可点
+        // （1440×900 真机实测）。加宽到 1440px 容纳整表；仍超出时由 Table
+        // 内建 .scroll（overflow-x:auto，见 Table.module.scss）兜底横向滚动，
+        // 窄视口由 Modal 的 max-width:100% 与抽屉 tablet/mobile 断点收敛。
+        width={1440}
       >
         <div data-testid="farm-containers-drawer">
           {activeDrawer === 'containers' ? (
