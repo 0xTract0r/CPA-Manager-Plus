@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { farmApi } from '@/services/api/farm';
-import { useFarmStore } from '@/stores';
 import type { FarmUsageItem } from '@/types/farm';
 
 export interface UseFarmUsageResult {
@@ -21,20 +20,12 @@ export interface UseFarmUsageResult {
  */
 export function useFarmUsage(): UseFarmUsageResult {
   const { t } = useTranslation();
-  const isConfigured = useFarmStore((state) => state.isConfigured);
   const [items, setItems] = useState<FarmUsageItem[]>([]);
   const [note, setNote] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   const reload = useCallback(async () => {
-    if (!isConfigured) {
-      setItems([]);
-      setNote('');
-      setError('');
-      setLoading(false);
-      return;
-    }
     setLoading(true);
     setError('');
     try {
@@ -47,7 +38,7 @@ export function useFarmUsage(): UseFarmUsageResult {
     } finally {
       setLoading(false);
     }
-  }, [isConfigured, t]);
+  }, [t]);
 
   useEffect(() => {
     reload();

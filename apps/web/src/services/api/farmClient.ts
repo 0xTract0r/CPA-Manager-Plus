@@ -1,11 +1,17 @@
 /**
  * 农场编排器（Device Farm）独立 Axios 客户端
  *
- * 农场编排器是一个独立后端服务（services/farm-orchestrator），不是 CPA 的一部分：
- * - base URL 独立配置（编排器地址，不是 CPA 的 apiBase，也不拼 /v0/management 前缀）
- * - 鉴权独立：编排器要求 `Authorization: Bearer <FARM_MGMT_KEY>`
- *   （见 services/farm-orchestrator/internal/httpapi/middleware.go），
- *   与 CPA 的 managementKey 无关，不能共用 `@/services/api/client` 单例。
+ * 默认零配置：base URL 留空（''），axios 拼出的请求 URL 就是相对路径
+ * `/api/farm/*`（见 services/api/farm.ts），天然打向当前管理前端同源——由
+ * manager-server 反代到真正的农场编排器后端，operator 不需要手填地址。
+ * 鉴权同样分两档：
+ * - 默认零配置模式（未设置高级覆盖 adminKey）：请求带当前 cpamp 会话的
+ *   `managementKey` 作为 `Authorization: Bearer`（见 useAuthStore.ts），交由
+ *   同源反代身后的农场 handler 校验调用方身份。
+ * - 高级覆盖模式（operator 在 FarmConfigPanel 显式填了 base URL + admin
+ *   key，要直连另一个独立编排器实例）：改带覆盖 adminKey 作为 Bearer
+ *   （编排器自身鉴权见 services/farm-orchestrator/internal/httpapi/
+ *   middleware.go 的 `FARM_MGMT_KEY` 校验），与 cpamp 会话 managementKey 无关。
  * - 401 语义不同：单例 apiClient 遇 401 会 dispatch `unauthorized` 触发整个
  *   管理前端登出（见 client.ts）。农场编排器故障或 admin key 配错只应该让
  *   农场页面本身报错，绝不能把整个 CPA 管理会话登出——因此这里刻意不接入
@@ -14,6 +20,7 @@
 
 import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
 import type { ApiError } from '@/types';
+import { useAuthStore } from '@/stores/useAuthStore';
 import { FARM_REQUEST_TIMEOUT_MS } from '@/utils/constants';
 
 export interface FarmClientConfig {
@@ -75,8 +82,12 @@ class FarmApiClient {
     this.instance.interceptors.request.use(
       (config) => {
         config.baseURL = this.baseUrl;
-        if (this.adminKey) {
-          config.headers.Authorization = `Bearer ${this.adminKey}`;
+        // 高级覆盖 adminKey 优先；否则回落到当前 cpamp 会话的 managementKey，
+        // 使默认零配置模式下打向同源 /api/farm/* 的请求也带有效身份。两种模式
+        // 二选一，不叠加发送。
+        const bearerKey = this.adminKey || useAuthStore.getState().managementKey;
+        if (bearerKey) {
+          config.headers.Authorization = `Bearer ${bearerKey}`;
         }
         return config;
       },
@@ -97,8 +108,15 @@ class FarmApiClient {
     this.adminKey = config.adminKey || '';
   }
 
+  /**
+   * 默认零配置模式（baseUrl / adminKey 均未覆盖）始终视为"已就绪"——请求打同源
+   * `/api/farm/*`，鉴权走 cpamp 会话 managementKey，不需要 operator 手填任何值。
+   * 高级覆盖模式下要求 baseUrl 与 adminKey 同时填齐，缺一视为未就绪（避免半覆盖
+   * 态悄悄把请求打到错误地址、或带错的 Bearer key）。
+   */
   isConfigured(): boolean {
-    return Boolean(this.baseUrl && this.adminKey);
+    const hasOverride = Boolean(this.baseUrl) || Boolean(this.adminKey);
+    return hasOverride ? Boolean(this.baseUrl && this.adminKey) : true;
   }
 
   async get<T = unknown>(url: string, config?: AxiosRequestConfig): Promise<T> {

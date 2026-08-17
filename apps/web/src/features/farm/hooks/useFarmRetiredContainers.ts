@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { farmApi } from '@/services/api/farm';
-import { useFarmStore } from '@/stores';
 import type { FarmContainerView } from '@/types/farm';
 
 export interface UseFarmRetiredContainersResult {
@@ -22,13 +21,12 @@ export interface UseFarmRetiredContainersResult {
  */
 export function useFarmRetiredContainers(enabled: boolean): UseFarmRetiredContainersResult {
   const { t } = useTranslation();
-  const isConfigured = useFarmStore((state) => state.isConfigured);
   const [containers, setContainers] = useState<FarmContainerView[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   const reload = useCallback(async () => {
-    if (!isConfigured || !enabled) {
+    if (!enabled) {
       setContainers([]);
       setError('');
       setLoading(false);
@@ -53,7 +51,7 @@ export function useFarmRetiredContainers(enabled: boolean): UseFarmRetiredContai
     } finally {
       setLoading(false);
     }
-  }, [enabled, isConfigured, t]);
+  }, [enabled, t]);
 
   useEffect(() => {
     reload();

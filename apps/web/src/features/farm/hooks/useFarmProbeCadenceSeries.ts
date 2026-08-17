@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { farmApi } from '@/services/api/farm';
-import { useFarmStore } from '@/stores';
 import type { FarmProbeCadenceView } from '@/types/farm';
 
 export interface FarmProbeCadenceSeries {
@@ -45,19 +44,18 @@ function toSeries(view: FarmProbeCadenceView): FarmProbeCadenceSeries {
 export function useFarmProbeCadenceSeries(
   containerIds: string[]
 ): UseFarmProbeCadenceSeriesResult {
-  const isConfigured = useFarmStore((state) => state.isConfigured);
   const [seriesById, setSeriesById] = useState<Map<string, FarmProbeCadenceSeries>>(new Map());
 
   // 稳定化 id 集合的身份：按内容（排序后 join）派生 key，避免调用方每次渲染传入
   // 新数组引用就重新拉取。
   const idsKey = useMemo(() => [...containerIds].sort().join('|'), [containerIds]);
 
-  // load 把 setState 全部收在 await 之后（未配置/空集合同样走 Promise.allSettled([])
+  // load 把 setState 全部收在 await 之后（空集合同样走 Promise.allSettled([])
   // 这条恒异步路径），effect 体内不做任何同步 setState，避免级联渲染。isCurrent
   // 由 effect 清理翻转，丢弃过期批次结果，防旧集合覆盖新集合的在途请求。
   const load = useCallback(
     async (isCurrent: () => boolean) => {
-      const ids = isConfigured && idsKey ? idsKey.split('|') : [];
+      const ids = idsKey ? idsKey.split('|') : [];
       const results = await Promise.allSettled(
         ids.map((id) =>
           farmApi
@@ -74,7 +72,7 @@ export function useFarmProbeCadenceSeries(
       }
       setSeriesById(next);
     },
-    [idsKey, isConfigured]
+    [idsKey]
   );
 
   // 本 effect 唯一职责就是「向外部系统（编排器 probe-cadence 端点）取数据、在异步

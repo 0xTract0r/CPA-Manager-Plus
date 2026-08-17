@@ -17,6 +17,7 @@ const defaultConfigName = "config.json"
 const defaultSecretFile = "/run/secrets/cpa_management_key"
 const defaultAdminSecretFile = "/run/secrets/cpa_admin_key"
 const defaultDataKeySecretFile = "/run/secrets/cpa_data_key"
+const defaultFarmOrchKeySecretFile = "/run/secrets/farm_orch_key"
 
 type Config struct {
 	HTTPAddr                     string
@@ -24,6 +25,8 @@ type Config struct {
 	DBPath                       string
 	CPAUpstreamURL               string
 	ManagementKey                string
+	FarmOrchestratorURL          string
+	FarmOrchestratorKey          string
 	AdminKey                     string
 	DataKey                      string
 	DataKeyPath                  string
@@ -128,6 +131,8 @@ func LoadWithOptions(options LoadOptions) (Config, error) {
 		DBPath:                       env("USAGE_DB_PATH", dbPathFallback),
 		CPAUpstreamURL:               env("CPA_UPSTREAM_URL", cfgFile.CPAUpstreamURL),
 		ManagementKey:                readSecret("CPA_MANAGEMENT_KEY", "CPA_MANAGEMENT_KEY_FILE", managementKeyFile),
+		FarmOrchestratorURL:          env("FARM_ORCH_URL", ""),
+		FarmOrchestratorKey:          readSecret("FARM_ORCH_KEY", "FARM_ORCH_KEY_FILE", defaultFarmOrchKeySecretFile),
 		AdminKey:                     readSecret("CPA_MANAGER_ADMIN_KEY", "CPA_MANAGER_ADMIN_KEY_FILE", adminKeyFile),
 		DataKey:                      readSecret("CPA_MANAGER_DATA_KEY", "CPA_MANAGER_DATA_KEY_FILE", dataKeyFile),
 		DataKeyPath:                  env("CPA_MANAGER_DATA_KEY_PATH", dataKeyPath),

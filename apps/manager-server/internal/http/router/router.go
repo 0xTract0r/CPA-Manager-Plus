@@ -50,6 +50,9 @@ func New(appCtx *app.Context) http.Handler {
 	mux.HandleFunc("/usage-service/quota-cooldowns", middleware.WithCORS(appCtx.Config, quotaCooldownHandler.Handle))
 	mux.HandleFunc("/setup", middleware.WithCORS(appCtx.Config, setupHandler.Setup))
 	mux.HandleFunc("/management.html", panelHandler.ManagementHTML)
+	// /api/farm/* 反向代理到农场编排器：先验 cpamp admin key，服务端注入 farm key。
+	// ServeMux 最长前缀优先，注册在 catch-all "/" 之前保证走专用 farm handler。
+	mux.HandleFunc("/api/farm/", middleware.WithCORS(appCtx.Config, proxyHandler.Farm))
 	mux.HandleFunc("/", rootHandler(appCtx, usageHandler, modelPriceHandler, apiKeyAliasHandler, accountActionHandler, codexInspectionHandler, dashboardHandler, monitoringHandler, proxyHandler))
 
 	return middleware.Recovery(middleware.RequestLogger(mux))

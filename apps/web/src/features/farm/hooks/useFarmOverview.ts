@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { farmApi } from '@/services/api/farm';
-import { useFarmStore } from '@/stores';
 import type { FarmOverviewResponse } from '@/types/farm';
 import { FARM_OVERVIEW_POLL_INTERVAL_MS } from '@/utils/constants';
 import { useInterval } from '@/hooks/useInterval';
@@ -15,23 +14,16 @@ export interface UseFarmOverviewResult {
 
 /**
  * GET /api/farm/overview：KPI 聚合，供 <FarmOverviewBar> 首屏概览带消费
- * （design.md 决策4/6，tasks.md P0-9）。isConfigured=false 时不发请求，与
- * 其余 farm hooks 短路口径一致。
+ * （design.md 决策4/6，tasks.md P0-9）。农场页默认零配置即可用（同源代理 +
+ * cpamp 会话身份），本 hook 不再按 isConfigured 短路。
  */
 export function useFarmOverview(): UseFarmOverviewResult {
   const { t } = useTranslation();
-  const isConfigured = useFarmStore((state) => state.isConfigured);
   const [overview, setOverview] = useState<FarmOverviewResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   const reload = useCallback(async () => {
-    if (!isConfigured) {
-      setOverview(null);
-      setError('');
-      setLoading(false);
-      return;
-    }
     setError('');
     try {
       const data = await farmApi.getOverview();
@@ -42,7 +34,7 @@ export function useFarmOverview(): UseFarmOverviewResult {
     } finally {
       setLoading(false);
     }
-  }, [isConfigured, t]);
+  }, [t]);
 
   useEffect(() => {
     setLoading(true);
@@ -51,7 +43,7 @@ export function useFarmOverview(): UseFarmOverviewResult {
 
   useInterval(() => {
     reload();
-  }, isConfigured ? FARM_OVERVIEW_POLL_INTERVAL_MS : null);
+  }, FARM_OVERVIEW_POLL_INTERVAL_MS);
 
   return { overview, loading, error, reload };
 }

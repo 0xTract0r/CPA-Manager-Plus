@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { farmApi } from '@/services/api/farm';
-import { useFarmStore } from '@/stores';
 import type {
   FarmContainerDetailView,
   FarmKeepaliveSeriesResponse,
@@ -67,7 +66,6 @@ const DETAIL_SERIES_STEP = '1h';
  */
 export function useFarmContainerDetail(containerId: string | null): UseFarmContainerDetailResult {
   const { t } = useTranslation();
-  const isConfigured = useFarmStore((state) => state.isConfigured);
   const [detail, setDetail] = useState<FarmContainerDetailView | null>(null);
   const [keepalive, setKeepalive] = useState<FarmKeepaliveSeriesResponse | null>(null);
   const [resources, setResources] = useState<FarmResourceSeriesResponse | null>(null);
@@ -81,7 +79,7 @@ export function useFarmContainerDetail(containerId: string | null): UseFarmConta
   const [usageError, setUsageError] = useState('');
 
   const reload = useCallback(async () => {
-    if (!isConfigured || !containerId) {
+    if (!containerId) {
       setDetail(null);
       setKeepalive(null);
       setResources(null);
@@ -157,12 +155,12 @@ export function useFarmContainerDetail(containerId: string | null): UseFarmConta
     }
 
     setLoading(false);
-  }, [containerId, isConfigured, t]);
+  }, [containerId, t]);
 
   useEffect(() => {
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [containerId, isConfigured]);
+  }, [containerId]);
 
   return {
     detail,

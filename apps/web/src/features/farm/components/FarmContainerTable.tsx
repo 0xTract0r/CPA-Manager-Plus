@@ -112,7 +112,7 @@ export function FarmContainerTable({
   onGroupFilterChange,
 }: FarmContainerTableProps) {
   const { t, i18n } = useTranslation();
-  const [internalGroupFilter, setInternalGroupFilter] = useState<FarmContainerFilter>('active');
+  const [internalGroupFilter, setInternalGroupFilter] = useState<FarmContainerFilter>('all');
   const groupFilter = controlledGroupFilter ?? internalGroupFilter;
   const setGroupFilter = (value: FarmContainerFilter) => {
     if (controlledGroupFilter === undefined) setInternalGroupFilter(value);
@@ -143,6 +143,12 @@ export function FarmContainerTable({
 
   const isLoading = loading || (needsRetired && retiredLoading);
   const combinedError = error || (needsRetired ? retiredError : '');
+
+  // 当前分组/状态过滤下无匹配行，但容器池本身并非真空（`containers` 是父级
+  // 默认活跃视图）时，是"过滤后为空"而非"池空"——两者措辞不同，避免用户误以为
+  // 整个容器池没有任何容器（同仓已有范式：codex_filtered_empty_title /
+  // table_filtered_empty_title）。
+  const isFilteredEmpty = rows.length === 0 && containers.length > 0;
 
   const filterOptions = [
     { value: 'all', label: t('farm.filter.all') },
@@ -175,11 +181,19 @@ export function FarmContainerTable({
         loadingCentered
         loadingTestId="farm-containers-loading"
         errorTestId="farm-containers-error"
-        empty={{
-          title: t('farm.containers.empty_title'),
-          description: t('farm.containers.empty_desc'),
-          testId: 'farm-containers-empty',
-        }}
+        empty={
+          isFilteredEmpty
+            ? {
+                title: t('farm.containers.filtered_empty_title'),
+                description: t('farm.containers.filtered_empty_desc'),
+                testId: 'farm-containers-filtered-empty',
+              }
+            : {
+                title: t('farm.containers.empty_title'),
+                description: t('farm.containers.empty_desc'),
+                testId: 'farm-containers-empty',
+              }
+        }
       >
         <ResponsiveTable>
         <Table data-testid="farm-container-table">

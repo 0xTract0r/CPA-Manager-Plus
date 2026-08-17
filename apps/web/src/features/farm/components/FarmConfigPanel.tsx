@@ -7,9 +7,11 @@ import { useFarmStore, useNotificationStore } from '@/stores';
 import styles from './FarmConfigPanel.module.scss';
 
 /**
- * 农场编排器是独立后端（services/farm-orchestrator），不走 CPA 登录页；
- * 这里是它唯一的配置入口——operator 手填编排器地址与 admin key，保存后
- * 由 useFarmStore.setConfig 灌进独立的 farmClient 单例（见 farmClient.ts）。
+ * 农场编排器默认零配置：本组件是"高级覆盖"入口，只在 operator 需要直连另一个
+ * 独立编排器实例时才使用——填了 base URL + admin key 才会切到覆盖模式；留空
+ * 就是同源代理默认（farmClient 请求打相对路径 `/api/farm/*`，鉴权走 cpamp
+ * 会话 managementKey，见 farmClient.ts 顶部注释）。保存后由 useFarmStore.setConfig
+ * 灌进独立的 farmClient 单例。
  */
 export function FarmConfigPanel() {
   const { t } = useTranslation();
@@ -34,7 +36,19 @@ export function FarmConfigPanel() {
   const trimmedBaseUrl = baseUrlDraft.trim();
   const trimmedAdminKey = adminKeyDraft.trim();
   const dirty = trimmedBaseUrl !== orchestratorBaseUrl || trimmedAdminKey !== farmAdminKey;
-  const canSave = Boolean(trimmedBaseUrl && trimmedAdminKey);
+  // 高级覆盖要么两者都填（切到直连别的编排器），要么两者都留空（退回同源代理
+  // 默认）；只填其中一项是无效的中间态，禁止保存——不再要求"必须填齐才能保存"
+  // 本身（那是旧的"连通前提"语义），清空两个字段同样是一次有效保存。
+  const isPartialOverride = Boolean(trimmedBaseUrl) !== Boolean(trimmedAdminKey);
+  const canSave = dirty && !isPartialOverride;
+
+  const hasOverride = Boolean(orchestratorBaseUrl || farmAdminKey);
+  const statusVariant = hasOverride && !isConfigured ? 'warning' : 'success';
+  const statusLabel = hasOverride
+    ? isConfigured
+      ? t('farm.config.status_override_ready')
+      : t('farm.config.status_override_error')
+    : t('farm.config.status_same_origin');
 
   const handleSave = () => {
     setConfig({ orchestratorBaseUrl: trimmedBaseUrl, farmAdminKey: trimmedAdminKey });
@@ -46,10 +60,10 @@ export function FarmConfigPanel() {
       <div className={styles.header}>
         <div className={styles.title}>{t('farm.config.title')}</div>
         <span
-          className={`status-badge ${isConfigured ? 'success' : 'warning'}`}
+          className={`status-badge ${statusVariant}`}
           data-testid="farm-header-config-status"
         >
-          {isConfigured ? t('farm.config.status_ready') : t('farm.config.status_missing')}
+          {statusLabel}
         </span>
       </div>
       <p className={styles.desc}>{t('farm.config.desc')}</p>
@@ -81,8 +95,16 @@ export function FarmConfigPanel() {
           }
         />
       </div>
+      {isPartialOverride ? (
+        <p className="error-box" data-testid="farm-config-partial-override-error">
+          {t('farm.config.partial_override_error')}
+        </p>
+      ) : (
+        !trimmedBaseUrl &&
+        !trimmedAdminKey && <p className="hint">{t('farm.config.same_origin_hint')}</p>
+      )}
       <div className={styles.actions}>
-        <Button onClick={handleSave} disabled={!canSave || !dirty} data-testid="farm-config-save">
+        <Button onClick={handleSave} disabled={!canSave} data-testid="farm-config-save">
           {t('common.save')}
         </Button>
       </div>
