@@ -77,6 +77,14 @@ export function AccountSpeedReadings({
         {t('auth_files.speed_readings_label', { defaultValue: 'Speed' })}
       </span>
       <span className={styles.speedReadingsWindow}>{windowLabel}</span>
+      {sampleCount > 0 && (
+        <span className={styles.speedReadingsNote}>
+          {t('auth_files.speed_readings_sample_note', {
+            count: sampleCount,
+            defaultValue: '· {{count}} reqs',
+          })}
+        </span>
+      )}
     </div>
   );
 
@@ -152,14 +160,6 @@ export function AccountSpeedReadings({
           </span>
         </div>
       </div>
-      {sampleCount > 0 && (
-        <span className={styles.speedReadingsNote}>
-          {t('auth_files.speed_readings_sample_note', {
-            count: sampleCount,
-            defaultValue: '· {{count}} reqs',
-          })}
-        </span>
-      )}
     </div>
   );
 }
