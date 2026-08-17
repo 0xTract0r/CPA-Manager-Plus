@@ -14,6 +14,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { authFilesApi } from '@/services/api';
+import { normalizeAuthIndex } from '@/utils/usage';
 import type {
   AuthFileAccountSettings,
   AuthFileAccountSettingsPatchRequest,
@@ -81,6 +82,8 @@ function validateProxyUrl(value: string): { valid: boolean; reason?: ProxyUrlVal
 
 export type AccountSettingsEditorState = {
   fileName: string;
+  /** 该账号的 auth_index（若下发）；用于速度体感面板精确 join analytics 事件。 */
+  authIndex: string | number | null;
   provider: string;
   fileInfoText: string;
   loading: boolean;
@@ -322,6 +325,7 @@ export function useAuthFilesAccountSettings(
     const normalizedRequest = normalizeSettings(name, settings);
     setAccountSettingsEditor({
       fileName: name,
+      authIndex: normalizeAuthIndex(file['auth_index'] ?? file.authIndex),
       provider: resolveAuthFileProvider(file, settings),
       fileInfoText: JSON.stringify(file, null, 2),
       loading: false,
@@ -372,6 +376,7 @@ export function useAuthFilesAccountSettings(
     const inlineSettings = file.account_settings || file.accountSettings || null;
     setAccountSettingsEditor({
       fileName: name,
+      authIndex: normalizeAuthIndex(file['auth_index'] ?? file.authIndex),
       provider: resolveAuthFileProvider(file, inlineSettings),
       fileInfoText: JSON.stringify(file, null, 2),
       loading: true,
