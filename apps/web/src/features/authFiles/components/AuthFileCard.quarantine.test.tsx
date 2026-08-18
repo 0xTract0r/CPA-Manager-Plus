@@ -34,7 +34,6 @@ const baseProps: Omit<AuthFileCardProps, 'file'> = {
   statusBarCache: new Map(),
   onShowModels: () => {},
   onDownload: () => {},
-  onOpenPrefixProxyEditor: () => {},
   onOpenAccountSettings: () => {},
   onDelete: () => {},
   onToggleStatus: () => {},

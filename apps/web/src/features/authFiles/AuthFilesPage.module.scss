@@ -1016,11 +1016,50 @@
   min-width: 0;
 }
 
+// 卡片头部操作区（点⑤）：账号设置入口按钮，右上角对齐，不参与内容列压缩。
+.cardHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
 .cardBadgeRow {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+
+// 卡片头部健康 pill（点⑤）：一眼可见的近期请求成败摘要，复用 statusPanel 数据。
+.healthPill {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.healthPillHealthy {
+  color: var(--success-badge-text, #065f46);
+  background: var(--success-badge-bg, #d1fae5);
+  border: 1px solid var(--success-badge-border, #6ee7b7);
+}
+
+.healthPillWarning {
+  color: var(--warning-text);
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-border);
+}
+
+.healthPillNeutral {
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--surface-subtle) 86%, transparent);
+  border: 1px solid var(--border-subtle);
 }
 
 .typeBadge {

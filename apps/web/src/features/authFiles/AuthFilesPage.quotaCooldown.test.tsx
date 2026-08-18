@@ -215,18 +215,6 @@ vi.mock('@/features/authFiles/hooks/useAuthFilesModels', () => ({
   }),
 }));
 
-vi.mock('@/features/authFiles/hooks/useAuthFilesPrefixProxyEditor', () => ({
-  useAuthFilesPrefixProxyEditor: () => ({
-    prefixProxyEditor: null,
-    prefixProxyUpdatedText: '',
-    prefixProxyDirty: false,
-    openPrefixProxyEditor: vi.fn(),
-    closePrefixProxyEditor: vi.fn(),
-    handlePrefixProxyChange: vi.fn(),
-    handlePrefixProxySave: vi.fn(),
-  }),
-}));
-
 vi.mock('@/features/authFiles/hooks/useAuthFilesStatusBarCache', () => ({
   useAuthFilesStatusBarCache: () => new Map(),
 }));
@@ -306,10 +294,6 @@ vi.mock('@/features/authFiles/components/AuthJsonPasteModal', () => ({
 
 vi.mock('@/features/authFiles/components/AuthFileModelsModal', () => ({
   AuthFileModelsModal: () => null,
-}));
-
-vi.mock('@/features/authFiles/components/AuthFilesPrefixProxyEditorModal', () => ({
-  AuthFilesPrefixProxyEditorModal: () => null,
 }));
 
 vi.mock('@/features/authFiles/components/OAuthExcludedCard', () => ({

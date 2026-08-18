@@ -53,7 +53,6 @@ import {
 import { AuthFileCard } from '@/features/authFiles/components/AuthFileCard';
 import { AuthJsonPasteModal } from '@/features/authFiles/components/AuthJsonPasteModal';
 import { AuthFileModelsModal } from '@/features/authFiles/components/AuthFileModelsModal';
-import { AuthFilesPrefixProxyEditorModal } from '@/features/authFiles/components/AuthFilesPrefixProxyEditorModal';
 import { AuthFilesAccountSettingsModal } from '@/features/authFiles/components/AuthFilesAccountSettingsModal';
 import { TestMessageModal } from '@/features/authFiles/components/TestMessageModal';
 import { OAuthExcludedCard } from '@/features/authFiles/components/OAuthExcludedCard';
@@ -88,7 +87,6 @@ import { useAuthFilesData } from '@/features/authFiles/hooks/useAuthFilesData';
 import { useAuthFilesModels } from '@/features/authFiles/hooks/useAuthFilesModels';
 import { useAuthFilesOauth } from '@/features/authFiles/hooks/useAuthFilesOauth';
 import { useAuthFilesReauth } from '@/features/authFiles/hooks/useAuthFilesReauth';
-import { useAuthFilesPrefixProxyEditor } from '@/features/authFiles/hooks/useAuthFilesPrefixProxyEditor';
 import { useAuthFilesAccountSettings } from '@/features/authFiles/hooks/useAuthFilesAccountSettings';
 import { useAuthFilesTestMessage } from '@/features/authFiles/hooks/useAuthFilesTestMessage';
 import { useAuthFilesStatusBarCache } from '@/features/authFiles/hooks/useAuthFilesStatusBarCache';
@@ -426,19 +424,6 @@ export function AuthFilesPage() {
     showModels,
     closeModelsModal,
   } = useAuthFilesModels();
-
-  const {
-    prefixProxyEditor,
-    prefixProxyUpdatedText,
-    prefixProxyDirty,
-    openPrefixProxyEditor,
-    closePrefixProxyEditor,
-    handlePrefixProxyChange,
-    handlePrefixProxySave,
-  } = useAuthFilesPrefixProxyEditor({
-    disableControls: connectionStatus !== 'connected',
-    loadFiles,
-  });
 
   const {
     accountSettingsEditor,
@@ -2043,9 +2028,7 @@ export function AuthFilesPage() {
                       onRefreshStatus={handleStatusRefresh}
                       onTestMessage={handleTestMessage}
                       onDownload={handleDownload}
-                      onOpenPrefixProxyEditor={openPrefixProxyEditor}
                       onOpenAccountSettings={openAccountSettingsEditor}
-                      auditReloadKey={auditReloadKeys[file.name] ?? 0}
                       onDelete={handleDelete}
                       onToggleStatus={handleStatusToggle}
                       onToggleSelect={() => toggleSelect(getAuthFileSelectionKey(file))}
@@ -2124,22 +2107,12 @@ export function AuthFilesPage() {
         onCopyText={copyTextWithNotification}
       />
 
-      <AuthFilesPrefixProxyEditorModal
-        disableControls={disableControls}
-        editor={prefixProxyEditor}
-        updatedText={prefixProxyUpdatedText}
-        dirty={prefixProxyDirty}
-        onClose={closePrefixProxyEditor}
-        onCopyText={copyTextWithNotification}
-        onSave={handlePrefixProxySave}
-        onChange={handlePrefixProxyChange}
-      />
-
       <AuthFilesAccountSettingsModal
         disableControls={disableControls}
         editor={accountSettingsEditor}
         updatedText={accountSettingsUpdatedText}
         dirty={accountSettingsDirty}
+        auditReloadKey={auditReloadKeys[accountSettingsEditor?.fileName ?? ''] ?? 0}
         onClose={closeAccountSettingsEditor}
         onCopyText={copyTextWithNotification}
         onSave={() => void handleAccountSettingsSaveWithAuditReload()}
