@@ -331,6 +331,34 @@ export const isAuthFileMissingProxyUrl = (file: AuthFileItem): boolean => {
   return typeof settings.proxy_url === 'string' && settings.proxy_url.trim() === '';
 };
 
+// 身份变更审计入口（reauth / status 历史）门槛：仅 OAuth 账号显示。对照旧版
+// useAuthFilesReauth.AUTH_FILE_OAUTH_PROVIDER_MAP 的 provider key 集合，避免对所有
+// 非 runtime 卡都挂审计面板。卡片与账号设置弹窗共用同一判定，避免两处各写一份。
+export const OAUTH_AUDITABLE_PROVIDER_KEYS = new Set([
+  'anthropic',
+  'claude',
+  'codex',
+  'antigravity',
+  'gemini',
+  'gemini-cli',
+  'kimi',
+  'xai',
+]);
+
+/**
+ * 该账号是否可查看身份变更审计历史（reauth / status 历史）：非 runtime 占位卡，
+ * 且 provider / type 任一命中 OAuth 集合。
+ */
+export const canViewAuthFileAuditHistory = (file: AuthFileItem): boolean => {
+  if (isRuntimeOnlyAuthFile(file)) return false;
+  const providerKey = normalizeProviderKey(String(file.type ?? file.provider ?? 'unknown'));
+  const providerKeyFromProvider = normalizeProviderKey(String(file.provider ?? ''));
+  return (
+    OAUTH_AUDITABLE_PROVIDER_KEYS.has(providerKey) ||
+    OAUTH_AUDITABLE_PROVIDER_KEYS.has(providerKeyFromProvider)
+  );
+};
+
 export const getTypeLabel = (t: TFunction, type: string): string => {
   const providerKey = normalizeProviderKey(type);
   const key = `auth_files.filter_${providerKey}`;

@@ -45,11 +45,30 @@ vi.mock('./AccountFastImpactPanel', () => ({
   AccountFastImpactPanel: () => null,
 }));
 
+// 身份变更审计历史面板（reauth / status）依赖 Drawer / portal / API，与本测试无关，桩掉。
+vi.mock('./AuthFilesReauthHistoryPanel', () => ({
+  AuthFilesReauthHistoryPanel: () => null,
+}));
+vi.mock('./AuthFilesStatusHistoryPanel', () => ({
+  AuthFilesStatusHistoryPanel: () => null,
+}));
+
 const makeEditor = (provider: string): AccountSettingsEditorState => ({
   fileName: `acct-${provider}.json`,
+  file: { name: `acct-${provider}.json`, type: provider } as AccountSettingsEditorState['file'],
   authIndex: 1,
   provider,
+  providerKey: provider,
   fileInfoText: '{}',
+  prefix: '',
+  priority: '',
+  websockets: false,
+  rawJsonAvailable: false,
+  rawJsonObject: null,
+  rawJsonText: '',
+  rawJsonBaseline: '',
+  rawJsonTouched: false,
+  rawJsonError: null,
   loading: false,
   saving: false,
   error: null,

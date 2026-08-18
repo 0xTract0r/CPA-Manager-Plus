@@ -13,8 +13,14 @@
  */
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { authFilesApi } from '@/services/api';
+import { authFilesApi, type AuthFileFieldsPatch } from '@/services/api';
 import { normalizeAuthIndex } from '@/utils/usage';
+import {
+  normalizeProviderKey,
+  parsePriorityValue,
+  readAuthFileWebsockets,
+  supportsAuthFileWebsockets,
+} from '@/features/authFiles/constants';
 import type {
   AuthFileAccountSettings,
   AuthFileAccountSettingsPatchRequest,
@@ -39,7 +45,14 @@ export type AccountSettingsEditorField =
   | 'farmEnrolled'
   | 'extraHeadersText'
   | 'transportProfileText'
-  | 'tlsProfileText';
+  | 'tlsProfileText'
+  // 迁移自旧「登录文件详情」弹窗（AuthFilesPrefixProxyEditorModal）的原始 JSON 字段：
+  // prefix / priority / websockets 走 `/auth-files/fields`（原始 JSON 补丁），
+  // rawJsonText 走整份 auth 文件覆写（危险操作，保存前二次确认）。
+  | 'prefix'
+  | 'priority'
+  | 'websockets'
+  | 'rawJsonText';
 
 export type AccountSettingsEditorFieldValue = string | boolean;
 
@@ -82,10 +95,33 @@ function validateProxyUrl(value: string): { valid: boolean; reason?: ProxyUrlVal
 
 export type AccountSettingsEditorState = {
   fileName: string;
+  /** 原始 auth 文件对象；供弹窗内的身份变更审计面板（reauth / status 历史）消费。 */
+  file: AuthFileItem;
   /** 该账号的 auth_index（若下发）；用于速度体感面板精确 join analytics 事件。 */
   authIndex: string | number | null;
   provider: string;
+  /** 归一化后的 provider key（codex/xai 等）；仅用于 websockets 开关的 provider gate。 */
+  providerKey: string;
   fileInfoText: string;
+  /**
+   * 迁移自旧「登录文件详情」弹窗的原始 JSON 字段（走 `/auth-files/fields`）。
+   * 仅当成功下载并解析为对象时可用（rawJsonAvailable=true）；数组/非对象/下载
+   * 失败时这些结构化字段不渲染，只保留账号设置白名单能力。
+   */
+  prefix: string;
+  priority: string;
+  websockets: boolean;
+  /** 是否成功加载到可结构化编辑的原始 JSON 对象。 */
+  rawJsonAvailable: boolean;
+  /** 原始 JSON 解析出的对象基线（用于计算 prefix/priority/websockets 补丁增量）。 */
+  rawJsonObject: Record<string, unknown> | null;
+  /** 可编辑的整份原始 auth JSON 文本（折叠区内，保存前二次确认）。 */
+  rawJsonText: string;
+  /** 原始 JSON 文本基线（首次加载格式化后的文本），用于判断是否手工改过。 */
+  rawJsonBaseline: string;
+  rawJsonTouched: boolean;
+  /** 原始 JSON 文本非法（无法解析为对象）时的错误文案；为 null 表示合法。 */
+  rawJsonError: string | null;
   loading: boolean;
   saving: boolean;
   error: string | null;
@@ -301,12 +337,105 @@ const buildPatchRequest = (
   };
 };
 
+/**
+ * 迁移自旧弹窗：把下载到的原始 auth 文件文本解析成「可结构化编辑的对象」。
+ * 只有 JSON 对象（非数组、非标量）才允许结构化编辑 prefix/priority/websockets
+ * 并暴露可编辑的原始 JSON；否则回退为不可用（不臆造结构，避免误写多账号数组文件）。
+ */
+const parseRawAuthJson = (
+  rawText: string
+): { object: Record<string, unknown> | null; text: string } => {
+  const trimmed = (rawText || '').trim();
+  if (!trimmed) return { object: null, text: '' };
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (isRecordObject(parsed)) {
+      return { object: parsed, text: JSON.stringify(parsed, null, 2) };
+    }
+    // 数组/标量：保留原文供只读参考，但不开放结构化字段。
+    return { object: null, text: trimmed };
+  } catch {
+    return { object: null, text: trimmed };
+  }
+};
+
+/** 从原始 JSON 对象派生 prefix / priority / websockets 的初始编辑值。 */
+const deriveRawEditableFields = (
+  object: Record<string, unknown> | null,
+  providerKey: string
+): { prefix: string; priority: string; websockets: boolean } => {
+  if (!object) return { prefix: '', priority: '', websockets: false };
+  const prefix = typeof object.prefix === 'string' ? object.prefix : '';
+  const priority = parsePriorityValue(object.priority);
+  const websockets = supportsAuthFileWebsockets(providerKey)
+    ? readAuthFileWebsockets(object)
+    : false;
+  return {
+    prefix,
+    priority: priority !== undefined ? String(priority) : '',
+    websockets,
+  };
+};
+
+/**
+ * 计算 prefix / priority / websockets 相对原始 JSON 基线的增量补丁
+ * （走 `/auth-files/fields`）。proxy_url / note / headers 不在此——它们由账号设置
+ * 白名单 PATCH（proxy_url / note / extra_headers）负责，避免两个端点重复写同一字段。
+ */
+const buildRawFieldsPatch = (editor: AccountSettingsEditorState): AuthFileFieldsPatch => {
+  const patch: AuthFileFieldsPatch = {};
+  const original = editor.rawJsonObject ?? {};
+
+  const originalPrefix = typeof original.prefix === 'string' ? original.prefix.trim() : '';
+  const nextPrefix = editor.prefix.trim();
+  if (nextPrefix !== originalPrefix) {
+    patch.prefix = nextPrefix;
+  }
+
+  const originalPriority = parsePriorityValue(original.priority);
+  const priorityText = editor.priority.trim();
+  const nextPriority = parsePriorityValue(priorityText);
+  if (!priorityText) {
+    if (originalPriority !== undefined && originalPriority !== 0) {
+      patch.priority = 0;
+    }
+  } else if (nextPriority !== undefined) {
+    if (nextPriority === 0) {
+      if (originalPriority !== undefined && originalPriority !== 0) {
+        patch.priority = 0;
+      }
+    } else if (nextPriority !== originalPriority) {
+      patch.priority = nextPriority;
+    }
+  }
+
+  if (supportsAuthFileWebsockets(editor.providerKey)) {
+    const originalWebsockets = readAuthFileWebsockets(original);
+    const nextWebsockets = Boolean(editor.websockets);
+    if (nextWebsockets !== originalWebsockets) {
+      patch.websockets = nextWebsockets;
+    }
+  }
+
+  return patch;
+};
+
+const hasRawFieldsPatch = (editor: AccountSettingsEditorState): boolean =>
+  editor.rawJsonAvailable && Object.keys(buildRawFieldsPatch(editor)).length > 0;
+
+/** 原始 JSON 文本是否被手工改动（相对格式化基线）。 */
+const isRawJsonDirty = (editor: AccountSettingsEditorState): boolean =>
+  editor.rawJsonAvailable &&
+  editor.rawJsonTouched &&
+  editor.rawJsonText.trim() !== editor.rawJsonBaseline.trim();
+
 export function useAuthFilesAccountSettings(
   options: UseAuthFilesAccountSettingsOptions
 ): UseAuthFilesAccountSettingsResult {
   const { disableControls, loadFiles, loadKeyStats } = options;
   const { t } = useTranslation();
   const showNotification = useNotificationStore((state) => state.showNotification);
+  const showConfirmation = useNotificationStore((state) => state.showConfirmation);
 
   const [accountSettingsEditor, setAccountSettingsEditor] =
     useState<AccountSettingsEditorState | null>(null);
@@ -318,10 +447,19 @@ export function useAuthFilesAccountSettings(
     return JSON.stringify(request, null, 2);
   })();
 
-  const accountSettingsDirty =
+  // 账号设置白名单是否被改动（proxy_url / note / disabled / refresh / fast /
+  // farm_enrolled / extra_headers / transport / tls）。
+  const accountSettingsWhitelistDirty =
     Boolean(accountSettingsEditor) &&
     accountSettingsUpdatedText !== '' &&
     accountSettingsUpdatedText !== accountSettingsEditor?.originalSerializedRequest;
+
+  // 总 dirty = 账号设置白名单改动 ∪ 原始 JSON 字段（prefix/priority/websockets）改动
+  // ∪ 手工编辑整份原始 JSON。任一改动都应让保存可用。
+  const accountSettingsDirty =
+    accountSettingsWhitelistDirty ||
+    (accountSettingsEditor !== null &&
+      (hasRawFieldsPatch(accountSettingsEditor) || isRawJsonDirty(accountSettingsEditor)));
 
   const closeAccountSettingsEditor = () => {
     setAccountSettingsEditor(null);
@@ -330,15 +468,34 @@ export function useAuthFilesAccountSettings(
   const hydrateEditor = (
     name: string,
     file: AuthFileItem,
-    settings: Partial<AuthFileAccountSettings> | null | undefined
+    settings: Partial<AuthFileAccountSettings> | null | undefined,
+    rawText?: string
   ) => {
     const provider = resolveAuthFileProvider(file, settings);
     const normalizedRequest = normalizeSettings(name, settings, provider);
+    const { object: rawObject, text: rawJsonText } = parseRawAuthJson(rawText ?? '');
+    const providerKey = normalizeProviderKey(
+      String(
+        rawObject?.type ?? rawObject?.provider ?? file.type ?? file.provider ?? provider ?? ''
+      )
+    );
+    const rawFields = deriveRawEditableFields(rawObject, providerKey);
     setAccountSettingsEditor({
       fileName: name,
+      file,
       authIndex: normalizeAuthIndex(file['auth_index'] ?? file.authIndex),
       provider,
+      providerKey,
       fileInfoText: JSON.stringify(file, null, 2),
+      prefix: rawFields.prefix,
+      priority: rawFields.priority,
+      websockets: rawFields.websockets,
+      rawJsonAvailable: rawObject !== null,
+      rawJsonObject: rawObject,
+      rawJsonText,
+      rawJsonBaseline: rawJsonText,
+      rawJsonTouched: false,
+      rawJsonError: null,
       loading: false,
       saving: false,
       error: null,
@@ -387,9 +544,20 @@ export function useAuthFilesAccountSettings(
     const inlineSettings = file.account_settings || file.accountSettings || null;
     setAccountSettingsEditor({
       fileName: name,
+      file,
       authIndex: normalizeAuthIndex(file['auth_index'] ?? file.authIndex),
       provider: resolveAuthFileProvider(file, inlineSettings),
+      providerKey: normalizeProviderKey(String(file.type ?? file.provider ?? '')),
       fileInfoText: JSON.stringify(file, null, 2),
+      prefix: '',
+      priority: '',
+      websockets: false,
+      rawJsonAvailable: false,
+      rawJsonObject: null,
+      rawJsonText: '',
+      rawJsonBaseline: '',
+      rawJsonTouched: false,
+      rawJsonError: null,
       loading: true,
       saving: false,
       error: null,
@@ -430,21 +598,32 @@ export function useAuthFilesAccountSettings(
       originalSerializedRequest: '',
     });
 
-    try {
-      const settings = await authFilesApi.getAccountSettings(name);
-      hydrateEditor(name, file, settings);
-    } catch (err: unknown) {
-      if (inlineSettings) {
-        hydrateEditor(name, file, inlineSettings);
-        return;
-      }
-      const errorMessage = err instanceof Error ? err.message : t('notification.download_failed');
-      setAccountSettingsEditor((prev) => {
-        if (!prev || prev.fileName !== name) return prev;
-        return { ...prev, loading: false, error: errorMessage };
-      });
-      showNotification(`${t('notification.download_failed')}: ${errorMessage}`, 'error');
+    // 账号设置白名单视图与原始 auth JSON 并发拉取：原始 JSON 仅供 prefix/priority/
+    // websockets 结构化编辑与整份 JSON 危险编辑，失败不阻断账号设置本身（降级为
+    // 不可结构化编辑原始字段）。
+    const [settingsResult, rawResult] = await Promise.allSettled([
+      authFilesApi.getAccountSettings(name),
+      authFilesApi.downloadText(name),
+    ]);
+    const rawText = rawResult.status === 'fulfilled' ? rawResult.value : '';
+
+    if (settingsResult.status === 'fulfilled') {
+      hydrateEditor(name, file, settingsResult.value, rawText);
+      return;
     }
+
+    if (inlineSettings) {
+      hydrateEditor(name, file, inlineSettings, rawText);
+      return;
+    }
+
+    const err = settingsResult.reason;
+    const errorMessage = err instanceof Error ? err.message : t('notification.download_failed');
+    setAccountSettingsEditor((prev) => {
+      if (!prev || prev.fileName !== name) return prev;
+      return { ...prev, loading: false, error: errorMessage };
+    });
+    showNotification(`${t('notification.download_failed')}: ${errorMessage}`, 'error');
   };
 
   const handleAccountSettingsChange = (
@@ -481,21 +660,113 @@ export function useAuthFilesAccountSettings(
           transportProfileError: parseProfileText(transportProfileText).error,
         };
       }
-      const tlsProfileText = String(value);
-      return {
-        ...prev,
-        tlsProfileText,
-        tlsProfileTouched: true,
-        tlsProfileError: parseProfileText(tlsProfileText).error,
-      };
+      if (field === 'tlsProfileText') {
+        const tlsProfileText = String(value);
+        return {
+          ...prev,
+          tlsProfileText,
+          tlsProfileTouched: true,
+          tlsProfileError: parseProfileText(tlsProfileText).error,
+        };
+      }
+      if (field === 'prefix') return { ...prev, prefix: String(value) };
+      if (field === 'priority') return { ...prev, priority: String(value) };
+      if (field === 'websockets') return { ...prev, websockets: Boolean(value) };
+      if (field === 'rawJsonText') {
+        const rawJsonText = String(value);
+        const trimmed = rawJsonText.trim();
+        let rawJsonError: string | null = null;
+        if (!trimmed) {
+          rawJsonError = t('auth_files.account_settings_raw_json_invalid', {
+            defaultValue: 'Invalid JSON: content is empty.',
+          });
+        } else {
+          try {
+            const parsed = JSON.parse(trimmed) as unknown;
+            if (!isRecordObject(parsed)) {
+              rawJsonError = t('auth_files.account_settings_raw_json_invalid_object', {
+                defaultValue: 'Auth JSON must be a single JSON object.',
+              });
+            }
+          } catch {
+            rawJsonError = t('auth_files.account_settings_raw_json_invalid', {
+              defaultValue: 'Invalid JSON.',
+            });
+          }
+        }
+        return { ...prev, rawJsonText, rawJsonTouched: true, rawJsonError };
+      }
+      return prev;
     });
+  };
+
+  // 危险路径：手工编辑整份原始 auth JSON 后整份覆写（走 upload，不经账号设置白名单）。
+  const performRawJsonOverwrite = async (name: string, rawJsonText: string) => {
+    setAccountSettingsEditor((prev) =>
+      prev && prev.fileName === name ? { ...prev, saving: true } : prev
+    );
+    try {
+      await authFilesApi.saveText(name, rawJsonText);
+      showNotification(t('auth_files.prefix_proxy_saved_success', { name }), 'success');
+      await loadFiles();
+      await loadKeyStats();
+      setAccountSettingsEditor(null);
+    } catch (err: unknown) {
+      const rawMessage = err instanceof Error ? err.message : '';
+      showNotification(`${t('notification.upload_failed')}: ${rawMessage}`, 'error');
+      setAccountSettingsEditor((prev) =>
+        prev && prev.fileName === name ? { ...prev, saving: false } : prev
+      );
+    }
   };
 
   const handleAccountSettingsSave = async () => {
     if (!accountSettingsEditor || !accountSettingsDirty) return;
+    const editor = accountSettingsEditor;
+
+    // 危险路径优先：手工改过整份原始 JSON —— 只校验 JSON 合法性 + 二次确认 + 整份覆写，
+    // 不再叠加账号设置白名单 / 字段补丁（原始 JSON 已是完整真源）。
+    if (isRawJsonDirty(editor)) {
+      let validObject = false;
+      try {
+        validObject = isRecordObject(JSON.parse(editor.rawJsonText.trim()));
+      } catch {
+        validObject = false;
+      }
+      if (!validObject) {
+        const message = t('auth_files.account_settings_raw_json_invalid_object', {
+          defaultValue: 'Auth JSON must be a single JSON object.',
+        });
+        setAccountSettingsEditor((prev) =>
+          prev && prev.fileName === editor.fileName
+            ? { ...prev, rawJsonError: message }
+            : prev
+        );
+        showNotification(message, 'error');
+        return;
+      }
+      showConfirmation({
+        title: t('auth_files.account_settings_raw_json_confirm_title', {
+          defaultValue: 'Overwrite raw auth JSON?',
+        }),
+        message: t('auth_files.account_settings_raw_json_confirm_message', {
+          defaultValue:
+            'Editing the raw auth JSON directly can break this account (invalid credentials or lost identity binding). Saving overwrites the entire auth file. Continue?',
+        }),
+        confirmText: t('auth_files.account_settings_raw_json_confirm_ok', {
+          defaultValue: 'Overwrite auth JSON',
+        }),
+        cancelText: t('common.cancel'),
+        variant: 'danger',
+        onConfirm: () => {
+          void performRawJsonOverwrite(editor.fileName, editor.rawJsonText);
+        },
+      });
+      return;
+    }
 
     // proxy_url 必填 + 格式校验：为空或非法时前端拦截，不提交（T041：core#26/#27 服务端守卫呼应）。
-    const proxyError = computeProxyUrlError(accountSettingsEditor.proxyUrl);
+    const proxyError = computeProxyUrlError(editor.proxyUrl);
     if (proxyError) {
       setAccountSettingsEditor((prev) =>
         prev ? { ...prev, proxyUrlError: proxyError } : prev
@@ -504,12 +775,17 @@ export function useAuthFilesAccountSettings(
       return;
     }
 
-    const { request, error } = buildPatchRequest(accountSettingsEditor);
+    const { request, error } = buildPatchRequest(editor);
     if (!request) {
       const errorMessage = error?.startsWith('auth_files.') ? t(error) : error || 'Invalid format';
       showNotification(errorMessage, 'error');
       return;
     }
+
+    // prefix / priority / websockets 走 `/auth-files/fields` 原始 JSON 补丁；只在真正
+    // 改动时追加一次请求（与账号设置白名单 PATCH 的字段不重叠，顺序执行不冲突）。
+    const fieldsPatch = buildRawFieldsPatch(editor);
+    const shouldPatchFields = editor.rawJsonAvailable && Object.keys(fieldsPatch).length > 0;
 
     setAccountSettingsEditor((prev) => {
       if (!prev) return prev;
@@ -517,7 +793,13 @@ export function useAuthFilesAccountSettings(
     });
 
     try {
-      await authFilesApi.updateAccountSettings(request);
+      // 账号设置白名单未改动（仅改了原始字段）时可省略该请求，避免无谓写回。
+      if (accountSettingsWhitelistDirty) {
+        await authFilesApi.updateAccountSettings(request);
+      }
+      if (shouldPatchFields) {
+        await authFilesApi.patchFields(editor.fileName, fieldsPatch);
+      }
       showNotification(
         t('auth_files.prefix_proxy_saved_success', { name: request.name }),
         'success'

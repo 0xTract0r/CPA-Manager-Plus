@@ -39,7 +39,13 @@ import type {
 } from '@/types/authFile';
 import { useNotificationStore, useThemeStore } from '@/stores';
 import { formatInUtc8 } from '@/utils/format';
+import {
+  canViewAuthFileAuditHistory,
+  supportsAuthFileWebsockets,
+} from '@/features/authFiles/constants';
 import { AccountFastImpactPanel } from './AccountFastImpactPanel';
+import { AuthFilesReauthHistoryPanel } from './AuthFilesReauthHistoryPanel';
+import { AuthFilesStatusHistoryPanel } from './AuthFilesStatusHistoryPanel';
 import styles from './AuthFilesAccountSettingsModal.module.scss';
 
 /**
@@ -80,6 +86,8 @@ export type AuthFilesAccountSettingsModalProps = {
   editor: AccountSettingsEditorState | null;
   updatedText: string;
   dirty: boolean;
+  /** 身份变更审计面板（reauth / status 历史）的重载键；账号设置保存等操作后由页面 bump。 */
+  auditReloadKey?: number;
   onClose: () => void;
   onCopyText: (text: string) => void | Promise<void>;
   onSave: () => void;
@@ -396,7 +404,143 @@ function ClaudeHeaderStrategyPanel({ t }: { t: TranslateFn }) {
       <div className="hint">
         {t('auth_files.account_settings_claude_header_strategy_hint', {
           defaultValue:
-            'Claude does not pin one managed version on the account page. Multiple clients may use the same CPA instance, so concrete versions are shown below as recent current-process observations.',
+            "Claude does not pin one managed version on the account page. Concrete versions are shown below as this account's recent observations, with a shared baseline used only before this account has one of its own.",
+        })}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 大小写不敏感地在若干 header map 里解析某个 header 的字面值。
+ * 优先取先给出的 map（managedHeaders 优先于 summary_headers）；命中空串视为未透出。
+ */
+function resolveHeaderLiteral(maps: (AuthFileHeaderMap | undefined)[], name: string): string {
+  const target = name.toLowerCase();
+  for (const map of maps) {
+    if (!map) continue;
+    for (const [key, value] of Object.entries(map)) {
+      if (key.toLowerCase() === target) {
+        const literal = String(value ?? '').trim();
+        if (literal) return literal;
+      }
+    }
+  }
+  return '';
+}
+
+/**
+ * 最终出站指纹 header（实际值）表——Claude/农场号专用。
+ * 与上方 ClaudeHeaderStrategyPanel（header→来源，无值）并列：这里渲染 core 已投影的
+ * 真实字面值，数据来自 editor.managedHeaders / managed_header_state.current
+ * （summary_headers + runtime_fingerprint），不新增数据获取。
+ *  - 版本/客户端类 header 取 managedHeaders → summary_headers。
+ *  - X-Stainless-Os / X-Stainless-Arch 取 runtime_fingerprint（裸农场号可能未透出）。
+ * device_id 不是 header，不在此表（另有合成 device_id 区展示）。
+ */
+function ClaudeOutboundFingerprintPanel({
+  managedHeaders,
+  summaryHeaders,
+  runtimeFingerprint,
+  t,
+}: {
+  managedHeaders: AuthFileHeaderMap;
+  summaryHeaders: AuthFileHeaderMap | undefined;
+  runtimeFingerprint: AuthFileHeaderMap | undefined;
+  t: TranslateFn;
+}) {
+  const headerMaps: (AuthFileHeaderMap | undefined)[] = [managedHeaders, summaryHeaders];
+  const runtimePlaceholder = t('auth_files.account_settings_outbound_fingerprint_not_surfaced', {
+    defaultValue: 'Not surfaced (PATCH account settings metadata to expose)',
+  });
+  const rows: { name: string; value: string; missingPlaceholder: string; isRuntime: boolean }[] = [
+    ...['User-Agent', 'X-App', 'X-Stainless-Package-Version', 'X-Stainless-Runtime-Version', 'X-Stainless-Timeout'].map(
+      (name) => ({
+        name,
+        value: resolveHeaderLiteral(headerMaps, name),
+        missingPlaceholder: '-',
+        isRuntime: false,
+      })
+    ),
+    ...['X-Stainless-Os', 'X-Stainless-Arch'].map((name) => ({
+      name,
+      value: resolveHeaderLiteral([runtimeFingerprint], name),
+      missingPlaceholder: runtimePlaceholder,
+      isRuntime: true,
+    })),
+  ];
+
+  return (
+    <div className="form-group">
+      <label>
+        {t('auth_files.account_settings_outbound_fingerprint', {
+          defaultValue: 'Final outbound fingerprint headers (actual values)',
+        })}
+      </label>
+      <div
+        className={styles.managedHeaderPanel}
+        data-testid="account-settings-outbound-fingerprint-panel"
+      >
+        <div className={styles.managedHeaderPlainHeader}>
+          <span>
+            {t('auth_files.account_settings_outbound_fingerprint_runtime_title', {
+              defaultValue: 'Concrete values core merges into the outbound request',
+            })}
+          </span>
+          <span className={styles.managedHeaderMeta}>Claude only</span>
+        </div>
+        <table className={styles.managedHeaderTable}>
+          <thead>
+            <tr>
+              <th>
+                {t('auth_files.account_settings_managed_headers_table_name', {
+                  defaultValue: 'Header',
+                })}
+              </th>
+              <th>
+                {t('auth_files.account_settings_managed_headers_table_value', {
+                  defaultValue: 'Runtime value',
+                })}
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr data-testid="account-settings-outbound-fingerprint-row" key={row.name}>
+                <th scope="row" className={styles.managedHeaderKey}>
+                  {row.name}
+                </th>
+                <td
+                  data-label={t('auth_files.account_settings_managed_headers_table_value', {
+                    defaultValue: 'Runtime value',
+                  })}
+                >
+                  {row.value ? (
+                    <code className={styles.managedHeaderValue} title={row.value}>
+                      {row.value}
+                    </code>
+                  ) : (
+                    <span
+                      className={styles.outboundFingerprintMissing}
+                      data-testid={
+                        row.isRuntime
+                          ? 'account-settings-outbound-fingerprint-missing'
+                          : undefined
+                      }
+                    >
+                      {row.missingPlaceholder}
+                    </span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="hint">
+        {t('auth_files.account_settings_outbound_fingerprint_hint', {
+          defaultValue:
+            'Read-only. These are the concrete header values core will send on the wire for this account. Platform rows (Os/Arch) come from the runtime fingerprint; a bare farm account that has not surfaced them yet shows a placeholder instead of a fabricated value.',
         })}
       </div>
     </div>
@@ -439,7 +583,7 @@ function ClaudeClientVersionObservationsPanel({
         <div className={styles.managedHeaderPlainHeader}>
           <span>
             {t('auth_files.account_settings_claude_client_observations_runtime_title', {
-              defaultValue: 'Observed by the current core process',
+              defaultValue: 'Observed for this account (falls back to a shared baseline)',
             })}
           </span>
           <span className={styles.managedHeaderMeta}>
@@ -548,7 +692,7 @@ function ClaudeClientVersionObservationsPanel({
           >
             {t('auth_files.account_settings_claude_client_observations_empty', {
               defaultValue:
-                'No real Claude CLI request has been observed by this core process yet.',
+                'No real Claude CLI request has been observed for this account yet, and no shared baseline is available.',
             })}
           </div>
         )}
@@ -556,7 +700,7 @@ function ClaudeClientVersionObservationsPanel({
       <div className="hint">
         {t('auth_files.account_settings_claude_client_observations_hint', {
           defaultValue:
-            'Claude runtime resolves request version markers from real incoming Claude CLI requests first. This list is recent in-memory observation for this core process, not a fixed per-account managed version and not a complete audit log of every client.',
+            "Claude runtime resolves version markers from real incoming Claude CLI requests first, and records observations separately per account. This list shows this account's own observations by default; it only falls back to a shared cross-account baseline when this account has no observation of its own yet — which is why different accounts can show the same entry before either has a real request, switching to the account's own data as soon as one arrives. It is not a fixed managed version, and not a complete audit log of every client.",
         })}
       </div>
     </div>
@@ -1072,8 +1216,17 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
   const { t } = useTranslation();
   const resolvedTheme = useThemeStore((state) => state.resolvedTheme);
   const showConfirmation = useNotificationStore((state) => state.showConfirmation);
-  const { disableControls, editor, updatedText, dirty, onClose, onCopyText, onSave, onChange } =
-    props;
+  const {
+    disableControls,
+    editor,
+    updatedText,
+    dirty,
+    auditReloadKey = 0,
+    onClose,
+    onCopyText,
+    onSave,
+    onChange,
+  } = props;
 
   const managedHeaderState = editor?.managedHeaderState || null;
   // 旧 payload 仍可能带 policy_version；仅用于推断 provider，不再作为「自动升级策略版本」展示。
@@ -1196,6 +1349,10 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
     ([left], [right]) => left.localeCompare(right)
   );
   const managedHeaderCurrent = managedHeaderState?.current || null;
+  // 出站指纹「实际值」表数据源（点③）：summary_headers（版本/客户端类 header 的
+  // 字面值）+ runtime_fingerprint（Os/Arch）。不新增数据获取，只消费已有投影。
+  const managedHeaderSummaryHeaders = managedHeaderState?.current?.summary_headers;
+  const managedHeaderRuntimeFingerprint = managedHeaderState?.current?.runtime_fingerprint;
   const managedHeaderGeneratedAt = managedHeaderState?.current?.generated_at || '';
   const managedHeaderSource = managedHeaderCurrent?.source || '';
   const managedHeaderSourceUrl = managedHeaderCurrent?.source_url || '';
@@ -1350,7 +1507,8 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
               Boolean(editor?.proxyUrlError) ||
               Boolean(editor?.extraHeadersError) ||
               Boolean(editor?.transportProfileError) ||
-              Boolean(editor?.tlsProfileError)
+              Boolean(editor?.tlsProfileError) ||
+              Boolean(editor?.rawJsonError)
             }
           >
             {t('common.save')}
@@ -1592,6 +1750,59 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
                   data-testid="account-settings-note-input"
                   onChange={(e) => onChange('note', e.target.value)}
                 />
+
+                {/* 基础路由配置（迁移自旧「登录文件详情」弹窗）：prefix / priority /
+                    websockets 直接写原始 auth JSON（走 /auth-files/fields）。仅当成功
+                    加载到可结构化编辑的原始 JSON 时渲染。 */}
+                {editor.rawJsonAvailable && (
+                  <div className={styles.fieldsGrid} data-testid="account-settings-routing-fields">
+                    <Input
+                      label={t('auth_files.prefix_label', { defaultValue: 'Prefix (prefix)' })}
+                      value={editor.prefix}
+                      hint={t('auth_files.account_settings_prefix_hint', {
+                        defaultValue:
+                          'Optional model-name prefix stored in the raw auth file for this account.',
+                      })}
+                      disabled={disableControls || editor.saving}
+                      data-testid="account-settings-prefix-input"
+                      onChange={(e) => onChange('prefix', e.target.value)}
+                    />
+                    <Input
+                      label={t('auth_files.priority_label', { defaultValue: 'Priority (priority)' })}
+                      value={editor.priority}
+                      placeholder={t('auth_files.priority_placeholder', {
+                        defaultValue: 'e.g. 10 or -1',
+                      })}
+                      hint={t('auth_files.priority_hint', {
+                        defaultValue:
+                          'Integers only. Invalid values are ignored. Larger value means higher priority.',
+                      })}
+                      disabled={disableControls || editor.saving}
+                      data-testid="account-settings-priority-input"
+                      onChange={(e) => onChange('priority', e.target.value)}
+                    />
+                    {supportsAuthFileWebsockets(editor.providerKey) && (
+                      <div className="form-group" data-testid="account-settings-websockets-field">
+                        <label>
+                          {t('auth_files.websockets_label', { defaultValue: 'WebSockets' })}
+                        </label>
+                        <ToggleSwitch
+                          checked={Boolean(editor.websockets)}
+                          onChange={(value) => onChange('websockets', value)}
+                          disabled={disableControls || editor.saving}
+                          ariaLabel={t('auth_files.websockets_label', {
+                            defaultValue: 'WebSockets',
+                          })}
+                        />
+                        <div className="hint">
+                          {t('auth_files.websockets_hint', {
+                            defaultValue: 'Enable WebSocket transport for this login file.',
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <details
                   className={styles.advancedDetails}
@@ -1951,7 +2162,15 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
                 )}
 
                 {isClaudeManagedPolicy ? (
-                  <ClaudeHeaderStrategyPanel t={t} />
+                  <>
+                    <ClaudeHeaderStrategyPanel t={t} />
+                    <ClaudeOutboundFingerprintPanel
+                      managedHeaders={editor.managedHeaders}
+                      summaryHeaders={managedHeaderSummaryHeaders}
+                      runtimeFingerprint={managedHeaderRuntimeFingerprint}
+                      t={t}
+                    />
+                  </>
                 ) : (
                   <ManagedHeadersPanel entries={managedHeaderEntries} t={t} />
                 )}
@@ -2052,6 +2271,31 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
                     {readonlyBadge}
                   </span>
                 </header>
+
+                {/* 身份变更审计的两条历史（reauth / status），从卡片挪到此处，与
+                    managed_header_state.history 并列。仅 OAuth 账号可见（canViewAuthFileAuditHistory）。 */}
+                {canViewAuthFileAuditHistory(editor.file) && (
+                  <div
+                    className={styles.identityHistoryPanels}
+                    data-testid="account-settings-identity-history-panels"
+                  >
+                    <div className={styles.identityHistoryPanelsLabel}>
+                      {t('auth_files.account_settings_identity_history_label', {
+                        defaultValue: 'Re-authentication & status-check history',
+                      })}
+                    </div>
+                    <div className={styles.identityHistoryPanelsRow}>
+                      <AuthFilesReauthHistoryPanel file={editor.file} reloadKey={auditReloadKey} />
+                      <AuthFilesStatusHistoryPanel file={editor.file} reloadKey={auditReloadKey} />
+                    </div>
+                    <div className="hint">
+                      {t('auth_files.account_settings_identity_history_hint', {
+                        defaultValue:
+                          'Open to review re-authentication and status-check history for this account (OAuth accounts only).',
+                      })}
+                    </div>
+                  </div>
+                )}
 
                 <div
                   className={styles.managedHeaderPanel}
@@ -2179,37 +2423,77 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
                 </div>
               )}
 
-              {/* 末区：高级原始 JSON 预览（debug 用途，折叠） */}
+              {/* 末区：原始 auth JSON（可编辑，折叠，保存前二次确认）。 */}
               <details
                 className={styles.advancedDetails}
                 data-testid="account-settings-raw-json-details"
               >
                 <summary>
                   {t('auth_files.account_settings_raw_json_details', {
-                    defaultValue: 'Advanced raw JSON preview',
+                    defaultValue: 'Advanced: raw auth JSON (editable)',
                   })}
                 </summary>
                 <div className={styles.advancedBody}>
-                  <div className={styles.jsonWrapper}>
-                    <label className={styles.fieldLabel}>
-                      {t('auth_files.prefix_proxy_info_label', {
-                        defaultValue: 'Auth file summary',
-                      })}
-                    </label>
-                    <ReadOnlyCodeViewer
-                      value={editor.fileInfoText}
-                      minRows={6}
-                      testId="account-settings-auth-file-info-viewer"
-                      label={readonlyBadge}
-                      onCopyText={onCopyText}
-                    />
-                    <div className="hint">
-                      {t('auth_files.prefix_proxy_info_hint', {
-                        defaultValue:
-                          'Read-only snapshot of the auth file metadata. Edit account settings above.',
-                      })}
+                  {editor.rawJsonAvailable ? (
+                    <div className={styles.jsonWrapper}>
+                      <label className={styles.fieldLabel}>
+                        {t('auth_files.account_settings_raw_json_editable_label', {
+                          defaultValue: 'Raw auth JSON (editable)',
+                        })}
+                      </label>
+                      <div
+                        className={styles.rawJsonDangerNote}
+                        data-testid="account-settings-raw-json-danger-note"
+                        role="note"
+                      >
+                        {t('auth_files.account_settings_raw_json_danger_note', {
+                          defaultValue:
+                            'Danger: editing the raw auth JSON overwrites the entire auth file and can break this account. Saving requires an extra confirmation.',
+                        })}
+                      </div>
+                      <EditableJsonCodeField
+                        value={editor.rawJsonText}
+                        placeholder={`{\n  "type": "claude",\n  "proxy_url": "socks5://…"\n}`}
+                        invalid={Boolean(editor.rawJsonError)}
+                        disabled={disableControls || editor.saving}
+                        testId="account-settings-raw-json-editor"
+                        theme={resolvedTheme}
+                        onChange={(value) => onChange('rawJsonText', value)}
+                      />
+                      {editor.rawJsonError && (
+                        <div className="error-box" data-testid="account-settings-raw-json-error">
+                          {editor.rawJsonError}
+                        </div>
+                      )}
+                      <div className="hint">
+                        {t('auth_files.account_settings_raw_json_editable_hint', {
+                          defaultValue:
+                            'Full auth file JSON. Most changes should use the structured fields above; edit here only when you must. Invalid JSON cannot be saved.',
+                        })}
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    <div className={styles.jsonWrapper}>
+                      <label className={styles.fieldLabel}>
+                        {t('auth_files.prefix_proxy_info_label', {
+                          defaultValue: 'Auth file summary',
+                        })}
+                      </label>
+                      <ReadOnlyCodeViewer
+                        value={editor.fileInfoText}
+                        minRows={6}
+                        testId="account-settings-auth-file-info-viewer"
+                        label={readonlyBadge}
+                        onCopyText={onCopyText}
+                      />
+                      <div className="hint">
+                        {t('auth_files.account_settings_raw_json_unavailable_hint', {
+                          defaultValue:
+                            'Raw auth JSON could not be loaded for structured editing; showing a read-only metadata snapshot instead.',
+                        })}
+                      </div>
+                    </div>
+                  )}
 
                   <div className={styles.jsonWrapper}>
                     <label className={styles.fieldLabel}>
@@ -2227,7 +2511,7 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
                     <div className="hint">
                       {t('auth_files.prefix_proxy_source_hint', {
                         defaultValue:
-                          'Read-only preview of the payload that Save will send. Editable fields are labeled above.',
+                          'Read-only preview of the account-settings payload that Save will send. Editable fields are labeled above.',
                       })}
                     </div>
                   </div>

@@ -383,6 +383,54 @@
   min-width: 0;
 }
 
+// 出站指纹「实际值」表里未透出值的占位（裸农场号未透出 Os/Arch 等）。
+.outboundFingerprintMissing {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border: 1px dashed color-mix(in srgb, var(--border-color) 82%, transparent);
+  border-radius: 999px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+// 身份变更审计区顶部的两条历史入口（reauth / status），从卡片挪进弹窗。
+.identityHistoryPanels {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 65%, transparent);
+  border-radius: $radius-sm;
+  background-color: color-mix(in srgb, var(--bg-primary) 75%, transparent);
+}
+
+.identityHistoryPanelsLabel {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.identityHistoryPanelsRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+// 原始 auth JSON 可编辑区的危险提示。
+.rawJsonDangerNote {
+  padding: 8px 10px;
+  border: 1px solid var(--danger-color);
+  border-radius: $radius-sm;
+  background-color: rgba($error-color, 0.08);
+  color: var(--danger-color);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
 // 未绑定 Claude 红警：不撑满整行，左对齐自适应宽度。
 .deviceIdUnprovisionedWarning {
   align-self: flex-start;

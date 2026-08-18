@@ -11,7 +11,6 @@ import {
   IconKey,
   IconModelCluster,
   IconRefreshCw,
-  IconSettings,
   IconShield,
   IconTrash2,
 } from '@/components/ui/icons';
@@ -53,26 +52,10 @@ import {
 } from '@/features/authFiles/hooks/useAuthFilesReauth';
 import { AccountSpeedReadings } from '@/features/authFiles/components/AccountSpeedReadings';
 import { AuthFileQuotaSection } from '@/features/authFiles/components/AuthFileQuotaSection';
-import { AuthFilesReauthHistoryPanel } from '@/features/authFiles/components/AuthFilesReauthHistoryPanel';
-import { AuthFilesStatusHistoryPanel } from '@/features/authFiles/components/AuthFilesStatusHistoryPanel';
 import styles from '@/features/authFiles/AuthFilesPage.module.scss';
 import reauthStyles from '@/features/authFiles/components/AuthFileReauthInline.module.scss';
 
 const HEALTHY_STATUS_MESSAGES = new Set(['ok', 'healthy', 'ready', 'success', 'available']);
-
-// 审计入口（reauth / status 历史）门槛：与旧版一致，仅 OAuth 账号显示。
-// 对照旧版 useAuthFilesReauth.AUTH_FILE_OAUTH_PROVIDER_MAP 的 provider key 集合，
-// 避免像旧版那样对所有非 runtime 卡都挂审计面板，导致同行卡片元素多寡不一、高度参差。
-const OAUTH_AUDITABLE_PROVIDER_KEYS = new Set([
-  'anthropic',
-  'claude',
-  'codex',
-  'antigravity',
-  'gemini',
-  'gemini-cli',
-  'kimi',
-  'xai',
-]);
 
 export type AuthFileCardProps = {
   file: AuthFileItem;
@@ -112,11 +95,8 @@ export type AuthFileCardProps = {
   /** 迁移自旧版：逐账号发送一次测试消息，验证账号是否能正常出请求。 */
   onTestMessage?: (file: AuthFileItem) => void;
   onDownload: (name: string) => void;
-  onOpenPrefixProxyEditor: (file: AuthFileItem) => void;
-  /** 打开身份隔离账号设置弹窗（与「编辑原始 JSON」的 onOpenPrefixProxyEditor 并存，互不替代）。 */
+  /** 打开统一「账号设置」弹窗（含基础路由配置 / 身份模型 / 出站指纹 / 身份变更审计）。 */
   onOpenAccountSettings: (file: AuthFileItem) => void;
-  /** 该文件的审计面板重载键；reauth / 账号设置保存成功等操作后由页面 bump，用于让已展开的面板重新拉取历史。 */
-  auditReloadKey?: number;
   onDelete: (name: string) => void;
   onToggleStatus: (file: AuthFileItem, enabled: boolean) => void;
   onToggleSelect: (name: string) => void;
@@ -165,9 +145,7 @@ export function AuthFileCard(props: AuthFileCardProps) {
     onRefreshStatus,
     onTestMessage,
     onDownload,
-    onOpenPrefixProxyEditor,
     onOpenAccountSettings,
-    auditReloadKey = 0,
     onDelete,
     onToggleStatus,
     onToggleSelect,
@@ -181,13 +159,6 @@ export function AuthFileCard(props: AuthFileCardProps) {
   const isRuntimeOnly = isRuntimeOnlyAuthFile(file);
   const resolvedProvider = resolveAuthProvider(file);
   const providerKey = normalizeProviderKey(String(file.type ?? file.provider ?? 'unknown'));
-  // 审计入口仅 OAuth 账号显示（恢复旧版门槛），非 OAuth / runtime 卡不挂审计面板。
-  // 与旧版 resolveAuthFileOAuthProvider 一致：provider / type 任一命中 OAuth 集合即算。
-  const auditProviderKeyFromProvider = normalizeProviderKey(String(file.provider ?? ''));
-  const canViewAuditHistory =
-    !isRuntimeOnly &&
-    (OAUTH_AUDITABLE_PROVIDER_KEYS.has(providerKey) ||
-      OAUTH_AUDITABLE_PROVIDER_KEYS.has(auditProviderKeyFromProvider));
   const isAntigravity = resolvedProvider === 'antigravity';
   const isAistudio = providerKey === 'aistudio';
   const showModelsButton = !isRuntimeOnly || isAistudio;
@@ -247,6 +218,37 @@ export function AuthFileCard(props: AuthFileCardProps) {
     : '';
   // 无健康数据（成功/失败均为 0）时不占整块 HEALTH 面板，改成一行紧凑占位。
   const hasStatusData = statusData.totalSuccess + statusData.totalFailure > 0;
+
+  // 卡片头部健康 pill（点⑤）：把原本埋在卡片中部 HEALTH 面板的近期请求成败数据
+  // 提到头部，一眼可见，不用滚动。复用同一 statusData，语义分层：
+  //  - warning：隔离 / 需重认证 / 有近期失败 / 结构化告警。
+  //  - healthy：有近期成功且无上述告警。
+  //  - neutral：无近期数据（或虚拟占位卡不渲染）。
+  const headerHealthTone: 'healthy' | 'warning' | 'neutral' = isRuntimeOnly
+    ? 'neutral'
+    : isAutoQuarantined || isReauthRequired || hasStatusWarning || statusData.totalFailure > 0
+      ? 'warning'
+      : statusData.totalSuccess > 0
+        ? 'healthy'
+        : 'neutral';
+  const headerHealthPillClass =
+    headerHealthTone === 'healthy'
+      ? styles.healthPillHealthy
+      : headerHealthTone === 'warning'
+        ? styles.healthPillWarning
+        : styles.healthPillNeutral;
+  const headerHealthPillText = hasStatusData
+    ? t('auth_files.card_health_pill_counts', {
+        success: statusData.totalSuccess,
+        failure: statusData.totalFailure,
+        defaultValue: '✓ {{success}} · ✗ {{failure}}',
+      })
+    : t('auth_files.card_health_pill_no_data', { defaultValue: 'No recent data' });
+  const headerHealthPillTitle = t('auth_files.card_health_pill_title', {
+    success: statusData.totalSuccess,
+    failure: statusData.totalFailure,
+    defaultValue: 'Recent request health: {{success}} success / {{failure}} failure',
+  });
 
   // 隔离/异常原因常驻可见文本的第二行：接线 recent_requests 的 Failed 计数
   // （与卡片下方 HEALTH 面板同一数据源 statusData.totalFailure，避免展示口径
@@ -459,6 +461,15 @@ export function AuthFileCard(props: AuthFileCardProps) {
                 >
                   {stateLabel}
                 </span>
+                {!isRuntimeOnly && (
+                  <span
+                    className={`${styles.healthPill} ${headerHealthPillClass}`}
+                    title={headerHealthPillTitle}
+                    data-testid={`auth-file-health-pill-${file.name}`}
+                  >
+                    {headerHealthPillText}
+                  </span>
+                )}
                 {missingProxyUrl && (
                   <span
                     className={`${styles.stateBadge} ${styles.stateBadgeWarning}`}
@@ -582,6 +593,28 @@ export function AuthFileCard(props: AuthFileCardProps) {
                 </div>
               )}
             </div>
+            {/* 头部操作区（点⑤）：把「账号设置」入口从卡片底部提到头部，一眼可点，
+                不用滚到底部动作区。 */}
+            {!isRuntimeOnly && (
+              <div className={styles.cardHeaderActions}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => onOpenAccountSettings(file)}
+                  className={styles.iconButton}
+                  title={t('auth_files.account_settings_button', {
+                    defaultValue: 'Account settings',
+                  })}
+                  aria-label={t('auth_files.account_settings_button', {
+                    defaultValue: 'Account settings',
+                  })}
+                  data-testid={`auth-file-account-settings-${file.name}`}
+                  disabled={disableControls}
+                >
+                  <IconShield className={styles.actionIcon} size={16} />
+                </Button>
+              </div>
+            )}
           </div>
 
           <div className={`${styles.cardMeta} ${compact ? styles.cardMetaCompact : ''}`}>
@@ -607,14 +640,6 @@ export function AuthFileCard(props: AuthFileCardProps) {
               <div className={styles.metaItem} title={projectIdValue}>
                 <span className={styles.metaLabel}>{t('auth_files.project_id_display')}</span>
                 <span className={styles.metaValue}>{projectIdValue}</span>
-              </div>
-            )}
-            {canViewAuditHistory && (
-              <div className={styles.cardMetaAction}>
-                <div className={styles.cardMetaActionList}>
-                  <AuthFilesReauthHistoryPanel file={file} reloadKey={auditReloadKey} />
-                  <AuthFilesStatusHistoryPanel file={file} reloadKey={auditReloadKey} />
-                </div>
               </div>
             )}
           </div>
@@ -899,31 +924,6 @@ export function AuthFileCard(props: AuthFileCardProps) {
                           <IconKey className={styles.actionIcon} size={16} />
                         </Button>
                       )}
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => onOpenPrefixProxyEditor(file)}
-                        className={styles.iconButton}
-                        title={t('auth_files.prefix_proxy_button')}
-                        disabled={disableControls}
-                      >
-                        <IconSettings className={styles.actionIcon} size={16} />
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => onOpenAccountSettings(file)}
-                        className={styles.iconButton}
-                        title={t('auth_files.account_settings_button', {
-                          defaultValue: 'Account settings',
-                        })}
-                        aria-label={t('auth_files.account_settings_button', {
-                          defaultValue: 'Account settings',
-                        })}
-                        disabled={disableControls}
-                      >
-                        <IconShield className={styles.actionIcon} size={16} />
-                      </Button>
                       <Button
                         variant="danger"
                         size="sm"
