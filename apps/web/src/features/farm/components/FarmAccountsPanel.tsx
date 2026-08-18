@@ -10,11 +10,20 @@ import {
   TableRow,
 } from '@/components/ui/Table';
 import { Select } from '@/components/ui/Select';
-import { Button } from '@/components/ui/Button';
 import { AsyncPanel } from '@/components/ui/AsyncPanel';
 import { AccountAuthBadge } from '@/components/ui/AccountAuthBadge';
 import { ContainerRuntimeBadge } from '@/components/ui/ContainerRuntimeBadge';
-import { IconBot, IconInfo, IconShield, IconTimer } from '@/components/ui/icons';
+import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/DropdownMenu';
+import {
+  IconArrowUpFromLine,
+  IconBot,
+  IconInfo,
+  IconModelCluster,
+  IconMoreVertical,
+  IconSatellite,
+  IconShield,
+  IconTimer,
+} from '@/components/ui/icons';
 import { useFarmAccounts } from '../hooks/useFarmAccounts';
 import { useFarmAccountState } from '../hooks/useFarmAccountState';
 import { useFarmContainers } from '../hooks/useFarmContainers';
@@ -54,6 +63,7 @@ import {
   type FarmDeviceIDSource,
   type FarmEnv,
 } from '@/types/farm';
+import type { FarmDetailTab } from './FarmContainerDetail';
 import { formatDateTimeUtc8 } from '@/utils/datetime';
 import { formatDurationMs } from '@/utils/usage/latency';
 import styles from './FarmAccountsPanel.module.scss';
@@ -110,9 +120,19 @@ const CADENCE_SPARKLINE_MIN_SAMPLES = 2;
 interface FarmAccountsPanelProps {
   /** 页面级容器快照；传入后不再启动本面板自己的轮询。 */
   containers?: FarmContainerView[];
+  /**
+   * 打开统一「账号·设备详情」抽屉并深链到指定分区（IA 重设计）。由
+   * FarmDashboard 传入，复用其 scheduleAfterDrawerClose 编排（关账号抽屉 →
+   * 370ms 后开详情，同一焦点恢复时序）。未传时遥测徽标 / ⋯管理菜单里的详情
+   * 入口降级为不可用（未绑定账号本就没有容器可看）。
+   */
+  onOpenDetail?: (container: FarmContainerView, initialTab: FarmDetailTab) => void;
 }
 
-export function FarmAccountsPanel({ containers: sharedContainers }: FarmAccountsPanelProps = {}) {
+export function FarmAccountsPanel({
+  containers: sharedContainers,
+  onOpenDetail,
+}: FarmAccountsPanelProps = {}) {
   const { t, i18n } = useTranslation();
   // C8「筛选维度改造」：环境（test/prod）对本部署无意义——编排器当前只服务 test，
   // 生产账号不会出现在这个列表里。env 固定为 test 仅用于底层拉取，不再作为可见
@@ -618,6 +638,55 @@ export function FarmAccountsPanel({ containers: sharedContainers }: FarmAccounts
               const canOnboard = !account.farm_bound && !account.disabled;
               const isOnboarding = onboardingAccountId === account.name;
 
+              // IA 重设计：统一「账号·设备详情」深链入口门控。仅已绑定容器且父级
+              // 提供了 onOpenDetail 时，遥测徽标可点、⋯管理菜单的「查看遥测/容器
+              // 详情」可用；未绑定账号没有容器可看，降级为不可点/置灰。
+              const canOpenDetail = Boolean(joinedContainer && onOpenDetail);
+              const telemetryAliveLabel = t(
+                `farm.accountHealth.telemetryAlive_${telemetryAliveState}`,
+                { defaultValue: telemetryAliveState }
+              );
+              const telemetryUnknownHint =
+                telemetryAliveState === 'unknown'
+                  ? t('farm.accountHealth.telemetryAlive_unknownHint', {
+                      defaultValue:
+                        'The telemetry collection plane is not wired up yet; this is expected, not an anomaly.',
+                    })
+                  : undefined;
+
+              // ⋯管理菜单（用户③）：把「接入农场 Onboard」从独立操作列收进本菜单
+              // （解 U8「管理入口埋底」），与「查看遥测 / 容器详情」两个详情深链
+              // 入口并列。未绑定账号：详情两项置灰，只留「接入农场」可用。
+              const accountMenuItems: DropdownMenuItem[] = [
+                {
+                  key: 'telemetry',
+                  label: t('farm.accountHealth.menuViewTelemetry', { defaultValue: '查看遥测' }),
+                  icon: <IconSatellite size={15} aria-hidden="true" />,
+                  disabled: !canOpenDetail,
+                  onClick: () => {
+                    if (joinedContainer && onOpenDetail) onOpenDetail(joinedContainer, 'telemetry');
+                  },
+                },
+                {
+                  key: 'container-detail',
+                  label: t('farm.accountHealth.menuContainerDetail', { defaultValue: '容器详情' }),
+                  icon: <IconModelCluster size={15} aria-hidden="true" />,
+                  disabled: !canOpenDetail,
+                  onClick: () => {
+                    if (joinedContainer && onOpenDetail) onOpenDetail(joinedContainer, 'overview');
+                  },
+                },
+                {
+                  key: 'onboard',
+                  label: isOnboarding
+                    ? t('farm.accountHealth.onboarding', { defaultValue: 'Onboarding…' })
+                    : t('farm.accountHealth.onboardAction', { defaultValue: 'Onboard to farm' }),
+                  icon: <IconArrowUpFromLine size={15} aria-hidden="true" />,
+                  disabled: !canOnboard || isOnboarding,
+                  onClick: () => onboard(account.name, env),
+                },
+              ];
+
               return (
                 <TableRow key={account.name} data-testid={`farm-account-row-${account.name}`}>
                   <TableCell data-label={t('farm.accounts.column_name')}>
@@ -960,23 +1029,40 @@ export function FarmAccountsPanel({ containers: sharedContainers }: FarmAccounts
                                 : 'Outbound Mac',
                           })}
                         </span>
-                        <span
-                          className={`status-badge ${telemetryAliveBadgeVariant}`}
-                          data-testid={`farm-account-telemetry-alive-${account.name}`}
-                          data-telemetry-alive={telemetryAliveState}
-                          title={
-                            telemetryAliveState === 'unknown'
-                              ? t('farm.accountHealth.telemetryAlive_unknownHint', {
-                                  defaultValue:
-                                    'The telemetry collection plane is not wired up yet; this is expected, not an anomaly.',
-                                })
-                              : undefined
-                          }
-                        >
-                          {t(`farm.accountHealth.telemetryAlive_${telemetryAliveState}`, {
-                            defaultValue: telemetryAliveState,
-                          })}
-                        </span>
+                        {/* IA 重设计：telemetry_alive 徽标可点 → 一键直达统一详情的
+                            「遥测」分区（无需再滚到第 8 段）。仅已绑定容器且父级提供
+                            onOpenDetail 时可点；未绑定账号显 unknown 且不可点（保持
+                            原 span，附「采集面未接入是正常态」提示）。 */}
+                        {canOpenDetail ? (
+                          <button
+                            type="button"
+                            className={`status-badge ${telemetryAliveBadgeVariant} ${styles.telemetryAliveButton}`}
+                            data-testid={`farm-account-telemetry-alive-${account.name}`}
+                            data-telemetry-alive={telemetryAliveState}
+                            onClick={() => onOpenDetail?.(joinedContainer!, 'telemetry')}
+                            title={
+                              telemetryUnknownHint ??
+                              t('farm.accountHealth.telemetryAlive_openHint', {
+                                defaultValue: '查看该容器遥测详情',
+                              })
+                            }
+                            aria-label={t('farm.accountHealth.telemetryAlive_openAria', {
+                              state: telemetryAliveLabel,
+                              defaultValue: '查看该容器遥测详情（当前 {{state}}）',
+                            })}
+                          >
+                            {telemetryAliveLabel}
+                          </button>
+                        ) : (
+                          <span
+                            className={`status-badge ${telemetryAliveBadgeVariant}`}
+                            data-testid={`farm-account-telemetry-alive-${account.name}`}
+                            data-telemetry-alive={telemetryAliveState}
+                            title={telemetryUnknownHint}
+                          >
+                            {telemetryAliveLabel}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </TableCell>
@@ -989,32 +1075,27 @@ export function FarmAccountsPanel({ containers: sharedContainers }: FarmAccounts
                     </span>
                   </TableCell>
 
-                  {/* C2 操作列：reauth 动作已移出账号健康面板（状态由账号认证态徽标
-                      承载，重新授权动作留「认证文件」页）。本列只保留 onboard。 */}
+                  {/* 操作列（用户③，IA 重设计）：收敛成单一「⋯管理」DropdownMenu——
+                      把此前独立的「接入农场 Onboard」按钮 + 详情入口都收进菜单，解 U8
+                      「管理入口埋底」；reauth 动作仍留「认证文件」页。菜单项与置灰
+                      逻辑见上方 accountMenuItems。 */}
                   <TableCell data-label={actionsColumnLabel}>
-                    <div className={styles.actionsCell}>
-                      {canOnboard ? (
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          loading={isOnboarding}
-                          onClick={() => onboard(account.name, env)}
-                          className={styles.onboardButton}
-                          aria-label={t('farm.accountHealth.onboardAction', {
-                            defaultValue: 'Onboard to farm',
-                          })}
-                          title={t('farm.accountHealth.onboardAction', {
-                            defaultValue: 'Onboard to farm',
-                          })}
-                          data-testid={`farm-account-onboard-${account.name}`}
-                        >
-                          {isOnboarding
-                            ? t('farm.accountHealth.onboarding', { defaultValue: 'Onboarding…' })
-                            : t('farm.accountHealth.onboardActionShort', { defaultValue: 'Onboard' })}
-                        </Button>
-                      ) : (
-                        <span className={styles.mono}>—</span>
-                      )}
+                    <div
+                      className={styles.actionsCell}
+                      data-testid={`farm-account-menu-${account.name}`}
+                    >
+                      <DropdownMenu
+                        ariaLabel={t('farm.accountHealth.rowMenuLabel', {
+                          defaultValue: '账号管理菜单',
+                        })}
+                        triggerClassName={styles.rowMenuTrigger}
+                        triggerIcon={<IconMoreVertical size={16} aria-hidden="true" />}
+                        triggerLabel={t('farm.accountHealth.rowMenuTrigger', {
+                          defaultValue: '管理',
+                        })}
+                        items={accountMenuItems}
+                        align="end"
+                      />
                     </div>
                   </TableCell>
                 </TableRow>

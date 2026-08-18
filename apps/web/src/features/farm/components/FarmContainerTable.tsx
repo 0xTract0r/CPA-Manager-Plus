@@ -208,7 +208,11 @@ export function FarmContainerTable({
               <TableHead>{t('farm.containers.column_device_alignment')}</TableHead>
               <TableHead>{t('farm.containers.column_next_estimate')}</TableHead>
               <TableHead>{t('farm.containers.column_binding')}</TableHead>
-              <TableHead alignRight>{t('farm.containers.column_actions')}</TableHead>
+              {/* U4：操作列固定在右侧（sticky-right），10 列表格横向溢出抽屉时
+                  绑定/解绑/退役按钮仍常驻视口内可点，不再被裁到屏外。 */}
+              <TableHead alignRight className={styles.stickyActions}>
+                {t('farm.containers.column_actions')}
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -348,6 +352,7 @@ export function FarmContainerTable({
                   </TableCell>
                   <TableCell
                     alignRight
+                    className={styles.stickyActions}
                     data-label={t('farm.containers.column_actions')}
                     onClick={onSelectContainer ? stopRowClick : undefined}
                     onKeyDown={onSelectContainer ? stopRowKeyDown : undefined}

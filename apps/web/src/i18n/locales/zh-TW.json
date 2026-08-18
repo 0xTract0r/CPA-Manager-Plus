@@ -4030,7 +4030,8 @@
       "containersEntryDesc": "篩選容器池，建立、綁定、解綁、退役並查看詳情。",
       "resourcesEntryDesc": "查看整機與容器記憶體、CPU 水位及限制口徑。",
       "usageEntryDesc": "查看帳號與容器的累計 Token、請求數和費用口徑。",
-      "backToContainers": "返回容器池"
+      "backToContainers": "返回容器池",
+      "backToAccounts": "返回帳號列表"
     },
     "config": {
       "title": "編排器連線設定",
@@ -4103,7 +4104,7 @@
       "funnelNotApplicable": "{{count}} 不適用"
     },
     "accounts": {
-      "title": "帳號健康",
+      "title": "帳號狀態",
       "desc": "該環境下可用於綁定的帳號清單（來自 CPA 既有驗證檔案健康檢查）。",
       "empty_title": "尚無帳號",
       "empty_desc": "該環境下還沒有可用帳號，請先在 CPA 端上傳驗證檔案。",
@@ -4323,7 +4324,13 @@
       "telemetryAlive_unknown": "遙測未知 · 待採集",
       "telemetryAlive_unknownHint": "尚未接入遙測採集平面，屬於正常態，不代表異常",
       "farmEnrolledBadge_enrolled": "已納管",
-      "farmEnrolledBadge_notEnrolled": "未納管 · 免疫農場治理"
+      "farmEnrolledBadge_notEnrolled": "未納管 · 免疫農場治理",
+      "menuViewTelemetry": "查看遙測",
+      "menuContainerDetail": "容器詳情",
+      "rowMenuLabel": "帳號管理選單",
+      "rowMenuTrigger": "管理",
+      "telemetryAlive_openHint": "查看該容器遙測詳情",
+      "telemetryAlive_openAria": "查看該容器遙測詳情（目前 {{state}}）"
     },
     "overview": {
       "running": "運行中容器",
@@ -4392,7 +4399,13 @@
       "probeTokenGap": "本輪聚合讀取路徑未接入 tokens_total 求和（見交付說明 gaps），暫無法誠實展示趨勢圖，待 P1/store 層補聚合欄後接入。",
       "eventsSection": "狀態 / 告警事件",
       "noOpenEvents": "目前沒有仍在 firing 的事件。",
-      "eventsHistoryGap": "只展示目前仍 firing 的事件，暫非完整歷史時間線（見交付說明 gaps）。"
+      "eventsHistoryGap": "只展示目前仍 firing 的事件，暫非完整歷史時間線（見交付說明 gaps）。",
+      "tab_overview": "概覽",
+      "tab_telemetry": "遙測",
+      "tab_resources": "資源",
+      "tab_cadence": "節奏與用量",
+      "tab_events": "事件",
+      "tabsAria": "容器詳情分區"
     },
     "healthReason": {
       "ok": "健康",

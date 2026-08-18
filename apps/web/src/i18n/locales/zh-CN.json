@@ -4030,7 +4030,8 @@
       "containersEntryDesc": "筛选容器池，创建、绑定、解绑、退役并下钻详情。",
       "resourcesEntryDesc": "查看整机与容器内存、CPU 水位及限制口径。",
       "usageEntryDesc": "查看账号与容器的累计 Token、请求数和费用口径。",
-      "backToContainers": "返回容器池"
+      "backToContainers": "返回容器池",
+      "backToAccounts": "返回账号列表"
     },
     "config": {
       "title": "编排器连接配置",
@@ -4103,7 +4104,7 @@
       "funnelNotApplicable": "{{count}} 不适用"
     },
     "accounts": {
-      "title": "账号健康",
+      "title": "账号状态",
       "desc": "该环境下可用于绑定的账号列表（来自 CPA 既有认证文件健康检查）。",
       "empty_title": "暂无账号",
       "empty_desc": "该环境下还没有可用账号，请先在 CPA 侧上传认证文件。",
@@ -4323,7 +4324,13 @@
       "telemetryAlive_unknown": "遥测未知 · 待采集",
       "telemetryAlive_unknownHint": "尚未接入遥测采集平面，属于正常态，不代表异常",
       "farmEnrolledBadge_enrolled": "已纳管",
-      "farmEnrolledBadge_notEnrolled": "未纳管 · 免疫农场治理"
+      "farmEnrolledBadge_notEnrolled": "未纳管 · 免疫农场治理",
+      "menuViewTelemetry": "查看遥测",
+      "menuContainerDetail": "容器详情",
+      "rowMenuLabel": "账号管理菜单",
+      "rowMenuTrigger": "管理",
+      "telemetryAlive_openHint": "查看该容器遥测详情",
+      "telemetryAlive_openAria": "查看该容器遥测详情（当前 {{state}}）"
     },
     "overview": {
       "running": "运行中容器",
@@ -4392,7 +4399,13 @@
       "probeTokenGap": "本轮聚合读取路径未接入 tokens_total 求和（见交付说明 gaps），暂无法诚实展示趋势图，待 P1/store 层补聚合列后接入。",
       "eventsSection": "状态 / 告警事件",
       "noOpenEvents": "当前没有仍在 firing 的事件。",
-      "eventsHistoryGap": "只展示当前仍 firing 的事件，暂非完整历史时间线（见交付说明 gaps）。"
+      "eventsHistoryGap": "只展示当前仍 firing 的事件，暂非完整历史时间线（见交付说明 gaps）。",
+      "tab_overview": "概览",
+      "tab_telemetry": "遥测",
+      "tab_resources": "资源",
+      "tab_cadence": "节奏与用量",
+      "tab_events": "事件",
+      "tabsAria": "容器详情分区"
     },
     "healthReason": {
       "ok": "健康",

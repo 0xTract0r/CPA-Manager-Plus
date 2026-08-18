@@ -4030,7 +4030,8 @@
       "containersEntryDesc": "Filter the pool, create, bind, unbind, retire, and inspect containers.",
       "resourcesEntryDesc": "Review host and container memory/CPU levels and limit semantics.",
       "usageEntryDesc": "Review cumulative tokens, requests, and cost by account and container.",
-      "backToContainers": "Back to container pool"
+      "backToContainers": "Back to container pool",
+      "backToAccounts": "Back to accounts"
     },
     "config": {
       "title": "Orchestrator Connection",
@@ -4103,7 +4104,7 @@
       "funnelNotApplicable": "{{count}} not applicable"
     },
     "accounts": {
-      "title": "Account Health",
+      "title": "Account Status",
       "desc": "Accounts available for binding in this environment (from CPA's existing auth file health checks).",
       "empty_title": "No accounts",
       "empty_desc": "No accounts available in this environment yet; upload auth files on the CPA side first.",
@@ -4323,7 +4324,13 @@
       "telemetryAlive_unknown": "Telemetry unknown · pending collection",
       "telemetryAlive_unknownHint": "The telemetry collection plane is not wired up yet; this is expected, not an anomaly.",
       "farmEnrolledBadge_enrolled": "Enrolled",
-      "farmEnrolledBadge_notEnrolled": "Not enrolled · immune to farm governance"
+      "farmEnrolledBadge_notEnrolled": "Not enrolled · immune to farm governance",
+      "menuViewTelemetry": "View telemetry",
+      "menuContainerDetail": "Container detail",
+      "rowMenuLabel": "Account management menu",
+      "rowMenuTrigger": "Manage",
+      "telemetryAlive_openHint": "View this container's telemetry",
+      "telemetryAlive_openAria": "View this container's telemetry (currently {{state}})"
     },
     "overview": {
       "running": "Running Containers",
@@ -4392,7 +4399,13 @@
       "probeTokenGap": "The current aggregation path does not sum tokens_total (see delivery gaps); a trend chart cannot be shown honestly yet, pending a P1/store-layer aggregation column.",
       "eventsSection": "Status / Alert Events",
       "noOpenEvents": "No events currently firing.",
-      "eventsHistoryGap": "Only currently-firing events are shown; this is not yet a full history timeline (see delivery gaps)."
+      "eventsHistoryGap": "Only currently-firing events are shown; this is not yet a full history timeline (see delivery gaps).",
+      "tab_overview": "Overview",
+      "tab_telemetry": "Telemetry",
+      "tab_resources": "Resources",
+      "tab_cadence": "Cadence & usage",
+      "tab_events": "Events",
+      "tabsAria": "Container detail sections"
     },
     "healthReason": {
       "ok": "Healthy",

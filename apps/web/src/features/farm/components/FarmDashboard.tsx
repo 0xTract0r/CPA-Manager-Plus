@@ -19,7 +19,7 @@ import { FarmAlertsPanel } from './FarmAlertsPanel';
 import { FarmBindModal } from './FarmBindModal';
 import { FarmCapacityPanel } from './FarmCapacityPanel';
 import { FarmConfigPanel } from './FarmConfigPanel';
-import { FarmContainerDetail } from './FarmContainerDetail';
+import { FarmContainerDetail, type FarmDetailTab } from './FarmContainerDetail';
 import {
   FarmContainerTable,
   type FarmContainerFilter,
@@ -82,9 +82,13 @@ export function FarmDashboard() {
   const [lastContainerId, setLastContainerId] = useState<string | null>(null);
   const [bindModalOpen, setBindModalOpen] = useState(false);
   const [preselectedContainerId, setPreselectedContainerId] = useState<string | null>(null);
-  const [focusRestoreTarget, setFocusRestoreTarget] = useState<'container-row' | 'containers-trigger' | null>(
-    null
-  );
+  // IA 重设计：统一详情的深链初始分区 + 来源（账号表 / 容器表）。来源决定
+  // 「返回」和关闭后恢复到哪个抽屉/触发器，复用既有 scheduleAfterDrawerClose 时序。
+  const [detailInitialTab, setDetailInitialTab] = useState<FarmDetailTab>('overview');
+  const [detailOrigin, setDetailOrigin] = useState<'containers' | 'accounts'>('containers');
+  const [focusRestoreTarget, setFocusRestoreTarget] = useState<
+    'container-row' | 'containers-trigger' | 'accounts-trigger' | null
+  >(null);
   const transitionTimerRef = useRef<number | null>(null);
 
   const clearTransitionTimer = useCallback(() => {
@@ -122,6 +126,21 @@ export function FarmDashboard() {
         ?.closest('.modal-body');
       setContainerScrollTop(drawerBody instanceof HTMLElement ? drawerBody.scrollTop : 0);
       setLastContainerId(container.id);
+      setDetailOrigin('containers');
+      setDetailInitialTab('overview');
+      scheduleAfterDrawerClose(() => setSelectedContainer(container));
+    },
+    [scheduleAfterDrawerClose]
+  );
+
+  // 账号面板 → 统一详情深链入口（IA 重设计）：遥测徽标 / ⋯管理菜单触发。复用
+  // 与容器表行点击完全相同的 scheduleAfterDrawerClose 编排（关账号抽屉 → 370ms
+  // 后开详情），只是来源标记为 'accounts' 且可深链到指定分区（如遥测）。
+  const handleOpenAccountDetail = useCallback(
+    (container: FarmContainerView, initialTab: FarmDetailTab) => {
+      setLastContainerId(container.id);
+      setDetailOrigin('accounts');
+      setDetailInitialTab(initialTab);
       scheduleAfterDrawerClose(() => setSelectedContainer(container));
     },
     [scheduleAfterDrawerClose]
@@ -133,10 +152,12 @@ export function FarmDashboard() {
     clearTransitionTimer();
     transitionTimerRef.current = window.setTimeout(() => {
       transitionTimerRef.current = null;
-      setActiveDrawer('containers');
-      setFocusRestoreTarget('container-row');
+      // 返回到来源抽屉：容器表来源恢复容器抽屉 + 聚焦原容器行；账号表来源恢复
+      // 账号抽屉（由 Modal 自行落初始焦点，无单一"行"可聚焦）。
+      setActiveDrawer(detailOrigin);
+      if (detailOrigin === 'containers') setFocusRestoreTarget('container-row');
     }, DRAWER_TRANSITION_MS);
-  }, [clearTransitionTimer]);
+  }, [clearTransitionTimer, detailOrigin]);
 
   const closeContainerDetail = useCallback(() => {
     setSelectedContainer(null);
@@ -144,9 +165,12 @@ export function FarmDashboard() {
     clearTransitionTimer();
     transitionTimerRef.current = window.setTimeout(() => {
       transitionTimerRef.current = null;
-      setFocusRestoreTarget('containers-trigger');
+      // 关闭后把焦点还给来源入口的运营卡触发器（账号 / 容器）。
+      setFocusRestoreTarget(
+        detailOrigin === 'accounts' ? 'accounts-trigger' : 'containers-trigger'
+      );
     }, DRAWER_TRANSITION_MS);
-  }, [clearTransitionTimer]);
+  }, [clearTransitionTimer, detailOrigin]);
 
   useEffect(() => {
     if (!focusRestoreTarget) return;
@@ -158,12 +182,16 @@ export function FarmDashboard() {
     const restoreFocus = () => {
       if (cancelled) return;
 
+      const triggerTestId =
+        focusRestoreTarget === 'accounts-trigger'
+          ? 'farm-accounts-trigger'
+          : 'farm-containers-trigger';
       const target =
         focusRestoreTarget === 'container-row' && lastContainerId
           ? document.querySelector<HTMLElement>(
               `[data-testid="farm-container-row-${CSS.escape(lastContainerId)}"]`
             )
-          : document.querySelector<HTMLElement>('[data-testid="farm-containers-trigger"]');
+          : document.querySelector<HTMLElement>(`[data-testid="${triggerTestId}"]`);
 
       if (!target) {
         attempts += 1;
@@ -355,7 +383,9 @@ export function FarmDashboard() {
         width={1280}
       >
         <div data-testid="farm-accounts-drawer">
-          {activeDrawer === 'accounts' ? <FarmAccountsPanel containers={containers} /> : null}
+          {activeDrawer === 'accounts' ? (
+            <FarmAccountsPanel containers={containers} onOpenDetail={handleOpenAccountDetail} />
+          ) : null}
         </div>
       </FarmSectionDrawer>
 
@@ -429,6 +459,12 @@ export function FarmDashboard() {
         container={selectedContainer}
         onClose={closeContainerDetail}
         onBack={restoreContainerContext}
+        backLabel={
+          detailOrigin === 'accounts'
+            ? t('farm.ia.backToAccounts')
+            : t('farm.ia.backToContainers')
+        }
+        initialTab={detailInitialTab}
       />
     </div>
   );

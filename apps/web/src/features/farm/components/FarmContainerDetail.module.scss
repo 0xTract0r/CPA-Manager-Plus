@@ -80,6 +80,23 @@
   flex-wrap: wrap;
 }
 
+// IA 重设计（U11）：5 分区标签行。<SegmentedTabs> root 自带内边距/圆角/横向
+// 滚动（窄屏标签溢出时自身 overflow-x:auto），这里只负责它在抽屉纵向流里的
+// 占位与最小宽度收敛，不覆盖 SegmentedTabs 本体视觉。
+.tabsRow {
+  display: flex;
+  min-width: 0;
+}
+
+// 单个分区面板容器：与 .body 一致的纵向 flex + 段间距，让并入同一分区的多个
+// <section> 保持原有间距节奏；min-width:0 避免内部宽图表把面板撑出横向溢出。
+.tabPanel {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-md;
+  min-width: 0;
+}
+
 .section {
   display: flex;
   flex-direction: column;

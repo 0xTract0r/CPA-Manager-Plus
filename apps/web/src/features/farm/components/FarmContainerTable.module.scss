@@ -86,6 +86,60 @@
   white-space: nowrap;
 }
 
+// U9：容器池表格单元格内边距保底。<Table> 基础组件已提供 10/14(th)、12/14(td)
+// 表格间距；这里在 farm 作用域内以更高特异性（.tableWrap thead th /
+// .tableWrap tbody td，(0,1,2) 高于 <Table> 的 .head th / .row td 的 (0,1,1)）
+// 显式复述同一设计系统间距，确保任何情况下（基础组件回归 / 跨 module 加载顺序
+// 抖动）「容器状态」等文字都不贴单元格边缘。数值与 <Table> 一致、不加宽（本表
+// 已横向溢出，见 U4，加宽只会更宽），仅作保底。
+// 只在非 mobile（≥769）生效——mobile 由 <ResponsiveTable> 降级成堆叠卡片、
+// 单元格改用卡片自身内边距，不能被本规则覆盖。
+@media (min-width: #{$breakpoint-mobile + 1}) {
+  .tableWrap thead th {
+    padding: 10px 14px;
+  }
+
+  .tableWrap tbody td {
+    padding: 12px 14px;
+  }
+}
+
+// U4：把「操作」列固定在横向滚动区右侧（sticky-right）。
+// 机制：<Table> 内层 .scroll 是 overflow-x:auto 的横向滚动容器，也是 sticky
+// 元素的定位视口；<Table> 用 border-collapse:separate（sticky 作用于表格单元格
+// 的前提，collapse 下 Chrome 不支持粘附）。给「操作」th/td 加 position:sticky
+// + right:0：当 10 列表格宽于 .scroll 可视宽（真机 scrollWidth 1648 > clientWidth
+// ~1340）触发横向滚动时，该列吸附在滚动区右可视缘常驻可见——其右边缘恒等于滚动区
+// 右可视缘、必 ≤ 视口宽，绑定/解绑/退役按钮不再被裁到屏外、可点。表格不溢出时
+// sticky 无副作用（元素本就在正常流内、不触发吸附）。
+th.stickyActions,
+td.stickyActions {
+  position: sticky;
+  right: 0;
+  // 抬到同行其它单元格之上，横滚内容从下方穿过而非盖住按钮。
+  z-index: 2;
+  // 左内侧 1px 分隔线：区隔固定列 + 提示左侧还有可横向滚动的内容。
+  box-shadow: inset 1px 0 0 0 var(--border-color);
+}
+
+// 固定列必须不透明，否则横滚时其它单元格从下方透出会糊住按钮。表头/表体各自
+// 匹配 <Table> 的 thead(--bg-tertiary) / tbody 行(--bg-primary) 底色。
+th.stickyActions {
+  background: var(--bg-tertiary);
+}
+
+td.stickyActions {
+  background: var(--bg-primary);
+}
+
+// 行 hover 时固定列同步着色：把 <Table> 行 hover 的半透明 accent 合成到不透明
+// --bg-primary 上（而非 transparent），既与整行一致又不透光。特异性
+// tr.clickableRow:hover td.stickyActions (0,2,2) 高于 <Table> 的 .row:hover td
+// (0,2,1)，确保本规则生效。
+tr.clickableRow:hover td.stickyActions {
+  background: color-mix(in srgb, var(--accent-tertiary) 50%, var(--bg-primary));
+}
+
 .actions {
   display: flex;
   justify-content: flex-end;
@@ -110,6 +164,14 @@
 @include mobile {
   .filterSelect {
     width: 100%;
+  }
+
+  // 窄屏卡片模式下取消固定列吸附（卡片纵向堆叠、无横向滚动容器，sticky/分隔
+  // 线在此无意义且会在卡片里留一道多余竖线）。
+  th.stickyActions,
+  td.stickyActions {
+    position: static;
+    box-shadow: none;
   }
 
   // 卡片里每个字段独占整行，容器 id / 绑定账号允许换行显示完整值，不再省略号截断。

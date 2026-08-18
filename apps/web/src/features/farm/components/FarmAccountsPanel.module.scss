@@ -339,7 +339,32 @@
 
 // 「接入农场」按钮防御性 nowrap：CJK 文本默认允许逐字断行，nowrap 保证按钮
 // 文案整体不逐字拆成竖排；操作列本就纵向堆叠，最坏也只是按钮整体换行。
+// （IA 重设计后 Onboard 已收进 ⋯管理菜单，本类保留供潜在复用，不再挂在行内。）
 .onboardButton {
+  white-space: nowrap;
+}
+
+// IA 重设计：telemetry_alive 徽标可点态（→ 一键直达详情遥测分区）。复用全局
+// .status-badge 视觉（底色/圆角/内边距由 variant 类提供），这里只把 <button>
+// 还原成 badge 外观（font/line-height 继承）并加可点反馈 + 焦点态，不改语义色。
+.telemetryAliveButton {
+  cursor: pointer;
+  font: inherit;
+  line-height: inherit;
+
+  &:hover {
+    filter: brightness(0.97);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--focus-ring, var(--accent, #4c8bf5));
+    outline-offset: 1px;
+  }
+}
+
+// ⋯管理菜单触发按钮（用户③）：nowrap 防「管理」CJK 文案逐字竖排；其余胶囊
+// 外观由 <DropdownMenu> 自带 .trigger 样式承载。
+.rowMenuTrigger {
   white-space: nowrap;
 }
 
