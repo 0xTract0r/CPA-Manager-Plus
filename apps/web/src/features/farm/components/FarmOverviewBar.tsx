@@ -37,8 +37,9 @@ interface FarmOverviewKpiItem {
   // 不渲染裸数值/裸横杠，改用中性 chip 明示「未接入」，避免首屏被误读成半成品。
   placeholder?: { chipLabel: string; title: string };
   // 可点导航：磁贴从静态数字升级为入口。`route` 跳转到对应筛选的容器池整页；
-  // `anchor` 滚动到同页的告警区（原生 hash 锚点）。带任一者时磁贴渲染成可聚焦的
-  // button / a，并加 hover/focus 态。
+  // `anchor` 滚动到同页的告警区。带任一者时磁贴渲染成可聚焦的 button / a，并加
+  // hover/focus 态。注意：本 app 用 createHashRouter，`#` 之后是路由命名空间，
+  // 裸 hash 锚点会被当作路由跳转，anchor 分支必须 preventDefault 后手动滚动。
   action?:
     | { kind: 'route'; to: string; ariaLabel: string }
     | { kind: 'anchor'; href: string; ariaLabel: string };
@@ -186,8 +187,8 @@ export function FarmOverviewBar({ containers }: FarmOverviewBarProps) {
               </>
             );
 
-            // 可点磁贴：route → button（编程式导航到筛选整页）；anchor → a（原生
-            // hash 滚动到同页告警区）。不可点磁贴保持静态 div。
+            // 可点磁贴：route → button（编程式导航到筛选整页）；anchor → a（拦截默认
+            // 导航后手动 scrollIntoView 到同页告警区）。不可点磁贴保持静态 div。
             if (item.action?.kind === 'route') {
               const to = item.action.to;
               return (
@@ -205,6 +206,7 @@ export function FarmOverviewBar({ containers }: FarmOverviewBarProps) {
               );
             }
             if (item.action?.kind === 'anchor') {
+              const targetId = item.action.href.replace(/^#/, '');
               return (
                 <a
                   key={item.key}
@@ -213,6 +215,15 @@ export function FarmOverviewBar({ containers }: FarmOverviewBarProps) {
                   data-testid={item.testId}
                   data-tone={item.tone}
                   aria-label={item.action.ariaLabel}
+                  onClick={(e) => {
+                    // 本 app 用 createHashRouter：裸 hash 锚点会被路由当作未匹配
+                    // 相对路由落入 catch-all 跳回首页，而不是滚到同页告警区。
+                    // 因此拦掉默认导航，手动滚动，绕开 HashRouter。
+                    e.preventDefault();
+                    document
+                      .getElementById(targetId)
+                      ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  }}
                 >
                   {tileInner}
                 </a>
