@@ -60,7 +60,9 @@ export function DropdownMenu({
   const focusItem = useCallback((index: number) => {
     const node = itemRefs.current[index];
     if (node) {
-      node.focus();
+      // preventScroll: 滚动 / resize 重定位会重跑聚焦效果，若默认 scrollIntoView
+      // 会在用户滚动时把页面拽回，造成跳动；这里只移焦点、不滚动。
+      node.focus({ preventScroll: true });
     }
   }, []);
 
@@ -90,12 +92,20 @@ export function DropdownMenu({
     setPosition({ top, left });
   }, [align]);
 
-  const open = useCallback(() => {
-    if (disabled) return;
-    setIsOpen(true);
-    const firstEnabled = enabledIndices[0] ?? -1;
-    setActiveIndex(firstEnabled);
-  }, [disabled, enabledIndices]);
+  const open = useCallback(
+    // preference 决定初始高亮/聚焦项：鼠标点击或 ArrowDown 打开落到第一项，
+    // ArrowUp 打开落到最后一项（标准 ARIA menu 键盘模式）。
+    (preference: 'first' | 'last' = 'first') => {
+      if (disabled) return;
+      setIsOpen(true);
+      const target =
+        preference === 'last'
+          ? (enabledIndices[enabledIndices.length - 1] ?? -1)
+          : (enabledIndices[0] ?? -1);
+      setActiveIndex(target);
+    },
+    [disabled, enabledIndices]
+  );
 
   useLayoutEffect(() => {
     if (!isOpen) return;
@@ -129,15 +139,35 @@ export function DropdownMenu({
     };
   }, [close, isOpen, updatePosition]);
 
+  // 焦点移入菜单（本次修复的核心）。
+  //
+  // 菜单经 createPortal 挂到 document.body，是独立子树；触发按钮才是 Modal/Drawer
+  // 的 DOM 后代。初次打开时菜单先以 visibility:hidden 渲染（position 尚为 null）等待
+  // 测量定位，此阶段元素不可聚焦——旧实现在该阶段就调用 focus()，静默失败，键盘焦点
+  // 一直停在触发按钮上；且因依赖里没有 position，菜单定位可见后不再重跑，焦点永远进
+  // 不了菜单。结果按 Esc 时事件从触发按钮发出，绕过本菜单的 onKeyDown/stopPropagation，
+  // 冒泡到 Modal 的 document 级 Esc 监听器，关掉整个抽屉（真机 Playwright 实测坐实）。
+  //
+  // 修复：把 position 纳入依赖并 gate，只有菜单真正定位可见后才聚焦；聚焦落到当前
+  // active 项（无可用项时退回聚焦菜单容器，menuRef 有 tabIndex=-1 且挂了 onKeyDown，
+  // 保证 Esc 仍被本菜单拦截、不外泄）。方向键改变 activeIndex 时同一效果负责把焦点
+  // 移到新项。
   useEffect(() => {
-    if (!isOpen || activeIndex < 0) return;
-    focusItem(activeIndex);
-  }, [activeIndex, focusItem, isOpen]);
+    if (!isOpen || !position) return;
+    if (activeIndex >= 0) {
+      focusItem(activeIndex);
+    } else {
+      menuRef.current?.focus({ preventScroll: true });
+    }
+  }, [activeIndex, focusItem, isOpen, position]);
 
   const handleTriggerKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     if (event.key === 'ArrowDown') {
       event.preventDefault();
-      open();
+      open('first');
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      open('last');
     }
   };
 
@@ -168,7 +198,7 @@ export function DropdownMenu({
         event.preventDefault();
         event.stopPropagation();
         close();
-        triggerRef.current?.focus();
+        triggerRef.current?.focus({ preventScroll: true });
         break;
       case 'ArrowDown':
         event.preventDefault();
