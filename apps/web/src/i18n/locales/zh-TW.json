@@ -4365,6 +4365,8 @@
       "telemetryCategory": "遙測"
     },
     "detail": {
+      "titleLabel": "帳號 · 裝置詳情",
+      "titleAccountUnbound": "未綁定帳號",
       "healthSection": "健康狀態",
       "keepaliveSection": "心跳成功率與延遲（近24h，1h 分桶）",
       "successRate": "成功率",

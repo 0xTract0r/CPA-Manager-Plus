@@ -4365,6 +4365,8 @@
       "telemetryCategory": "Telemetry"
     },
     "detail": {
+      "titleLabel": "Account · Device Detail",
+      "titleAccountUnbound": "Unbound account",
       "healthSection": "Health",
       "keepaliveSection": "Keepalive Success Rate & Latency (last 24h, 1h buckets)",
       "successRate": "Success rate",

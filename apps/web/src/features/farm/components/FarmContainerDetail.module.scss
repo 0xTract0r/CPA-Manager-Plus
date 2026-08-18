@@ -59,10 +59,21 @@
   font-weight: 700;
 }
 
+.titleAccount {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
 .titleMasked {
   font-family: $font-mono;
   font-size: $fs-xs;
   color: var(--text-secondary);
+}
+
+.titleContainerId {
+  font-family: $font-mono;
+  font-size: $fs-2xs;
+  color: var(--text-tertiary);
 }
 
 .body {

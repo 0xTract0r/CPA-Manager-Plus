@@ -190,10 +190,21 @@ export function FarmContainerDetail({
       open={open}
       onClose={onClose}
       title={
+        // 真机走查点②：标题此前只裸显容器 ID，operator 一眼看不出这是哪个账号
+        // 的详情。改成语义标题「账号·设备详情」+ 绑定账号标识（无绑定时显式
+        // 兜底文案，不留空）+ 已有设备脱敏短识；容器 ID 降级为末尾小字保留
+        // （排障仍用得到，只是不再充当标题主语）。
         container ? (
           <div className={styles.titleRow}>
-            <span className={styles.titleId}>{container.id}</span>
+            <span className={styles.titleId}>
+              {t('farm.detail.titleLabel', { defaultValue: '账号 · 设备详情' })}
+            </span>
+            <span className={styles.titleAccount}>
+              {container.binding?.account ||
+                t('farm.detail.titleAccountUnbound', { defaultValue: '未绑定账号' })}
+            </span>
             <span className={styles.titleMasked}>{container.device_id_masked}</span>
+            <span className={styles.titleContainerId}>{container.id}</span>
           </div>
         ) : undefined
       }

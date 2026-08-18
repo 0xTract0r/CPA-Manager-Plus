@@ -4365,6 +4365,8 @@
       "telemetryCategory": "遥测"
     },
     "detail": {
+      "titleLabel": "账号 · 设备详情",
+      "titleAccountUnbound": "未绑定账号",
       "healthSection": "健康状态",
       "keepaliveSection": "心跳成功率与延迟（近24h，1h 分桶）",
       "successRate": "成功率",

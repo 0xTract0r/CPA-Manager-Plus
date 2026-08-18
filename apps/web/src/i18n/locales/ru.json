@@ -4356,6 +4356,8 @@
       "telemetryCategory": "Телеметрия"
     },
     "detail": {
+      "titleLabel": "Аккаунт · сведения об устройстве",
+      "titleAccountUnbound": "Аккаунт не привязан",
       "healthSection": "Состояние здоровья",
       "keepaliveSection": "Успешность и задержка keepalive (24ч, шаг 1ч)",
       "successRate": "Успешность",

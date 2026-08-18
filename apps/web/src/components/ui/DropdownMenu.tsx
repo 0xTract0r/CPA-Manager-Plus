@@ -159,7 +159,14 @@ export function DropdownMenu({
   const handleMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     switch (event.key) {
       case 'Escape':
+        // 菜单以 createPortal 挂到 document.body，DOM 上不是父级 Modal/Drawer 的
+        // 子孙；Modal/Drawer 的 Esc 关闭监听器挂在 document 上（原生 keydown，非
+        // React 合成事件树）。若这里只 close() 不 stopPropagation()，原生事件会
+        // 继续冒泡到 document，被外层 Modal/Drawer 一并关掉（真机走查实测坐实）。
+        // stopPropagation() 会连带调用底层原生 event.stopPropagation()，阻断继续
+        // 冒泡，让 Esc 只关本菜单，父级弹层不受影响。
         event.preventDefault();
+        event.stopPropagation();
         close();
         triggerRef.current?.focus();
         break;
