@@ -4110,7 +4110,18 @@
       "funnelBlockedProxy": "{{count}} 待代理",
       "funnelBlockedCapacity": "{{count}} 待容量",
       "funnelAwaitOnboard": "{{count}} 待接入",
-      "funnelNotApplicable": "{{count}} 不适用"
+      "funnelNotApplicable": "{{count}} 不适用",
+      "autoProvisionToggleLabel": "新号自动供给",
+      "autoProvisionConfirmEnableTitle": "开启自动供给？",
+      "autoProvisionConfirmEnableBody": "开启后：新认证的账号（仅新号、需已配住宅代理）将自动创建容器接入农场；fail-closed，无代理不供给；不影响已绑定 / 生产老号。",
+      "autoProvisionConfirmEnableCta": "开启",
+      "autoProvisionConfirmDisableTitle": "关闭自动供给？",
+      "autoProvisionConfirmDisableBody": "关闭后：认证账号不再自动新建容器；已有容器与绑定不受影响，新号请在账号面板手动「接入农场」。",
+      "autoProvisionConfirmDisableCta": "关闭",
+      "autoProvisionConfirmRestartNote": "这是运行时覆盖、不持久：编排器重启后会回落到部署侧默认值。",
+      "autoProvisionToggleSuccessOn": "自动供给已开启。",
+      "autoProvisionToggleSuccessOff": "自动供给已关闭。",
+      "autoProvisionToggleFailed": "更新自动供给开关失败"
     },
     "accounts": {
       "title": "账号状态",

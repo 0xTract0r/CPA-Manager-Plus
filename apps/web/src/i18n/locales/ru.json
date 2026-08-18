@@ -4101,7 +4101,18 @@
       "funnelBlockedProxy": "{{count}} ждут прокси",
       "funnelBlockedCapacity": "{{count}} ждут ёмкость",
       "funnelAwaitOnboard": "{{count}} ждут подключения",
-      "funnelNotApplicable": "{{count}} неприменимо"
+      "funnelNotApplicable": "{{count}} неприменимо",
+      "autoProvisionToggleLabel": "Авто-провижининг новых аккаунтов",
+      "autoProvisionConfirmEnableTitle": "Включить авто-провижининг?",
+      "autoProvisionConfirmEnableBody": "После включения только что аутентифицированные аккаунты (только новые и только при уже настроенном резидентном прокси) автоматически получают контейнер и подключаются к ферме. Fail-closed: без прокси провижининга нет. Уже привязанные и производственные аккаунты не затрагиваются.",
+      "autoProvisionConfirmEnableCta": "Включить",
+      "autoProvisionConfirmDisableTitle": "Выключить авто-провижининг?",
+      "autoProvisionConfirmDisableBody": "После выключения аутентификация аккаунта больше не создаёт контейнер. Существующие контейнеры и привязки не затрагиваются; подключайте новые аккаунты вручную на панели аккаунтов.",
+      "autoProvisionConfirmDisableCta": "Выключить",
+      "autoProvisionConfirmRestartNote": "Это runtime-переопределение, оно не сохраняется: после перезапуска оркестратора значение возвращается к дефолту деплоя.",
+      "autoProvisionToggleSuccessOn": "Авто-провижининг включён.",
+      "autoProvisionToggleSuccessOff": "Авто-провижининг выключен.",
+      "autoProvisionToggleFailed": "Не удалось обновить авто-провижининг"
     },
     "accounts": {
       "title": "Статус аккаунтов",

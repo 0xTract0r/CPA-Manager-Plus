@@ -4110,7 +4110,18 @@
       "funnelBlockedProxy": "{{count}} waiting on proxy",
       "funnelBlockedCapacity": "{{count}} waiting on capacity",
       "funnelAwaitOnboard": "{{count}} awaiting onboard",
-      "funnelNotApplicable": "{{count}} not applicable"
+      "funnelNotApplicable": "{{count}} not applicable",
+      "autoProvisionToggleLabel": "Auto-provision new accounts",
+      "autoProvisionConfirmEnableTitle": "Enable auto-provisioning?",
+      "autoProvisionConfirmEnableBody": "Once enabled, newly authenticated accounts (new accounts only, and only when a residential proxy is already configured) automatically get a container and join the farm. Fail-closed: no proxy means no provisioning. Already-bound and production accounts are unaffected.",
+      "autoProvisionConfirmEnableCta": "Enable",
+      "autoProvisionConfirmDisableTitle": "Disable auto-provisioning?",
+      "autoProvisionConfirmDisableBody": "Once disabled, authenticating an account no longer creates a container. Existing containers and bindings are unaffected; onboard new accounts manually from the account panel.",
+      "autoProvisionConfirmDisableCta": "Disable",
+      "autoProvisionConfirmRestartNote": "This is a runtime override and is not persisted — after an orchestrator restart it falls back to the deployment default.",
+      "autoProvisionToggleSuccessOn": "Auto-provisioning enabled.",
+      "autoProvisionToggleSuccessOff": "Auto-provisioning disabled.",
+      "autoProvisionToggleFailed": "Failed to update auto-provisioning"
     },
     "accounts": {
       "title": "Account Status",

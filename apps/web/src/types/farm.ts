@@ -476,6 +476,18 @@ export interface FarmCapacityResponse {
   proxy_coverage: FarmProxyCoverageView | null;
 }
 
+// PATCH /api/farm/config 请求体（handlers.go handleUpdateConfig）：运行时翻转
+// 「认证即自动供」灰度开关。当前只暴露 auto_provision_enabled 一个可写字段。
+export interface FarmConfigUpdateRequest {
+  auto_provision_enabled: boolean;
+}
+
+// PATCH /api/farm/config 成功响应体（200）：回显设置后的开关真值。前端以此为准
+// 更新展示，而不是乐观假设一定成功（RWMutex 保护，后端设置后的值即返回值）。
+export interface FarmConfigResponse {
+  auto_provision_enabled: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // P0-9 前端·概览 + 下钻 + 告警（design.md 决策6，字段名照抄
 // services/farm-orchestrator/internal/httpapi/dto.go 的 P0-4 只读监测 API 段）

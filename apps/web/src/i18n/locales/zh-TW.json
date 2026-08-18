@@ -4110,7 +4110,18 @@
       "funnelBlockedProxy": "{{count}} 待代理",
       "funnelBlockedCapacity": "{{count}} 待容量",
       "funnelAwaitOnboard": "{{count}} 待接入",
-      "funnelNotApplicable": "{{count}} 不適用"
+      "funnelNotApplicable": "{{count}} 不適用",
+      "autoProvisionToggleLabel": "新帳號自動供給",
+      "autoProvisionConfirmEnableTitle": "開啟自動供給？",
+      "autoProvisionConfirmEnableBody": "開啟後：新驗證的帳號（僅新帳號、需已設定住宅代理）將自動建立容器接入農場；fail-closed，無代理不供給；不影響已綁定 / 生產舊帳號。",
+      "autoProvisionConfirmEnableCta": "開啟",
+      "autoProvisionConfirmDisableTitle": "關閉自動供給？",
+      "autoProvisionConfirmDisableBody": "關閉後：驗證帳號不再自動新建容器；已有容器與綁定不受影響，新帳號請在帳號面板手動「接入農場」。",
+      "autoProvisionConfirmDisableCta": "關閉",
+      "autoProvisionConfirmRestartNote": "這是執行階段覆寫、不會持久化：編排器重啟後會回落到部署端預設值。",
+      "autoProvisionToggleSuccessOn": "自動供給已開啟。",
+      "autoProvisionToggleSuccessOff": "自動供給已關閉。",
+      "autoProvisionToggleFailed": "更新自動供給開關失敗"
     },
     "accounts": {
       "title": "帳號狀態",

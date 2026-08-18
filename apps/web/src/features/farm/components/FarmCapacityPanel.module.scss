@@ -214,6 +214,13 @@
   color: var(--text-primary);
 }
 
+// ToggleSwitch 包裹：把开关推到标题行右侧，label（On/Off 文案）在开关左侧。
+.autoProvisionControl {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+}
+
 .autoProvisionHint {
   margin: 0;
   font-size: 12px;
