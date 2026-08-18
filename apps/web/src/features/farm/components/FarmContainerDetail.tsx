@@ -86,10 +86,14 @@ function formatPct(pct: number | undefined): string {
  * initialTab 深链直达任一分区。抽屉初始焦点仍由 <Modal> 落在 drawerActions 的
  * 返回/关闭按钮（DOM 序在 tabs 之前），深链只改激活分区、不影响焦点陷阱。
  *
- * 三条底层请求（主详情/心跳时序/资源时序）用 Promise.allSettled 并行发起、
- * 独立捕获错误（见 useFarmContainerDetail）：只要主详情成功就打开抽屉正常
- * 渲染，心跳或资源时序其中一条失败只让对应图表区块落 block 级 error 态
- * （<DataState variant="error">），不连累已成功的主详情或另一条时序。
+ * 五条底层请求（主详情/心跳时序/资源时序/探针节奏/用量）各自独立发起、
+ * 独立 settle、独立捕获错误与 loading（见 useFarmContainerDetail）：抽屉的
+ * 主 loading 只等主详情，一 resolve 就渲染抽屉壳 + 5 个 tab（含遥测 tab，
+ * 它走独立 hook，本就不该被这里任何字段连累）；心跳/资源/探针节奏/用量
+ * 其中任意一条慢或失败，只让对应区块落局部 loading（<DataState
+ * variant="loading">）或 block 级 error 态（<DataState variant="error">），
+ * 不连累已成功渲染的主详情或其它区块——这是修复"整个抽屉被最慢/最容易
+ * 失败的用量子请求拖住转圈"的关键点。
  */
 export function FarmContainerDetail({
   container,
@@ -125,11 +129,15 @@ export function FarmContainerDetail({
     usage,
     loading,
     error,
+    keepaliveLoading,
     keepaliveError,
+    resourcesLoading,
     resourcesError,
+    probeCadenceLoading,
     probeCadenceError,
+    usageLoading,
     usageError,
-  } = useFarmContainerDetail(containerId);
+  } = useFarmContainerDetail(containerId, container?.binding?.env);
 
   const successRatePoints = useMemo(() => {
     const values = (keepalive?.buckets ?? []).map((b) =>
@@ -289,7 +297,13 @@ export function FarmContainerDetail({
                           defaultValue: '心跳成功率与延迟（近24h，1h 分桶）',
                         })}
                       </h3>
-                      {keepaliveError ? (
+                      {keepaliveLoading ? (
+                        <DataState
+                          variant="loading"
+                          label={t('common.loading')}
+                          testId="farm-detail-keepalive-loading"
+                        />
+                      ) : keepaliveError ? (
                         <DataState
                           variant="error"
                           message={keepaliveError}
@@ -424,7 +438,13 @@ export function FarmContainerDetail({
                           defaultValue: '资源占用（近24h，1h 分桶）',
                         })}
                       </h3>
-                      {resourcesError ? (
+                      {resourcesLoading ? (
+                        <DataState
+                          variant="loading"
+                          label={t('common.loading')}
+                          testId="farm-detail-resources-loading"
+                        />
+                      ) : resourcesError ? (
                         <DataState
                           variant="error"
                           message={resourcesError}
@@ -489,7 +509,13 @@ export function FarmContainerDetail({
                       >
                         {t('farm.detail.probeCadenceScopeBadge', { defaultValue: '口径：探针到达间隔' })}
                       </span>
-                      {probeCadenceError ? (
+                      {probeCadenceLoading ? (
+                        <DataState
+                          variant="loading"
+                          label={t('common.loading')}
+                          testId="farm-detail-probe-cadence-loading"
+                        />
+                      ) : probeCadenceError ? (
                         <DataState
                           variant="error"
                           message={probeCadenceError}
@@ -587,7 +613,13 @@ export function FarmContainerDetail({
                       <span className={styles.scopeBadge} data-testid="farm-detail-cpa-usage-scope">
                         {t('farm.detail.cpaUsageScopeBadge', { defaultValue: '口径：账号 CPA 累计' })}
                       </span>
-                      {usageError ? (
+                      {usageLoading ? (
+                        <DataState
+                          variant="loading"
+                          label={t('common.loading')}
+                          testId="farm-detail-cpa-usage-loading"
+                        />
+                      ) : usageError ? (
                         <DataState
                           variant="error"
                           message={usageError}
