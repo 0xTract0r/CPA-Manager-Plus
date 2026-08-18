@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useTimezone } from '@/hooks/useTimezone';
 import { AsyncPanel } from '@/components/ui/AsyncPanel';
 import { useInterval } from '@/hooks/useInterval';
 import {
@@ -107,6 +108,8 @@ function onWireFieldValue(_field: FarmTelemetryFingerprintField): string | null 
  */
 export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
   const { t, i18n } = useTranslation();
+  // 订阅全局时区（TZ2/#49）：切换时区时本组件重渲染，内部 formatDateTimeUtc8 同步刷新。
+  useTimezone();
   const containerId = container?.id ?? null;
   const { beacons, loading, error } = useFarmContainerBeacons(containerId);
 

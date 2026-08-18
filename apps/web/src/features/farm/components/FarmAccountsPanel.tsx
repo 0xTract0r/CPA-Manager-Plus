@@ -1,5 +1,6 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useTimezone } from '@/hooks/useTimezone';
 import { useInterval } from '@/hooks/useInterval';
 import {
   Table,
@@ -141,6 +142,8 @@ export function FarmAccountsPanel({
   hideHeading = false,
 }: FarmAccountsPanelProps = {}) {
   const { t, i18n } = useTranslation();
+  // 订阅全局时区（TZ2/#49）：切换时区时本组件重渲染，内部 formatDateTimeUtc8 同步刷新。
+  useTimezone();
   // C8「筛选维度改造」：环境（test/prod）对本部署无意义——编排器当前只服务 test，
   // 生产账号不会出现在这个列表里。env 固定为 test 仅用于底层拉取，不再作为可见
   // 筛选维度；对 operator 有意义的「账号认证态」+「备注/账号名搜索」改为客户端筛选。
@@ -541,7 +544,8 @@ export function FarmAccountsPanel({
                 });
               } else if (authState === 'unprovisioned') {
                 authDetailLabel = t('farm.accountHealth.unprovisionedHint', {
-                  defaultValue: '未绑定容器·不可出站——接入农场后才能经住宅代理请求',
+                  defaultValue:
+                    '未绑定容器：若本账号已配住宅代理，出站仍安全经该代理；未配代理则 fail-closed 不出站。遥测 device_id 未经容器对齐，暂用合成假名（接入农场后转真）。',
                 });
               }
               // 账号态副行详情只在非健康态展示（healthy 的 label 已够）。

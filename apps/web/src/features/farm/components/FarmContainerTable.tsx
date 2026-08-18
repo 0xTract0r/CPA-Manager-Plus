@@ -1,5 +1,6 @@
 import { useMemo, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useTimezone } from '@/hooks/useTimezone';
 import {
   Table,
   TableBody,
@@ -113,6 +114,8 @@ export function FarmContainerTable({
   onGroupFilterChange,
 }: FarmContainerTableProps) {
   const { t, i18n } = useTranslation();
+  // 订阅全局时区（TZ2/#49）：切换时区时本组件重渲染，内部 formatDateTimeUtc8 同步刷新。
+  useTimezone();
   const [internalGroupFilter, setInternalGroupFilter] = useState<FarmContainerFilter>('all');
   const groupFilter = controlledGroupFilter ?? internalGroupFilter;
   const setGroupFilter = (value: FarmContainerFilter) => {

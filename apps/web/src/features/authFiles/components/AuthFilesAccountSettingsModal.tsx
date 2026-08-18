@@ -1994,14 +1994,18 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
                         </div>
                       </div>
                       {isFarmUnprovisionedClaude ? (
-                        // 未绑定容器的 Claude 账号：不可出站，红警（用户拍板「绑定+健康才正常」）。
+                        // 未绑定容器的 Claude 账号（FC1b 校正文案）：出站是否安全取决于本账号
+                        // 有无住宅代理——有代理仍安全经代理出站，无代理才 fail-closed 不出站；
+                        // 未绑定的确定影响只是遥测 device_id 未经容器对齐、暂用合成假名。
+                        // 徽标沿用 error 样式属「未纳管」提示级别，其严重度口径归 #45 弹框重设计再收敛。
                         <div
                           className={`status-badge error ${styles.deviceIdUnprovisionedWarning}`}
                           data-testid="account-settings-device-id-unprovisioned-warning"
                           role="alert"
                         >
                           {t('auth_files.account_settings_device_id_unprovisioned_warning', {
-                            defaultValue: '未绑定容器·不可出站——接入农场后才能经住宅代理请求',
+                            defaultValue:
+                              '未绑定容器：若本账号已配住宅代理，出站仍安全经该代理；未配代理则 fail-closed 不出站。遥测 device_id 未经容器对齐，暂用合成假名（接入农场后转真）。',
                           })}
                         </div>
                       ) : null}

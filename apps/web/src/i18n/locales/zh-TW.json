@@ -1101,7 +1101,7 @@
     "account_settings_device_id_source_synthetic": "合成",
     "account_settings_device_id_source_drift": "漂移",
     "account_settings_device_id_source_unknown": "未知",
-    "account_settings_device_id_unprovisioned_warning": "未綁定容器·不可出站——接入農場後才能經住宅代理請求",
+    "account_settings_device_id_unprovisioned_warning": "未綁定容器：若本帳號已配住宅代理，出站仍安全經該代理；未配代理則 fail-closed 不出站。遙測 device_id 未經容器對齊，暫用合成假名（接入農場後轉真）。",
     "account_settings_synthetic_device_id_pending": "尚未派生",
     "account_settings_synthetic_device_id_hint": "唯讀。core 派生的每帳號穩定合成假名；只展示前 16 位 hex，真實值不暴露。為空表示 core 尚未派生。",
     "account_settings_raw_json_details": "進階：原始 auth JSON（可編輯）",
@@ -3890,6 +3890,21 @@
     "english": "English",
     "russian": "Русский"
   },
+  "timezone": {
+    "switch": "顯示時區",
+    "hint": "全站時間顯示時區（全域設定，非按帳號）",
+    "zones": {
+      "local": "瀏覽器本地",
+      "shanghai": "上海",
+      "utc": "UTC",
+      "tokyo": "東京",
+      "kolkata": "印度",
+      "moscow": "莫斯科",
+      "london": "倫敦",
+      "newYork": "紐約",
+      "losAngeles": "洛杉磯"
+    }
+  },
   "theme": {
     "switch": "主題",
     "white": "明亮",
@@ -4236,7 +4251,7 @@
       "authState_operator_disabled": "已停用",
       "authState_unprovisioned": "未綁定",
       "authState_unknown": "未知",
-      "unprovisionedHint": "未綁定容器·不可出站——接入農場後才能經住宅代理請求",
+      "unprovisionedHint": "未綁定容器：若本帳號已配住宅代理，出站仍安全經該代理；未配代理則 fail-closed 不出站。遙測 device_id 未經容器對齊，暫用合成假名（接入農場後轉真）。",
       "quarantineDetail": "{{reason}} · {{at}}",
       "reauthHint": "憑證已失效——請在「認證檔案」頁對該帳號重新授權",
       "cadenceModelNote": "保活探針按指數分佈隨機觸發，只有區間與均值、沒有精確倒數計時（防遙測規律化的刻意設計）。",
@@ -4432,7 +4447,7 @@
       "docker_missing_orphaned": "Docker 容器缺失（幽靈態）",
       "telemetry_devid_drift": "device_id 漂移（自報值與釘值不一致）",
       "telemetry_devid_collision": "device_id 串號（多容器自報同一 device_id）",
-      "telemetry_host_leak": "出站 host 洩漏（自報目標偏離預期）",
+      "telemetry_host_leak": "多容器共享同一 CPA 後端 host（apiBaseUrlHost 聚類·內在關聯向量）",
       "telemetry_silence": "遙測靜默（久未收到自報 beacon）",
       "telemetry_entrypoint_mismatch": "入口標識不一致（entrypoint 偏離預期）"
     },

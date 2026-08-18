@@ -23,6 +23,16 @@ export function maskAccountEmail(value?: string): string {
   return `${maskedLocal}${domain}`;
 }
 
+/**
+ * 剥掉账号标识尾部的 `.json` 后缀（#52 尾项）。农场绑定账号在无备注名时会回退到
+ * auth 文件名（形如 `claude@gmail.com.json`），脱敏后会显示成 `cl***@gmail.com.json`，
+ * `.json` 属于文件名工件、不是账号本体，展示前统一剥掉。大小写不敏感，顺带 trim。
+ */
+export function stripJsonSuffix(value?: string): string {
+  const trimmed = value?.trim() ?? '';
+  return trimmed.replace(/\.json$/i, '');
+}
+
 export interface BindingIdentityLabels {
   /** 主标识：备注名优先，无备注时回退到脱敏邮箱（再无则原始标识 / 空）。 */
   primary: string;
@@ -42,9 +52,11 @@ export function resolveBindingIdentity(
   account: string | undefined
 ): BindingIdentityLabels {
   const trimmedNote = note?.trim();
-  const maskedAccount = maskAccountEmail(account);
+  // 先剥掉尾部 `.json`（auth 文件名工件），再脱敏，避免显示成 `cl***@gmail.com.json`。
+  const normalizedAccount = stripJsonSuffix(account);
+  const maskedAccount = maskAccountEmail(normalizedAccount);
   if (trimmedNote) {
     return { primary: trimmedNote, secondary: maskedAccount, hasNote: true };
   }
-  return { primary: maskedAccount || (account?.trim() ?? ''), secondary: '', hasNote: false };
+  return { primary: maskedAccount || normalizedAccount, secondary: '', hasNote: false };
 }

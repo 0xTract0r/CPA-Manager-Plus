@@ -160,6 +160,7 @@
 }
 
 .language-menu,
+.timezone-menu,
 .theme-menu,
 .visual-effects-menu {
   position: relative;
@@ -173,6 +174,7 @@
 }
 
 .language-menu-popover,
+.timezone-menu-popover,
 .theme-menu-popover,
 .visual-effects-menu-popover {
   position: absolute;
@@ -187,7 +189,8 @@
   -webkit-backdrop-filter: var(--glass-backdrop-filter);
 }
 
-.language-menu-popover {
+.language-menu-popover,
+.timezone-menu-popover {
   width: max-content;
   min-width: 0;
   max-width: calc(100vw - 24px);
@@ -197,7 +200,8 @@
   gap: 2px;
 }
 
-.language-menu-option {
+.language-menu-option,
+.timezone-menu-option {
   width: auto;
   min-width: 100%;
   border: 0;
@@ -243,6 +247,7 @@
 
 [data-theme='white'] {
   .language-menu-popover,
+  .timezone-menu-popover,
   .theme-menu-popover,
   .visual-effects-menu-popover {
     border-color: color-mix(in srgb, var(--primary-color) 18%, var(--app-border-strong));
@@ -323,6 +328,7 @@
 [data-visual-effects='reduced'] {
   .navbar,
   .language-menu-popover,
+  .timezone-menu-popover,
   .theme-menu-popover,
   .visual-effects-menu-popover,
   .sidebar,
@@ -337,6 +343,7 @@
 @media (prefers-reduced-motion: reduce), (prefers-reduced-transparency: reduce) {
   .navbar,
   .language-menu-popover,
+  .timezone-menu-popover,
   .theme-menu-popover,
   .visual-effects-menu-popover,
   .sidebar,

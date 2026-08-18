@@ -1198,7 +1198,7 @@
     "account_settings_device_id_source_synthetic": "合成",
     "account_settings_device_id_source_drift": "漂移",
     "account_settings_device_id_source_unknown": "未知",
-    "account_settings_device_id_unprovisioned_warning": "未绑定容器·不可出站——接入农场后才能经住宅代理请求",
+    "account_settings_device_id_unprovisioned_warning": "未绑定容器：若本账号已配住宅代理，出站仍安全经该代理；未配代理则 fail-closed 不出站。遥测 device_id 未经容器对齐，暂用合成假名（接入农场后转真）。",
     "account_settings_synthetic_device_id_pending": "尚未派生",
     "account_settings_synthetic_device_id_hint": "只读。core 派生的每账号稳定合成假名；只展示前 16 位 hex，真实值不暴露。为空表示 core 尚未派生。",
     "account_settings_section_editable": "可编辑账号设置",
@@ -3890,6 +3890,21 @@
     "english": "English",
     "russian": "Русский"
   },
+  "timezone": {
+    "switch": "显示时区",
+    "hint": "全站时间显示时区（全局设置，非按账号）",
+    "zones": {
+      "local": "浏览器本地",
+      "shanghai": "上海",
+      "utc": "UTC",
+      "tokyo": "东京",
+      "kolkata": "印度",
+      "moscow": "莫斯科",
+      "london": "伦敦",
+      "newYork": "纽约",
+      "losAngeles": "洛杉矶"
+    }
+  },
   "theme": {
     "switch": "主题",
     "white": "明亮",
@@ -4236,7 +4251,7 @@
       "authState_operator_disabled": "已停用",
       "authState_unprovisioned": "未绑定",
       "authState_unknown": "未知",
-      "unprovisionedHint": "未绑定容器·不可出站——接入农场后才能经住宅代理请求",
+      "unprovisionedHint": "未绑定容器：若本账号已配住宅代理，出站仍安全经该代理；未配代理则 fail-closed 不出站。遥测 device_id 未经容器对齐，暂用合成假名（接入农场后转真）。",
       "quarantineDetail": "{{reason}} · {{at}}",
       "reauthHint": "凭证已失效——请在「认证文件」页对该账号重新授权",
       "cadenceModelNote": "保活探针按指数分布随机触发，只有区间与均值、没有精确倒计时（防遥测规律化的有意设计）。",
@@ -4432,7 +4447,7 @@
       "docker_missing_orphaned": "Docker 容器缺失（幽灵态）",
       "telemetry_devid_drift": "device_id 漂移（自报值与钉值不一致）",
       "telemetry_devid_collision": "device_id 串号（多容器自报同一 device_id）",
-      "telemetry_host_leak": "出站 host 泄漏（自报目标偏离预期）",
+      "telemetry_host_leak": "多容器共享同一 CPA 后端 host（apiBaseUrlHost 聚类·内在关联向量）",
       "telemetry_silence": "遥测静默（久未收到自报 beacon）",
       "telemetry_entrypoint_mismatch": "入口标识不一致（entrypoint 偏离预期）"
     },

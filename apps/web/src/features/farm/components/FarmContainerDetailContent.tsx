@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useTimezone } from '@/hooks/useTimezone';
 import { AsyncPanel } from '@/components/ui/AsyncPanel';
 import { DataState } from '@/components/ui/DataState';
 import { HealthPill, type HealthPillStatus } from '@/components/ui/HealthPill';
@@ -85,6 +86,8 @@ export function FarmContainerDetailContent({
   initialTab = 'overview',
 }: FarmContainerDetailContentProps) {
   const { t, i18n } = useTranslation();
+  // 订阅全局时区（TZ2/#49）：切换时区时本组件重渲染，内部 formatDateTimeUtc8 同步刷新。
+  useTimezone();
   const containerId = container.id;
 
   // 激活分区。用 React 官方「渲染期依据变化派生 state」模式（追踪上一次 detailKey

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useTimezone } from '@/hooks/useTimezone';
 import { AsyncPanel } from '@/components/ui/AsyncPanel';
 import { Button } from '@/components/ui/Button';
 import { HealthPill, type HealthPillStatus } from '@/components/ui/HealthPill';
@@ -28,6 +29,8 @@ interface FarmAlertsPanelProps {
  */
 export function FarmAlertsPanel({ mode = 'full', onViewAll }: FarmAlertsPanelProps) {
   const { t, i18n } = useTranslation();
+  // 订阅全局时区（TZ2/#49）：切换时区时本组件重渲染，内部 formatDateTimeUtc8 同步刷新。
+  useTimezone();
   const [statusFilter, setStatusFilter] = useState<AlertStatusFilter>('firing');
   const effectiveFilter = mode === 'summary' ? 'firing' : statusFilter;
   // firing 语义是"当前仍未解决"，不该按告警触发时间年龄过滤——否则会出现

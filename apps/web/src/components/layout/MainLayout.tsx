@@ -11,6 +11,7 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { PageTransition } from '@/components/common/PageTransition';
+import { TimezoneMenu } from '@/components/layout/TimezoneMenu';
 import { MainRoutes } from '@/router/MainRoutes';
 import {
   IconBot,
@@ -907,6 +908,9 @@ export function MainLayout({ routeBase = '', demoMode = false }: MainLayoutProps
                 </div>
               )}
             </div>
+
+            {/* 全局显示时区开关（TZ2/#49）：与语言/主题并列的全局偏好，非 per-account。 */}
+            <TimezoneMenu />
 
             <div className={`theme-menu ${themeMenuOpen ? 'open' : ''}`} ref={themeMenuRef}>
               <Button

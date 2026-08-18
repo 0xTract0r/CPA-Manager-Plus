@@ -1198,7 +1198,7 @@
     "account_settings_device_id_source_synthetic": "Synthetic",
     "account_settings_device_id_source_drift": "Drift",
     "account_settings_device_id_source_unknown": "Unknown",
-    "account_settings_device_id_unprovisioned_warning": "Not onboarded to a container · cannot egress — onboard to the farm before it can send requests through a residential proxy",
+    "account_settings_device_id_unprovisioned_warning": "Not bound to a container: if this account has its own residential proxy, egress still goes safely through it; without a proxy it fails closed and cannot egress. The telemetry device_id isn't container-aligned yet and uses a synthetic pseudonym (it becomes real once onboarded to the farm).",
     "account_settings_synthetic_device_id_pending": "Not derived yet",
     "account_settings_synthetic_device_id_hint": "Read-only. A stable per-account synthetic pseudonym derived by core; only the first 16 hex characters are shown and the real value is never exposed. Empty means core has not derived one yet.",
     "account_settings_section_editable": "Editable account settings",
@@ -3890,6 +3890,21 @@
     "english": "English",
     "russian": "Русский"
   },
+  "timezone": {
+    "switch": "Display timezone",
+    "hint": "Global display timezone applied to all timestamps (not per-account)",
+    "zones": {
+      "local": "Browser local",
+      "shanghai": "Shanghai",
+      "utc": "UTC",
+      "tokyo": "Tokyo",
+      "kolkata": "India",
+      "moscow": "Moscow",
+      "london": "London",
+      "newYork": "New York",
+      "losAngeles": "Los Angeles"
+    }
+  },
   "theme": {
     "switch": "Theme",
     "white": "Light",
@@ -4236,7 +4251,7 @@
       "authState_operator_disabled": "Disabled",
       "authState_unprovisioned": "Unprovisioned",
       "authState_unknown": "Unknown",
-      "unprovisionedHint": "Not onboarded to a container · cannot egress — onboard to the farm to send requests through a residential proxy",
+      "unprovisionedHint": "Not bound to a container: if this account has its own residential proxy, egress still goes safely through it; without a proxy it fails closed and cannot egress. The telemetry device_id isn't container-aligned yet and uses a synthetic pseudonym (it becomes real once onboarded to the farm).",
       "quarantineDetail": "{{reason}} · {{at}}",
       "reauthHint": "Token expired — re-authenticate this account on the Auth Files page",
       "cadenceModelNote": "Keep-alive probes fire at random following an exponential distribution — only a range and a mean, no precise countdown (deliberate design to keep telemetry from becoming predictable).",
@@ -4432,7 +4447,7 @@
       "docker_missing_orphaned": "Docker container missing (orphaned)",
       "telemetry_devid_drift": "device_id drift (self-reported value differs from pinned)",
       "telemetry_devid_collision": "device_id collision (multiple containers self-report the same device_id)",
-      "telemetry_host_leak": "outbound host leak (self-reported target deviates from expected)",
+      "telemetry_host_leak": "multiple containers share the same CPA backend host (apiBaseUrlHost clustering · intrinsic correlation vector)",
       "telemetry_silence": "telemetry silence (no self-reported beacon for a long time)",
       "telemetry_entrypoint_mismatch": "entrypoint mismatch (entrypoint deviates from expected)"
     },
