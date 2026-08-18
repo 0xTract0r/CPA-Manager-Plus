@@ -35,7 +35,12 @@
 }
 
 .healthGrid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  // 固定 4 列在窄的桌面右列(container 是 1.5fr:1fr 两栏、健康卡挤在 1fr 侧)下会把
+  // 每张卡压到几十像素，标签/数值双双被裁成 "Usag…"。改用与 .systemGrid 一致的
+  // auto-fit + minmax 换行：卡片不够宽时自动换行，而不是强行挤压成 4 列。
+  // minmax 取 240px 是因为最长的健康卡标签(如 "Request Record Reader" / 俄语更长)
+  // 需要这么宽的内容区才不会被省略号截断。
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
 }
 
 .item, .healthItem {

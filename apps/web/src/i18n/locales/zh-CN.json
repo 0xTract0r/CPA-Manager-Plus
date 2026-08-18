@@ -2529,7 +2529,7 @@
     "column_auths": "凭证数",
     "column_models": "模型数",
     "column_success_rate": "成功率",
-    "column_success_rate_short": "成功",
+    "column_success_rate_short": "成功率",
     "realtime_success_rate_hint": "该账号 + 供应商 + 模型 + 渠道组合的滚动累计成功率，并非本行单次请求的结果。",
     "column_tokens": "Tokens",
     "column_cost": "花费",

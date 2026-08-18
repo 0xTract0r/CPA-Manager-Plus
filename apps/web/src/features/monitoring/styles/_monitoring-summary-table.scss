@@ -559,16 +559,21 @@
   }
 
   .accountOverviewTable {
+    // ACTION 列(Focus Account 按钮 + 更多菜单)在窄的桌面宽度(如 1440)下被原 12%
+    // 挤到 clientWidth < scrollWidth 而截断成 "Focus Accou"；LATEST 列同理放不下
+    // toLocaleString 的完整时间戳。这里从有充足余量的 status / success-rate /
+    // total-tokens 三列各挪 1% 给 ACTION,并让 LATEST 列改为两行换行(见下方
+    // td:nth-child(9) 规则)而非继续扩列宽,使两列在 1440 下都能完整显示。
     --account-col-account: 21%;
-    --account-col-status: 8%;
+    --account-col-status: 7%;
     --account-col-total-calls: 5%;
     --account-col-success-calls: 7%;
     --account-col-failure-calls: 7%;
-    --account-col-success-rate: 8%;
-    --account-col-total-tokens: 10%;
+    --account-col-success-rate: 7%;
+    --account-col-total-tokens: 9%;
     --account-col-estimated-cost: 9%;
     --account-col-latest-request: 13%;
-    --account-col-action: 12%;
+    --account-col-action: 15%;
     --account-overview-columns: var(--account-col-account) var(--account-col-status)
       var(--account-col-total-calls) var(--account-col-success-calls)
       var(--account-col-failure-calls) var(--account-col-success-rate)
@@ -684,6 +689,15 @@
 
   .accountOverviewTable col:nth-child(10) {
     width: var(--account-col-action);
+  }
+
+  // LATEST(最近请求时间)列用 toLocaleString 渲染完整日期+时间,单行在 13% 列宽下会
+  // 溢出顶到 ACTION 列(td clientWidth < scrollWidth)。允许在日期/时间之间的空格处
+  // 换成两行,不再挤压其余列。
+  .accountOverviewTable td:nth-child(9) {
+    white-space: normal;
+    word-break: normal;
+    line-height: 1.35;
   }
 
   .accountOverviewTable td:last-child {

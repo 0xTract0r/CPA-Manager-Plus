@@ -282,7 +282,13 @@
 
 .usageSummaryGrid {
   display: grid;
-  grid-template-columns: repeat(var(--usage-summary-columns, 5), minmax(0, 1fr));
+  // 原先按卡片数量强制等分列(--usage-summary-columns，最多 8 列)，在 1400px 断点
+  // 之上没有再收窄列数：顶部 8 张汇总卡在 1440 宽视口下被摊薄到约 79px/卡，
+  // "Estimated Cost" / "Output Tokens" 等标签被裁成省略号。改用 auto-fit +
+  // minmax 换行：宽度够时仍尽量铺满一行（卡片少于可容纳列数时空轨道会收缩，
+  // 效果与原先按 --usage-summary-columns 等分一致），宽度不够时自动换到下一行，
+  // 而不是把每张卡压得比标签还窄。以下 1400/1100/760 断点固定列数保持不变。
+  grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
   grid-auto-rows: minmax(112px, auto);
   gap: 10px;
   min-width: 0;
