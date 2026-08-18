@@ -13,9 +13,10 @@ import { Select } from '@/components/ui/Select';
 import { AsyncPanel } from '@/components/ui/AsyncPanel';
 import { HealthPill } from '@/components/ui/HealthPill';
 import type { FarmContainerView } from '@/types/farm';
-import { formatDateTimeUtc8 } from '@/utils/datetime';
-import { formatDurationMs } from '@/utils/usage/latency';
+import { formatDateTimeUtc8, formatRelativeFromNow } from '@/utils/datetime';
+import { useInterval } from '@/hooks/useInterval';
 import { useFarmRetiredContainers } from '../hooks/useFarmRetiredContainers';
+import { resolveBindingIdentity } from '../utils/identity';
 import { ResponsiveTable } from './ResponsiveTable';
 import {
   deviceAlignmentToBadgeVariant,
@@ -119,6 +120,17 @@ export function FarmContainerTable({
     onGroupFilterChange?.(value);
   };
 
+  // 密度改造：默认列的最近保活时间戳改「相对时间」（绝对值放 title 悬浮）。相对
+  // 时间需要一个「当前时刻」——用每 60s tick 的 state 时钟，避免在 render 期直接读
+  // Date.now() 破坏 React render 纯度（与 FarmAccountsPanel 同款处理）。
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useInterval(() => setNowMs(Date.now()), 60 * 1000);
+
+  // 密度改造：'all' 视图下默认折叠已退役/幽灵（归档态）容器，避免几周前的死容器
+  // 混进活跃池；operator 需要时用「显示已退役」开关展开。显式选中 'retired' 分组
+  // 时不受此开关影响（那就是专门看归档的视图）。
+  const [showRetired, setShowRetired] = useState(false);
+
   // "已退役"分组数据不在默认活跃轮询里（见 useFarmContainers 顶部注释），只
   // 在 operator 选中 retired 或 all 时才按需拉取，避免默认视图/绑定弹窗的
   // 可绑定容器列表被归档数据污染。
@@ -129,17 +141,29 @@ export function FarmContainerTable({
     error: retiredError,
   } = useFarmRetiredContainers(needsRetired);
 
-  const rows = useMemo(() => {
-    if (groupFilter === 'retired') return retiredContainers;
+  const { rows, archivedCount } = useMemo(() => {
+    if (groupFilter === 'retired') {
+      return { rows: retiredContainers, archivedCount: 0 };
+    }
     if (groupFilter === 'all') {
       const rowsById = new Map<string, FarmContainerView>();
       for (const container of [...containers, ...retiredContainers]) {
         if (!rowsById.has(container.id)) rowsById.set(container.id, container);
       }
-      return [...rowsById.values()];
+      const merged = [...rowsById.values()];
+      const isArchived = (c: FarmContainerView) =>
+        c.status === 'retired' || c.status === 'orphaned';
+      const archived = merged.filter(isArchived);
+      return {
+        rows: showRetired ? merged : merged.filter((c) => !isArchived(c)),
+        archivedCount: archived.length,
+      };
     }
-    return containers.filter((c) => groupOfStatus(c.status) === groupFilter);
-  }, [containers, retiredContainers, groupFilter]);
+    return {
+      rows: containers.filter((c) => groupOfStatus(c.status) === groupFilter),
+      archivedCount: 0,
+    };
+  }, [containers, retiredContainers, groupFilter, showRetired]);
 
   const isLoading = loading || (needsRetired && retiredLoading);
   const combinedError = error || (needsRetired ? retiredError : '');
@@ -170,6 +194,23 @@ export function FarmContainerTable({
             id="farm-container-status-select-control"
           />
         </div>
+        {/* 密度改造：'all' 视图有归档容器时给出「显示已退役」开关，默认折叠。 */}
+        {groupFilter === 'all' && archivedCount > 0 ? (
+          <label className={styles.retiredToggle} data-testid="farm-container-show-retired">
+            <input
+              type="checkbox"
+              checked={showRetired}
+              onChange={(event) => setShowRetired(event.target.checked)}
+            />
+            <span>
+              {t('farm.containers.show_retired', {
+                defaultValue: '显示已退役',
+              })}
+              {' · '}
+              {archivedCount}
+            </span>
+          </label>
+        ) : null}
       </div>
 
       <AsyncPanel
@@ -205,11 +246,12 @@ export function FarmContainerTable({
               <TableHead>{t('farm.containers.column_keepalive')}</TableHead>
               <TableHead>{t('farm.containers.column_resource')}</TableHead>
               <TableHead>{t('farm.containers.column_success_rate')}</TableHead>
-              <TableHead>{t('farm.containers.column_device_alignment')}</TableHead>
-              <TableHead>{t('farm.containers.column_next_estimate')}</TableHead>
+              {/* 密度改造：低频列「设备对齐 / 下次探针预估」移入容器详情页
+                  （farm-detail-device-id / farm-detail-next-estimate），默认列压到
+                  7 列；设备对齐仅在漂移/未知等需处理态时压成设备列内的紧凑徽标提示。 */}
               <TableHead>{t('farm.containers.column_binding')}</TableHead>
-              {/* U4：操作列固定在右侧（sticky-right），10 列表格横向溢出抽屉时
-                  绑定/解绑/退役按钮仍常驻视口内可点，不再被裁到屏外。 */}
+              {/* U4：操作列固定在右侧（sticky-right），表格横向溢出时绑定/解绑/退役
+                  按钮仍常驻视口内可点，不再被裁到屏外。 */}
               <TableHead alignRight className={styles.stickyActions}>
                 {t('farm.containers.column_actions')}
               </TableHead>
@@ -238,8 +280,16 @@ export function FarmContainerTable({
               const successRateVariant = successRateToFarmHealthVariant(container.success_rate_24h);
 
               const deviceAlignmentVariant = deviceAlignmentToBadgeVariant(container.device_id_alignment);
+              // 只在漂移/未知等需处理态冒出设备对齐徽标；正常的 container_synced 不渲染以减噪。
+              const showDeviceAlignmentBadge =
+                Boolean(container.device_id_alignment) &&
+                container.device_id_alignment !== 'container_synced';
 
-              const nextEstimate = container.next_keepalive_estimate;
+              // #52 绑定账号列：备注名（binding.note）优先作为主标识，邮箱脱敏后降为
+              // 次要标识。运营者主要用备注名认账号，裸邮箱既难认又是敏感信息。
+              const bindingIdentity = container.binding
+                ? resolveBindingIdentity(container.binding.note, container.binding.account)
+                : null;
 
               const handleRowClick = onSelectContainer
                 ? () => onSelectContainer(container)
@@ -268,7 +318,24 @@ export function FarmContainerTable({
                   <TableCell data-label={t('farm.containers.column_device')}>
                     <div className={styles.deviceCell}>
                       <span className={styles.containerId}>{container.id}</span>
-                      <span className={styles.deviceIdMasked}>{container.device_id_masked}</span>
+                      <div className={styles.deviceMetaRow}>
+                        <span className={styles.deviceIdMasked}>{container.device_id_masked}</span>
+                        {/* 设备对齐低频列压进设备格：只在漂移/未知等需处理态时冒出
+                            紧凑徽标（正常的 container_synced 不渲染，减噪）；完整对齐口径
+                            在容器详情页。title 悬浮点明这是「设备 ID 对齐」。 */}
+                        {showDeviceAlignmentBadge ? (
+                          <span
+                            className={`status-badge ${deviceAlignmentVariant} ${styles.alignmentBadge}`}
+                            title={t('farm.containers.column_device_alignment')}
+                            data-testid={`farm-container-device-alignment-${container.id}`}
+                          >
+                            {t(
+                              `auth_files.account_settings_device_id_source_${container.device_id_alignment}`,
+                              { defaultValue: container.device_id_alignment }
+                            )}
+                          </span>
+                        ) : null}
+                      </div>
                     </div>
                   </TableCell>
                   <TableCell data-label={t('farm.containers.column_status')}>
@@ -285,11 +352,18 @@ export function FarmContainerTable({
                     />
                   </TableCell>
                   <TableCell data-label={t('farm.containers.column_keepalive')}>
-                    <span className={styles.mono}>
-                      {container.last_keepalive_at
-                        ? formatDateTimeUtc8(container.last_keepalive_at, i18n.language)
-                        : t('farm.containers.never')}
-                    </span>
+                    {/* 密度改造：相对时间（「2 分钟前」）压缩行高，绝对值仍走全局时区
+                        formatDateTimeUtc8 放 title 悬浮，保持全站时区口径一致。 */}
+                    {container.last_keepalive_at ? (
+                      <span
+                        className={styles.mono}
+                        title={formatDateTimeUtc8(container.last_keepalive_at, i18n.language)}
+                      >
+                        {formatRelativeFromNow(container.last_keepalive_at, nowMs, i18n.language)}
+                      </span>
+                    ) : (
+                      <span className={styles.mono}>{t('farm.containers.never')}</span>
+                    )}
                   </TableCell>
                   <TableCell data-label={t('farm.containers.column_resource')}>
                     {container.latest_resource ? (
@@ -313,38 +387,34 @@ export function FarmContainerTable({
                       <span className={styles.mono}>—</span>
                     )}
                   </TableCell>
-                  <TableCell data-label={t('farm.containers.column_device_alignment')}>
-                    {container.device_id_alignment ? (
-                      <span className={`status-badge ${deviceAlignmentVariant}`}>
-                        {t(
-                          `auth_files.account_settings_device_id_source_${container.device_id_alignment}`,
-                          { defaultValue: container.device_id_alignment }
-                        )}
-                      </span>
-                    ) : (
-                      <span className={styles.mono}>—</span>
-                    )}
-                  </TableCell>
-                  <TableCell data-label={t('farm.containers.column_next_estimate')}>
-                    {nextEstimate ? (
-                      <span className={styles.mono} title={nextEstimate.note}>
-                        {typeof nextEstimate.avg_observed_seconds_24h === 'number'
-                          ? formatDurationMs(nextEstimate.avg_observed_seconds_24h * 1000, {
-                              maxUnits: 1,
-                            })
-                          : `~${formatDurationMs(nextEstimate.base_seconds * 1000, { maxUnits: 1 })}`}
-                      </span>
-                    ) : (
-                      <span className={styles.mono}>—</span>
-                    )}
-                  </TableCell>
                   <TableCell data-label={t('farm.containers.column_binding')}>
-                    {container.binding ? (
+                    {container.binding && bindingIdentity ? (
                       <div className={styles.bindingCell}>
-                        <span className={styles.bindingAccount}>{container.binding.account}</span>
-                        <span className={styles.chip}>{t(`farm.env.${container.binding.env}`, {
-                          defaultValue: container.binding.env,
-                        })}</span>
+                        <div className={styles.bindingPrimaryRow}>
+                          {/* 主标识：备注名优先；无备注时回退脱敏邮箱。title 保留原始
+                              邮箱供 operator 需要时悬浮查看。 */}
+                          <span
+                            className={styles.bindingAccount}
+                            title={container.binding.account}
+                            data-testid={`farm-container-binding-primary-${container.id}`}
+                          >
+                            {bindingIdentity.primary || t('farm.containers.no_binding')}
+                          </span>
+                          <span className={styles.chip}>
+                            {t(`farm.env.${container.binding.env}`, {
+                              defaultValue: container.binding.env,
+                            })}
+                          </span>
+                        </div>
+                        {/* 次要标识：有备注名时才展示脱敏邮箱（无备注名时主标识已是脱敏邮箱）。 */}
+                        {bindingIdentity.hasNote && bindingIdentity.secondary ? (
+                          <span
+                            className={styles.bindingSecondary}
+                            data-testid={`farm-container-binding-secondary-${container.id}`}
+                          >
+                            {bindingIdentity.secondary}
+                          </span>
+                        ) : null}
                       </div>
                     ) : (
                       <span className={styles.mono}>{t('farm.containers.no_binding')}</span>

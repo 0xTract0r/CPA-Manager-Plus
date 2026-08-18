@@ -15,6 +15,11 @@ export interface FarmBindingView {
   account: string;
   auth_index?: number;
   bound_at: string;
+  // 绑定账号的 CPA 备注名（dto.go bindingView.Note，cpa.AuthFileEntry.Note 的
+  // 容器视角投影，如 "AC11-CLAUDE-GOOGLE"）。供容器池「绑定账号」列优先展示
+  // 备注名而非裸邮箱（#52）。留空表示该账号没有设置 note，或本次请求未能拉到
+  // CPA 账号快照（中性回退，不是「确认没有备注」），前端回退到脱敏邮箱。
+  note?: string;
 }
 
 // GET /api/farm/containers/{id}/... 时序响应共用的分桶资源快照（dto.go
@@ -225,6 +230,17 @@ export interface FarmAccountEntry {
   disabled: boolean;
   last_refresh?: string;
   reauth_url?: string;
+  // 账号卡时间字段（#50，编排器 accountView 内嵌 cpa.AuthFileEntry 透传）：
+  //  - created_at：core 侧该 auth 记录首次装载时间的近似值（RFC3339），**不是**
+  //    Anthropic profile 的账号注册时间（真源需 quota snapshots 端点，编排器未
+  //    接入，见 dto.go 诚实边界注释），前端展示不应称其为「账号注册时间」。
+  //  - first_identity_at：首次登录/接入时间（源自
+  //    account_settings.runtime_identity.current.created_at，RFC3339），是 #50
+  //    描述「首次登录」的等价字段。
+  // 两者均 omitempty，缺失时前端展示 '—'，不伪造。封禁时间（refresh_disabled_at）
+  // core 尚未投影到任何管理 API JSON，编排器拿不到，暂缺（见 #57，前端显 '—'）。
+  created_at?: string;
+  first_identity_at?: string;
   proxy_url?: string;
   device_id?: string;
   success?: number;

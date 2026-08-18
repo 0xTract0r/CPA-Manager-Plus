@@ -63,9 +63,10 @@ import {
   type FarmDeviceIDSource,
   type FarmEnv,
 } from '@/types/farm';
-import type { FarmDetailTab } from './FarmContainerDetail';
+import type { FarmDetailTab } from './FarmContainerDetailContent';
 import { formatDateTimeUtc8 } from '@/utils/datetime';
 import { formatDurationMs } from '@/utils/usage/latency';
+import { deriveFarmAccountTimeLabels } from '../utils/accountTime';
 import styles from './FarmAccountsPanel.module.scss';
 
 // 容器注册表快照「陈旧」的前端展示阈值：本列只用它给「容器运行态」徽标的
@@ -127,11 +128,17 @@ interface FarmAccountsPanelProps {
    * 入口降级为不可用（未绑定账号本就没有容器可看）。
    */
   onOpenDetail?: (container: FarmContainerView, initialTab: FarmDetailTab) => void;
+  /**
+   * 作为独立整页（FarmAccountsPage）承载时，标题/说明由页头提供，隐藏面板内
+   * 重复的标题与描述，仅保留筛选控件、容量说明与节奏心智模型说明。
+   */
+  hideHeading?: boolean;
 }
 
 export function FarmAccountsPanel({
   containers: sharedContainers,
   onOpenDetail,
+  hideHeading = false,
 }: FarmAccountsPanelProps = {}) {
   const { t, i18n } = useTranslation();
   // C8「筛选维度改造」：环境（test/prod）对本部署无意义——编排器当前只服务 test，
@@ -325,21 +332,22 @@ export function FarmAccountsPanel({
   return (
     <div className={styles.panel} data-testid="farm-accounts-panel">
       {/* 容量分配模型正名（spec REQ-5）：住宅 IP 是容量真源、device_id 廉价无
-          上限、激活需三件齐备。帮 operator 一眼理解容器池为何受限、何时能接新账号。 */}
-      <div className={styles.capacityNotice} data-testid="farm-capacity-model-callout">
-        <div className={styles.capacityNoticeHeader}>
-          <IconInfo size={14} />
+          上限、激活需三件齐备。改为 progressive disclosure——默认收起，避免三段说明
+          常驻首屏挤占账号表；operator 需要时点开标题展开。 */}
+      <details className={styles.capacityNotice} data-testid="farm-capacity-model-callout">
+        <summary className={styles.capacityNoticeHeader}>
+          <IconInfo size={14} aria-hidden="true" />
           <span>{t('farm.capacityModel.title')}</span>
-        </div>
+        </summary>
         <ul className={styles.capacityNoticeList}>
           <li>{t('farm.capacityModel.ipSource')}</li>
           <li>{t('farm.capacityModel.deviceIdCheap')}</li>
           <li>{t('farm.capacityModel.activationRule')}</li>
         </ul>
-      </div>
+      </details>
 
       <div className={styles.header}>
-        <div className={styles.title}>{t('farm.accounts.title')}</div>
+        {hideHeading ? null : <div className={styles.title}>{t('farm.accounts.title')}</div>}
         {/* C8：把无意义的 test/prod 环境下拉换成「账号认证态」筛选 + 「备注/账号名」
             搜索这两个对 operator 真正有用的客户端筛选维度。 */}
         <div className={styles.filterControls} data-testid="farm-accounts-filters">
@@ -371,7 +379,7 @@ export function FarmAccountsPanel({
           />
         </div>
       </div>
-      <p className={styles.desc}>{t('farm.accounts.desc')}</p>
+      {hideHeading ? null : <p className={styles.desc}>{t('farm.accounts.desc')}</p>}
 
       {/* C5 常驻心智模型：保活探针指数分布随机触发，只有区间与均值、无精确倒计时。
           放面板级、始终可见，防止「请求节奏」列的默认区间被误读成精确倒计时。 */}
@@ -427,13 +435,17 @@ export function FarmAccountsPanel({
                 'device-id-source'
               )}
               {renderSortHead('lastRefresh', t('farm.accountHealth.lastRefresh'), 'last-refresh')}
+              {/* #50 账号时间字段列：创建 / 首次登录 / 存活 / 封禁（非排序列）。 */}
+              <TableHead>
+                {t('farm.accountHealth.timeColumn', { defaultValue: '账号时间' })}
+              </TableHead>
               <TableHead>{actionsColumnLabel}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {filteredAccounts.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} data-testid="farm-accounts-filter-empty">
+                <TableCell colSpan={8} data-testid="farm-accounts-filter-empty">
                   <span className={styles.filterEmpty}>
                     {t('farm.accounts.filter_no_match', {
                       defaultValue: '没有账号匹配当前筛选条件。',
@@ -686,6 +698,39 @@ export function FarmAccountsPanel({
                   onClick: () => onboard(account.name, env),
                 },
               ];
+
+              // ---------------------------------------------------------
+              // #50 账号时间字段：创建 / 首次登录 / 存活 / 封禁（全部走全局时区展示）。
+              //  - 创建：account.created_at（core 侧记录首次装载近似值，非账号注册时间）。
+              //  - 首次登录：account.first_identity_at（runtime_identity.current.created_at）。
+              //  - 存活：健康号 = now − 创建；已失效号（隔离/需重认证）= 失效时间 − 创建。
+              //    失效时间仅 auto_quarantined 有 quarantined_at；needs_reauth 无精确失效
+              //    时间时退回 now 估算并标注「估算」。
+              //  - 封禁：refresh_disabled_at 目前未从 core 透传（#57），显示 '—' 留待补齐。
+              // ---------------------------------------------------------
+              // #50 零时间兜底 + 存活派生统一走 deriveFarmAccountTimeLabels（纯函数，
+              // 内部复用 parseCoreQuotaTimestamp 拦 Go 零值 0001-01-01T00:00:00Z）。
+              // 失效时刻只对 auto_quarantined 取 quarantined_at；needs_reauth 无精确失效
+              // 时刻 → 按 now 估算并标注。见该 util 顶部注释与回归测试。
+              const aliveImpaired =
+                authState === 'auto_quarantined' || authState === 'needs_reauth';
+              const { createdAtDate, firstIdentityDate, aliveMs, aliveEstimated } =
+                deriveFarmAccountTimeLabels({
+                  createdAt: account.created_at,
+                  firstIdentityAt: account.first_identity_at,
+                  failureAt:
+                    authState === 'auto_quarantined' ? account.quarantined_at : undefined,
+                  impaired: aliveImpaired,
+                  nowMs,
+                });
+              const createdAtLabel = createdAtDate
+                ? formatDateTimeUtc8(createdAtDate, i18n.language)
+                : '—';
+              const firstIdentityLabel = firstIdentityDate
+                ? formatDateTimeUtc8(firstIdentityDate, i18n.language)
+                : '—';
+              const aliveLabel =
+                aliveMs != null ? formatDurationMs(aliveMs, { maxUnits: 2 }) : '—';
 
               return (
                 <TableRow key={account.name} data-testid={`farm-account-row-${account.name}`}>
@@ -1073,6 +1118,76 @@ export function FarmAccountsPanel({
                         ? formatDateTimeUtc8(account.last_refresh, i18n.language)
                         : t('farm.containers.never')}
                     </span>
+                  </TableCell>
+
+                  {/* #50 账号时间字段：创建 / 首次登录 / 存活 / 封禁。 */}
+                  <TableCell
+                    data-label={t('farm.accountHealth.timeColumn', { defaultValue: '账号时间' })}
+                    data-testid={`farm-account-time-cell-${account.name}`}
+                  >
+                    <dl className={styles.timeCell}>
+                      <div className={styles.timeRow}>
+                        <dt className={styles.timeLabel}>
+                          {t('farm.accountHealth.timeCreated', { defaultValue: '创建' })}
+                        </dt>
+                        <dd
+                          className={`${styles.timeValue} ${styles.mono}`}
+                          data-testid={`farm-account-created-${account.name}`}
+                        >
+                          {createdAtLabel}
+                        </dd>
+                      </div>
+                      <div className={styles.timeRow}>
+                        <dt className={styles.timeLabel}>
+                          {t('farm.accountHealth.timeFirstLogin', { defaultValue: '首次登录' })}
+                        </dt>
+                        <dd
+                          className={`${styles.timeValue} ${styles.mono}`}
+                          data-testid={`farm-account-first-identity-${account.name}`}
+                        >
+                          {firstIdentityLabel}
+                        </dd>
+                      </div>
+                      <div className={styles.timeRow}>
+                        <dt className={styles.timeLabel}>
+                          {t('farm.accountHealth.timeAlive', { defaultValue: '存活' })}
+                        </dt>
+                        <dd
+                          className={styles.timeValue}
+                          data-testid={`farm-account-alive-${account.name}`}
+                        >
+                          <span className={styles.mono}>{aliveLabel}</span>
+                          {aliveEstimated ? (
+                            <span
+                              className={styles.timeEstimate}
+                              data-testid={`farm-account-alive-estimated-${account.name}`}
+                              title={t('farm.accountHealth.timeAliveEstimateHint', {
+                                defaultValue: '缺精确失效时间，按当前时间估算',
+                              })}
+                            >
+                              {t('farm.accountHealth.timeEstimateBadge', { defaultValue: '估算' })}
+                            </span>
+                          ) : null}
+                        </dd>
+                      </div>
+                      <div className={styles.timeRow}>
+                        <dt className={styles.timeLabel}>
+                          {t('farm.accountHealth.timeBanned', { defaultValue: '封禁' })}
+                        </dt>
+                        <dd
+                          className={`${styles.timeValue} ${styles.mono}`}
+                          data-testid={`farm-account-banned-${account.name}`}
+                        >
+                          <span
+                            title={t('farm.accountHealth.timeBannedPending', {
+                              defaultValue: '封禁时间待后端补充（refresh_disabled_at 未暴露）',
+                            })}
+                          >
+                            —
+                          </span>
+                        </dd>
+                      </div>
+                    </dl>
                   </TableCell>
 
                   {/* 操作列（用户③，IA 重设计）：收敛成单一「⋯管理」DropdownMenu——

@@ -4024,7 +4024,8 @@
       "configureNow": "立即配置",
       "notConfiguredDesc": "高级覆盖填写的编排器地址或 Admin Key 可能有误，或该编排器暂时无法访问。请检查设置，或清空两项以改用同源代理。",
       "backToContainers": "返回容器池",
-      "backToAccounts": "返回账号列表"
+      "backToAccounts": "返回账号列表",
+      "collapseAlerts": "收起"
     },
     "config": {
       "title": "编排器连接配置",
@@ -4141,7 +4142,8 @@
       "never": "从未",
       "create_placeholder": "容器编号后缀，例如 acct-07",
       "create_button": "新建容器",
-      "create_success": "容器 {{id}} 已创建"
+      "create_success": "容器 {{id}} 已创建",
+      "show_retired": "显示已退役"
     },
     "status": {
       "created": "已入池",
@@ -4212,7 +4214,8 @@
       "accountClockCoverage": "覆盖范围",
       "accountClockCoverageValue": "{{accounts}} 账号 / {{containers}} 容器",
       "noteBadgeTitle": "账号备注 / 别名",
-      "emptyUnlock": "解锁条件：该环境需有健康容器绑定账号，且账号自 CPA 上次重启后产生过请求；满足后此处会按账号/容器列出累计用量。当前测试端可能尚无健康容器或账号未产生流量。"
+      "emptyUnlock": "解锁条件：该环境需有健康容器绑定账号，且账号自 CPA 上次重启后产生过请求；满足后此处会按账号/容器列出累计用量。当前测试端可能尚无健康容器或账号未产生流量。",
+      "subtitle": "农场绑定账号在 CPA 侧的累计用量（自 CPA 上次重启起、内存态，不等同探针保活次数）。"
     },
     "resources": {
       "title": "资源占用",
@@ -4222,7 +4225,8 @@
       "noLimit": "无上限",
       "hostTitle": "整机",
       "hostNote": "整机含非农场进程",
-      "empty": "暂无容器资源数据"
+      "empty": "暂无容器资源数据",
+      "subtitle": "农场容器与宿主机的内存 / CPU 占用（含整机非农场进程口径说明）。"
     },
     "accountHealth": {
       "accountHealthColumn": "账号认证态",
@@ -4323,7 +4327,15 @@
       "rowMenuLabel": "账号管理菜单",
       "rowMenuTrigger": "管理",
       "telemetryAlive_openHint": "查看该容器遥测详情",
-      "telemetryAlive_openAria": "查看该容器遥测详情（当前 {{state}}）"
+      "telemetryAlive_openAria": "查看该容器遥测详情（当前 {{state}}）",
+      "timeColumn": "账号时间",
+      "timeCreated": "创建",
+      "timeFirstLogin": "首次登录",
+      "timeAlive": "存活",
+      "timeBanned": "封禁",
+      "timeEstimateBadge": "估算",
+      "timeAliveEstimateHint": "缺精确失效时间，按当前时间估算",
+      "timeBannedPending": "封禁时间待后端补充（refresh_disabled_at 未暴露）"
     },
     "overview": {
       "running": "运行中容器",
@@ -4336,7 +4348,9 @@
       "generatedAt": "数据截至",
       "generatedAtNote": "（本次 API 响应生成时间，非精确的 Poller 最近巡检时刻）",
       "probeCostNotWired": "未接入",
-      "probeCostNotWiredHint": "探针 token cost 聚合待 P1 接入，当前无诚实数据来源"
+      "probeCostNotWiredHint": "探针 token cost 聚合待 P1 接入，当前无诚实数据来源",
+      "downLink": "查看离线容器",
+      "alertsLink": "查看活跃告警"
     },
     "alerts": {
       "title": "农场告警",
@@ -4485,7 +4499,8 @@
       "rowSourceOnWireFull": "on-wire：{{source}} 在容器出站链路真实抓取",
       "rowSourceDeclared": "自报 · {{source}}",
       "rowSourceDeclaredFull": "自报：容器声明 / 自报（{{source}}），非出站抓取",
-      "deviceIdFullNote": "此处 device_id 为自报全量值（非列表页脱敏前 16 位），仅供运维核对自洽性用；漂移/串号/host 泄漏等自洽异常经告警面板呈现。"
+      "deviceIdFullNote": "此处 device_id 为自报全量值（非列表页脱敏前 16 位），仅供运维核对自洽性用；漂移/串号/host 泄漏等自洽异常经告警面板呈现。",
+      "disclaimerSummary": "来源边界说明（点开）：信标混合自报 + on-wire，不构成跨账号反关联证明"
     }
   }
 }

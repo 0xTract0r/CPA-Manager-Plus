@@ -1,4 +1,5 @@
 import { useMemo, type ReactElement } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { AsyncPanel } from '@/components/ui/AsyncPanel';
 import {
@@ -35,6 +36,12 @@ interface FarmOverviewKpiItem {
   // 「未接入」占位态（后端本轮无诚实非零聚合路径的 KPI，如探针 cost）：置位时
   // 不渲染裸数值/裸横杠，改用中性 chip 明示「未接入」，避免首屏被误读成半成品。
   placeholder?: { chipLabel: string; title: string };
+  // 可点导航：磁贴从静态数字升级为入口。`route` 跳转到对应筛选的容器池整页；
+  // `anchor` 滚动到同页的告警区（原生 hash 锚点）。带任一者时磁贴渲染成可聚焦的
+  // button / a，并加 hover/focus 态。
+  action?:
+    | { kind: 'route'; to: string; ariaLabel: string }
+    | { kind: 'anchor'; href: string; ariaLabel: string };
 }
 
 /**
@@ -51,6 +58,7 @@ interface FarmOverviewKpiItem {
  */
 export function FarmOverviewBar({ containers }: FarmOverviewBarProps) {
   const { t, i18n } = useTranslation();
+  const navigate = useNavigate();
   const { overview, loading, error } = useFarmOverview();
 
   const boundAccountsCount = useMemo(
@@ -96,6 +104,12 @@ export function FarmOverviewBar({ containers }: FarmOverviewBarProps) {
       label: t('farm.overview.down', { defaultValue: '离线容器' }),
       value: String(downCount),
       testId: 'farm-overview-kpi-down',
+      // 磁贴可点：跳到容器池整页并预置「离线」筛选。
+      action: {
+        kind: 'route',
+        to: '/farm/containers?filter=down',
+        ariaLabel: t('farm.overview.downLink', { defaultValue: '查看离线容器' }),
+      },
     },
     {
       key: 'alerts',
@@ -104,6 +118,12 @@ export function FarmOverviewBar({ containers }: FarmOverviewBarProps) {
       label: t('farm.overview.activeAlerts', { defaultValue: '活跃告警' }),
       value: String(activeAlerts),
       testId: 'farm-overview-kpi-alerts',
+      // 磁贴可点：滚动到同页告警区。
+      action: {
+        kind: 'anchor',
+        href: '#farm-alerts-region',
+        ariaLabel: t('farm.overview.alertsLink', { defaultValue: '查看活跃告警' }),
+      },
     },
     {
       key: 'bound',
@@ -143,13 +163,11 @@ export function FarmOverviewBar({ containers }: FarmOverviewBarProps) {
         <div className={styles.kpiRow}>
           {items.map((item) => {
             const Icon = item.icon;
-            return (
-              <div
-                key={item.key}
-                className={`${styles.kpiTile} ${styles[item.tone]}`}
-                data-testid={item.testId}
-                data-tone={item.tone}
-              >
+            const tileClass = `${styles.kpiTile} ${styles[item.tone]}${
+              item.action ? ` ${styles.kpiTileClickable}` : ''
+            }`;
+            const tileInner = (
+              <>
                 <Icon size={18} />
                 <div className={styles.kpiText}>
                   {item.placeholder ? (
@@ -165,6 +183,49 @@ export function FarmOverviewBar({ containers }: FarmOverviewBarProps) {
                   )}
                   <span className={styles.kpiLabel}>{item.label}</span>
                 </div>
+              </>
+            );
+
+            // 可点磁贴：route → button（编程式导航到筛选整页）；anchor → a（原生
+            // hash 滚动到同页告警区）。不可点磁贴保持静态 div。
+            if (item.action?.kind === 'route') {
+              const to = item.action.to;
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={tileClass}
+                  data-testid={item.testId}
+                  data-tone={item.tone}
+                  aria-label={item.action.ariaLabel}
+                  onClick={() => navigate(to)}
+                >
+                  {tileInner}
+                </button>
+              );
+            }
+            if (item.action?.kind === 'anchor') {
+              return (
+                <a
+                  key={item.key}
+                  href={item.action.href}
+                  className={tileClass}
+                  data-testid={item.testId}
+                  data-tone={item.tone}
+                  aria-label={item.action.ariaLabel}
+                >
+                  {tileInner}
+                </a>
+              );
+            }
+            return (
+              <div
+                key={item.key}
+                className={tileClass}
+                data-testid={item.testId}
+                data-tone={item.tone}
+              >
+                {tileInner}
               </div>
             );
           })}

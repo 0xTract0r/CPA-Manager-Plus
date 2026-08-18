@@ -163,12 +163,21 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
           自报/声明，on-wire 行才是 mitmproxy/ebpf 在出站链路真实抓取，不能对整列
           笼统说「都是 on-wire」。另一件独立的事是「把 beacon 逐字段派生进指纹自洽
           卡 on-wire 列」尚未接入，与「原始 on_wire beacon 已实时采集」不是一回事。 */}
-      <p className={styles.probeTokenBadge} data-testid="farm-telemetry-disclaimer">
-        {t('farm.telemetry.disclaimer', {
-          defaultValue:
-            '下方是该容器的遥测信标列表，混合两类来源并逐条标注：「自报 (declared)」是容器声明/自报的内容，「on-wire」行才是 mitmproxy/ebpf 在容器出站链路真实抓取的数据。即便 on-wire 行也只证明该容器确实发出过这些请求，不构成跨账号反关联证明。另外，上方指纹自洽卡的「出站实测 (on-wire)」列是把信标逐字段派生、与自报值比对的独立步骤——这一步尚未接入才显示占位，与「原始 on-wire 信标是否已抓取」是两回事。',
-        })}
-      </p>
+      {/* progressive disclosure：来源边界免责声明较长（多段），默认收起，只留一行
+          警示摘要占位，operator 需要完整口径时点开；避免长段落落地即占遥测 tab 首屏。 */}
+      <details className={styles.disclaimerDisclosure} data-testid="farm-telemetry-disclaimer">
+        <summary className={styles.disclaimerSummary}>
+          {t('farm.telemetry.disclaimerSummary', {
+            defaultValue: '来源边界说明（点开）：信标混合自报 + on-wire，不构成跨账号反关联证明',
+          })}
+        </summary>
+        <p className={styles.probeTokenBadge}>
+          {t('farm.telemetry.disclaimer', {
+            defaultValue:
+              '下方是该容器的遥测信标列表，混合两类来源并逐条标注：「自报 (declared)」是容器声明/自报的内容，「on-wire」行才是 mitmproxy/ebpf 在容器出站链路真实抓取的数据。即便 on-wire 行也只证明该容器确实发出过这些请求，不构成跨账号反关联证明。另外，上方指纹自洽卡的「出站实测 (on-wire)」列是把信标逐字段派生、与自报值比对的独立步骤——这一步尚未接入才显示占位，与「原始 on-wire 信标是否已抓取」是两回事。',
+          })}
+        </p>
+      </details>
       <span className={styles.scopeBadge} data-testid="farm-telemetry-scope">
         {t('farm.telemetry.scopeBadge', {
           defaultValue: '口径：信标含自报与 on-wire 两类·逐条标注来源，指纹逐字段派生待接入',

@@ -4024,7 +4024,8 @@
       "configureNow": "Configure now",
       "notConfiguredDesc": "The orchestrator URL or Admin Key in the advanced override looks invalid, or that orchestrator is temporarily unreachable. Check the settings, or clear both fields to fall back to the same-origin proxy.",
       "backToContainers": "Back to container pool",
-      "backToAccounts": "Back to accounts"
+      "backToAccounts": "Back to accounts",
+      "collapseAlerts": "Collapse"
     },
     "config": {
       "title": "Orchestrator Connection",
@@ -4141,7 +4142,8 @@
       "never": "Never",
       "create_placeholder": "Container id suffix, e.g. acct-07",
       "create_button": "New Container",
-      "create_success": "Container {{id}} created"
+      "create_success": "Container {{id}} created",
+      "show_retired": "Show retired"
     },
     "status": {
       "created": "Created",
@@ -4212,7 +4214,8 @@
       "accountClockCoverage": "Coverage",
       "accountClockCoverageValue": "{{accounts}} accounts / {{containers}} containers",
       "noteBadgeTitle": "Account note / alias",
-      "emptyUnlock": "Unlock conditions: this environment needs a healthy container bound to an account, and the account must have produced requests since the last CPA restart. Once met, cumulative usage will be listed here by account/container. The test side may currently have no healthy container, or the account has produced no traffic."
+      "emptyUnlock": "Unlock conditions: this environment needs a healthy container bound to an account, and the account must have produced requests since the last CPA restart. Once met, cumulative usage will be listed here by account/container. The test side may currently have no healthy container, or the account has produced no traffic.",
+      "subtitle": "Cumulative usage of farm-bound accounts on the CPA side (since CPA last restart, in-memory; not the same as keepalive probe count)."
     },
     "resources": {
       "title": "Resource Usage",
@@ -4222,7 +4225,8 @@
       "noLimit": "no limit",
       "hostTitle": "Host",
       "hostNote": "Includes non-farm processes on the whole machine",
-      "empty": "No container resource data yet"
+      "empty": "No container resource data yet",
+      "subtitle": "Memory / CPU usage of farm containers and the host (includes the whole-host, non-farm-process caveat)."
     },
     "accountHealth": {
       "accountHealthColumn": "Account Auth Status",
@@ -4323,7 +4327,15 @@
       "rowMenuLabel": "Account management menu",
       "rowMenuTrigger": "Manage",
       "telemetryAlive_openHint": "View this container's telemetry",
-      "telemetryAlive_openAria": "View this container's telemetry (currently {{state}})"
+      "telemetryAlive_openAria": "View this container's telemetry (currently {{state}})",
+      "timeColumn": "Account timeline",
+      "timeCreated": "Created",
+      "timeFirstLogin": "First login",
+      "timeAlive": "Alive",
+      "timeBanned": "Banned",
+      "timeEstimateBadge": "Est.",
+      "timeAliveEstimateHint": "No exact failure time; estimated up to now.",
+      "timeBannedPending": "Ban time pending backend support (refresh_disabled_at not exposed)."
     },
     "overview": {
       "running": "Running Containers",
@@ -4336,7 +4348,9 @@
       "generatedAt": "Data as of",
       "generatedAtNote": "(API response generation time, not an exact last poller run timestamp)",
       "probeCostNotWired": "Not wired",
-      "probeCostNotWiredHint": "Probe token cost aggregation is pending P1; no honest data source yet."
+      "probeCostNotWiredHint": "Probe token cost aggregation is pending P1; no honest data source yet.",
+      "downLink": "View offline containers",
+      "alertsLink": "View active alerts"
     },
     "alerts": {
       "title": "Farm Alerts",
@@ -4485,7 +4499,8 @@
       "rowSourceOnWireFull": "on-wire: captured for real by {{source}} on the outbound path",
       "rowSourceDeclared": "declared · {{source}}",
       "rowSourceDeclaredFull": "declared: container self-reported ({{source}}), not an outbound capture",
-      "deviceIdFullNote": "device_id here is the full self-reported value (not the list page's masked first 16 chars), for ops self-consistency checks only; drift / collision / host-leak anomalies surface in the alerts panel."
+      "deviceIdFullNote": "device_id here is the full self-reported value (not the list page's masked first 16 chars), for ops self-consistency checks only; drift / collision / host-leak anomalies surface in the alerts panel.",
+      "disclaimerSummary": "Source scope (expand): signals mix declared + on-wire, not a cross-account correlation proof"
     }
   }
 }

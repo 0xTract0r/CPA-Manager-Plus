@@ -9,6 +9,12 @@
   min-width: 0;
 }
 
+// 告警区锚点目标：hash 滚动（来自 KPI「活跃告警」磁贴）落点上方留出边距，
+// 避免锚点顶边紧贴视口/被上方内容压住。
+.alertsRegion {
+  scroll-margin-top: $spacing-xl;
+}
+
 .dashboard {
   gap: $spacing-xl;
   width: 100%;
@@ -118,4 +124,18 @@
   .operationsGrid {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+// 内联展开的完整告警列表头（替代原 alerts 抽屉标题栏）：标题 + 收起按钮。
+.inlineAlertsHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-sm;
+  margin-bottom: $spacing-sm;
+}
+
+.inlineAlertsTitle {
+  font-weight: 700;
+  color: var(--text-primary);
 }

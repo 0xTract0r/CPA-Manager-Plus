@@ -239,6 +239,46 @@ export function formatHourAxisUtc8(value: unknown, fallback = ''): string {
   return `${month}-${day} ${hour}:00`;
 }
 
+// 相对时间分段：从秒逐级向上归并到年。amount 为「进位到下一单位」的阈值。
+const RELATIVE_TIME_DIVISIONS: ReadonlyArray<{ amount: number; unit: Intl.RelativeTimeFormatUnit }> =
+  [
+    { amount: 60, unit: 'second' },
+    { amount: 60, unit: 'minute' },
+    { amount: 24, unit: 'hour' },
+    { amount: 7, unit: 'day' },
+    { amount: 4.34524, unit: 'week' },
+    { amount: 12, unit: 'month' },
+    { amount: Number.POSITIVE_INFINITY, unit: 'year' },
+  ];
+
+/**
+ * 相对时间（「2 分钟前」/「yesterday」/「через 3 часа」），走 `Intl.RelativeTimeFormat`
+ * 原生本地化（en / zh / ru 均支持），用于表格等高频时间戳的紧凑展示——绝对值应由
+ * 调用方放进 `title` 悬浮（用 `formatDateTimeUtc8` 保持全局时区一致）。相对时间本身
+ * 与时区无关，只依赖两个时刻之差。
+ *
+ * @param nowMs 当前时刻（毫秒）；由调用方的稳定时钟（如每分钟 tick 的 state）提供，
+ *   避免在 render 期直接读 `Date.now()` 破坏 render 纯度。
+ */
+export function formatRelativeFromNow(
+  value: unknown,
+  nowMs: number,
+  locale?: string,
+  fallback = ''
+): string {
+  const date = toDate(value);
+  if (!date) return fallback;
+  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
+  let duration = (date.getTime() - nowMs) / 1000; // 秒；负数=过去，正数=将来
+  for (const division of RELATIVE_TIME_DIVISIONS) {
+    if (Math.abs(duration) < division.amount) {
+      return rtf.format(Math.round(duration), division.unit);
+    }
+    duration /= division.amount;
+  }
+  return fallback;
+}
+
 /**
  * 日期横轴：YYYY-MM-DD，走全局时区配置（默认 UTC+8）。
  */

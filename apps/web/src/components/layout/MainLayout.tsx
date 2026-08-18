@@ -558,11 +558,12 @@ export function MainLayout({ routeBase = '', demoMode = false }: MainLayoutProps
       label: t('nav.farm', { defaultValue: '农场' }),
       shortLabel: navShortLabel('nav.farm', t('nav.farm', { defaultValue: '农场' })),
       icon: sidebarIcons.farm,
-      // 精确匹配：/farm/<section> 深链下父项「农场」不再高亮，交给对应子项。
+      // 精确匹配：/farm/<section> 子页下父项「农场」不再高亮，交给对应子项。
       exact: true,
     },
-    // 农场持久子导航项：点击导航到 /farm/<section>，由 FarmDashboard 依 URL 打开
-    // 对应右侧抽屉（账号状态表 / 容器池表 / 资源 / 用量），复用既有数据层。
+    // 农场子导航项：NavLink 真正导航到各自的独立路由整页（账号状态 / 容器池 /
+    // 资源占用 / 用量明细），不再是打开右侧抽屉。容器详情 /farm/containers/:id
+    // 归属「容器池」子项高亮（matchesNavPath 的 startsWith 前缀匹配）。
     {
       path: '/farm/accounts',
       label: t('farm.accounts.title'),

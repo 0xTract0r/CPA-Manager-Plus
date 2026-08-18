@@ -4024,7 +4024,8 @@
       "configureNow": "立即設定",
       "notConfiguredDesc": "高階覆蓋填寫的編排器位址或 Admin Key 可能有誤，或該編排器暫時無法存取。請檢查設定，或清空兩項以改用同源代理。",
       "backToContainers": "返回容器池",
-      "backToAccounts": "返回帳號列表"
+      "backToAccounts": "返回帳號列表",
+      "collapseAlerts": "收起"
     },
     "config": {
       "title": "編排器連線設定",
@@ -4141,7 +4142,8 @@
       "never": "從未",
       "create_placeholder": "容器編號後綴，例如 acct-07",
       "create_button": "新建容器",
-      "create_success": "容器 {{id}} 已建立"
+      "create_success": "容器 {{id}} 已建立",
+      "show_retired": "顯示已退役"
     },
     "status": {
       "created": "已入池",
@@ -4212,7 +4214,8 @@
       "accountClockCoverage": "覆蓋範圍",
       "accountClockCoverageValue": "{{accounts}} 帳號 / {{containers}} 容器",
       "noteBadgeTitle": "帳號備註 / 別名",
-      "emptyUnlock": "解鎖條件：該環境需有健康容器綁定帳號，且帳號自 CPA 上次重啟後產生過請求；滿足後此處會按帳號/容器列出累計用量。當前測試端可能尚無健康容器或帳號未產生流量。"
+      "emptyUnlock": "解鎖條件：該環境需有健康容器綁定帳號，且帳號自 CPA 上次重啟後產生過請求；滿足後此處會按帳號/容器列出累計用量。當前測試端可能尚無健康容器或帳號未產生流量。",
+      "subtitle": "農場綁定帳號在 CPA 側的累計用量（自 CPA 上次重啟起、記憶體態，不等同探針保活次數）。"
     },
     "resources": {
       "title": "資源佔用",
@@ -4222,7 +4225,8 @@
       "noLimit": "無上限",
       "hostTitle": "整機",
       "hostNote": "整機含非農場行程",
-      "empty": "尚無容器資源資料"
+      "empty": "尚無容器資源資料",
+      "subtitle": "農場容器與主機的記憶體 / CPU 佔用（含整機非農場行程口徑說明）。"
     },
     "accountHealth": {
       "accountHealthColumn": "帳號認證態",
@@ -4323,7 +4327,15 @@
       "rowMenuLabel": "帳號管理選單",
       "rowMenuTrigger": "管理",
       "telemetryAlive_openHint": "查看該容器遙測詳情",
-      "telemetryAlive_openAria": "查看該容器遙測詳情（目前 {{state}}）"
+      "telemetryAlive_openAria": "查看該容器遙測詳情（目前 {{state}}）",
+      "timeColumn": "帳號時間",
+      "timeCreated": "建立",
+      "timeFirstLogin": "首次登入",
+      "timeAlive": "存活",
+      "timeBanned": "封禁",
+      "timeEstimateBadge": "估算",
+      "timeAliveEstimateHint": "缺精確失效時間，按目前時間估算",
+      "timeBannedPending": "封禁時間待後端補充（refresh_disabled_at 未暴露）"
     },
     "overview": {
       "running": "運行中容器",
@@ -4336,7 +4348,9 @@
       "generatedAt": "資料截至",
       "generatedAtNote": "（本次 API 回應生成時間，非精確的 Poller 最近巡檢時刻）",
       "probeCostNotWired": "未接入",
-      "probeCostNotWiredHint": "探針 token cost 匯總待 P1 接入，目前無誠實資料來源"
+      "probeCostNotWiredHint": "探針 token cost 匯總待 P1 接入，目前無誠實資料來源",
+      "downLink": "檢視離線容器",
+      "alertsLink": "檢視活躍告警"
     },
     "alerts": {
       "title": "農場告警",
@@ -4485,7 +4499,8 @@
       "rowSourceOnWireFull": "on-wire：{{source}} 在容器出站鏈路真實擷取",
       "rowSourceDeclared": "自報 · {{source}}",
       "rowSourceDeclaredFull": "自報：容器聲明 / 自報（{{source}}），非出站擷取",
-      "deviceIdFullNote": "此處 device_id 為自報全量值（非列表頁脫敏前 16 位），僅供維運核對自洽性用；漂移/串號/host 洩漏等自洽異常經告警面板呈現。"
+      "deviceIdFullNote": "此處 device_id 為自報全量值（非列表頁脫敏前 16 位），僅供維運核對自洽性用；漂移/串號/host 洩漏等自洽異常經告警面板呈現。",
+      "disclaimerSummary": "來源邊界說明（點開）：信標混合自報 + on-wire，不構成跨帳號反關聯證明"
     }
   }
 }

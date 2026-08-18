@@ -141,9 +141,13 @@
   color: var(--text-secondary);
 }
 
+// 整页详情承载时不再用 `1fr 1fr`（会把 sparkline 拉宽变扁——这套图表列原是为
+// ~320px 抽屉列设计的）。改为每列 clamp 到 ~300–420px 的响应式卡片网格：窄容器
+// （抽屉/平板）自然回退到 1–2 列且不横向拉伸，宽整页里左对齐排布、单个 svg 不
+// 超过 420px，避免又宽又扁。低于 280px 的窄屏由下方 mobile 覆盖回退单列。
 .chartRow {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 420px));
   gap: $spacing-md;
 }
 

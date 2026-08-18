@@ -19,6 +19,21 @@
   width: 160px;
 }
 
+// 密度改造：'all' 视图的「显示已退役」开关，紧跟状态筛选，弱化为次要控件。
+.retiredToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: $fs-xs;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+
+  input {
+    cursor: pointer;
+  }
+}
+
 .deviceCell {
   display: flex;
   flex-direction: column;
@@ -35,10 +50,24 @@
   max-width: 240px;
 }
 
+// 掩码设备 id 与（仅异常态才出现的）设备对齐徽标同排，保持设备格两行高度不膨胀。
+.deviceMetaRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
 .deviceIdMasked {
   font-family: $font-mono;
   font-size: $fs-2xs;
   color: var(--text-secondary);
+}
+
+// 设备对齐紧凑徽标：比默认 status-badge 更小字号，作为设备格内的次要提示。
+.alignmentBadge {
+  font-size: $fs-2xs;
 }
 
 .mono {
@@ -47,7 +76,17 @@
   color: var(--text-secondary);
 }
 
+// #52：绑定账号列改为「主标识行（备注名 + 环境 chip）+ 次要脱敏邮箱行」的纵向
+// 布局，主标识优先展示备注名。
 .bindingCell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  min-width: 0;
+}
+
+.bindingPrimaryRow {
   display: flex;
   align-items: center;
   gap: $spacing-sm;
@@ -57,6 +96,16 @@
 .bindingAccount {
   font-weight: 500;
   color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+}
+
+.bindingSecondary {
+  font-family: $font-mono;
+  font-size: $fs-2xs;
+  color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -116,28 +165,40 @@ th.stickyActions,
 td.stickyActions {
   position: sticky;
   right: 0;
-  // 抬到同行其它单元格之上，横滚内容从下方穿过而非盖住按钮。
-  z-index: 2;
   // 左内侧 1px 分隔线：区隔固定列 + 提示左侧还有可横向滚动的内容。
   box-shadow: inset 1px 0 0 0 var(--border-color);
 }
 
-// 固定列必须不透明，否则横滚时其它单元格从下方透出会糊住按钮。表头/表体各自
-// 匹配 <Table> 的 thead(--bg-tertiary) / tbody 行(--bg-primary) 底色。
+// #56 修复「横滚到右时操作列表头与『绑定账号』表头重叠」：根因是主题 --bg-tertiary
+// / --bg-primary 都是半透明（app-surface* 系列 rgba alpha<1），固定列背景透光，
+// 横滚时下层单元格内容（如绑定账号表头文字）从下方透出，看起来像两列文字重叠。
+// 修法：给固定列一个**不透明**背景——用不透明的 --app-surface-strong 作底层，
+// 再叠一层主题色调（linear-gradient 两端同色）保留原视觉；两层叠加后单元格整体
+// 不透光。同时把表头固定角单元格 z-index 抬到 3（高于表体固定列的 2 与同行普通
+// 表头的 auto），确保横滚 + 纵向共存时它始终盖在最上。
 th.stickyActions {
-  background: var(--bg-tertiary);
+  z-index: 3;
+  background-color: var(--app-surface-strong, var(--bg-primary));
+  background-image: linear-gradient(var(--bg-tertiary), var(--bg-tertiary));
 }
 
 td.stickyActions {
-  background: var(--bg-primary);
+  // 抬到同行其它单元格之上，横滚内容从下方穿过而非盖住按钮。
+  z-index: 2;
+  background-color: var(--app-surface-strong, var(--bg-primary));
+  background-image: linear-gradient(var(--bg-primary), var(--bg-primary));
 }
 
-// 行 hover 时固定列同步着色：把 <Table> 行 hover 的半透明 accent 合成到不透明
-// --bg-primary 上（而非 transparent），既与整行一致又不透光。特异性
-// tr.clickableRow:hover td.stickyActions (0,2,2) 高于 <Table> 的 .row:hover td
-// (0,2,1)，确保本规则生效。
+// 行 hover 时固定列同步着色：不透明 --app-surface-strong 作底层，再叠一层 hover
+// accent 色调，既与整行 hover 一致又保证不透光（同 #56 主修，避免 hover 时又透出
+// 下层单元格）。特异性 tr.clickableRow:hover td.stickyActions (0,2,2) 高于 <Table>
+// 的 .row:hover td (0,2,1)，确保本规则生效。
 tr.clickableRow:hover td.stickyActions {
-  background: color-mix(in srgb, var(--accent-tertiary) 50%, var(--bg-primary));
+  background-color: var(--app-surface-strong, var(--bg-primary));
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--accent-tertiary) 50%, transparent),
+    color-mix(in srgb, var(--accent-tertiary) 50%, transparent)
+  );
 }
 
 .actions {
@@ -167,11 +228,13 @@ tr.clickableRow:hover td.stickyActions {
   }
 
   // 窄屏卡片模式下取消固定列吸附（卡片纵向堆叠、无横向滚动容器，sticky/分隔
-  // 线在此无意义且会在卡片里留一道多余竖线）。
+  // 线在此无意义且会在卡片里留一道多余竖线）；一并清掉 #56 为横滚加的不透明
+  // 背景，让操作字段回归卡片本身底色。
   th.stickyActions,
   td.stickyActions {
     position: static;
     box-shadow: none;
+    background: none;
   }
 
   // 卡片里每个字段独占整行，容器 id / 绑定账号允许换行显示完整值，不再省略号截断。
