@@ -547,6 +547,17 @@
   }
 }
 
+// 农场分组下的持久子导航项（账号状态/容器池/资源/用量）：相对父项「农场」轻微缩进，
+// 视觉上表达从属层级。仅在展开显示标签时缩进；折叠为纯图标态（.collapsed 且非移动端
+// .open）回退默认外边距，保持图标列与其它项对齐。
+.nav-item-sub {
+  margin-left: 30px;
+}
+
+.sidebar.collapsed:not(.open) .nav-item-sub {
+  margin-left: 8px;
+}
+
 .nav-icon {
   width: var(--sidebar-icon-box-width);
   min-width: var(--sidebar-icon-box-width);

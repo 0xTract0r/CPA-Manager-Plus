@@ -13,7 +13,10 @@ import { Button } from '@/components/ui/Button';
 import { PageTransition } from '@/components/common/PageTransition';
 import { MainRoutes } from '@/router/MainRoutes';
 import {
+  IconBot,
+  IconChartLine,
   IconGithub,
+  IconModelCluster,
   IconSidebarAuthFiles,
   IconSidebarConfig,
   IconSidebarDashboard,
@@ -26,6 +29,7 @@ import {
   IconSidebarQuota,
   IconSidebarSystem,
   IconSidebarUsage,
+  IconTrendingUp,
 } from '@/components/ui/icons';
 import { INLINE_LOGO_JPEG } from '@/assets/logoInline';
 import {
@@ -67,6 +71,11 @@ const sidebarIcons: Record<string, ReactNode> = {
   monitoring: <IconSidebarMonitor size={SIDEBAR_ICON_SIZE} />,
   // 农场（Device Farm）迁移第一刀：暂复用监控图标，专属图标留后续精修切片。
   farm: <IconSidebarMonitor size={SIDEBAR_ICON_SIZE} />,
+  // 农场持久子导航项图标沿用农场页操作卡的图标风格（账号/容器/资源/用量）。
+  farmAccounts: <IconBot size={SIDEBAR_ICON_SIZE} />,
+  farmContainers: <IconModelCluster size={SIDEBAR_ICON_SIZE} />,
+  farmResources: <IconChartLine size={SIDEBAR_ICON_SIZE} />,
+  farmUsage: <IconTrendingUp size={SIDEBAR_ICON_SIZE} />,
   plugins: <IconSidebarPlugins size={SIDEBAR_ICON_SIZE} />,
   config: <IconSidebarConfig size={SIDEBAR_ICON_SIZE} />,
   logs: <IconSidebarLogs size={SIDEBAR_ICON_SIZE} />,
@@ -232,6 +241,9 @@ type NavItem = {
   shortLabel?: string;
   icon: ReactNode;
   exact?: boolean;
+  // 持久子导航项（农场分组下的账号状态/容器池/资源/用量）加缩进样式，
+  // 视觉上归属到上方的「农场」父项。
+  isSub?: boolean;
 };
 
 interface MainLayoutProps {
@@ -546,6 +558,38 @@ export function MainLayout({ routeBase = '', demoMode = false }: MainLayoutProps
       label: t('nav.farm', { defaultValue: '农场' }),
       shortLabel: navShortLabel('nav.farm', t('nav.farm', { defaultValue: '农场' })),
       icon: sidebarIcons.farm,
+      // 精确匹配：/farm/<section> 深链下父项「农场」不再高亮，交给对应子项。
+      exact: true,
+    },
+    // 农场持久子导航项：点击导航到 /farm/<section>，由 FarmDashboard 依 URL 打开
+    // 对应右侧抽屉（账号状态表 / 容器池表 / 资源 / 用量），复用既有数据层。
+    {
+      path: '/farm/accounts',
+      label: t('farm.accounts.title'),
+      shortLabel: t('farm.accounts.title'),
+      icon: sidebarIcons.farmAccounts,
+      isSub: true,
+    },
+    {
+      path: '/farm/containers',
+      label: t('farm.containers.title'),
+      shortLabel: t('farm.containers.title'),
+      icon: sidebarIcons.farmContainers,
+      isSub: true,
+    },
+    {
+      path: '/farm/resources',
+      label: t('farm.resources.title'),
+      shortLabel: t('farm.resources.title'),
+      icon: sidebarIcons.farmResources,
+      isSub: true,
+    },
+    {
+      path: '/farm/usage',
+      label: t('farm.usage.detailTitle'),
+      shortLabel: t('farm.usage.detailTitle'),
+      icon: sidebarIcons.farmUsage,
+      isSub: true,
     },
     ...(fileLogsAvailable
       ? [
@@ -999,7 +1043,9 @@ export function MainLayout({ routeBase = '', demoMode = false }: MainLayoutProps
                     to={prefixRouteBase(item.path, routeBase)}
                     end={item.path === '/' || item.exact}
                     className={({ isActive }) =>
-                      `nav-item ${isActive || matchesNavPath(item, currentPath) ? 'active' : ''}`
+                      `nav-item ${item.isSub ? 'nav-item-sub' : ''} ${
+                        isActive || matchesNavPath(item, currentPath) ? 'active' : ''
+                      }`
                     }
                     onClick={() => setSidebarOpen(false)}
                     title={item.label}

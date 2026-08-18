@@ -638,11 +638,16 @@ export interface FarmProbeCadenceView {
 // （services/farm-orchestrator/internal/httpapi/telemetry_beacon.go）
 // ---------------------------------------------------------------------------
 
-// **诚实边界（写进类型也写进 UI）**：beacon 是容器「自报 / 声明」的遥测内容
-// （source ∈ declared/self-report，存储层把未知值归一到 unknown），只证明
-// 「上报管道连通 + 容器声明了什么」，**不构成反关联证明**——它不是从真实出站
-// 流量里抓到的 on-wire 值。真正的 on-wire 抓取管道尚未落地，前端展示时 on-wire
-// 一列必须显式灰置标注「待抓取管道，尚未证明」，不得让界面暗示已抓到真实出站值。
+// **来源边界（写进类型也写进 UI，逐条标注不笼统）**：beacon 列表混合两类来源，
+// 由后端 source_kind 分区（store.TelemetrySourceKind）：
+//   - declared：容器「自报 / 声明」（存储层 source=unknown 折叠），只证明「上报
+//     管道连通 + 容器声明了什么」，**不是**从真实出站流量抓到的 on-wire 值；
+//   - on_wire：mitmproxy / ebpf 在容器出站链路真实抓取（存储层 source=mitmproxy/ebpf）。
+// 展示层必须**逐条按 source_kind 标注**（declared 行标 declared、on_wire 行标
+// on-wire·来源），不得对整列笼统 claim on-wire；即便 on_wire 行也只证明该容器确实
+// 发出过这些请求，不构成跨账号反关联证明。另一件独立的事：指纹自洽卡的「出站实测
+// (on-wire)」一列是把 beacon **逐字段派生**进自洽比对这一步，尚未接入（列内占位），
+// 与「原始 on_wire beacon 是否已实时采集」不是一回事，文案不能混为一谈。
 //
 // GET /api/farm/containers/{id}/beacons?limit=<默认50，上限500> 响应体是**裸 JSON
 // 数组**（不是包裹对象），按 captured_at 降序；空容器返回 []（非 null）；
@@ -667,15 +672,44 @@ export interface FarmContainerBeaconView {
   api_base_url_host: string;
   // 自报入口标识（entrypoint，ParseBeacon 抽取）。
   entrypoint: string;
-  // 上报来源分类：declared / self-report / unknown（存储层归一后的值），
-  // 前端据此提示这些值是「声明/自报」而非「抓包实测」。
+  // 细粒度上报来源（存储层归一后的值）：unknown（declared 折叠）/ mitmproxy /
+  // ebpf。前端优先用 source_kind 分区标注，raw source 仅作细粒度补充展示。
   source: string;
+  // 读路径分区维度（telemetry_beacon.go beaconView.SourceKind）：declared（source=
+  // unknown 折叠）/ on_wire（source=mitmproxy/ebpf 真实出站抓取）。后端恒返回；旧
+  // 后端缺该字段时前端从 source 兜底派生（见 resolveBeaconSourceKind），故声明可选。
+  source_kind?: FarmTelemetrySourceKind;
 }
 
 // GET /api/farm/containers/{id}/beacons 响应体：裸数组（captured_at 降序）。
 export type FarmContainerBeaconsResponse = FarmContainerBeaconView[];
 
-// beacon 自洽卡的三个比对字段（declared 列现在能填，on-wire 列一律灰置待抓取）。
+// beacon 读路径分区维度（store.TelemetrySourceKind / telemetry_beacon.go
+// beaconView.SourceKind）：declared=容器自报/声明；on_wire=mitmproxy/ebpf 真实
+// 出站抓取。前端据此逐条准确标注来源，不对整列笼统 claim on-wire。
+export const FARM_TELEMETRY_SOURCE_KINDS = ['declared', 'on_wire'] as const;
+export type FarmTelemetrySourceKind = (typeof FARM_TELEMETRY_SOURCE_KINDS)[number];
+
+// 对应 source_kind=on_wire 的细粒度 source 值集合（真实出站抓取管道产物）。
+const FARM_ON_WIRE_BEACON_SOURCES: ReadonlySet<string> = new Set(['mitmproxy', 'ebpf']);
+
+/**
+ * 归一某条 beacon 的读路径分区：优先信后端 source_kind；缺失（旧后端）时从细粒度
+ * source 兜底派生（mitmproxy/ebpf → on_wire，其余含 unknown → declared）。供
+ * FarmTelemetryPanel 逐条准确标注来源用。
+ */
+export function resolveBeaconSourceKind(
+  beacon: Pick<FarmContainerBeaconView, 'source' | 'source_kind'>
+): FarmTelemetrySourceKind {
+  if (beacon.source_kind === 'declared' || beacon.source_kind === 'on_wire') {
+    return beacon.source_kind;
+  }
+  return FARM_ON_WIRE_BEACON_SOURCES.has(beacon.source) ? 'on_wire' : 'declared';
+}
+
+// beacon 指纹自洽卡的三个比对字段（declared 列现在能填；on-wire 列是「把 beacon
+// 逐字段派生进自洽比对」这一独立步骤，尚未接入、列内占位——与「原始 on_wire beacon
+// 是否已在下方时间线实时呈现」是两回事，不要混为一谈）。
 export const FARM_TELEMETRY_FINGERPRINT_FIELDS = [
   'device_id',
   'entrypoint',

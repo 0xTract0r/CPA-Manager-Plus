@@ -298,6 +298,9 @@ const mainRoutes: RouteObject[] = [
     ),
   },
   { path: '/farm', element: <FarmPage /> },
+  // 农场持久子导航项深链（/farm/accounts | containers | resources | usage）：
+  // 同样渲染农场页，由 FarmDashboard 依 section 打开对应右侧抽屉。
+  { path: '/farm/:section', element: <FarmPage /> },
   { path: '/system', element: <SystemPage /> },
   { path: '*', element: <Navigate to="/" replace /> },
 ];

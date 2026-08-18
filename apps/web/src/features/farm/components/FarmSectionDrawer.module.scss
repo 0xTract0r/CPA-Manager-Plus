@@ -33,10 +33,12 @@
   max-width: 100%;
 
   // 抽屉自身负责标题和外层留白；面板由 Dashboard 的稳定 wrapper 包一层，
-  // 因此在这里收掉内层标题、圆角边框和重复 padding，只保留筛选/刷新等操作。
+  // 因此在这里收掉内层标题、圆角边框和重复的纵向 padding，只保留筛选/刷新等操作。
+  // 横向 padding 不能一并清零（U9）：筛选栏 + 表头会贴着抽屉面板外框，
+  // 保留桌面 $spacing-md(16px) 的横向内边距，纵向仍为 0 避免顶部空太多。
   > div > [data-testid$='-panel'],
   > div > :global(.card) {
-    padding: 0;
+    padding: 0 $spacing-md;
     border: 0;
     border-radius: 0;
     background: transparent;
@@ -84,5 +86,13 @@
   .drawer :global(.modal-header),
   .drawer :global(.modal-body) {
     padding: $spacing-md;
+  }
+
+  // 窄屏下 .modal-body 已经贡献一层 $spacing-md 横向 padding，
+  // 面板自身横向内边距收窄到 12px（仍 ≥12px），避免两层叠加把表格挤得过窄。
+  .body > div > [data-testid$='-panel'],
+  .body > div > :global(.card) {
+    padding-left: 12px;
+    padding-right: 12px;
   }
 }

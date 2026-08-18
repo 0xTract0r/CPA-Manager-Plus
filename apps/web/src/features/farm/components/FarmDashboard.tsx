@@ -1,14 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
-import {
-  IconBot,
-  IconChartLine,
-  IconModelCluster,
-  IconSettings,
-} from '@/components/ui/icons';
+import { IconSettings } from '@/components/ui/icons';
 import { useFarmStore } from '@/stores';
 import type { FarmContainerView } from '@/types/farm';
 import { useFarmBindings } from '../hooks/useFarmBindings';
@@ -24,7 +20,6 @@ import {
   FarmContainerTable,
   type FarmContainerFilter,
 } from './FarmContainerTable';
-import { FarmOperationCard } from './FarmOperationCard';
 import { FarmOverviewBar } from './FarmOverviewBar';
 import { FarmResourcePanel } from './FarmResourcePanel';
 import { FarmSectionDrawer, type FarmSection } from './FarmSectionDrawer';
@@ -33,12 +28,25 @@ import styles from './FarmDashboard.module.scss';
 
 const DRAWER_TRANSITION_MS = 370;
 
+// 侧栏「农场」分组下持久子导航项 /farm/<section> → 对应右侧抽屉分区（纯函数，供
+// useState 初始化器读取 URL 用；深链只覆盖账号/容器/资源/用量，config/alerts 不深链）。
+function deriveFarmDeepLinkSection(pathname: string): FarmSection | null {
+  const path = pathname.replace(/\/+$/, '');
+  if (path.endsWith('/farm/accounts')) return 'accounts';
+  if (path.endsWith('/farm/containers')) return 'containers';
+  if (path.endsWith('/farm/resources')) return 'resources';
+  if (path.endsWith('/farm/usage')) return 'usage';
+  return null;
+}
+
 /**
  * 农场页信息架构主体。宿主页只需保留标题/副标题并渲染本组件；所有长表和配置
  * 都由单一 activeDrawer 管理，容器详情切换时等待上一 dialog 完成关闭，避免叠层。
  */
 export function FarmDashboard() {
   const { t } = useTranslation();
+  const location = useLocation();
+  const navigate = useNavigate();
   const isConfigured = useFarmStore((state) => state.isConfigured);
   const orchestratorBaseUrl = useFarmStore((state) => state.orchestratorBaseUrl);
   const farmAdminKey = useFarmStore((state) => state.farmAdminKey);
@@ -75,7 +83,13 @@ export function FarmDashboard() {
         ? { variant: 'muted', label: t('farm.config.status_same_origin_loading') }
         : { variant: 'success', label: t('farm.config.status_same_origin') };
 
-  const [activeDrawer, setActiveDrawer] = useState<FarmSection | null>(null);
+  // 农场 ↔ /farm/<section> 导航会重挂载本页（PageTransition 按 location.key 分层重挂），
+  // 因此用 useState 初始化器在挂载时直接从 URL 读取初始抽屉——无需 effect 同步（规避
+  // setState-in-effect 级联渲染），也天然支持浏览器前进/后退与刷新深链。config/alerts 等
+  // 非深链抽屉仍由内部交互置位，URL 无 section 段时初始为 null。
+  const [activeDrawer, setActiveDrawer] = useState<FarmSection | null>(() =>
+    deriveFarmDeepLinkSection(location.pathname)
+  );
   const [selectedContainer, setSelectedContainer] = useState<FarmContainerView | null>(null);
   const [containerFilter, setContainerFilter] = useState<FarmContainerFilter>('all');
   const [containerScrollTop, setContainerScrollTop] = useState(0);
@@ -86,9 +100,10 @@ export function FarmDashboard() {
   // 「返回」和关闭后恢复到哪个抽屉/触发器，复用既有 scheduleAfterDrawerClose 时序。
   const [detailInitialTab, setDetailInitialTab] = useState<FarmDetailTab>('overview');
   const [detailOrigin, setDetailOrigin] = useState<'containers' | 'accounts'>('containers');
-  const [focusRestoreTarget, setFocusRestoreTarget] = useState<
-    'container-row' | 'containers-trigger' | 'accounts-trigger' | null
-  >(null);
+  // 首屏「管理入口」触发器网格已整块移除（提升为侧栏持久子导航项），农场首屏
+  // 不再有账号/容器触发器可回焦——回焦目标只剩「容器详情返回容器抽屉时聚焦原
+  // 容器行」这一种（container-row），故不再有 *-trigger 分支。
+  const [focusRestoreTarget, setFocusRestoreTarget] = useState<'container-row' | null>(null);
   const transitionTimerRef = useRef<number | null>(null);
 
   const clearTransitionTimer = useCallback(() => {
@@ -100,12 +115,27 @@ export function FarmDashboard() {
 
   useEffect(() => clearTransitionTimer, [clearTransitionTimer]);
 
+  // 关闭深链抽屉时回到农场首屏 URL（/farm），去掉尾部 /farm/<section> 段；这样再次
+  // 点击同一侧栏项才会产生真实导航并重新打开（同址点击不会触发导航），浏览器历史也保持
+  // 与抽屉状态一致。非深链抽屉（config/alerts，URL 无 section 段）时为无副作用 no-op。
+  // routeBase 前缀（demo 站点）通过只裁剪尾部 section 段、保留其余路径而天然兼容。
+  const resetFarmDeepLinkUrl = useCallback(() => {
+    const path = location.pathname;
+    const base = path.replace(/\/(accounts|containers|resources|usage)\/*$/, '');
+    if (base !== path) {
+      navigate(base || '/farm', { replace: true });
+    }
+  }, [location.pathname, navigate]);
+
   const openDrawer = useCallback((section: FarmSection) => {
     clearTransitionTimer();
     setActiveDrawer(section);
   }, [clearTransitionTimer]);
 
-  const closeDrawer = useCallback(() => setActiveDrawer(null), []);
+  const closeDrawer = useCallback(() => {
+    setActiveDrawer(null);
+    resetFarmDeepLinkUrl();
+  }, [resetFarmDeepLinkUrl]);
 
   const scheduleAfterDrawerClose = useCallback(
     (callback: () => void) => {
@@ -163,14 +193,10 @@ export function FarmDashboard() {
     setSelectedContainer(null);
     setFocusRestoreTarget(null);
     clearTransitionTimer();
-    transitionTimerRef.current = window.setTimeout(() => {
-      transitionTimerRef.current = null;
-      // 关闭后把焦点还给来源入口的运营卡触发器（账号 / 容器）。
-      setFocusRestoreTarget(
-        detailOrigin === 'accounts' ? 'accounts-trigger' : 'containers-trigger'
-      );
-    }, DRAWER_TRANSITION_MS);
-  }, [clearTransitionTimer, detailOrigin]);
+    // 首屏入口卡已迁移到侧栏持久子导航项，农场首屏不再有账号/容器触发器可回焦；
+    // 关闭详情直接回农场首屏 URL（若来自侧栏深链会一并清除 /farm/<section> 段）。
+    resetFarmDeepLinkUrl();
+  }, [clearTransitionTimer, resetFarmDeepLinkUrl]);
 
   useEffect(() => {
     if (!focusRestoreTarget) return;
@@ -182,16 +208,13 @@ export function FarmDashboard() {
     const restoreFocus = () => {
       if (cancelled) return;
 
-      const triggerTestId =
-        focusRestoreTarget === 'accounts-trigger'
-          ? 'farm-accounts-trigger'
-          : 'farm-containers-trigger';
-      const target =
-        focusRestoreTarget === 'container-row' && lastContainerId
-          ? document.querySelector<HTMLElement>(
-              `[data-testid="farm-container-row-${CSS.escape(lastContainerId)}"]`
-            )
-          : document.querySelector<HTMLElement>(`[data-testid="${triggerTestId}"]`);
+      // focusRestoreTarget 只剩 'container-row' 一种（见 state 声明处注释），回焦
+      // 目标即原容器行；lastContainerId 缺失时无行可聚焦，交给下面的重试兜底。
+      const target = lastContainerId
+        ? document.querySelector<HTMLElement>(
+            `[data-testid="farm-container-row-${CSS.escape(lastContainerId)}"]`
+          )
+        : null;
 
       if (!target) {
         attempts += 1;
@@ -203,12 +226,10 @@ export function FarmDashboard() {
         return;
       }
 
-      if (focusRestoreTarget === 'container-row') {
-        const drawerBody = document
-          .querySelector('[data-testid="farm-section-drawer-containers"]')
-          ?.closest('.modal-body');
-        if (drawerBody instanceof HTMLElement) drawerBody.scrollTop = containerScrollTop;
-      }
+      const drawerBody = document
+        .querySelector('[data-testid="farm-section-drawer-containers"]')
+        ?.closest('.modal-body');
+      if (drawerBody instanceof HTMLElement) drawerBody.scrollTop = containerScrollTop;
 
       target.focus();
       frameId = window.requestAnimationFrame(() => {
@@ -304,46 +325,9 @@ export function FarmDashboard() {
               全自动「认证即自动供」，裸「新建容器」入口移除，统一走「接入农场」）。 */}
           <FarmCapacityPanel />
 
-          <section aria-labelledby="farm-operations-title">
-            <div className={styles.sectionHeading}>
-              <h2 id="farm-operations-title">{t('farm.ia.operationsTitle')}</h2>
-              <p>{t('farm.ia.operationsDesc')}</p>
-            </div>
-            <div className={styles.operationsGrid} data-testid="farm-operations-grid">
-              <FarmOperationCard
-                section="accounts"
-                icon={IconBot}
-                title={t('farm.accounts.title')}
-                description={t('farm.ia.accountsEntryDesc')}
-                expanded={activeDrawer === 'accounts'}
-                onOpen={() => openDrawer('accounts')}
-              />
-              <FarmOperationCard
-                section="containers"
-                icon={IconModelCluster}
-                title={t('farm.containers.title')}
-                description={t('farm.ia.containersEntryDesc')}
-                expanded={activeDrawer === 'containers'}
-                onOpen={() => openDrawer('containers')}
-              />
-              <FarmOperationCard
-                section="resources"
-                icon={IconChartLine}
-                title={t('farm.resources.title')}
-                description={t('farm.ia.resourcesEntryDesc')}
-                expanded={activeDrawer === 'resources'}
-                onOpen={() => openDrawer('resources')}
-              />
-              <FarmOperationCard
-                section="usage"
-                icon={IconChartLine}
-                title={t('farm.usage.detailTitle')}
-                description={t('farm.ia.usageEntryDesc')}
-                expanded={activeDrawer === 'usage'}
-                onOpen={() => openDrawer('usage')}
-              />
-            </div>
-          </section>
+          {/* 原「管理入口」操作卡网格（账号状态/容器池/资源/用量）已整块移除，
+              提升为左侧栏农场分组下的持久子导航项（/farm/<section> 深链打开右侧抽屉），
+              农场首屏聚焦健康 / 告警 / 容量。 */}
         </div>
       )}
 
