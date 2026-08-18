@@ -15,7 +15,7 @@
  *     「例行版本刷新」分类展示）
  */
 import { useTranslation } from 'react-i18next';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import CodeMirror from '@uiw/react-codemirror';
 import { json } from '@codemirror/lang-json';
 import { search, searchKeymap, highlightSelectionMatches } from '@codemirror/search';
@@ -1228,6 +1228,19 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
     onChange,
   } = props;
 
+  // 原始 auth JSON 含明文 access_token，属敏感暴露面。native <details> 折叠时仍会把
+  // 子节点保留在 DOM（只是 UA display:none 视觉隐藏），access_token 仍可被 devtools /
+  // view-source 直接读到。这里改为完全受控折叠 + 展开态条件挂载：默认收起、收起时不挂
+  // 载编辑器，确保 DOM 中不出现 access_token；切换账号时重置回收起（默认折叠 per 账号）。
+  const [rawJsonExpanded, setRawJsonExpanded] = useState(false);
+  const [rawJsonExpandedFor, setRawJsonExpandedFor] = useState<string | undefined>(
+    editor?.fileName
+  );
+  if (editor?.fileName !== rawJsonExpandedFor) {
+    setRawJsonExpandedFor(editor?.fileName);
+    setRawJsonExpanded(false);
+  }
+
   const managedHeaderState = editor?.managedHeaderState || null;
   // 旧 payload 仍可能带 policy_version；仅用于推断 provider，不再作为「自动升级策略版本」展示。
   const managedHeaderPolicy = managedHeaderState?.policy_version || '';
@@ -2423,16 +2436,21 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
                 </div>
               )}
 
-              {/* 末区：原始 auth JSON（可编辑，折叠，保存前二次确认）。 */}
+              {/* 末区：原始 auth JSON（可编辑，默认折叠，展开态条件挂载，保存前二次确认）。
+                  受控折叠 + `rawJsonExpanded && (...)`：收起时整块 body 不挂载，
+                  access_token 不进 DOM（native details 折叠仍会留在 DOM，故此处条件渲染）。 */}
               <details
                 className={styles.advancedDetails}
                 data-testid="account-settings-raw-json-details"
+                open={rawJsonExpanded}
+                onToggle={(event) => setRawJsonExpanded(event.currentTarget.open)}
               >
                 <summary>
                   {t('auth_files.account_settings_raw_json_details', {
                     defaultValue: 'Advanced: raw auth JSON (editable)',
                   })}
                 </summary>
+                {rawJsonExpanded && (
                 <div className={styles.advancedBody}>
                   {editor.rawJsonAvailable ? (
                     <div className={styles.jsonWrapper}>
@@ -2516,6 +2534,7 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
                     </div>
                   </div>
                 </div>
+                )}
               </details>
             </>
           )}
