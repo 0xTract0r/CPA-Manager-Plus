@@ -23,6 +23,7 @@ import { buildMonitoringAuthMetaMap } from '@/features/monitoring/model/authMeta
 import { buildAuthFileMapFromMeta } from '@/features/monitoring/model/sourceDisplay';
 import type { MonitoringChannelMeta } from '@/features/monitoring/model/types';
 import { buildSourceInfoMap } from '@/utils/sourceResolver';
+import { formatInUtc8 } from '@/utils/datetime';
 import type { AuthFileItem } from '@/types/authFile';
 import { VersionCard } from './components/VersionCard';
 import { UsageMetricsCard } from './components/UsageMetricsCard';
@@ -407,19 +408,22 @@ export function DashboardPage() {
         ? styles.configBadgeFillFirst
         : styles.configBadgeUnknown;
 
-  const formattedDate = currentTime.toLocaleDateString(i18n.language, {
-    weekday: 'long',
-  });
+  // 展示走全局时区配置（默认 UTC+8），不跟随浏览器本地时区。
+  const formattedDate = formatInUtc8(currentTime, { weekday: 'long' }, i18n.language);
 
-  const formattedDateTime = currentTime.toLocaleString(i18n.language, {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  });
+  const formattedDateTime = formatInUtc8(
+    currentTime,
+    {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    },
+    i18n.language
+  );
 
   return (
     <>

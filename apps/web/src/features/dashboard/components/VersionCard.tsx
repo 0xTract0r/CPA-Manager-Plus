@@ -20,6 +20,7 @@ import { configApi, versionApi } from '@/services/api';
 import type { UsageServiceStatus } from '@/services/api/usageService';
 import type { ConnectionStatus } from '@/types';
 import { compareVersions, type VersionComparison } from '@/utils/version';
+import { formatInUtc8 } from '@/utils/datetime';
 import { readApiLatestVersion, readManagerLatestTag } from '@/features/system/versionChecks';
 import styles from './VersionCard.module.scss';
 
@@ -304,9 +305,13 @@ export function VersionCard({
     [apiVersion, latest.latestApi, t]
   );
 
-  const buildTimeDisplay = serverBuildDate
-    ? new Date(serverBuildDate).toLocaleString(i18n.language)
-    : t('dashboard.version_unknown');
+  // 展示走全局时区配置（默认 UTC+8）；无法解析（含 Go 零时间）时回退「未知」。
+  const buildTimeDisplay = formatInUtc8(
+    serverBuildDate,
+    { dateStyle: 'medium', timeStyle: 'medium' },
+    i18n.language,
+    t('dashboard.version_unknown')
+  );
 
   const collector = collectorStatus?.collector;
   const collectorLastError = collector?.lastError?.trim() || '';

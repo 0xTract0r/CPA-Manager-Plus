@@ -9,6 +9,7 @@ import {
 } from '@/features/monitoring/model/sourceDisplay';
 import { buildSourceInfoMap } from '@/utils/sourceResolver';
 import { maskSensitiveText, truncateText } from '@/utils/format';
+import { formatInUtc8 } from '@/utils/datetime';
 import { formatDurationMs } from '@/utils/usage';
 import styles from './HealthAlertsCard.module.scss';
 
@@ -206,7 +207,12 @@ export function HealthAlertsCard({
               >
                 <div className={styles.failureMeta}>
                   <span className={styles.time}>
-                    {new Date(failure.timestamp_ms).toLocaleTimeString(i18n.language)}
+                    {/* 展示走全局时区配置（默认 UTC+8）。 */}
+                    {formatInUtc8(
+                      failure.timestamp_ms,
+                      { hour: '2-digit', minute: '2-digit', second: '2-digit' },
+                      i18n.language
+                    )}
                   </span>
                   <span className={styles.model}>{failure.model}</span>
                 </div>

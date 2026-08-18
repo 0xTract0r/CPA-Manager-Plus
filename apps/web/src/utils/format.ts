@@ -5,6 +5,13 @@ import { parseTimestamp } from './timestamp';
  * 从原项目 src/utils/string.js 迁移
  */
 
+/**
+ * 面向用户的时区格式化统一走 `utils/datetime`（由全局时区配置驱动，默认 UTC+8）。
+ * 这里重新导出 `formatInUtc8`，让历史上从 `@/utils/format` 引入它的调用点
+ * （authFiles / quota 等）自动迁移到同一个全局配置，不再各自维护一份 UTC+8 逻辑。
+ */
+export { formatInUtc8 } from './datetime';
+
 const resolveDefaultLocale = (): string | undefined => {
   const fromDocument =
     typeof document !== 'undefined' ? document.documentElement?.lang?.trim() : '';
@@ -73,44 +80,6 @@ export function formatFileSize(bytes: number): string {
   const i = Math.floor(Math.log(bytes) / Math.log(k));
 
   return `${(bytes / Math.pow(k, i)).toFixed(2)} ${units[i]}`;
-}
-
-/** 强制的展示时区。用户环境固定 UTC+8（Asia/Shanghai），不跟随浏览器本地时区。 */
-const DISPLAY_TIME_ZONE = 'Asia/Shanghai';
-
-/** 面向用户的时区标注文案，追加在格式化结果之后。 */
-const UTC8_LABEL = 'UTC+8';
-
-/**
- * 把任意时间值按 UTC+8（Asia/Shanghai）格式化为字符串，不受浏览器本地时区影响。
- * @param value 时间值（Date/number ms/ISO 字符串）
- * @param options Intl 选项（timeZone 会被强制覆盖为 Asia/Shanghai）；`withZoneLabel`
- *   为 true 时在结果后追加 ` UTC+8` 标注
- * @param locale 区域；不传则用运行时默认
- * @param fallback 解析失败时的占位串
- */
-export function formatInUtc8(
-  value: unknown,
-  options?: Intl.DateTimeFormatOptions & { withZoneLabel?: boolean },
-  locale?: string,
-  fallback = ''
-): string {
-  const date =
-    value instanceof Date
-      ? value
-      : typeof value === 'string'
-        ? (parseTimestamp(value) ?? new Date(value))
-        : typeof value === 'number'
-          ? new Date(value)
-          : null;
-  if (!date || Number.isNaN(date.getTime())) return fallback;
-
-  const { withZoneLabel, ...intlOptions } = options ?? {};
-  const formatted = new Intl.DateTimeFormat(locale, {
-    ...intlOptions,
-    timeZone: DISPLAY_TIME_ZONE,
-  }).format(date);
-  return withZoneLabel ? `${formatted} ${UTC8_LABEL}` : formatted;
 }
 
 /**
