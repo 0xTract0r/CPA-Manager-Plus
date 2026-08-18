@@ -14,6 +14,11 @@ $table-columns: 92px minmax(132px, 0.72fr) minmax(180px, 1fr) 96px 72px minmax(2
   display: flex;
   flex-direction: column;
   min-width: 0;
+  // 溢出兜底：8 列网格 min 综合 ≈1116px，加 overflow-x:auto（照基座
+  // components/ui/Table/Table.module.scss 的 .scroll 范式）以防在卡片化断点
+  // （@include narrow-laptop，≤1440px 视口）之上、可用宽度仍窄于该值的场景下
+  // （如更窄的父容器）整页横向溢出而非局部横滚。
+  overflow-x: auto;
 }
 
 .headerRow {

@@ -159,12 +159,22 @@
 
 $plugin-table-columns: minmax(220px, 1.2fr) minmax(136px, 0.68fr) minmax(180px, 1fr)
   minmax(160px, 0.82fr) 72px 126px;
+// 6 列下限之和 220+136+180+160+72+126=894px + 5 处列间 gap(12px×5=60px) + 行左右
+// padding(14px×2=28px) = 982px。显式把这道下限复述到 .tableHeader/.row 自身的
+// min-width（见下），防止 flex 子项的自动最小尺寸被覆盖后被 .list 静默裁切，
+// 而是改为触发下面的横向滚动。
+$plugin-table-min-width: 982px;
 
 .list {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  overflow: hidden;
+  // 溢出改横滚而非裁切（照基座 components/ui/Table/Table.module.scss 的 .scroll
+  // 范式）。展开侧栏等视口下 .list 可视宽度可能落在 1180px 卡片化断点与上面
+  // $plugin-table-min-width(982px) 之间；此前 overflow:hidden 会把超出部分（含
+  // 最右操作列）静默裁掉、按钮点不到。改横向自动滚动后操作列保证可通过横滚到达，
+  // 并配合下面 .actions 的 sticky-right 常驻可见。
+  overflow-x: auto;
   border-radius: 12px;
 }
 
@@ -179,7 +189,7 @@ $plugin-table-columns: minmax(220px, 1.2fr) minmax(136px, 0.68fr) minmax(180px, 
   grid-template-columns: $plugin-table-columns;
   gap: 12px;
   align-items: center;
-  min-width: 0;
+  min-width: $plugin-table-min-width;
 }
 
 .tableHeader {
@@ -188,6 +198,17 @@ $plugin-table-columns: minmax(220px, 1.2fr) minmax(136px, 0.68fr) minmax(180px, 
   color: var(--text-tertiary);
   font-size: 12px;
   font-weight: 700;
+}
+
+// 操作列表头吸附：随 .actions（见下）同步固定在滚动区右可视缘，横滚时列头与
+// 列体对齐。.list 背景是 var(--bg-primary)（本表没有独立表头底色），故吸附底色
+// 与 .list 一致，避免透出下方滚动内容。
+.tableHeader > span:last-child {
+  position: sticky;
+  right: 0;
+  z-index: 2;
+  background: var(--bg-primary);
+  box-shadow: inset 1px 0 0 0 var(--border-color);
 }
 
 .row {
@@ -399,10 +420,31 @@ $plugin-table-columns: minmax(220px, 1.2fr) minmax(136px, 0.68fr) minmax(180px, 
 .actions {
   justify-content: flex-end;
   gap: 6px;
+  // 操作列固定在横向滚动区右侧（sticky-right）：.list 是 overflow-x:auto 的滚动
+  // 容器（见上）；本表是 div/grid 构成的 role=table（非原生 <table>），sticky
+  // 相对最近可滚动祖先 .list 生效，不涉及原生表格 border-collapse 的兼容顾虑。
+  // 触发横滚时该列吸附在 .list 右可视缘常驻可见，绑定/OAuth/重装/删除等操作
+  // 按钮不再被裁到屏外、恒可点；不触发横滚时 sticky 无副作用。z-index 抬高 +
+  // 不透明底色，确保横滚时其它列内容从下方穿过而非盖住/透出到按钮上。参照
+  // features/farm/components/FarmContainerTable.module.scss 的同款 sticky-right
+  // 范式。
+  position: sticky;
+  right: 0;
+  z-index: 2;
+  background: var(--bg-primary);
+  box-shadow: inset 1px 0 0 0 var(--border-color);
 
   span {
     min-width: 0;
   }
+}
+
+// 行 hover 时固定列同步着色：.row:hover 的背景设在整行容器上（见上），而
+// .actions 自身另有不透明底色（横滚时需要遮住下方滚动内容），两者叠加会让 hover
+// 高亮在操作列处"断层"。这里显式复用 .row:hover 同一底色，保持整行观感一致，
+// 同时仍是不透明（横滚不透光）。
+.row:hover .actions {
+  background: color-mix(in srgb, var(--surface-subtle) 58%, var(--bg-primary));
 }
 
 .moreButton {
@@ -584,6 +626,9 @@ $plugin-table-columns: minmax(220px, 1.2fr) minmax(136px, 0.68fr) minmax(180px, 
       'actions actions';
     align-items: start;
     gap: 10px 12px;
+    // 卡片化断点重置桌面态的 $plugin-table-min-width(982px)，否则卡片会被强行
+    // 撑到该宽度，与本断点「窄屏堆叠卡片」的设计意图冲突。
+    min-width: 0;
     min-height: 0;
     padding: 12px;
     border: 1px solid var(--border-color);
@@ -633,6 +678,11 @@ $plugin-table-columns: minmax(220px, 1.2fr) minmax(136px, 0.68fr) minmax(180px, 
     grid-area: actions;
     justify-content: flex-start;
     flex-wrap: wrap;
+    // 卡片化后 .list 不再横滚（上方已重置为 overflow:visible），取消桌面态的
+    // sticky-right 吸附与不透明底色/分隔线，避免卡片内操作区出现多余背景块。
+    position: static;
+    background: none;
+    box-shadow: none;
   }
 
   .statusDetails span,
