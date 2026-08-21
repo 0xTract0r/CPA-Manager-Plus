@@ -56,7 +56,14 @@
   min-width: 0;
 }
 
-.statusMeta span {
+// 通用 chip 底色/间距只套给 .statusMeta 的普通 meta span，不套 .statusBadge：
+// - 用 `>` 只选直接子项，不用后代选择器——徽章内嵌套的 .statusDot 圆点也是个
+//   span，后代选择器会连它一起选中，把 8px 圆点撑成 32px 高的胶囊、border-radius
+//   也会从 50% 被这条规则的 12px 顶掉。
+// - 排除 .statusBadge 本身——它有自己一整套底色/文字色（含按连接状态 tone 着色），
+//   这里的中性灰底色/文字色特异性(0,1,1)比 .statusBadge 自身(0,1,0)更高，不排除
+//   就会盖掉 tone 着色，看起来"已连接"徽章变成和其它 chip 一样的灰底灰字。
+.statusMeta > span:not(.statusBadge) {
   display: inline-flex;
   align-items: center;
   min-height: 32px;
@@ -261,9 +268,15 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  flex-wrap: nowrap;
+  // 曾在 960px 容器断点前固定 nowrap：中间宽度区(actionGroup 按钮组 + 本容器共享
+  // .actionBar 的 minmax(0,1fr) 列)挤不下时，chip/按钮不能换行只能溢出列宽，视觉
+  // 漂移。提前到基线就允许换行，chip 换到下一行而不是撑破容器。
+  flex-wrap: wrap;
   gap: 8px;
-  min-width: 0;
+  // 只给一个"别被压成不可读的窄条"下限，不是让本列强行占满 220px+（网格列是
+  // minmax(0,1fr)，item 的 min-width 不参与该列的自动最小尺寸计算，设太大反而会在
+  // actionGroup 按钮组也很宽时把本列顶出栅格、制造新的溢出）。约一个 chip 的宽度即可。
+  min-width: 160px;
 
   .statusBar {
     min-width: 0;
@@ -1685,6 +1698,13 @@
 
 .realtimeModelCell {
   max-width: 100%;
+  outline: none;
+}
+
+.realtimeModelCell:focus-visible {
+  outline: 2px solid var(--monitor-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 .realtimeModelText {
@@ -1693,6 +1713,85 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap !important;
+}
+
+// 模型全名即时浮层（见 RealtimeModelCell）：与 .realtimeFailureTooltip 同一手法
+// (position:fixed + JS 定位 + createPortal 挂到 document.body)，用来逃出
+// .tableWrapper / .dataPanel 的 overflow 裁切祖先；因为 portal 后节点脱离 .page
+// 容器，--monitor-* 自定义属性在此重新声明一份，否则拿不到父级 :root 变量。
+// 语义上这只是信息提示（非失败态），不复用 .realtimeFailureTooltip 的红色描边。
+.realtimeModelTooltip {
+  --monitor-surface-elevated: color-mix(in srgb, var(--bg-primary) 82%, var(--surface-subtle));
+  --monitor-ink: var(--text-primary);
+  --monitor-muted: var(--text-secondary);
+  --monitor-line: var(--border-color);
+
+  position: fixed;
+  z-index: 2030;
+  display: grid;
+  gap: 4px;
+  width: max-content;
+  min-width: 120px;
+  max-width: min(360px, calc(100vw - 48px));
+  max-height: 240px;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 8px;
+  background: var(--monitor-surface-elevated);
+  box-shadow: var(--shadow-lg);
+  color: var(--monitor-ink);
+  font-size: 12px;
+  line-height: 1.45;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-4px);
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
+  visibility: hidden;
+  white-space: normal;
+  user-select: text;
+}
+
+.realtimeModelTooltip::before {
+  content: '';
+  position: absolute;
+  left: 16px;
+  width: 8px;
+  height: 8px;
+  background: var(--monitor-surface-elevated);
+  transform: rotate(45deg);
+}
+
+.realtimeModelTooltipBelow::before {
+  top: -5px;
+  border-left: 1px solid var(--monitor-line);
+  border-top: 1px solid var(--monitor-line);
+}
+
+.realtimeModelTooltipAbove::before {
+  bottom: -5px;
+  border-right: 1px solid var(--monitor-line);
+  border-bottom: 1px solid var(--monitor-line);
+}
+
+.realtimeModelTooltipOpen {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+  visibility: visible;
+}
+
+.realtimeModelTooltipPrimary {
+  overflow-wrap: anywhere;
+  color: var(--monitor-ink);
+  font-weight: 700;
+}
+
+.realtimeModelTooltipSecondary {
+  overflow-wrap: anywhere;
+  color: var(--monitor-muted);
 }
 
 .realtimeApiKeyLine {
@@ -1868,6 +1967,44 @@
     outline: 2px solid var(--monitor-accent);
     outline-offset: 2px;
   }
+}
+
+// D1 大日志窗口化渲染（64KB~2MB，或 >=2MB 截断后）：与 .requestLogViewerBody 同一套
+// 外观 chrome（边框/圆角/底色/等宽字体），但固定行高的虚拟滚动要求每行不自动换行——
+// 长行改为整个容器横向滚动，而不是像小文件那样 white-space:pre-wrap 自动折行。
+.requestLogViewerVirtual {
+  margin: 0;
+  max-height: min(60vh, 560px);
+  overflow: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 10px;
+  background: var(--monitor-surface-muted);
+  color: var(--monitor-ink);
+  font-family: 'SFMono-Regular', ui-monospace, 'JetBrains Mono', 'Menlo', 'Consolas', monospace;
+  font-size: 12.5px;
+  tab-size: 2;
+
+  &:focus-visible {
+    outline: 2px solid var(--monitor-accent);
+    outline-offset: 2px;
+  }
+}
+
+.requestLogViewerVirtualRow {
+  overflow: visible;
+  white-space: pre;
+}
+
+.requestLogViewerTruncatedNotice {
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--monitor-amber) 32%, var(--monitor-line));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--monitor-amber) 10%, var(--monitor-surface));
+  color: var(--monitor-ink);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .requestLogViewerMatch {
@@ -2558,7 +2695,10 @@
     justify-content: center;
   }
 
-  .statusMeta span {
+  // 用 `>` 只选中 .statusMeta 的直接子项(徽章 + 各 meta chip)，不要用后代选择器：
+  // 徽章内部还嵌套了 .statusDot 这个 8x8px 圆点 span，后代选择器会连它一起选中，
+  // 让圆点被拉伸变形。
+  .statusMeta > span {
     white-space: normal;
   }
 
@@ -2683,7 +2823,6 @@
     min-width: 0;
   }
 
-  .statusMeta span,
   .realtimeHeaderActions > span,
   .realtimeHeaderActions > button {
     width: 100%;
@@ -2692,6 +2831,17 @@
 
   .customRangeModalGrid {
     grid-template-columns: 1fr;
+  }
+}
+
+// 状态徽章 + meta chip 的最窄断点：曾用 @media(max-width:640px)(视口宽)控制，
+// 与本文件其余全部用 @container(容器宽) 的断点体系混用——.page 侧栏收窄等场景下
+// 视口宽度与容器宽度会不一致，混用触发点错位就是"窄屏漂移"的另一处根因。这里统一
+// 换成同一套容器查询体系，直接复用 monitoring-page 容器，不再引入 viewport 断点。
+@container monitoring-page (max-width: 640px) {
+  .statusMeta > span {
+    width: 100%;
+    justify-content: center;
   }
 }
 
