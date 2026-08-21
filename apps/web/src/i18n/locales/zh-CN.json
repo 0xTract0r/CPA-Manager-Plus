@@ -2072,6 +2072,8 @@
     "reasoning_effort_short": "强度",
     "service_tier": "服务等级",
     "service_tier_short": "等级",
+    "reasoning_effort_hint": "客户端本次请求要求的思考强度（reasoning effort），如 minimal/low/medium/high，反映推理深度。",
+    "service_tier_hint": "客户端请求的服务等级（service tier），绝大多数为 auto；priority/flex/scale 等非默认档才有区分度。",
     "executor_type": "执行器类型",
     "executor_type_short": "执行器",
     "fail_status_code": "失败状态码",

@@ -2072,6 +2072,8 @@
     "reasoning_effort_short": "Уровень",
     "service_tier": "Уровень сервиса",
     "service_tier_short": "Сервис",
+    "reasoning_effort_hint": "Уровень рассуждения (reasoning effort), запрошенный клиентом для этого вызова (например, minimal/low/medium/high) — отражает глубину рассуждения.",
+    "service_tier_hint": "Уровень сервиса (service tier), запрошенный клиентом. Большинство запросов используют auto; только нестандартные уровни, такие как priority/flex/scale, действительно различимы.",
     "executor_type": "Тип исполнителя",
     "executor_type_short": "Исполнитель",
     "fail_status_code": "Код ошибки",
