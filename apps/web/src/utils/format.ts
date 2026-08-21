@@ -12,7 +12,7 @@ import { parseTimestamp } from './timestamp';
  * 本模块自身的 `formatDateTime` / `formatUnixTimestamp` 也委托给它，避免再走
  * 浏览器本地时区（此前的旁路根源）。
  */
-import { formatInUtc8 } from './datetime';
+import { formatDateTimeUtc8, formatInUtc8 } from './datetime';
 
 export { formatInUtc8 };
 
@@ -87,36 +87,27 @@ export function formatFileSize(bytes: number): string {
 }
 
 /**
- * 格式化日期时间。走全局时区配置（默认 UTC+8），不再跟随浏览器本地时区。
+ * 格式化日期时间。标准数字格式 `YYYY-MM-DD HH:mm:ss`（#78：与 locale 无关，不再随
+ * 界面语言变化日期顺序/分隔符），走全局时区配置（默认 UTC+8），不再跟随浏览器本地
+ * 时区。委托给 `formatDateTimeUtc8`（不带时区标注），保持全站唯一格式化落点。
  */
-export function formatDateTime(date: string | Date, locale?: string): string {
+export function formatDateTime(date: string | Date, _locale?: string): string {
   const d = typeof date === 'string' ? parseTimestamp(date) ?? new Date(date) : date;
 
   if (isNaN(d.getTime())) {
     return 'Invalid Date';
   }
 
-  const resolvedLocale = locale?.trim() || resolveDefaultLocale();
-  return formatInUtc8(
-    d,
-    {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-    },
-    resolvedLocale,
-    'Invalid Date'
-  );
+  return formatDateTimeUtc8(d, undefined, 'Invalid Date', false);
 }
 
 /**
  * 将 Unix 时间戳（秒/毫秒/微秒/纳秒）格式化为字符串。多精度归一后走全局时区配置
- * （默认 UTC+8）渲染，不再跟随浏览器本地时区。
+ * （默认 UTC+8）渲染，不再跟随浏览器本地时区。标准数字格式 `YYYY-MM-DD HH:mm:ss`
+ * （#78：与 locale 无关），委托给 `formatDateTimeUtc8`（不带时区标注），保持全站
+ * 唯一格式化落点。
  */
-export function formatUnixTimestamp(value: unknown, locale?: string): string {
+export function formatUnixTimestamp(value: unknown, _locale?: string): string {
   if (value === null || value === undefined || value === '') return '';
 
   const asNumber = typeof value === 'number' ? value : Number(value);
@@ -141,21 +132,7 @@ export function formatUnixTimestamp(value: unknown, locale?: string): string {
   })();
 
   if (Number.isNaN(date.getTime())) return '';
-  // 走全局时区；显式给全字段以匹配 `toLocaleString()` 默认的「日期+时间」形状
-  // （`Intl.DateTimeFormat` 不给 style/字段时只输出日期）。
-  return formatInUtc8(
-    date,
-    {
-      year: 'numeric',
-      month: 'numeric',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: 'numeric',
-      second: 'numeric',
-    },
-    locale,
-    ''
-  );
+  return formatDateTimeUtc8(date, undefined, '', false);
 }
 
 /**

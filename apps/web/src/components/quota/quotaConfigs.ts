@@ -81,19 +81,9 @@ import {
   hasUsageHeaderQuotaSignal,
 } from '@/utils/usageHeaderSnapshots';
 import { normalizeAuthIndex } from '@/utils/authIndex';
-import { formatInUtc8 } from '@/utils/datetime';
+import { formatDateTimeUtc8, formatInUtc8 } from '@/utils/datetime';
 import type { QuotaRenderHelpers } from './QuotaCard';
 import styles from '@/features/quota/QuotaPage.module.scss';
-
-/** `toLocaleString()` 默认的「日期+时间」全字段选项，用于全局时区格式化保持原有形状。 */
-const FULL_DATETIME_OPTIONS: Intl.DateTimeFormatOptions = {
-  year: 'numeric',
-  month: 'numeric',
-  day: 'numeric',
-  hour: 'numeric',
-  minute: 'numeric',
-  second: 'numeric',
-};
 
 type QuotaUpdater<T> = T | ((prev: T) => T);
 
@@ -654,7 +644,8 @@ export const buildObservedCodexQuotaState = (
   const observedQuota = buildObservedCodexQuotaFromHeaderSnapshot(snapshot);
   const usedPercent = getHeaderSnapshotUsedPercent(snapshot);
   const recoverAtMS = getHeaderSnapshotRecoverAtMs(snapshot);
-  const recoverLabel = recoverAtMS ? formatInUtc8(recoverAtMS, FULL_DATETIME_OPTIONS) : '-';
+  // 标准数字格式 `YYYY-MM-DD HH:mm:ss`（#78：与 locale 无关），委托给 formatDateTimeUtc8。
+  const recoverLabel = recoverAtMS ? formatDateTimeUtc8(recoverAtMS, undefined, '', false) : '-';
   const headerPlanType = observedQuota?.planType || getHeaderSnapshotPlanType(snapshot);
   const planType = resolveCodexPlanType(file) ?? (headerPlanType || null);
   const observedWindows = observedQuota?.payload
@@ -728,14 +719,9 @@ export const getSortedCodexResetCreditExpiries = (
 const formatCodexResetCreditExpiryTime = (expiresAt: string): string => {
   const expiresAtMs = new Date(expiresAt).getTime();
   if (!Number.isFinite(expiresAtMs)) return '-';
-  return formatInUtc8(expiresAtMs, {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
+  // 标准数字格式 `YYYY-MM-DD HH:mm`（#78：与 locale 无关），走 dateStyle/timeStyle
+  // 的标准化分支（见 utils/datetime.ts formatInTimezone），不再手工拼字段。
+  return formatInUtc8(expiresAtMs, { dateStyle: 'medium', timeStyle: 'short' });
 };
 
 const renderCodexResetCreditExpiryInfo = (
@@ -801,7 +787,7 @@ const buildCodexWindowTooltipRows = (
   const timestampMs = fromUsageHeaders ? quota.observedAtMs : quota.fetchedAtMs;
   const fetchedAt =
     timestampMs && Number.isFinite(timestampMs)
-      ? formatInUtc8(timestampMs, FULL_DATETIME_OPTIONS)
+      ? formatDateTimeUtc8(timestampMs, undefined, '', false)
       : '--';
 
   return [

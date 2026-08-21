@@ -414,17 +414,10 @@ export function DashboardPage() {
   // 展示走全局时区配置（默认 UTC+8），不跟随浏览器本地时区。
   const formattedDate = formatInUtc8(currentTime, { weekday: 'long' }, i18n.language);
 
+  // 仪表盘实时时钟：标准数字格式 YYYY-MM-DD HH:mm:ss + 全局时区（紧凑时钟不带时区标注）。
   const formattedDateTime = formatInUtc8(
     currentTime,
-    {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-    },
+    { dateStyle: 'medium', timeStyle: 'medium' },
     i18n.language
   );
 

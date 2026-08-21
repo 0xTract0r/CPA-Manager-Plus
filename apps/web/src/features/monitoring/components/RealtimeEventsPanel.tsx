@@ -299,25 +299,9 @@ const getRealtimeDurationToneClass = (value: number | null | undefined) => {
 };
 
 const formatRealtimeDateParts = (timestampMs: number, locale: string) => ({
-  date: formatInUtc8(
-    timestampMs,
-    {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    },
-    locale
-  ),
-  time: formatInUtc8(
-    timestampMs,
-    {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-    },
-    locale
-  ),
+  // 标准数字格式 + 全局时区（date=YYYY-MM-DD，time=HH:mm:ss）；分列展示故不带时区标注。
+  date: formatInUtc8(timestampMs, { dateStyle: 'medium' }, locale),
+  time: formatInUtc8(timestampMs, { timeStyle: 'medium' }, locale),
 });
 
 const formatHeaderRecoverAt = (value: number | null | undefined, locale: string) => {

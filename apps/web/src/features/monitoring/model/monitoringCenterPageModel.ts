@@ -1262,14 +1262,7 @@ export const buildObservedCodexAccountQuotaEntry = (
   const planLabel = getCodexPlanLabel(planType, t);
   const observedAtMs = readFiniteTimestamp(snapshot?.timestamp_ms) ?? undefined;
   const observedAt = observedAtMs
-    ? formatInUtc8(observedAtMs, {
-        year: 'numeric',
-        month: 'numeric',
-        day: 'numeric',
-        hour: 'numeric',
-        minute: 'numeric',
-        second: 'numeric',
-      })
+    ? formatInUtc8(observedAtMs, { dateStyle: 'medium', timeStyle: 'medium' })
     : '';
   const usedPercent = getHeaderSnapshotUsedPercent(snapshot);
   const recoverAtMS = getHeaderSnapshotRecoverAtMs(snapshot);
