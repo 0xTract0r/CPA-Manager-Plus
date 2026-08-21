@@ -1,4 +1,5 @@
 import type { TFunction } from 'i18next';
+import { formatDateTimeUtc8, formatMonthDayTimeUtc8 } from '@/utils/datetime';
 import {
   computeCacheHitRate,
   formatMetricValue,
@@ -573,15 +574,8 @@ export const buildCredentialDetailCards = ({
   const averageTokens = row.requestCount > 0 ? row.totalTokens / row.requestCount : 0;
   const failureRate = row.requestCount > 0 ? row.failureCount / row.requestCount : 0;
   const cacheRate = computeCacheHitRate(row);
-  const lastSeenLabel = row.lastSeenMs
-    ? new Intl.DateTimeFormat(locale, {
-        day: '2-digit',
-        hour: '2-digit',
-        hour12: false,
-        minute: '2-digit',
-        month: '2-digit',
-      }).format(new Date(row.lastSeenMs))
-    : '-';
+  // 凭证「最近活跃」卡面值：紧凑 MM/DD HH:mm，走全局时区中心工具（不再裸 Intl 读浏览器本地时区）。
+  const lastSeenLabel = row.lastSeenMs ? formatMonthDayTimeUtc8(row.lastSeenMs) : '-';
 
   return [
     {
@@ -649,16 +643,8 @@ export const buildCredentialDetailCards = ({
       label: t('usage_analytics.credential_last_seen'),
       meta: t('usage_analytics.credential_last_seen_meta'),
       value: lastSeenLabel,
-      valueTitle: row.lastSeenMs
-        ? new Intl.DateTimeFormat(locale, {
-            day: '2-digit',
-            hour: '2-digit',
-            hour12: false,
-            minute: '2-digit',
-            month: '2-digit',
-            year: 'numeric',
-          }).format(new Date(row.lastSeenMs))
-        : '-',
+      // 悬浮标题给完整精确时刻：标准 YYYY-MM-DD HH:mm:ss + 全局时区标注（UTC±H）。
+      valueTitle: row.lastSeenMs ? formatDateTimeUtc8(row.lastSeenMs, locale, '-') : '-',
     },
   ];
 };

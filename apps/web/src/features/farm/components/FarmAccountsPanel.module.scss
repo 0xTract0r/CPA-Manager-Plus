@@ -101,8 +101,19 @@
   // 搜索框复用全局 `.input` 外观；`.input` 默认 width:100%，这里用
   // `.filterControls .filterSearch` 两类选择器提升特异性，确保桌面固定 200px
   // 不被全局规则覆盖成满宽（否则搜索框会在筛选行里撑满一整行）。
+  //
+  // #79：全局 `.input` 没有显式 height/font-size/line-height（只有 padding），
+  // 实际渲染高度取决于继承字号（约 46px）；相邻的 <Select> `.trigger` 是显式
+  // `height: 40px; font-size: 13px`（与站内 `.btn` 一致）。两者并排导致搜索框
+  // 明显比筛选下拉高，观感不一致。这里对齐 Select trigger 的尺寸配方，只影响
+  // 本面板的搜索框，不改全局 `.input`（避免波及未审查过的其它页面）。
   .filterSearch {
     width: 200px;
+    height: 40px;
+    padding: 0 12px;
+    font-size: 13px;
+    line-height: 1.2;
+    box-sizing: border-box;
     flex: 0 0 auto;
   }
 }
@@ -565,10 +576,16 @@
   min-width: 0;
 }
 
+// #77：窄视口（≤768 卡片降级 / 390 手机）下「标签: 值」若强行挤在同一行，值会
+// 在标签正中间硬断行、观感很乱。改成 flex-wrap：宽度够时仍是同一行的
+// 「标签 值」；不够时值整体换到标签下一行（而不是值内部逐字断行），标签始终
+// 保持完整不被腰斩。桌面（有足够宽度）视觉不变，仍是同一行。
 .timeRow {
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  flex-wrap: wrap;
+  row-gap: 2px;
+  column-gap: 6px;
   min-width: 0;
 }
 
@@ -582,6 +599,8 @@
 .timeValue {
   margin: 0;
   display: inline-flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 4px;
   min-width: 0;

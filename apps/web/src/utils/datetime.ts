@@ -46,6 +46,37 @@ function appendZoneLabel(formatted: string, tz: string, at: Date): string {
 }
 
 /**
+ * 把日期在给定时区下拆解为标准数字字段：`YYYY-MM-DD` / `HH:mm:ss` / `HH:mm`。
+ * 固定用 `en-CA` 语言环境只是为了取得稳定的阿拉伯数字字段值（不受运行时 UI
+ * 语言影响），分隔符由本函数手工拼接，不使用 `en-CA` 自带的 `,` 分隔符。
+ */
+function standardDateTimeParts(
+  date: Date,
+  zone: string
+): { date: string; time: string; timeShort: string } {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: zone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(date);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+  let hour = get('hour');
+  if (hour === '24') hour = '00'; // 部分 ICU 实现在 hour12:false 下用 24 表示午夜，归一为 00。
+  const minute = get('minute');
+  const second = get('second');
+  return {
+    date: `${get('year')}-${get('month')}-${get('day')}`,
+    time: `${hour}:${minute}:${second}`,
+    timeShort: `${hour}:${minute}`,
+  };
+}
+
+/**
  * 把任意可解析为时间的值转换成 Date；无法解析时返回 null。
  * 支持：Date、毫秒数（number）、ISO/RFC3339 字符串（含亚毫秒精度归一）、数字字符串。
  * 注意：此函数不处理秒/微秒/纳秒等多精度 Unix 戳，那由调用方在传入前归一化。
@@ -56,11 +87,23 @@ function toDate(value: unknown): Date | null {
 
 /**
  * 规范入口：把一个时间值按指定时区（缺省取全局配置）格式化为字符串。
+ *
+ * 传入 `dateStyle`/`timeStyle`（Intl 的语义化档位，如 `medium`/`short`）时，本函数
+ * **不会**转交给 `Intl.DateTimeFormat` 按 locale 渲染 —— 那会在 zh 环境产出
+ * 「2026年8月16日」这类中文长格式、在其它 locale 下产出各自不同的日期顺序。
+ * 这里统一改成与 locale 无关的标准数字格式：`YYYY-MM-DD`（仅 dateStyle）、
+ * `HH:mm[:ss]`（仅 timeStyle，`short` 不含秒、其余含秒）、或两者拼接的
+ * `YYYY-MM-DD HH:mm[:ss]`（#78：全站时间格式统一，只需改这一处即可让所有走
+ * dateStyle/timeStyle 的调用点全部生效，不用逐个页面改）。
+ *
+ * 未传 `dateStyle`/`timeStyle` 的显式字段选项（如 `{ month: '2-digit', ... }`）
+ * 行为不变，仍按传入的 `locale` 走 `Intl.DateTimeFormat`。
+ *
  * @param value 时间值（Date/number ms/ISO 字符串）
  * @param options Intl 选项（timeZone 会被强制覆盖为解析出的时区）；可选 `withZoneLabel`
  *   为 true 时在结果后追加 ` UTC±H`（绝对时间戳的面向用户展示场景用）
  * @param tz 目标时区（IANA 名）；不传/非法则取全局时区配置（默认 Asia/Shanghai）
- * @param locale 区域；不传则用运行时默认
+ * @param locale 区域；仅用于未走 dateStyle/timeStyle 标准化分支的显式字段格式化
  * @param fallback 解析失败时的占位串
  */
 export function formatInTimezone(
@@ -73,11 +116,20 @@ export function formatInTimezone(
   const date = toDate(value);
   if (!date) return fallback;
   const zone = resolveTimeZone(tz);
-  const { withZoneLabel, ...intlOptions } = options ?? {};
-  const formatted = new Intl.DateTimeFormat(locale, {
-    ...intlOptions,
-    timeZone: zone,
-  }).format(date);
+  const { withZoneLabel, dateStyle, timeStyle, ...intlOptions } = options ?? {};
+
+  let formatted: string;
+  if (dateStyle || timeStyle) {
+    const parts = standardDateTimeParts(date, zone);
+    const timePart = timeStyle === 'short' ? parts.timeShort : parts.time;
+    formatted =
+      dateStyle && timeStyle ? `${parts.date} ${timePart}` : dateStyle ? parts.date : timePart;
+  } else {
+    formatted = new Intl.DateTimeFormat(locale, {
+      ...intlOptions,
+      timeZone: zone,
+    }).format(date);
+  }
   return withZoneLabel ? appendZoneLabel(formatted, zone, date) : formatted;
 }
 
@@ -95,9 +147,10 @@ export function formatInUtc8(
 }
 
 /**
- * 等价于 `date.toLocaleString()`，但走全局时区配置（默认 UTC+8）。
- * 面向用户的绝对时间戳，默认追加 ` UTC±H` 标注；传 `withZoneLabel = false` 可关闭
- * （例如紧凑/拼接场景）。
+ * 面向用户的绝对时间戳，标准数字格式 `YYYY-MM-DD HH:mm:ss`（与 locale 无关，不再是
+ * `date.toLocaleString()` 的中文「年月日」/各 locale 各异的日期顺序），走全局时区
+ * 配置（默认 UTC+8）。默认追加 ` UTC±H` 标注；传 `withZoneLabel = false` 可关闭
+ * （例如紧凑/拼接场景）。`locale` 参数保留仅为兼容历史调用签名，不影响输出格式。
  */
 export function formatDateTimeUtc8(
   value: unknown,

@@ -3,19 +3,9 @@ import type { MonitoringAccountAuthState } from '@/features/monitoring/accountOv
 import type { MonitoringAccountQuotaProvider } from '@/features/monitoring/accountOverviewQuotaTargets';
 import type { MonitoringAccountRow } from '@/features/monitoring/hooks/useMonitoringData';
 import { normalizePlanType } from '@/utils/quota';
-import { formatInUtc8 } from '@/utils/datetime';
+import { formatDateTimeUtc8 } from '@/utils/datetime';
 import { formatCompactNumber, formatUsd } from '@/utils/usage';
 import styles from '../MonitoringCenterPage.module.scss';
-
-/** `toLocaleString()` 默认的「日期+时间」全字段选项，用于全局时区格式化保持原有形状。 */
-const FULL_DATETIME_OPTIONS: Intl.DateTimeFormatOptions = {
-  year: 'numeric',
-  month: 'numeric',
-  day: 'numeric',
-  hour: 'numeric',
-  minute: 'numeric',
-  second: 'numeric',
-};
 
 const PREMIUM_CODEX_PLAN_TYPES = new Set(['pro', 'prolite', 'pro-lite', 'pro_lite']);
 
@@ -187,7 +177,9 @@ export const buildAccountSummaryMetrics = (
     key: 'latest-request-time',
     label: shortLabel(t, 'monitoring.latest_request_time_short', 'monitoring.latest_request_time'),
     fullLabel: t('monitoring.latest_request_time'),
-    value: formatInUtc8(row.lastSeenAt, FULL_DATETIME_OPTIONS, locale),
+    // 标准数字格式 `YYYY-MM-DD HH:mm:ss`（#78：与 locale 无关），委托给
+    // formatDateTimeUtc8，不再本地维护 FULL_DATETIME_OPTIONS 字段拼接。
+    value: formatDateTimeUtc8(row.lastSeenAt, locale, '', false),
   },
 ];
 

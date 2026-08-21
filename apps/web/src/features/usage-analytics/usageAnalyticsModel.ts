@@ -23,7 +23,7 @@ import { buildMonitoringSourceDisplay } from '@/features/monitoring/model/source
 import type { MonitoringAuthMeta, MonitoringChannelMeta } from '@/features/monitoring/model/types';
 import { getRangeBounds as getSharedRangeBounds } from '@/shared/model/timeRange';
 import type { CredentialInfo } from '@/types/sourceInfo';
-import { getUtc8Parts } from '@/utils/datetime';
+import { formatInUtc8, getUtc8Parts } from '@/utils/datetime';
 import { buildSourceInfoMap } from '@/utils/sourceResolver';
 import { formatCompactNumber, formatUsd } from '@/utils/usage';
 
@@ -597,14 +597,11 @@ export const formatLocalBucketLabel = (
   return `${parts.month}/${parts.day} ${parts.hour}:00`;
 };
 
+// 绝对时刻展示：标准数字格式 YYYY-MM-DD HH:mm（timeStyle:'short' 保留原本无秒语义），
+// 走全局时区中心工具（不再裸 Intl 读浏览器本地时区），随全局时区开关统一跟随。
+// 该函数被表格单元格、图表 tooltip 等多处复用，改这一处即全部对齐全局时区。
 export const formatLocalDateTime = (timestampMs: number, locale: string) =>
-  new Intl.DateTimeFormat(locale, {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(timestampMs));
+  formatInUtc8(timestampMs, { dateStyle: 'medium', timeStyle: 'short' }, locale);
 
 // 分析页时间范围计算委托给 shared/model/timeRange，与监控页共用同一套口径。
 // 分析页此前的 24h/today/yesterday/7d/30d 语义（滚动窗口 vs 自然日锚定）与共享模块

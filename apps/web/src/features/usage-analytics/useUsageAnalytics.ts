@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useMonitoringAnalytics } from '@/features/monitoring/hooks/useMonitoringAnalytics';
 import { useUsageData } from '@/features/monitoring/hooks/useUsageData';
@@ -284,14 +284,18 @@ export function useUsageAnalytics() {
 
   // 底层闪烁修复：dataStale（切筛选/时间范围/重刷新期间旧数据与当前 scope 不匹配）
   // 不应该把下游数据直接置空——那会让所有依赖 analyticsData 的汇总/表格/图表瞬间归零，
-  // 造成“旧数据 -> 全空/零 -> 新数据”的闪烁。这里维护一份“上一次成功数据”的 ref，
+  // 造成“旧数据 -> 全空/零 -> 新数据”的闪烁。这里维护一份“上一次成功数据”的 state，
   // dataStale 期间只要曾经成功过一次，就继续展示旧数据（视觉上叠加 UpdatingOverlay），
   // 而不是塌陷成 null。真正的首屏（从未成功过）才应该是 null，交给 Skeleton 处理。
-  const lastGoodAnalyticsDataRef = useRef<typeof analytics.data>(null);
-  if (!analytics.dataStale && analytics.data) {
-    lastGoodAnalyticsDataRef.current = analytics.data;
+  // 用 render 期条件 setState（React 官方「render 期按需调整 state」模式）替代 render 期
+  // 写 ref：新的成功数据到达时同步落库，React 立即重渲染（丢弃中间输出、不 commit、无 effect 延迟），
+  // 语义与原先「render 期同步更新 ref」等价，但对 React 保持响应式可追踪。
+  // 守卫里的 `analytics.data !== lastGoodAnalyticsData` 用引用相等短路，防止 render 期 setState 无限循环。
+  const [lastGoodAnalyticsData, setLastGoodAnalyticsData] = useState<typeof analytics.data>(null);
+  if (!analytics.dataStale && analytics.data && analytics.data !== lastGoodAnalyticsData) {
+    setLastGoodAnalyticsData(analytics.data);
   }
-  const hasPreviousAnalyticsData = lastGoodAnalyticsDataRef.current !== null;
+  const hasPreviousAnalyticsData = lastGoodAnalyticsData !== null;
   const isFirstLoad = analytics.loading && !hasPreviousAnalyticsData;
   const isUpdating = (analytics.loading || analytics.dataStale) && hasPreviousAnalyticsData;
 
@@ -348,7 +352,7 @@ export function useUsageAnalytics() {
   });
 
   const analyticsData = analytics.dataStale
-    ? lastGoodAnalyticsDataRef.current
+    ? lastGoodAnalyticsData
     : analytics.data;
   const filterSelectorsData = filterSelectorsAnalytics.dataStale
     ? null

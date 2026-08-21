@@ -158,18 +158,7 @@ const buildApiKeySummaryMetrics = (
     key: 'latest-request-time',
     label: shortLabel(t, 'monitoring.latest_request_time_short', 'monitoring.latest_request_time'),
     fullLabel: t('monitoring.latest_request_time'),
-    value: formatInUtc8(
-      row.lastSeenAt,
-      {
-        year: 'numeric',
-        month: 'numeric',
-        day: 'numeric',
-        hour: 'numeric',
-        minute: 'numeric',
-        second: 'numeric',
-      },
-      locale
-    ),
+    value: formatInUtc8(row.lastSeenAt, { dateStyle: 'medium', timeStyle: 'medium' }, locale),
   },
 ];
 

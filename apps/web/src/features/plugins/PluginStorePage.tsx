@@ -28,6 +28,7 @@ import {
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { pluginsApi, pluginStoreApi } from '@/services/api';
 import { useAuthStore, useConfigStore, useNotificationStore } from '@/stores';
+import { formatInTimezone } from '@/utils/datetime';
 import { getErrorMessage, isRecord } from '@/utils/helpers';
 import type { PluginStoreEntry, PluginStoreResponse } from '@/types';
 import {
@@ -102,13 +103,9 @@ const formatPluginVersion = (version: string) => {
 
 const formatReleaseDate = (value: string, locale: string) => {
   if (!value) return '';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  return new Intl.DateTimeFormat(locale, {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(date);
+  // 插件发布日是「元数据日历日」——作者标注的固定日期，不该随阅读者全局时区切换而漂移，
+  // 故固定用 UTC 拆解出标准 YYYY-MM-DD（date-only），不套全局时区时钟。locale 仅兼容签名。
+  return formatInTimezone(value, { dateStyle: 'medium' }, 'UTC', locale);
 };
 
 function StoreLogo({ src }: { src: string }) {

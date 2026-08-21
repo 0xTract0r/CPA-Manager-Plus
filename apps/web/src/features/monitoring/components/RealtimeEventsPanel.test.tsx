@@ -218,26 +218,11 @@ const renderActions = (overrides: { exportRows?: PanelRow[]; hasPrices?: boolean
   );
 
 describe('RealtimeEventsPanel', () => {
-  // 组件已迁到全局时区渲染；预期值同样走 formatInUtc8，保持与机器本地时区无关。
-  const expectedDate = formatInUtc8(
-    baseRow().timestampMs,
-    {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    },
-    'en-US'
-  );
-  const expectedTime = formatInUtc8(
-    baseRow().timestampMs,
-    {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-    },
-    'en-US'
-  );
+  // 组件已迁到全局时区 + 标准格式渲染（date=YYYY-MM-DD via dateStyle:'medium'，
+  // time=HH:mm:ss via timeStyle:'medium'）；预期值走与组件同款的 formatInUtc8 选项，
+  // 标准数字格式与 locale/机器本地时区无关，避免断言写死某地区格式。
+  const expectedDate = formatInUtc8(baseRow().timestampMs, { dateStyle: 'medium' }, 'en-US');
+  const expectedTime = formatInUtc8(baseRow().timestampMs, { timeStyle: 'medium' }, 'en-US');
 
   it('renders CPA v7.1.18 usage details for failed rows', () => {
     const markup = renderPanel(
