@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { AsyncPanel } from '@/components/ui/AsyncPanel';
 import { Button } from '@/components/ui/Button';
+import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { IconChartLine } from '@/components/ui/icons';
 import { formatFileSize } from '@/utils/format';
 import {
@@ -14,6 +15,8 @@ import {
 } from '../utils/capacity';
 import type { StatusBadgeVariant } from '../utils/health';
 import { useFarmCapacity } from '../hooks/useFarmCapacity';
+import { useFarmAutoProvision } from '../hooks/useFarmAutoProvision';
+import { useFarmAutoEnroll } from '../hooks/useFarmAutoEnroll';
 import styles from './FarmCapacityPanel.module.scss';
 
 // 供给漏斗四段 → i18n label key + testid slug（顺序对齐 buildSupplyFunnel 输出）。
@@ -55,6 +58,19 @@ const CTA_KEYS: Record<
 export function FarmCapacityPanel() {
   const { t } = useTranslation();
   const { capacity, loading, error, reload } = useFarmCapacity();
+  const autoProvisionEnabled = Boolean(capacity?.auto_provision_enabled);
+  const { submitting: autoProvisionSubmitting, requestToggle: requestAutoProvisionToggle } =
+    useFarmAutoProvision({ enabled: autoProvisionEnabled, reload });
+
+  // 「全局自动纳管新号」开关（打 core /v0/management/farm-auto-enroll，与上面的
+  // 自动供给刻意分开：自动供给管「已纳管账号是否自动建容器」，自动纳管管「新号是否
+  // 进农场名单」）。自成一套读/写状态，不复用 capacity。
+  const {
+    enabled: autoEnrollEnabled,
+    loading: autoEnrollLoading,
+    submitting: autoEnrollSubmitting,
+    requestToggle: requestAutoEnrollToggle,
+  } = useFarmAutoEnroll();
 
   const maxContainers = capacity?.max_active_containers ?? 0;
   const activeContainers = capacity?.active_containers ?? 0;
@@ -68,7 +84,6 @@ export function FarmCapacityPanel() {
     : memAvailable > memThreshold
       ? 'success'
       : 'warning';
-  const autoProvisionEnabled = Boolean(capacity?.auto_provision_enabled);
   const provisioning = capacity?.provisioning ?? [];
 
   // D1/D2 派生：全部只读、口径对齐后端契约（见 utils/capacity.ts）。
@@ -241,25 +256,81 @@ export function FarmCapacityPanel() {
             </div>
           ) : null}
 
-          {/* 「认证即自动供」开关 + 说明。 */}
+          {/* 「认证即自动供」运行时开关 + 说明。拨动是行为变更，先二次确认再 PATCH
+              /api/farm/config；成功后 reload() 让开关按后端真值翻转，失败保持原值 + toast。 */}
           <div className={styles.autoProvision}>
             <div className={styles.autoProvisionHead}>
               <span className={styles.autoProvisionTitle}>
                 {t('farm.capacity.autoProvisionTitle')}
               </span>
               <span
-                className={`status-badge ${autoProvisionEnabled ? 'success' : 'muted'}`}
+                className={styles.autoProvisionControl}
                 data-testid="farm-capacity-autoprovision-status"
+                data-enabled={autoProvisionEnabled}
+                data-submitting={autoProvisionSubmitting}
               >
-                {autoProvisionEnabled
-                  ? t('farm.capacity.autoProvisionOn')
-                  : t('farm.capacity.autoProvisionOff')}
+                <ToggleSwitch
+                  checked={autoProvisionEnabled}
+                  onChange={requestAutoProvisionToggle}
+                  disabled={loading || autoProvisionSubmitting}
+                  ariaLabel={t('farm.capacity.autoProvisionToggleLabel')}
+                  labelPosition="left"
+                  label={
+                    autoProvisionEnabled
+                      ? t('farm.capacity.autoProvisionOn')
+                      : t('farm.capacity.autoProvisionOff')
+                  }
+                />
               </span>
             </div>
             <p className={styles.autoProvisionHint}>
               {autoProvisionEnabled
                 ? t('farm.capacity.autoProvisionOnHint')
                 : t('farm.capacity.autoProvisionOffHint')}
+            </p>
+          </div>
+
+          {/* 「全局自动纳管新号」开关（打 core，非编排器）。放在「自动供给」旁边，
+              但语义刻意区分：自动供给=为已纳管账号自动建容器；自动纳管=新号是否进农场
+              名单（per-account farm_enrolled 的全局默认）。拨动先二次确认再 PUT
+              /v0/management/farm-auto-enroll；成功后按 core 真值翻转，失败保持原值 + toast。 */}
+          <div className={styles.autoEnroll}>
+            <div className={styles.autoEnrollHead}>
+              <span className={styles.autoEnrollTitle}>
+                {t('farm.capacity.autoEnrollTitle', { defaultValue: '自动纳管新号' })}
+              </span>
+              <span
+                className={styles.autoEnrollControl}
+                data-testid="farm-capacity-autoenroll-status"
+                data-enabled={autoEnrollEnabled}
+                data-submitting={autoEnrollSubmitting}
+              >
+                <ToggleSwitch
+                  checked={autoEnrollEnabled}
+                  onChange={requestAutoEnrollToggle}
+                  disabled={autoEnrollLoading || autoEnrollSubmitting}
+                  ariaLabel={t('farm.capacity.autoEnrollToggleLabel', {
+                    defaultValue: '切换自动纳管新号',
+                  })}
+                  labelPosition="left"
+                  label={
+                    autoEnrollEnabled
+                      ? t('farm.capacity.autoEnrollOn', { defaultValue: '自动' })
+                      : t('farm.capacity.autoEnrollOff', { defaultValue: '手动' })
+                  }
+                />
+              </span>
+            </div>
+            <p className={styles.autoEnrollHint}>
+              {autoEnrollEnabled
+                ? t('farm.capacity.autoEnrollOnHint', {
+                    defaultValue:
+                      '新认证的账号会自动进入农场纳管名单。（这不同于上面的「自动供给」——那是为已纳管账号自动建容器。）',
+                  })
+                : t('farm.capacity.autoEnrollOffHint', {
+                    defaultValue:
+                      '新号不会自动纳管，需在「账号设置」里为每个号手动开启「农场纳管」。（与上面的「自动供给」是两回事。）',
+                  })}
             </p>
           </div>
 

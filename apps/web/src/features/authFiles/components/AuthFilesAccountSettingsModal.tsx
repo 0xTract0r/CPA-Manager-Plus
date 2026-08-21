@@ -15,7 +15,7 @@
  *     「例行版本刷新」分类展示）
  */
 import { useTranslation } from 'react-i18next';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import CodeMirror from '@uiw/react-codemirror';
 import { json } from '@codemirror/lang-json';
 import { search, searchKeymap, highlightSelectionMatches } from '@codemirror/search';
@@ -1228,6 +1228,19 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
     onChange,
   } = props;
 
+  // 原始 auth JSON 含明文 access_token，属敏感暴露面。native <details> 折叠时仍会把
+  // 子节点保留在 DOM（只是 UA display:none 视觉隐藏），access_token 仍可被 devtools /
+  // view-source 直接读到。这里改为完全受控折叠 + 展开态条件挂载：默认收起、收起时不挂
+  // 载编辑器，确保 DOM 中不出现 access_token；切换账号时重置回收起（默认折叠 per 账号）。
+  const [rawJsonExpanded, setRawJsonExpanded] = useState(false);
+  const [rawJsonExpandedFor, setRawJsonExpandedFor] = useState<string | undefined>(
+    editor?.fileName
+  );
+  if (editor?.fileName !== rawJsonExpandedFor) {
+    setRawJsonExpandedFor(editor?.fileName);
+    setRawJsonExpanded(false);
+  }
+
   const managedHeaderState = editor?.managedHeaderState || null;
   // 旧 payload 仍可能带 policy_version；仅用于推断 provider，不再作为「自动升级策略版本」展示。
   const managedHeaderPolicy = managedHeaderState?.policy_version || '';
@@ -1981,14 +1994,18 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
                         </div>
                       </div>
                       {isFarmUnprovisionedClaude ? (
-                        // 未绑定容器的 Claude 账号：不可出站，红警（用户拍板「绑定+健康才正常」）。
+                        // 未绑定容器的 Claude 账号（FC1b 校正文案）：出站是否安全取决于本账号
+                        // 有无住宅代理——有代理仍安全经代理出站，无代理才 fail-closed 不出站；
+                        // 未绑定的确定影响只是遥测 device_id 未经容器对齐、暂用合成假名。
+                        // 徽标沿用 error 样式属「未纳管」提示级别，其严重度口径归 #45 弹框重设计再收敛。
                         <div
                           className={`status-badge error ${styles.deviceIdUnprovisionedWarning}`}
                           data-testid="account-settings-device-id-unprovisioned-warning"
                           role="alert"
                         >
                           {t('auth_files.account_settings_device_id_unprovisioned_warning', {
-                            defaultValue: '未绑定容器·不可出站——接入农场后才能经住宅代理请求',
+                            defaultValue:
+                              '未绑定容器：若本账号已配住宅代理，出站仍安全经该代理；未配代理则 fail-closed 不出站。遥测 device_id 未经容器对齐，暂用合成假名（接入农场后转真）。',
                           })}
                         </div>
                       ) : null}
@@ -2423,16 +2440,21 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
                 </div>
               )}
 
-              {/* 末区：原始 auth JSON（可编辑，折叠，保存前二次确认）。 */}
+              {/* 末区：原始 auth JSON（可编辑，默认折叠，展开态条件挂载，保存前二次确认）。
+                  受控折叠 + `rawJsonExpanded && (...)`：收起时整块 body 不挂载，
+                  access_token 不进 DOM（native details 折叠仍会留在 DOM，故此处条件渲染）。 */}
               <details
                 className={styles.advancedDetails}
                 data-testid="account-settings-raw-json-details"
+                open={rawJsonExpanded}
+                onToggle={(event) => setRawJsonExpanded(event.currentTarget.open)}
               >
                 <summary>
                   {t('auth_files.account_settings_raw_json_details', {
                     defaultValue: 'Advanced: raw auth JSON (editable)',
                   })}
                 </summary>
+                {rawJsonExpanded && (
                 <div className={styles.advancedBody}>
                   {editor.rawJsonAvailable ? (
                     <div className={styles.jsonWrapper}>
@@ -2516,6 +2538,7 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
                     </div>
                   </div>
                 </div>
+                )}
               </details>
             </>
           )}

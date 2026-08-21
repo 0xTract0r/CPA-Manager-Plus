@@ -1198,7 +1198,7 @@
     "account_settings_device_id_source_synthetic": "合成",
     "account_settings_device_id_source_drift": "漂移",
     "account_settings_device_id_source_unknown": "未知",
-    "account_settings_device_id_unprovisioned_warning": "未绑定容器·不可出站——接入农场后才能经住宅代理请求",
+    "account_settings_device_id_unprovisioned_warning": "未绑定容器：若本账号已配住宅代理，出站仍安全经该代理；未配代理则 fail-closed 不出站。遥测 device_id 未经容器对齐，暂用合成假名（接入农场后转真）。",
     "account_settings_synthetic_device_id_pending": "尚未派生",
     "account_settings_synthetic_device_id_hint": "只读。core 派生的每账号稳定合成假名；只展示前 16 位 hex，真实值不暴露。为空表示 core 尚未派生。",
     "account_settings_section_editable": "可编辑账号设置",
@@ -2529,7 +2529,7 @@
     "column_auths": "凭证数",
     "column_models": "模型数",
     "column_success_rate": "成功率",
-    "column_success_rate_short": "成功",
+    "column_success_rate_short": "成功率",
     "realtime_success_rate_hint": "该账号 + 供应商 + 模型 + 渠道组合的滚动累计成功率，并非本行单次请求的结果。",
     "column_tokens": "Tokens",
     "column_cost": "花费",
@@ -3891,6 +3891,21 @@
     "english": "English",
     "russian": "Русский"
   },
+  "timezone": {
+    "switch": "显示时区",
+    "hint": "全站时间显示时区（全局设置，非按账号）",
+    "zones": {
+      "local": "浏览器本地",
+      "shanghai": "上海",
+      "utc": "UTC",
+      "tokyo": "东京",
+      "kolkata": "印度",
+      "moscow": "莫斯科",
+      "london": "伦敦",
+      "newYork": "纽约",
+      "losAngeles": "洛杉矶"
+    }
+  },
   "theme": {
     "switch": "主题",
     "white": "明亮",
@@ -4024,14 +4039,9 @@
       "connectionSettings": "连接设置",
       "configureNow": "立即配置",
       "notConfiguredDesc": "高级覆盖填写的编排器地址或 Admin Key 可能有误，或该编排器暂时无法访问。请检查设置，或清空两项以改用同源代理。",
-      "operationsTitle": "管理入口",
-      "operationsDesc": "长表和明细按需在右侧打开，首屏保持聚焦于健康与告警。",
-      "openSection": "打开",
-      "accountsEntryDesc": "查看账号认证态、容器运行态、隔离与重新授权入口。",
-      "containersEntryDesc": "筛选容器池，创建、绑定、解绑、退役并下钻详情。",
-      "resourcesEntryDesc": "查看整机与容器内存、CPU 水位及限制口径。",
-      "usageEntryDesc": "查看账号与容器的累计 Token、请求数和费用口径。",
-      "backToContainers": "返回容器池"
+      "backToContainers": "返回容器池",
+      "backToAccounts": "返回账号列表",
+      "collapseAlerts": "收起"
     },
     "config": {
       "title": "编排器连接配置",
@@ -4101,10 +4111,21 @@
       "funnelBlockedProxy": "{{count}} 待代理",
       "funnelBlockedCapacity": "{{count}} 待容量",
       "funnelAwaitOnboard": "{{count}} 待接入",
-      "funnelNotApplicable": "{{count}} 不适用"
+      "funnelNotApplicable": "{{count}} 不适用",
+      "autoProvisionToggleLabel": "新号自动供给",
+      "autoProvisionConfirmEnableTitle": "开启自动供给？",
+      "autoProvisionConfirmEnableBody": "开启后：新认证的账号（仅新号、需已配住宅代理）将自动创建容器接入农场；fail-closed，无代理不供给；不影响已绑定 / 生产老号。",
+      "autoProvisionConfirmEnableCta": "开启",
+      "autoProvisionConfirmDisableTitle": "关闭自动供给？",
+      "autoProvisionConfirmDisableBody": "关闭后：认证账号不再自动新建容器；已有容器与绑定不受影响，新号请在账号面板手动「接入农场」。",
+      "autoProvisionConfirmDisableCta": "关闭",
+      "autoProvisionConfirmRestartNote": "这是运行时覆盖、不持久：编排器重启后会回落到部署侧默认值。",
+      "autoProvisionToggleSuccessOn": "自动供给已开启。",
+      "autoProvisionToggleSuccessOff": "自动供给已关闭。",
+      "autoProvisionToggleFailed": "更新自动供给开关失败"
     },
     "accounts": {
-      "title": "账号健康",
+      "title": "账号状态",
       "desc": "该环境下可用于绑定的账号列表（来自 CPA 既有认证文件健康检查）。",
       "empty_title": "暂无账号",
       "empty_desc": "该环境下还没有可用账号，请先在 CPA 侧上传认证文件。",
@@ -4148,7 +4169,8 @@
       "never": "从未",
       "create_placeholder": "容器编号后缀，例如 acct-07",
       "create_button": "新建容器",
-      "create_success": "容器 {{id}} 已创建"
+      "create_success": "容器 {{id}} 已创建",
+      "show_retired": "显示已退役"
     },
     "status": {
       "created": "已入池",
@@ -4219,7 +4241,8 @@
       "accountClockCoverage": "覆盖范围",
       "accountClockCoverageValue": "{{accounts}} 账号 / {{containers}} 容器",
       "noteBadgeTitle": "账号备注 / 别名",
-      "emptyUnlock": "解锁条件：该环境需有健康容器绑定账号，且账号自 CPA 上次重启后产生过请求；满足后此处会按账号/容器列出累计用量。当前测试端可能尚无健康容器或账号未产生流量。"
+      "emptyUnlock": "解锁条件：该环境需有健康容器绑定账号，且账号自 CPA 上次重启后产生过请求；满足后此处会按账号/容器列出累计用量。当前测试端可能尚无健康容器或账号未产生流量。",
+      "subtitle": "农场绑定账号在 CPA 侧的累计用量（自 CPA 上次重启起、内存态，不等同探针保活次数）。"
     },
     "resources": {
       "title": "资源占用",
@@ -4229,7 +4252,8 @@
       "noLimit": "无上限",
       "hostTitle": "整机",
       "hostNote": "整机含非农场进程",
-      "empty": "暂无容器资源数据"
+      "empty": "暂无容器资源数据",
+      "subtitle": "农场容器与宿主机的内存 / CPU 占用（含整机非农场进程口径说明）。"
     },
     "accountHealth": {
       "accountHealthColumn": "账号认证态",
@@ -4239,7 +4263,7 @@
       "authState_operator_disabled": "已停用",
       "authState_unprovisioned": "未绑定",
       "authState_unknown": "未知",
-      "unprovisionedHint": "未绑定容器·不可出站——接入农场后才能经住宅代理请求",
+      "unprovisionedHint": "未绑定容器：若本账号已配住宅代理，出站仍安全经该代理；未配代理则 fail-closed 不出站。遥测 device_id 未经容器对齐，暂用合成假名（接入农场后转真）。",
       "quarantineDetail": "{{reason}} · {{at}}",
       "reauthHint": "凭证已失效——请在「认证文件」页对该账号重新授权",
       "cadenceModelNote": "保活探针按指数分布随机触发，只有区间与均值、没有精确倒计时（防遥测规律化的有意设计）。",
@@ -4324,7 +4348,21 @@
       "telemetryAlive_unknown": "遥测未知 · 待采集",
       "telemetryAlive_unknownHint": "尚未接入遥测采集平面，属于正常态，不代表异常",
       "farmEnrolledBadge_enrolled": "已纳管",
-      "farmEnrolledBadge_notEnrolled": "未纳管 · 免疫农场治理"
+      "farmEnrolledBadge_notEnrolled": "未纳管 · 免疫农场治理",
+      "menuViewTelemetry": "查看遥测",
+      "menuContainerDetail": "容器详情",
+      "rowMenuLabel": "账号管理菜单",
+      "rowMenuTrigger": "管理",
+      "telemetryAlive_openHint": "查看该容器遥测详情",
+      "telemetryAlive_openAria": "查看该容器遥测详情（当前 {{state}}）",
+      "timeColumn": "账号时间",
+      "timeCreated": "创建",
+      "timeFirstLogin": "首次登录",
+      "timeAlive": "存活",
+      "timeBanned": "封禁",
+      "timeEstimateBadge": "估算",
+      "timeAliveEstimateHint": "缺精确失效时间，按当前时间估算",
+      "timeBannedPending": "封禁时间待后端补充（refresh_disabled_at 未暴露）"
     },
     "overview": {
       "running": "运行中容器",
@@ -4337,7 +4375,9 @@
       "generatedAt": "数据截至",
       "generatedAtNote": "（本次 API 响应生成时间，非精确的 Poller 最近巡检时刻）",
       "probeCostNotWired": "未接入",
-      "probeCostNotWiredHint": "探针 token cost 聚合待 P1 接入，当前无诚实数据来源"
+      "probeCostNotWiredHint": "探针 token cost 聚合待 P1 接入，当前无诚实数据来源",
+      "downLink": "查看离线容器",
+      "alertsLink": "查看活跃告警"
     },
     "alerts": {
       "title": "农场告警",
@@ -4359,6 +4399,8 @@
       "telemetryCategory": "遥测"
     },
     "detail": {
+      "titleLabel": "账号 · 设备详情",
+      "titleAccountUnbound": "未绑定账号",
       "healthSection": "健康状态",
       "keepaliveSection": "心跳成功率与延迟（近24h，1h 分桶）",
       "successRate": "成功率",
@@ -4393,7 +4435,13 @@
       "probeTokenGap": "本轮聚合读取路径未接入 tokens_total 求和（见交付说明 gaps），暂无法诚实展示趋势图，待 P1/store 层补聚合列后接入。",
       "eventsSection": "状态 / 告警事件",
       "noOpenEvents": "当前没有仍在 firing 的事件。",
-      "eventsHistoryGap": "只展示当前仍 firing 的事件，暂非完整历史时间线（见交付说明 gaps）。"
+      "eventsHistoryGap": "只展示当前仍 firing 的事件，暂非完整历史时间线（见交付说明 gaps）。",
+      "tab_overview": "概览",
+      "tab_telemetry": "遥测",
+      "tab_resources": "资源",
+      "tab_cadence": "节奏与用量",
+      "tab_events": "事件",
+      "tabsAria": "容器详情分区"
     },
     "healthReason": {
       "ok": "健康",
@@ -4411,7 +4459,7 @@
       "docker_missing_orphaned": "Docker 容器缺失（幽灵态）",
       "telemetry_devid_drift": "device_id 漂移（自报值与钉值不一致）",
       "telemetry_devid_collision": "device_id 串号（多容器自报同一 device_id）",
-      "telemetry_host_leak": "出站 host 泄漏（自报目标偏离预期）",
+      "telemetry_host_leak": "多容器共享同一 CPA 后端 host（apiBaseUrlHost 聚类·内在关联向量）",
       "telemetry_silence": "遥测静默（久未收到自报 beacon）",
       "telemetry_entrypoint_mismatch": "入口标识不一致（entrypoint 偏离预期）"
     },
@@ -4448,13 +4496,13 @@
       "reauthFailed": "重新授权失败"
     },
     "telemetry": {
-      "section": "遥测内容（自报 beacon）",
-      "disclaimer": "自报 / 合成 beacon 只证明上报管道连通与容器声明了什么，不构成反关联证明；下方 on-wire（真实出站抓取）列尚未接入，标注为「待抓取管道」，不代表已抓到真实出站值。",
-      "scopeBadge": "口径：自报 / 声明，非出站实测",
+      "section": "遥测信标（自报 + on-wire，逐条标注来源）",
+      "disclaimer": "下方是该容器的遥测信标列表，混合两类来源并逐条标注：「自报 (declared)」是容器声明/自报的内容，「on-wire」行才是 mitmproxy/ebpf 在容器出站链路真实抓取的数据。即便 on-wire 行也只证明该容器确实发出过这些请求，不构成跨账号反关联证明。另外，上方指纹自洽卡的「出站实测 (on-wire)」列是把信标逐字段派生、与自报值比对的独立步骤——这一步尚未接入才显示占位，与「原始 on-wire 信标是否已抓取」是两回事。",
+      "scopeBadge": "口径：信标含自报与 on-wire 两类·逐条标注来源，指纹逐字段派生待接入",
       "fieldColumn": "指纹字段",
       "declaredColumn": "自报 (declared)",
       "onWireColumn": "出站实测 (on-wire)",
-      "onWireBanner": "on-wire 出站抓取管道尚未接入，以下 on-wire 列均为占位 / 声明态，不代表已完成实测。",
+      "onWireBanner": "指纹逐字段 on-wire 派生尚未接入，以下 on-wire 列暂为占位；这只是「把信标逐字段派生进自洽比对」这一步没做，原始 on-wire 信标已实时采集——见下方时间线中标注为 on-wire 的行。",
       "field_device_id": "device_id",
       "field_entrypoint": "entrypoint",
       "field_api_base_url_host": "api_base_url_host",
@@ -4464,12 +4512,22 @@
       "fresh": "较新",
       "noBeacons": "窗口内暂无 beacon 上报。",
       "channelDistribution": "通道分布",
-      "timeline": "beacon 时间线（自报，最新在前）",
+      "timeline": "遥测信标时间线（自报 + on-wire，逐条标注来源，最新在前）",
       "timelineEmpty": "暂无 beacon（空是正常返回，代表该容器尚未上报或未装配采集）。",
-      "source_declared": "声明",
-      "source_self-report": "自报",
-      "source_unknown": "未知",
-      "deviceIdFullNote": "此处 device_id 为自报全量值（非列表页脱敏前 16 位），仅供运维核对自洽性用；漂移/串号/host 泄漏等自洽异常经告警面板呈现。"
+      "timelineColumnTime": "时间",
+      "timelineColumnChannel": "通道",
+      "timelineColumnHostPath": "host / 路径",
+      "timelineColumnSize": "大小",
+      "timelineShowingRecent": "显示最近 {{limit}} 条 · 共 {{count}} 条",
+      "timelineShowingAll": "已展开全部 {{count}} 条",
+      "timelineExpand": "展开更多",
+      "timelineCollapse": "收起",
+      "rowSourceOnWire": "on-wire · {{source}}",
+      "rowSourceOnWireFull": "on-wire：{{source}} 在容器出站链路真实抓取",
+      "rowSourceDeclared": "自报 · {{source}}",
+      "rowSourceDeclaredFull": "自报：容器声明 / 自报（{{source}}），非出站抓取",
+      "deviceIdFullNote": "此处 device_id 为自报全量值（非列表页脱敏前 16 位），仅供运维核对自洽性用；漂移/串号/host 泄漏等自洽异常经告警面板呈现。",
+      "disclaimerSummary": "来源边界说明（点开）：信标混合自报 + on-wire，不构成跨账号反关联证明"
     }
   }
 }

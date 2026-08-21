@@ -30,6 +30,11 @@ import { CodexInspectionPage } from '@/pages/CodexInspectionPage';
 import { ServerCodexInspectionPage } from '@/pages/ServerCodexInspectionPage';
 import { ConfigPage } from '@/pages/ConfigPage';
 import { FarmPage } from '@/pages/FarmPage';
+import { FarmAccountsPage } from '@/pages/FarmAccountsPage';
+import { FarmContainersPage } from '@/pages/FarmContainersPage';
+import { FarmContainerDetailPage } from '@/pages/FarmContainerDetailPage';
+import { FarmResourcesPage } from '@/pages/FarmResourcesPage';
+import { FarmUsagePage } from '@/pages/FarmUsagePage';
 import { LogsPage } from '@/pages/LogsPage';
 import { PluginResourcePage } from '@/pages/PluginResourcePage';
 import { PluginsPage } from '@/pages/PluginsPage';
@@ -297,7 +302,16 @@ const mainRoutes: RouteObject[] = [
       </LogsGate>
     ),
   },
+  // 农场（Device Farm）从「抽屉覆盖」重构为独立路由整页：/farm 为设备农场总览
+  // （健康/告警/容量），账号状态 / 容器池 / 资源占用 / 用量明细各自是独立整页；
+  // 容器详情是容器池的子页 /farm/containers/:id（返回容器池）。旧的 /farm/:section
+  // 深链抽屉逻辑（FarmSectionDrawer + FarmDashboard deep-link）已删除。
   { path: '/farm', element: <FarmPage /> },
+  { path: '/farm/accounts', element: <FarmAccountsPage /> },
+  { path: '/farm/containers', element: <FarmContainersPage /> },
+  { path: '/farm/containers/:id', element: <FarmContainerDetailPage /> },
+  { path: '/farm/resources', element: <FarmResourcesPage /> },
+  { path: '/farm/usage', element: <FarmUsagePage /> },
   { path: '/system', element: <SystemPage /> },
   { path: '*', element: <Navigate to="/" replace /> },
 ];

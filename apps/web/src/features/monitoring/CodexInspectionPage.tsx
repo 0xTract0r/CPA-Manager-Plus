@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useTimezone } from '@/hooks/useTimezone';
 import {
   applyCodexInspectionExecutionResult,
   buildCodexInspectionError,
@@ -68,6 +69,8 @@ import styles from './CodexInspectionPage.module.scss';
 
 export function CodexInspectionPage() {
   const { t, i18n } = useTranslation();
+  // 订阅全局时区：切换时区时巡检结果时间戳随之重渲染，无需刷新。
+  useTimezone();
   const config = useConfigStore((state) => state.config);
   const apiBase = useAuthStore((state) => state.apiBase);
   const managementKey = useAuthStore((state) => state.managementKey);

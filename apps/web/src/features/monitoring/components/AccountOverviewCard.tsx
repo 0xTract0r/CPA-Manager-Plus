@@ -23,6 +23,7 @@ import type {
   MonitoringAccountModelSpendRow,
   MonitoringAccountRow,
 } from '@/features/monitoring/hooks/useMonitoringData';
+import { formatInUtc8 } from '@/utils/datetime';
 import { formatCompactNumber, formatUsd } from '@/utils/usage';
 import type { StatusBarData } from '@/utils/recentRequests';
 import { MonitoringHealthStatusBar } from './MonitoringHealthStatusBar';
@@ -40,6 +41,16 @@ import {
   type AccountSummaryMetric,
 } from './accountOverviewPresentation';
 import styles from '../MonitoringCenterPage.module.scss';
+
+/** `toLocaleString()` 默认的「日期+时间」全字段选项，用于全局时区格式化保持原有形状。 */
+const FULL_DATETIME_OPTIONS: Intl.DateTimeFormatOptions = {
+  year: 'numeric',
+  month: 'numeric',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: 'numeric',
+  second: 'numeric',
+};
 
 export function AccountStatusBadge({
   authState,
@@ -151,7 +162,7 @@ function AccountQuotaPanel({
       : (entry.fetchedAtMs ?? lastQuotaSyncMs);
     const formattedTime =
       timestampMs && Number.isFinite(timestampMs)
-        ? new Date(timestampMs).toLocaleString(locale)
+        ? formatInUtc8(timestampMs, FULL_DATETIME_OPTIONS, locale)
         : '--';
 
     return [
@@ -670,7 +681,7 @@ function AccountModelUsageList({
                           'monitoring.latest_request_time'
                         )}
                       </small>
-                      <strong>{new Date(model.lastSeenAt).toLocaleString(locale)}</strong>
+                      <strong>{formatInUtc8(model.lastSeenAt, FULL_DATETIME_OPTIONS, locale)}</strong>
                     </div>
                   </div>
                 ) : null}
@@ -759,7 +770,7 @@ export function AccountModelUsageTable({
                 <td>{formatCompactNumber(model.cachedTokens)}</td>
                 <td>{formatCompactNumber(model.totalTokens)}</td>
                 <td>{hasPrices ? formatUsd(model.totalCost) : '--'}</td>
-                <td>{new Date(model.lastSeenAt).toLocaleString(locale)}</td>
+                <td>{formatInUtc8(model.lastSeenAt, FULL_DATETIME_OPTIONS, locale)}</td>
               </tr>
             ))}
           </tbody>
@@ -858,7 +869,7 @@ export function AccountOverviewCard({
   const statusTone = getAccountStatusTone(authState);
   const accountDisplay = resolveAccountDisplayText(row, accountDisplayMode);
   const secondaryText = accountDisplay.secondary || buildAccountSecondaryText(row);
-  const latestRequestText = new Date(row.lastSeenAt).toLocaleString(locale);
+  const latestRequestText = formatInUtc8(row.lastSeenAt, FULL_DATETIME_OPTIONS, locale);
   const latestRequestLabel = shortLabel(
     t,
     'monitoring.latest_request_time_short',

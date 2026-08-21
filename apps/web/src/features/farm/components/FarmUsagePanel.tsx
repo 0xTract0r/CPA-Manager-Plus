@@ -44,7 +44,7 @@ function formatCostUsd(value: number | undefined): string {
  * 绑定账号）。note 固定携带口径说明（自 CPA 上次重启起、内存态、不持久），
  * 原样展示在表格上方，不另造措辞。
  */
-export function FarmUsagePanel() {
+export function FarmUsagePanel({ hideHeading = false }: { hideHeading?: boolean } = {}) {
   const { t } = useTranslation();
   const { items, note, loading, error, reload } = useFarmUsage();
 
@@ -54,8 +54,10 @@ export function FarmUsagePanel() {
 
   return (
     <div className={styles.panel} data-testid="farm-usage-panel">
+      {/* hideHeading：作为独立整页（FarmUsagePage）承载时，标题由页头 h1 提供，
+          这里隐藏面板内重复标题，仅保留刷新动作。 */}
       <div className={styles.header}>
-        <div className={styles.title}>{t('farm.usage.detailTitle')}</div>
+        {hideHeading ? <span /> : <div className={styles.title}>{t('farm.usage.detailTitle')}</div>}
         <Button
           variant="ghost"
           size="sm"

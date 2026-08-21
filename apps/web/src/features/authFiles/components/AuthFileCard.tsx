@@ -11,6 +11,7 @@ import {
   IconKey,
   IconModelCluster,
   IconRefreshCw,
+  IconSettings,
   IconShield,
   IconTrash2,
 } from '@/components/ui/icons';
@@ -611,7 +612,7 @@ export function AuthFileCard(props: AuthFileCardProps) {
                   data-testid={`auth-file-account-settings-${file.name}`}
                   disabled={disableControls}
                 >
-                  <IconShield className={styles.actionIcon} size={16} />
+                  <IconSettings className={styles.actionIcon} size={16} />
                 </Button>
               </div>
             )}

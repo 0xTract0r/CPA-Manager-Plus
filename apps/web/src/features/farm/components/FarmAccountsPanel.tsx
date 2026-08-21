@@ -1,5 +1,6 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useTimezone } from '@/hooks/useTimezone';
 import { useInterval } from '@/hooks/useInterval';
 import {
   Table,
@@ -10,11 +11,20 @@ import {
   TableRow,
 } from '@/components/ui/Table';
 import { Select } from '@/components/ui/Select';
-import { Button } from '@/components/ui/Button';
 import { AsyncPanel } from '@/components/ui/AsyncPanel';
 import { AccountAuthBadge } from '@/components/ui/AccountAuthBadge';
 import { ContainerRuntimeBadge } from '@/components/ui/ContainerRuntimeBadge';
-import { IconBot, IconInfo, IconShield, IconTimer } from '@/components/ui/icons';
+import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/DropdownMenu';
+import {
+  IconArrowUpFromLine,
+  IconBot,
+  IconInfo,
+  IconModelCluster,
+  IconMoreVertical,
+  IconSatellite,
+  IconShield,
+  IconTimer,
+} from '@/components/ui/icons';
 import { useFarmAccounts } from '../hooks/useFarmAccounts';
 import { useFarmAccountState } from '../hooks/useFarmAccountState';
 import { useFarmContainers } from '../hooks/useFarmContainers';
@@ -54,8 +64,10 @@ import {
   type FarmDeviceIDSource,
   type FarmEnv,
 } from '@/types/farm';
+import type { FarmDetailTab } from './FarmContainerDetailContent';
 import { formatDateTimeUtc8 } from '@/utils/datetime';
 import { formatDurationMs } from '@/utils/usage/latency';
+import { deriveFarmAccountTimeLabels } from '../utils/accountTime';
 import styles from './FarmAccountsPanel.module.scss';
 
 // 容器注册表快照「陈旧」的前端展示阈值：本列只用它给「容器运行态」徽标的
@@ -110,10 +122,28 @@ const CADENCE_SPARKLINE_MIN_SAMPLES = 2;
 interface FarmAccountsPanelProps {
   /** 页面级容器快照；传入后不再启动本面板自己的轮询。 */
   containers?: FarmContainerView[];
+  /**
+   * 打开统一「账号·设备详情」抽屉并深链到指定分区（IA 重设计）。由
+   * FarmDashboard 传入，复用其 scheduleAfterDrawerClose 编排（关账号抽屉 →
+   * 370ms 后开详情，同一焦点恢复时序）。未传时遥测徽标 / ⋯管理菜单里的详情
+   * 入口降级为不可用（未绑定账号本就没有容器可看）。
+   */
+  onOpenDetail?: (container: FarmContainerView, initialTab: FarmDetailTab) => void;
+  /**
+   * 作为独立整页（FarmAccountsPage）承载时，标题/说明由页头提供，隐藏面板内
+   * 重复的标题与描述，仅保留筛选控件、容量说明与节奏心智模型说明。
+   */
+  hideHeading?: boolean;
 }
 
-export function FarmAccountsPanel({ containers: sharedContainers }: FarmAccountsPanelProps = {}) {
+export function FarmAccountsPanel({
+  containers: sharedContainers,
+  onOpenDetail,
+  hideHeading = false,
+}: FarmAccountsPanelProps = {}) {
   const { t, i18n } = useTranslation();
+  // 订阅全局时区（TZ2/#49）：切换时区时本组件重渲染，内部 formatDateTimeUtc8 同步刷新。
+  useTimezone();
   // C8「筛选维度改造」：环境（test/prod）对本部署无意义——编排器当前只服务 test，
   // 生产账号不会出现在这个列表里。env 固定为 test 仅用于底层拉取，不再作为可见
   // 筛选维度；对 operator 有意义的「账号认证态」+「备注/账号名搜索」改为客户端筛选。
@@ -305,21 +335,22 @@ export function FarmAccountsPanel({ containers: sharedContainers }: FarmAccounts
   return (
     <div className={styles.panel} data-testid="farm-accounts-panel">
       {/* 容量分配模型正名（spec REQ-5）：住宅 IP 是容量真源、device_id 廉价无
-          上限、激活需三件齐备。帮 operator 一眼理解容器池为何受限、何时能接新账号。 */}
-      <div className={styles.capacityNotice} data-testid="farm-capacity-model-callout">
-        <div className={styles.capacityNoticeHeader}>
-          <IconInfo size={14} />
+          上限、激活需三件齐备。改为 progressive disclosure——默认收起，避免三段说明
+          常驻首屏挤占账号表；operator 需要时点开标题展开。 */}
+      <details className={styles.capacityNotice} data-testid="farm-capacity-model-callout">
+        <summary className={styles.capacityNoticeHeader}>
+          <IconInfo size={14} aria-hidden="true" />
           <span>{t('farm.capacityModel.title')}</span>
-        </div>
+        </summary>
         <ul className={styles.capacityNoticeList}>
           <li>{t('farm.capacityModel.ipSource')}</li>
           <li>{t('farm.capacityModel.deviceIdCheap')}</li>
           <li>{t('farm.capacityModel.activationRule')}</li>
         </ul>
-      </div>
+      </details>
 
       <div className={styles.header}>
-        <div className={styles.title}>{t('farm.accounts.title')}</div>
+        {hideHeading ? null : <div className={styles.title}>{t('farm.accounts.title')}</div>}
         {/* C8：把无意义的 test/prod 环境下拉换成「账号认证态」筛选 + 「备注/账号名」
             搜索这两个对 operator 真正有用的客户端筛选维度。 */}
         <div className={styles.filterControls} data-testid="farm-accounts-filters">
@@ -351,7 +382,7 @@ export function FarmAccountsPanel({ containers: sharedContainers }: FarmAccounts
           />
         </div>
       </div>
-      <p className={styles.desc}>{t('farm.accounts.desc')}</p>
+      {hideHeading ? null : <p className={styles.desc}>{t('farm.accounts.desc')}</p>}
 
       {/* C5 常驻心智模型：保活探针指数分布随机触发，只有区间与均值、无精确倒计时。
           放面板级、始终可见，防止「请求节奏」列的默认区间被误读成精确倒计时。 */}
@@ -407,13 +438,17 @@ export function FarmAccountsPanel({ containers: sharedContainers }: FarmAccounts
                 'device-id-source'
               )}
               {renderSortHead('lastRefresh', t('farm.accountHealth.lastRefresh'), 'last-refresh')}
+              {/* #50 账号时间字段列：创建 / 首次登录 / 存活 / 封禁（非排序列）。 */}
+              <TableHead>
+                {t('farm.accountHealth.timeColumn', { defaultValue: '账号时间' })}
+              </TableHead>
               <TableHead>{actionsColumnLabel}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {filteredAccounts.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} data-testid="farm-accounts-filter-empty">
+                <TableCell colSpan={8} data-testid="farm-accounts-filter-empty">
                   <span className={styles.filterEmpty}>
                     {t('farm.accounts.filter_no_match', {
                       defaultValue: '没有账号匹配当前筛选条件。',
@@ -509,7 +544,8 @@ export function FarmAccountsPanel({ containers: sharedContainers }: FarmAccounts
                 });
               } else if (authState === 'unprovisioned') {
                 authDetailLabel = t('farm.accountHealth.unprovisionedHint', {
-                  defaultValue: '未绑定容器·不可出站——接入农场后才能经住宅代理请求',
+                  defaultValue:
+                    '未绑定容器：若本账号已配住宅代理，出站仍安全经该代理；未配代理则 fail-closed 不出站。遥测 device_id 未经容器对齐，暂用合成假名（接入农场后转真）。',
                 });
               }
               // 账号态副行详情只在非健康态展示（healthy 的 label 已够）。
@@ -617,6 +653,112 @@ export function FarmAccountsPanel({ containers: sharedContainers }: FarmAccounts
               // 账号是 operator 主动关闭，不提供一键接入入口。
               const canOnboard = !account.farm_bound && !account.disabled;
               const isOnboarding = onboardingAccountId === account.name;
+
+              // IA 重设计：统一「账号·设备详情」深链入口门控。仅已绑定容器且父级
+              // 提供了 onOpenDetail 时，遥测徽标可点、⋯管理菜单的「查看遥测/容器
+              // 详情」可用；未绑定账号没有容器可看，降级为不可点/置灰。
+              const canOpenDetail = Boolean(joinedContainer && onOpenDetail);
+              const telemetryAliveLabel = t(
+                `farm.accountHealth.telemetryAlive_${telemetryAliveState}`,
+                { defaultValue: telemetryAliveState }
+              );
+              const telemetryUnknownHint =
+                telemetryAliveState === 'unknown'
+                  ? t('farm.accountHealth.telemetryAlive_unknownHint', {
+                      defaultValue:
+                        'The telemetry collection plane is not wired up yet; this is expected, not an anomaly.',
+                    })
+                  : undefined;
+
+              // ⋯管理菜单（用户③）：把「接入农场 Onboard」从独立操作列收进本菜单
+              // （解 U8「管理入口埋底」），与「查看遥测 / 容器详情」两个详情深链
+              // 入口并列。未绑定账号：详情两项置灰，只留「接入农场」可用。
+              const accountMenuItems: DropdownMenuItem[] = [
+                {
+                  key: 'telemetry',
+                  label: t('farm.accountHealth.menuViewTelemetry', { defaultValue: '查看遥测' }),
+                  icon: <IconSatellite size={15} aria-hidden="true" />,
+                  disabled: !canOpenDetail,
+                  onClick: () => {
+                    if (joinedContainer && onOpenDetail) onOpenDetail(joinedContainer, 'telemetry');
+                  },
+                },
+                {
+                  key: 'container-detail',
+                  label: t('farm.accountHealth.menuContainerDetail', { defaultValue: '容器详情' }),
+                  icon: <IconModelCluster size={15} aria-hidden="true" />,
+                  disabled: !canOpenDetail,
+                  onClick: () => {
+                    if (joinedContainer && onOpenDetail) onOpenDetail(joinedContainer, 'overview');
+                  },
+                },
+                {
+                  key: 'onboard',
+                  label: isOnboarding
+                    ? t('farm.accountHealth.onboarding', { defaultValue: 'Onboarding…' })
+                    : t('farm.accountHealth.onboardAction', { defaultValue: 'Onboard to farm' }),
+                  icon: <IconArrowUpFromLine size={15} aria-hidden="true" />,
+                  disabled: !canOnboard || isOnboarding,
+                  onClick: () => onboard(account.name, env),
+                },
+              ];
+
+              // ---------------------------------------------------------
+              // #50 / R5-1（AC11）账号时间字段：创建 / 首次登录 / 存活 / 封禁
+              // （全部走全局时区展示）。
+              //  - 创建：优先 account.account_registered_at（Anthropic 真实注册时间），
+              //    缺失才降级到 account.created_at（core 装载近似值）并标注「装载近似」。
+              //  - 首次登录：account.first_identity_at（runtime_identity.current.created_at）。
+              //  - 存活：起点=首次登录、终点=真实封禁 refresh_disabled_at（若有）否则 now；
+              //    封禁缺失但为隔离号时次选 quarantined_at 作终点；两者都缺才退回 now
+              //    估算并标注「估算」。修复：needs_reauth 死号此前终点一路退回 now、存活
+              //    数字虚涨——现在只要有真实封禁时刻就钉死终点。
+              //  - 封禁：account.refresh_disabled_at（真实封禁时刻），有值展示、无值 '—'。
+              // ---------------------------------------------------------
+              // 零时间兜底 + 存活派生统一走 deriveFarmAccountTimeLabels（纯函数，内部
+              // 复用 parseCoreQuotaTimestamp 拦 Go 零值 0001-01-01T00:00:00Z）。见该
+              // util 顶部注释与回归测试。
+              const aliveImpaired =
+                authState === 'auto_quarantined' || authState === 'needs_reauth';
+              const {
+                createdAtDate,
+                createdAtIsFallback,
+                bannedAtDate,
+                firstIdentityDate,
+                aliveMs,
+                aliveEstimated,
+              } = deriveFarmAccountTimeLabels({
+                registeredAt: account.account_registered_at,
+                createdAt: account.created_at,
+                firstIdentityAt: account.first_identity_at,
+                bannedAt: account.refresh_disabled_at,
+                failureAt:
+                  authState === 'auto_quarantined' ? account.quarantined_at : undefined,
+                impaired: aliveImpaired,
+                nowMs,
+              });
+              const createdAtLabel = createdAtDate
+                ? formatDateTimeUtc8(createdAtDate, i18n.language)
+                : '—';
+              // 创建时刻来源提示：真实注册 vs core 装载近似降级（fallback）。
+              const createdAtSourceHint = createdAtDate
+                ? createdAtIsFallback
+                  ? t('farm.accountHealth.timeCreatedFallbackHint', {
+                      defaultValue:
+                        '降级值：core 首次装载近似时刻（非 Anthropic 真实注册时间，后者暂缺）',
+                    })
+                  : t('farm.accountHealth.timeCreatedRealHint', {
+                      defaultValue: 'Anthropic 真实注册时间',
+                    })
+                : undefined;
+              const firstIdentityLabel = firstIdentityDate
+                ? formatDateTimeUtc8(firstIdentityDate, i18n.language)
+                : '—';
+              const aliveLabel =
+                aliveMs != null ? formatDurationMs(aliveMs, { maxUnits: 2 }) : '—';
+              const bannedAtLabel = bannedAtDate
+                ? formatDateTimeUtc8(bannedAtDate, i18n.language)
+                : '—';
 
               return (
                 <TableRow key={account.name} data-testid={`farm-account-row-${account.name}`}>
@@ -960,23 +1102,40 @@ export function FarmAccountsPanel({ containers: sharedContainers }: FarmAccounts
                                 : 'Outbound Mac',
                           })}
                         </span>
-                        <span
-                          className={`status-badge ${telemetryAliveBadgeVariant}`}
-                          data-testid={`farm-account-telemetry-alive-${account.name}`}
-                          data-telemetry-alive={telemetryAliveState}
-                          title={
-                            telemetryAliveState === 'unknown'
-                              ? t('farm.accountHealth.telemetryAlive_unknownHint', {
-                                  defaultValue:
-                                    'The telemetry collection plane is not wired up yet; this is expected, not an anomaly.',
-                                })
-                              : undefined
-                          }
-                        >
-                          {t(`farm.accountHealth.telemetryAlive_${telemetryAliveState}`, {
-                            defaultValue: telemetryAliveState,
-                          })}
-                        </span>
+                        {/* IA 重设计：telemetry_alive 徽标可点 → 一键直达统一详情的
+                            「遥测」分区（无需再滚到第 8 段）。仅已绑定容器且父级提供
+                            onOpenDetail 时可点；未绑定账号显 unknown 且不可点（保持
+                            原 span，附「采集面未接入是正常态」提示）。 */}
+                        {canOpenDetail ? (
+                          <button
+                            type="button"
+                            className={`status-badge ${telemetryAliveBadgeVariant} ${styles.telemetryAliveButton}`}
+                            data-testid={`farm-account-telemetry-alive-${account.name}`}
+                            data-telemetry-alive={telemetryAliveState}
+                            onClick={() => onOpenDetail?.(joinedContainer!, 'telemetry')}
+                            title={
+                              telemetryUnknownHint ??
+                              t('farm.accountHealth.telemetryAlive_openHint', {
+                                defaultValue: '查看该容器遥测详情',
+                              })
+                            }
+                            aria-label={t('farm.accountHealth.telemetryAlive_openAria', {
+                              state: telemetryAliveLabel,
+                              defaultValue: '查看该容器遥测详情（当前 {{state}}）',
+                            })}
+                          >
+                            {telemetryAliveLabel}
+                          </button>
+                        ) : (
+                          <span
+                            className={`status-badge ${telemetryAliveBadgeVariant}`}
+                            data-testid={`farm-account-telemetry-alive-${account.name}`}
+                            data-telemetry-alive={telemetryAliveState}
+                            title={telemetryUnknownHint}
+                          >
+                            {telemetryAliveLabel}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </TableCell>
@@ -989,32 +1148,114 @@ export function FarmAccountsPanel({ containers: sharedContainers }: FarmAccounts
                     </span>
                   </TableCell>
 
-                  {/* C2 操作列：reauth 动作已移出账号健康面板（状态由账号认证态徽标
-                      承载，重新授权动作留「认证文件」页）。本列只保留 onboard。 */}
-                  <TableCell data-label={actionsColumnLabel}>
-                    <div className={styles.actionsCell}>
-                      {canOnboard ? (
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          loading={isOnboarding}
-                          onClick={() => onboard(account.name, env)}
-                          className={styles.onboardButton}
-                          aria-label={t('farm.accountHealth.onboardAction', {
-                            defaultValue: 'Onboard to farm',
-                          })}
-                          title={t('farm.accountHealth.onboardAction', {
-                            defaultValue: 'Onboard to farm',
-                          })}
-                          data-testid={`farm-account-onboard-${account.name}`}
+                  {/* #50 账号时间字段：创建 / 首次登录 / 存活 / 封禁。 */}
+                  <TableCell
+                    data-label={t('farm.accountHealth.timeColumn', { defaultValue: '账号时间' })}
+                    data-testid={`farm-account-time-cell-${account.name}`}
+                  >
+                    <dl className={styles.timeCell}>
+                      <div className={styles.timeRow}>
+                        <dt className={styles.timeLabel}>
+                          {t('farm.accountHealth.timeCreated', { defaultValue: '创建' })}
+                        </dt>
+                        <dd
+                          className={`${styles.timeValue} ${styles.mono}`}
+                          data-testid={`farm-account-created-${account.name}`}
+                          data-created-fallback={createdAtIsFallback ? 'true' : undefined}
                         >
-                          {isOnboarding
-                            ? t('farm.accountHealth.onboarding', { defaultValue: 'Onboarding…' })
-                            : t('farm.accountHealth.onboardActionShort', { defaultValue: 'Onboard' })}
-                        </Button>
-                      ) : (
-                        <span className={styles.mono}>—</span>
-                      )}
+                          <span title={createdAtSourceHint}>{createdAtLabel}</span>
+                          {createdAtDate && createdAtIsFallback ? (
+                            <span
+                              className={styles.timeEstimate}
+                              data-testid={`farm-account-created-fallback-${account.name}`}
+                              title={createdAtSourceHint}
+                            >
+                              {t('farm.accountHealth.timeCreatedFallbackBadge', {
+                                defaultValue: '装载近似',
+                              })}
+                            </span>
+                          ) : null}
+                        </dd>
+                      </div>
+                      <div className={styles.timeRow}>
+                        <dt className={styles.timeLabel}>
+                          {t('farm.accountHealth.timeFirstLogin', { defaultValue: '首次登录' })}
+                        </dt>
+                        <dd
+                          className={`${styles.timeValue} ${styles.mono}`}
+                          data-testid={`farm-account-first-identity-${account.name}`}
+                        >
+                          {firstIdentityLabel}
+                        </dd>
+                      </div>
+                      <div className={styles.timeRow}>
+                        <dt className={styles.timeLabel}>
+                          {t('farm.accountHealth.timeAlive', { defaultValue: '存活' })}
+                        </dt>
+                        <dd
+                          className={styles.timeValue}
+                          data-testid={`farm-account-alive-${account.name}`}
+                        >
+                          <span className={styles.mono}>{aliveLabel}</span>
+                          {aliveEstimated ? (
+                            <span
+                              className={styles.timeEstimate}
+                              data-testid={`farm-account-alive-estimated-${account.name}`}
+                              title={t('farm.accountHealth.timeAliveEstimateHint', {
+                                defaultValue: '缺精确失效时间，按当前时间估算',
+                              })}
+                            >
+                              {t('farm.accountHealth.timeEstimateBadge', { defaultValue: '估算' })}
+                            </span>
+                          ) : null}
+                        </dd>
+                      </div>
+                      <div className={styles.timeRow}>
+                        <dt className={styles.timeLabel}>
+                          {t('farm.accountHealth.timeBanned', { defaultValue: '封禁' })}
+                        </dt>
+                        <dd
+                          className={`${styles.timeValue} ${styles.mono}`}
+                          data-testid={`farm-account-banned-${account.name}`}
+                          data-banned={bannedAtDate ? 'true' : undefined}
+                        >
+                          {bannedAtDate ? (
+                            <span>{bannedAtLabel}</span>
+                          ) : (
+                            <span
+                              title={t('farm.accountHealth.timeBannedNone', {
+                                defaultValue: '无封禁记录（账号未被封禁，或后端未提供封禁时刻）',
+                              })}
+                            >
+                              —
+                            </span>
+                          )}
+                        </dd>
+                      </div>
+                    </dl>
+                  </TableCell>
+
+                  {/* 操作列（用户③，IA 重设计）：收敛成单一「⋯管理」DropdownMenu——
+                      把此前独立的「接入农场 Onboard」按钮 + 详情入口都收进菜单，解 U8
+                      「管理入口埋底」；reauth 动作仍留「认证文件」页。菜单项与置灰
+                      逻辑见上方 accountMenuItems。 */}
+                  <TableCell data-label={actionsColumnLabel}>
+                    <div
+                      className={styles.actionsCell}
+                      data-testid={`farm-account-menu-${account.name}`}
+                    >
+                      <DropdownMenu
+                        ariaLabel={t('farm.accountHealth.rowMenuLabel', {
+                          defaultValue: '账号管理菜单',
+                        })}
+                        triggerClassName={styles.rowMenuTrigger}
+                        triggerIcon={<IconMoreVertical size={16} aria-hidden="true" />}
+                        triggerLabel={t('farm.accountHealth.rowMenuTrigger', {
+                          defaultValue: '管理',
+                        })}
+                        items={accountMenuItems}
+                        align="end"
+                      />
                     </div>
                   </TableCell>
                 </TableRow>

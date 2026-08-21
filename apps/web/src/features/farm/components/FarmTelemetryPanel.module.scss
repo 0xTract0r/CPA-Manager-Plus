@@ -52,6 +52,45 @@
   font-weight: 600;
 }
 
+// 来源边界免责声明改为 progressive disclosure：默认只显示一行警示摘要
+// （.disclaimerSummary），点开才展开完整多段说明（内部复用 .probeTokenBadge）。
+// 避免较长的多段落说明落地即占据遥测 tab 首屏。
+.disclaimerDisclosure {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.disclaimerSummary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: $radius-sm;
+  background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+  color: var(--color-warning);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+
+  &::-webkit-details-marker {
+    display: none;
+  }
+
+  // 展开指示符：收起朝右、展开朝下。
+  &::after {
+    content: '▸';
+    margin-left: auto;
+    transition: transform 0.15s ease;
+  }
+}
+
+.disclaimerDisclosure[open] > .disclaimerSummary::after {
+  transform: rotate(90deg);
+}
+
 .estimateBox {
   display: flex;
   flex-direction: column;
@@ -160,15 +199,122 @@
 .eventList {
   display: flex;
   flex-direction: column;
-  gap: $spacing-sm;
+  gap: 2px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
+// beacon 时间线：对齐网格行（时间 | 通道 | host/路径 | 大小），替代此前
+// display:flex + flex-wrap 内联堆叠——异构字段挤在一行里自动换行，narrow
+// 抽屉（~640px）下没有列对齐、host 从中间断行，成一堵乱字墙。列头
+// .eventListHeader 与数据行 .eventItem 共享同一份 .eventGrid 几何定义，
+// 保证跨行竖向对齐（同 .consistencyGrid「几何 + 各行组合类」的写法）。
+// 列宽：时间/通道固定窄列，host/路径吃掉剩余空间并单行截断，大小固定窄列
+// 右对齐；来源（declared/self-report/unknown）折进「通道」列的次要提示行，
+// 不再单独占一列，把列数收敛到验收要求的 4 列。
+.eventGrid {
+  display: grid;
+  // 时间列宽按 "MM/DD HH:mm:ss"（14 字符，等宽字体）留够空间，避免自己被
+  // text-ellipsis 截断；通道列宽按后端 ClassifyChannel 现有最长取值
+  // "event_logging" 的徽标宽度留够空间；大小列固定窄宽右对齐；host/路径吃
+  // 掉窄抽屉（~640px 内容区）里剩下的全部空间，是唯一预期会触发截断的列。
+  grid-template-columns: 112px 110px minmax(0, 1fr) 64px;
+  gap: 0 $spacing-sm;
+  align-items: center;
+
+  // .status-badge 全局默认带 margin-bottom: $spacing-md（16px，独立展示场景用），
+  // 放进固定行高的网格行里会撑高单行、破坏跨行对齐，这里清零。
+  :global(.status-badge) {
+    margin-bottom: 0;
+  }
+}
+
+.eventListHeader {
+  padding: 2px 0 4px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.eventHeaderCell {
+  font-size: $fs-2xs;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+// 大小列右对齐——表头与数据行共用，纯数值列靠右阅读更顺。
+.eventSizeCell {
+  text-align: right;
+}
+
 .eventItem {
+  padding: 4px 0;
+
+  &:not(:last-child) {
+    border-bottom: 1px solid var(--border-color);
+  }
+}
+
+.eventTimeCell {
+  @include text-ellipsis;
+}
+
+// 通道 + 来源合并列：channel 徽标在上，source（declared/self-report/unknown）
+// 次要提示在下，两者都不再需要单独占一整列。
+.eventChannelCell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+
+.eventSourceHint {
+  font-size: $fs-2xs;
+  color: var(--text-tertiary);
+  @include text-ellipsis;
+  max-width: 100%;
+}
+
+// 逐条来源标注的颜色区分（U2 复核·准确化，替代此前对整列笼统 claim on-wire）：
+// on-wire 行=mitmproxy/ebpf 真实出站抓取，用 success 语义色 + 加重让「真抓取」凸显；
+// declared 行=容器自报，用中性 tertiary 弱化。两者都继承 .eventSourceHint 的
+// text-ellipsis / 字号，仅覆盖颜色与字重，不破坏网格行高与截断。
+.eventSourceOnWire {
+  color: var(--color-success);
+  font-weight: 600;
+}
+
+.eventSourceDeclared {
+  color: var(--text-tertiary);
+}
+
+// host/路径单行截断：不再 word-break: break-all 从中间断行，完整值放进
+// title 悬浮显示。
+.eventHostCell {
+  @include text-ellipsis;
+  min-width: 0;
+}
+
+// 「展开更多 / 共 N 条」控制行：仅当 beacon 数超过默认展示上限时渲染。
+.timelineMeta {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: $spacing-sm;
-  flex-wrap: wrap;
+  padding-top: 4px;
+}
+
+.timelineToggle {
+  @include button-reset;
+  flex-shrink: 0;
+  color: var(--color-primary);
+  font-size: $fs-2xs;
+  font-weight: 600;
+  white-space: nowrap;
+
+  &:hover {
+    text-decoration: underline;
+  }
 }

@@ -10,6 +10,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
+import { useTimezone } from '@/hooks/useTimezone';
 import { useNavigate } from 'react-router-dom';
 import { animate } from 'motion/mini';
 import type { AnimationPlaybackControlsWithThen } from 'motion-dom';
@@ -212,6 +213,8 @@ const getQuotaCooldownContextKey = (managerServiceBase: string, managementKey: s
 
 export function AuthFilesPage() {
   const { t } = useTranslation();
+  // 订阅全局时区：切换时区时整页（含 AuthFileCard 的时间戳）随之重渲染，无需刷新。
+  useTimezone();
   const showNotification = useNotificationStore((state) => state.showNotification);
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const apiBase = useAuthStore((state) => state.apiBase);

@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import type { UsageServiceStatus } from '@/services/api/usageService';
+import { formatInUtc8 } from '@/utils/datetime';
 import styles from './CollectorStatusCard.module.scss';
 
 interface CollectorStatusCardProps {
@@ -17,11 +18,13 @@ const formatCount = (value: number | undefined) =>
 
 const formatTimestamp = (value: number | undefined, locale: string) => {
   if (!value || !Number.isFinite(value)) return '-';
-  return new Date(value).toLocaleTimeString(locale, {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
+  // 展示走全局时区配置（默认 UTC+8）。
+  return formatInUtc8(
+    value,
+    { hour: '2-digit', minute: '2-digit', second: '2-digit' },
+    locale,
+    '-'
+  );
 };
 
 export function CollectorStatusCard({

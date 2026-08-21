@@ -62,6 +62,8 @@ import {
   type UsageHeaderSnapshot,
 } from '@/services/api/usageService';
 import { useAuthStore, useNotificationStore } from '@/stores';
+import { useTimezone } from '@/hooks/useTimezone';
+import { formatInUtc8 } from '@/utils/datetime';
 import {
   buildUsageHeaderSnapshotLookup,
   getHeaderSnapshotErrorCode,
@@ -539,13 +541,17 @@ function normalizeServerResultAction(action: string): CodexInspectionAction {
 
 function formatObservedHeaderRecoverAt(value: number | null, locale: string) {
   if (!value || !Number.isFinite(value)) return '';
-  return new Date(value).toLocaleString(locale, {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
+  return formatInUtc8(
+    value,
+    {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    },
+    locale
+  );
 }
 
 function buildObservedHeaderEvidence(
@@ -675,6 +681,8 @@ function formatServiceHost(base: string): string {
 
 export function ServerCodexInspectionPage() {
   const { t, i18n } = useTranslation();
+  // 订阅全局时区：切换时区时巡检运行时间/观测 recover 时间戳随之重渲染，无需刷新。
+  useTimezone();
   const managementKey = useAuthStore((state) => state.managementKey);
   const featureAvailability = usePanelFeatureAvailability();
   const showNotification = useNotificationStore((state) => state.showNotification);
@@ -1187,7 +1195,11 @@ export function ServerCodexInspectionPage() {
 
   const renderStatusPanel = () => {
     const lastRunTime = activeRun?.finishedAtMs
-      ? new Date(activeRun.finishedAtMs).toLocaleTimeString(i18n.language)
+      ? formatInUtc8(
+          activeRun.finishedAtMs,
+          { hour: 'numeric', minute: 'numeric', second: 'numeric' },
+          i18n.language
+        )
       : '--';
     const durationLabel = formatDuration(activeRun, t);
     const serviceHost = formatServiceHost(serviceBase);

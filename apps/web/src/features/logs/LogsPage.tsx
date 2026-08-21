@@ -2,6 +2,7 @@ import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { useTimezone } from '@/hooks/useTimezone';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -82,6 +83,8 @@ const buildLogsQuery = (incremental: boolean, position: LogPosition): LogsQuery 
 
 export function LogsPage() {
   const { t } = useTranslation();
+  // 订阅全局时区：切换时区时文件修改时间戳随之重渲染，无需刷新。
+  useTimezone();
   const [searchParams, setSearchParams] = useSearchParams();
   const { showNotification, showConfirmation } = useNotificationStore();
   const connectionStatus = useAuthStore((state) => state.connectionStatus);

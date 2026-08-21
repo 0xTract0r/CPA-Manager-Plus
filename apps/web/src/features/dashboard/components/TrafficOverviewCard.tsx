@@ -16,6 +16,7 @@ import type {
   DashboardTrafficPoint,
 } from '@/services/api/usageService';
 import { formatCompactNumber } from '@/utils/usage';
+import { formatInUtc8 } from '@/utils/datetime';
 import { buildVisibleTrafficTimeline, isCurrentTrafficBucket } from './trafficOverviewChartModel';
 import styles from './TrafficOverviewCard.module.scss';
 
@@ -41,11 +42,9 @@ type HealthCellStyle = CSSProperties & Record<'--cell-intensity', number>;
 
 const fallbackHealthBucketMs = 10 * 60 * 1000;
 
+// 图表横轴时刻走全局时区配置（默认 UTC+8）。
 const formatHour = (bucketMs: number, locale: string) =>
-  new Date(bucketMs).toLocaleTimeString(locale, {
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  formatInUtc8(bucketMs, { hour: '2-digit', minute: '2-digit' }, locale);
 
 const tokenLabelMap: Record<string, string> = {
   input: 'dashboard.token_mix_input',
@@ -78,9 +77,8 @@ const formatPercent = (value: number | undefined, digits = 1) => {
 
 const formatMinuteLabel = (bucketMs: number | undefined, locale: string) => {
   if (!bucketMs) return '--';
-  return new Date(bucketMs).toLocaleTimeString(locale, {
-    minute: '2-digit',
-  });
+  // 展示走全局时区配置（默认 UTC+8）。
+  return formatInUtc8(bucketMs, { minute: '2-digit' }, locale, '--');
 };
 
 const buildHealthTitle = (

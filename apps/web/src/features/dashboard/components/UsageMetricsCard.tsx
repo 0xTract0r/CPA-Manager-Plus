@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/icons';
 import type { DashboardSummaryResponse } from '@/services/api/usageService';
 import { formatCompactNumber, formatDurationMs, formatUsd } from '@/utils/usage';
+import { formatInUtc8 } from '@/utils/datetime';
 import styles from './UsageMetricsCard.module.scss';
 
 interface UsageMetricsCardProps {
@@ -81,7 +82,12 @@ export function UsageMetricsCard({
   const loadingText = loading ? '...' : '-';
   const lastRefreshedText = lastRefreshedAt
     ? t('dashboard.last_refreshed_at', {
-        time: lastRefreshedAt.toLocaleTimeString(i18n.language),
+        // 展示走全局时区配置（默认 UTC+8）。
+        time: formatInUtc8(
+          lastRefreshedAt,
+          { hour: '2-digit', minute: '2-digit', second: '2-digit' },
+          i18n.language
+        ),
       })
     : undefined;
 

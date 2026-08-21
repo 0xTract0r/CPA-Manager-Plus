@@ -4,6 +4,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useTimezone } from '@/hooks/useTimezone';
 import { Link } from 'react-router-dom';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { usePanelFeatureAvailability } from '@/hooks/usePanelFeatureAvailability';
@@ -155,6 +156,8 @@ const formatRefreshTime = (value: Date | null) => {
 
 export function QuotaPage() {
   const { t } = useTranslation();
+  // 订阅全局时区：切换时区时配额卡的 reset/observed 时间戳随之重渲染，无需刷新。
+  useTimezone();
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const managementKey = useAuthStore((state) => state.managementKey);
   const featureAvailability = usePanelFeatureAvailability();

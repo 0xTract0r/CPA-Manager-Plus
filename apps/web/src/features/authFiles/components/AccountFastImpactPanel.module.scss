@@ -79,7 +79,9 @@
 .compareHead {
   color: var(--text-secondary);
   font-size: 11px;
-  padding-bottom: 2px;
+  // 水平内边距需与下方 .compareRow 一致（两者共用同一 grid-template-columns），
+  // 否则表头与数据列会错位。
+  padding: 0 8px 2px;
 
   span {
     min-width: 0;
@@ -90,7 +92,9 @@
 }
 
 .compareRow {
-  padding: 3px 0;
+  // 水平内边距从 0 抬到 8px：此前数字贴格边，与 .compareHead（见上）保持一致
+  // 的水平内边距以维持列对齐。
+  padding: 3px 8px;
   color: var(--text-primary);
 
   span {

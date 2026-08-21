@@ -855,6 +855,9 @@
 
 .payloadRuleRawParamRow {
   grid-template-columns: minmax(240px, 1fr) minmax(320px, 1fr) auto;
+  // 防御兜底：两列硬下限之和 ≈584px，当前页面级容器足够宽不会触发；仅为未来
+  // 复用到更窄容器时提供横滚兜底，不强制裁切。
+  overflow-x: auto;
 }
 
 .payloadRuleParamGroup {

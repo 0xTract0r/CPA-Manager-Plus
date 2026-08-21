@@ -1,0 +1,28 @@
+@use '../../../styles/variables' as *;
+
+// 账号·设备详情页头副标题：绑定账号（备注名优先）+ 设备脱敏短识 + 容器 ID，
+// 一行紧凑展示，帮 operator 一眼确认这是哪个账号 / 设备的详情。
+.identityLine {
+  display: inline-flex;
+  align-items: baseline;
+  gap: $spacing-sm;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.identityAccount {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.identityMasked {
+  font-family: $font-mono;
+  font-size: $fs-xs;
+  color: var(--text-secondary);
+}
+
+.identityId {
+  font-family: $font-mono;
+  font-size: $fs-2xs;
+  color: var(--text-tertiary);
+}

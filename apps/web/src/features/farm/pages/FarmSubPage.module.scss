@@ -1,0 +1,76 @@
+@use '../../../styles/variables' as *;
+@use '../../../styles/mixins' as *;
+
+// 农场整页统一外壳：/farm 总览（FarmPage）与各农场子页（账号状态 / 容器池 /
+// 资源占用 / 用量明细 / 容器详情）都复用本外壳，统一 gutter、max-width/overflow
+// 护栏与纵向布局节奏，让每页作为完整一页而非浮层抽屉呈现，避免外壳漂移。
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-gap, 20px);
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: clip;
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.backLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  align-self: flex-start;
+  color: var(--text-secondary);
+  font-size: 13px;
+  text-decoration: none;
+  border-radius: $radius-sm;
+  padding: 2px 6px 2px 2px;
+  margin-left: -2px;
+  transition: color $transition-fast;
+
+  &:hover {
+    color: var(--text-primary);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+  }
+}
+
+.titleRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: $spacing-md;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+  min-width: 0;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: $spacing-sm;
+  flex-wrap: wrap;
+}
+
+.subtitle {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+  max-width: 72ch;
+}

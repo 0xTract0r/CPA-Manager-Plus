@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { useTimezone } from '@/hooks/useTimezone';
 import {
   IconBot,
   IconFileText,
@@ -23,6 +24,7 @@ import { buildMonitoringAuthMetaMap } from '@/features/monitoring/model/authMeta
 import { buildAuthFileMapFromMeta } from '@/features/monitoring/model/sourceDisplay';
 import type { MonitoringChannelMeta } from '@/features/monitoring/model/types';
 import { buildSourceInfoMap } from '@/utils/sourceResolver';
+import { formatInUtc8 } from '@/utils/datetime';
 import type { AuthFileItem } from '@/types/authFile';
 import { VersionCard } from './components/VersionCard';
 import { UsageMetricsCard } from './components/UsageMetricsCard';
@@ -58,6 +60,8 @@ const HEALTH_REFRESH_INTERVAL_MS = 60_000;
 
 export function DashboardPage() {
   const { t, i18n } = useTranslation();
+  // 订阅全局时区：切换时区时整页时间戳（含 HealthAlerts/Version/UsageMetrics 卡）随之重渲染。
+  useTimezone();
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const serverVersion = useAuthStore((state) => state.serverVersion);
   const serverBuildDate = useAuthStore((state) => state.serverBuildDate);
@@ -407,19 +411,22 @@ export function DashboardPage() {
         ? styles.configBadgeFillFirst
         : styles.configBadgeUnknown;
 
-  const formattedDate = currentTime.toLocaleDateString(i18n.language, {
-    weekday: 'long',
-  });
+  // 展示走全局时区配置（默认 UTC+8），不跟随浏览器本地时区。
+  const formattedDate = formatInUtc8(currentTime, { weekday: 'long' }, i18n.language);
 
-  const formattedDateTime = currentTime.toLocaleString(i18n.language, {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  });
+  const formattedDateTime = formatInUtc8(
+    currentTime,
+    {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    },
+    i18n.language
+  );
 
   return (
     <>

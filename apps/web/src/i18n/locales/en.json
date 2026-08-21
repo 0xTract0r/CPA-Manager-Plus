@@ -1198,7 +1198,7 @@
     "account_settings_device_id_source_synthetic": "Synthetic",
     "account_settings_device_id_source_drift": "Drift",
     "account_settings_device_id_source_unknown": "Unknown",
-    "account_settings_device_id_unprovisioned_warning": "Not onboarded to a container · cannot egress — onboard to the farm before it can send requests through a residential proxy",
+    "account_settings_device_id_unprovisioned_warning": "Not bound to a container: if this account has its own residential proxy, egress still goes safely through it; without a proxy it fails closed and cannot egress. The telemetry device_id isn't container-aligned yet and uses a synthetic pseudonym (it becomes real once onboarded to the farm).",
     "account_settings_synthetic_device_id_pending": "Not derived yet",
     "account_settings_synthetic_device_id_hint": "Read-only. A stable per-account synthetic pseudonym derived by core; only the first 16 hex characters are shown and the real value is never exposed. Empty means core has not derived one yet.",
     "account_settings_section_editable": "Editable account settings",
@@ -2528,8 +2528,8 @@
     "column_host": "Host",
     "column_auths": "Creds",
     "column_models": "Models",
-    "column_success_rate": "Success",
-    "column_success_rate_short": "Success",
+    "column_success_rate": "Success Rate",
+    "column_success_rate_short": "Success Rate",
     "realtime_success_rate_hint": "Rolling success rate for this account + provider + model + channel combination, not the result of this single request.",
     "column_tokens": "Tokens",
     "column_cost": "Cost",
@@ -3891,6 +3891,21 @@
     "english": "English",
     "russian": "Русский"
   },
+  "timezone": {
+    "switch": "Display timezone",
+    "hint": "Global display timezone applied to all timestamps (not per-account)",
+    "zones": {
+      "local": "Browser local",
+      "shanghai": "Shanghai",
+      "utc": "UTC",
+      "tokyo": "Tokyo",
+      "kolkata": "India",
+      "moscow": "Moscow",
+      "london": "London",
+      "newYork": "New York",
+      "losAngeles": "Los Angeles"
+    }
+  },
   "theme": {
     "switch": "Theme",
     "white": "Light",
@@ -4024,14 +4039,9 @@
       "connectionSettings": "Connection settings",
       "configureNow": "Configure now",
       "notConfiguredDesc": "The orchestrator URL or Admin Key in the advanced override looks invalid, or that orchestrator is temporarily unreachable. Check the settings, or clear both fields to fall back to the same-origin proxy.",
-      "operationsTitle": "Management areas",
-      "operationsDesc": "Open long tables and details on demand while keeping the first screen focused on health and alerts.",
-      "openSection": "Open",
-      "accountsEntryDesc": "Review account auth, container runtime, quarantine, and re-authentication actions.",
-      "containersEntryDesc": "Filter the pool, create, bind, unbind, retire, and inspect containers.",
-      "resourcesEntryDesc": "Review host and container memory/CPU levels and limit semantics.",
-      "usageEntryDesc": "Review cumulative tokens, requests, and cost by account and container.",
-      "backToContainers": "Back to container pool"
+      "backToContainers": "Back to container pool",
+      "backToAccounts": "Back to accounts",
+      "collapseAlerts": "Collapse"
     },
     "config": {
       "title": "Orchestrator Connection",
@@ -4101,10 +4111,21 @@
       "funnelBlockedProxy": "{{count}} waiting on proxy",
       "funnelBlockedCapacity": "{{count}} waiting on capacity",
       "funnelAwaitOnboard": "{{count}} awaiting onboard",
-      "funnelNotApplicable": "{{count}} not applicable"
+      "funnelNotApplicable": "{{count}} not applicable",
+      "autoProvisionToggleLabel": "Auto-provision new accounts",
+      "autoProvisionConfirmEnableTitle": "Enable auto-provisioning?",
+      "autoProvisionConfirmEnableBody": "Once enabled, newly authenticated accounts (new accounts only, and only when a residential proxy is already configured) automatically get a container and join the farm. Fail-closed: no proxy means no provisioning. Already-bound and production accounts are unaffected.",
+      "autoProvisionConfirmEnableCta": "Enable",
+      "autoProvisionConfirmDisableTitle": "Disable auto-provisioning?",
+      "autoProvisionConfirmDisableBody": "Once disabled, authenticating an account no longer creates a container. Existing containers and bindings are unaffected; onboard new accounts manually from the account panel.",
+      "autoProvisionConfirmDisableCta": "Disable",
+      "autoProvisionConfirmRestartNote": "This is a runtime override and is not persisted — after an orchestrator restart it falls back to the deployment default.",
+      "autoProvisionToggleSuccessOn": "Auto-provisioning enabled.",
+      "autoProvisionToggleSuccessOff": "Auto-provisioning disabled.",
+      "autoProvisionToggleFailed": "Failed to update auto-provisioning"
     },
     "accounts": {
-      "title": "Account Health",
+      "title": "Account Status",
       "desc": "Accounts available for binding in this environment (from CPA's existing auth file health checks).",
       "empty_title": "No accounts",
       "empty_desc": "No accounts available in this environment yet; upload auth files on the CPA side first.",
@@ -4148,7 +4169,8 @@
       "never": "Never",
       "create_placeholder": "Container id suffix, e.g. acct-07",
       "create_button": "New Container",
-      "create_success": "Container {{id}} created"
+      "create_success": "Container {{id}} created",
+      "show_retired": "Show retired"
     },
     "status": {
       "created": "Created",
@@ -4219,7 +4241,8 @@
       "accountClockCoverage": "Coverage",
       "accountClockCoverageValue": "{{accounts}} accounts / {{containers}} containers",
       "noteBadgeTitle": "Account note / alias",
-      "emptyUnlock": "Unlock conditions: this environment needs a healthy container bound to an account, and the account must have produced requests since the last CPA restart. Once met, cumulative usage will be listed here by account/container. The test side may currently have no healthy container, or the account has produced no traffic."
+      "emptyUnlock": "Unlock conditions: this environment needs a healthy container bound to an account, and the account must have produced requests since the last CPA restart. Once met, cumulative usage will be listed here by account/container. The test side may currently have no healthy container, or the account has produced no traffic.",
+      "subtitle": "Cumulative usage of farm-bound accounts on the CPA side (since CPA last restart, in-memory; not the same as keepalive probe count)."
     },
     "resources": {
       "title": "Resource Usage",
@@ -4229,7 +4252,8 @@
       "noLimit": "no limit",
       "hostTitle": "Host",
       "hostNote": "Includes non-farm processes on the whole machine",
-      "empty": "No container resource data yet"
+      "empty": "No container resource data yet",
+      "subtitle": "Memory / CPU usage of farm containers and the host (includes the whole-host, non-farm-process caveat)."
     },
     "accountHealth": {
       "accountHealthColumn": "Account Auth Status",
@@ -4239,7 +4263,7 @@
       "authState_operator_disabled": "Disabled",
       "authState_unprovisioned": "Unprovisioned",
       "authState_unknown": "Unknown",
-      "unprovisionedHint": "Not onboarded to a container · cannot egress — onboard to the farm to send requests through a residential proxy",
+      "unprovisionedHint": "Not bound to a container: if this account has its own residential proxy, egress still goes safely through it; without a proxy it fails closed and cannot egress. The telemetry device_id isn't container-aligned yet and uses a synthetic pseudonym (it becomes real once onboarded to the farm).",
       "quarantineDetail": "{{reason}} · {{at}}",
       "reauthHint": "Token expired — re-authenticate this account on the Auth Files page",
       "cadenceModelNote": "Keep-alive probes fire at random following an exponential distribution — only a range and a mean, no precise countdown (deliberate design to keep telemetry from becoming predictable).",
@@ -4324,7 +4348,21 @@
       "telemetryAlive_unknown": "Telemetry unknown · pending collection",
       "telemetryAlive_unknownHint": "The telemetry collection plane is not wired up yet; this is expected, not an anomaly.",
       "farmEnrolledBadge_enrolled": "Enrolled",
-      "farmEnrolledBadge_notEnrolled": "Not enrolled · immune to farm governance"
+      "farmEnrolledBadge_notEnrolled": "Not enrolled · immune to farm governance",
+      "menuViewTelemetry": "View telemetry",
+      "menuContainerDetail": "Container detail",
+      "rowMenuLabel": "Account management menu",
+      "rowMenuTrigger": "Manage",
+      "telemetryAlive_openHint": "View this container's telemetry",
+      "telemetryAlive_openAria": "View this container's telemetry (currently {{state}})",
+      "timeColumn": "Account timeline",
+      "timeCreated": "Created",
+      "timeFirstLogin": "First login",
+      "timeAlive": "Alive",
+      "timeBanned": "Banned",
+      "timeEstimateBadge": "Est.",
+      "timeAliveEstimateHint": "No exact failure time; estimated up to now.",
+      "timeBannedPending": "Ban time pending backend support (refresh_disabled_at not exposed)."
     },
     "overview": {
       "running": "Running Containers",
@@ -4337,7 +4375,9 @@
       "generatedAt": "Data as of",
       "generatedAtNote": "(API response generation time, not an exact last poller run timestamp)",
       "probeCostNotWired": "Not wired",
-      "probeCostNotWiredHint": "Probe token cost aggregation is pending P1; no honest data source yet."
+      "probeCostNotWiredHint": "Probe token cost aggregation is pending P1; no honest data source yet.",
+      "downLink": "View offline containers",
+      "alertsLink": "View active alerts"
     },
     "alerts": {
       "title": "Farm Alerts",
@@ -4359,6 +4399,8 @@
       "telemetryCategory": "Telemetry"
     },
     "detail": {
+      "titleLabel": "Account · Device Detail",
+      "titleAccountUnbound": "Unbound account",
       "healthSection": "Health",
       "keepaliveSection": "Keepalive Success Rate & Latency (last 24h, 1h buckets)",
       "successRate": "Success rate",
@@ -4393,7 +4435,13 @@
       "probeTokenGap": "The current aggregation path does not sum tokens_total (see delivery gaps); a trend chart cannot be shown honestly yet, pending a P1/store-layer aggregation column.",
       "eventsSection": "Status / Alert Events",
       "noOpenEvents": "No events currently firing.",
-      "eventsHistoryGap": "Only currently-firing events are shown; this is not yet a full history timeline (see delivery gaps)."
+      "eventsHistoryGap": "Only currently-firing events are shown; this is not yet a full history timeline (see delivery gaps).",
+      "tab_overview": "Overview",
+      "tab_telemetry": "Telemetry",
+      "tab_resources": "Resources",
+      "tab_cadence": "Cadence & usage",
+      "tab_events": "Events",
+      "tabsAria": "Container detail sections"
     },
     "healthReason": {
       "ok": "Healthy",
@@ -4411,7 +4459,7 @@
       "docker_missing_orphaned": "Docker container missing (orphaned)",
       "telemetry_devid_drift": "device_id drift (self-reported value differs from pinned)",
       "telemetry_devid_collision": "device_id collision (multiple containers self-report the same device_id)",
-      "telemetry_host_leak": "outbound host leak (self-reported target deviates from expected)",
+      "telemetry_host_leak": "multiple containers share the same CPA backend host (apiBaseUrlHost clustering · intrinsic correlation vector)",
       "telemetry_silence": "telemetry silence (no self-reported beacon for a long time)",
       "telemetry_entrypoint_mismatch": "entrypoint mismatch (entrypoint deviates from expected)"
     },
@@ -4448,13 +4496,13 @@
       "reauthFailed": "Failed to re-authenticate"
     },
     "telemetry": {
-      "section": "Telemetry content (self-reported beacons)",
-      "disclaimer": "Self-reported / synthetic beacons only prove the reporting pipeline is connected and what the container declares — they are NOT anti-correlation proof. The on-wire (real outbound capture) column below is not wired yet and is marked \"capture pipeline pending\"; it does not mean a real outbound value has been captured.",
-      "scopeBadge": "Scope: self-reported / declared, not on-wire capture",
+      "section": "Telemetry beacons (self-reported + on-wire, labeled per row)",
+      "disclaimer": "Below is this container's telemetry beacon list, mixing two source kinds and labeled per row: \"Declared\" rows are what the container self-reports/declares, while \"on-wire\" rows are captured for real by mitmproxy/ebpf on the container's outbound path. Even on-wire rows only prove this container actually sent these requests — they are NOT cross-account anti-correlation proof. Separately, the \"On-wire\" column in the fingerprint consistency card above is a distinct step that derives each field from beacons and compares it against the declared value — that step is not wired yet, so the column shows a placeholder; that is a different thing from whether raw on-wire beacons were captured.",
+      "scopeBadge": "Scope: beacons include both declared and on-wire, labeled per row; per-field on-wire derivation pending",
       "fieldColumn": "Fingerprint field",
       "declaredColumn": "Declared",
       "onWireColumn": "On-wire",
-      "onWireBanner": "The on-wire outbound capture pipeline is not wired yet; the On-wire column below is placeholder / declared state only and does not represent a completed capture.",
+      "onWireBanner": "The per-field on-wire derivation for this table is not wired yet, so the On-wire column below is a placeholder; that only means the \"derive each field into the consistency check\" step is missing — raw on-wire beacons are already captured in real time, see the rows labeled on-wire in the timeline below.",
       "field_device_id": "device_id",
       "field_entrypoint": "entrypoint",
       "field_api_base_url_host": "api_base_url_host",
@@ -4464,12 +4512,22 @@
       "fresh": "Recent",
       "noBeacons": "No beacon reported in the window.",
       "channelDistribution": "Channel distribution",
-      "timeline": "Beacon timeline (self-reported, newest first)",
+      "timeline": "Telemetry beacon timeline (self-reported + on-wire, labeled per row, newest first)",
       "timelineEmpty": "No beacons (empty is a normal response — the container hasn't reported yet or collection isn't wired).",
-      "source_declared": "Declared",
-      "source_self-report": "Self-report",
-      "source_unknown": "Unknown",
-      "deviceIdFullNote": "device_id here is the full self-reported value (not the list page's masked first 16 chars), for ops self-consistency checks only; drift / collision / host-leak anomalies surface in the alerts panel."
+      "timelineColumnTime": "Time",
+      "timelineColumnChannel": "Channel",
+      "timelineColumnHostPath": "Host / path",
+      "timelineColumnSize": "Size",
+      "timelineShowingRecent": "Showing latest {{limit}} of {{count}}",
+      "timelineShowingAll": "Showing all {{count}}",
+      "timelineExpand": "Show more",
+      "timelineCollapse": "Show less",
+      "rowSourceOnWire": "on-wire · {{source}}",
+      "rowSourceOnWireFull": "on-wire: captured for real by {{source}} on the outbound path",
+      "rowSourceDeclared": "declared · {{source}}",
+      "rowSourceDeclaredFull": "declared: container self-reported ({{source}}), not an outbound capture",
+      "deviceIdFullNote": "device_id here is the full self-reported value (not the list page's masked first 16 chars), for ops self-consistency checks only; drift / collision / host-leak anomalies surface in the alerts panel.",
+      "disclaimerSummary": "Source scope (expand): signals mix declared + on-wire, not a cross-account correlation proof"
     }
   }
 }

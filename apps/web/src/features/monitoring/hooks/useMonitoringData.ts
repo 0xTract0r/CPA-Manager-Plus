@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useTimezone } from '@/hooks/useTimezone';
 import type { MonitoringAnalyticsEventRow } from '@/services/api/usageService';
 import type { AuthFileItem } from '@/types/authFile';
 import type { CredentialInfo } from '@/types/sourceInfo';
@@ -316,6 +317,10 @@ export function useMonitoringData({
   searchApiKeyHash,
   scopeFilters,
 }: UseMonitoringDataParams): UseMonitoringDataReturn {
+  // 订阅全局时区：切换时区时，按天/小时分桶的 dayKey/hourLabel(row 预烘焙)与时间线
+  // 坐标轴标签(buildHourLabel/buildDayLabel)都读同一个全局配置，需要把 timeZone 纳入
+  // allRows / timelineData 的 useMemo 依赖，才能在切换时即时重算、无需刷新页面。
+  const { timeZone } = useTimezone();
   const [authFiles, setAuthFiles] = useState<AuthFileItem[]>([]);
   const [channels, setChannels] = useState<MonitoringChannelMeta[]>([]);
   const [loading, setLoading] = useState(true);
@@ -673,6 +678,8 @@ export function useMonitoringData({
     eventsLoadingMore,
   ]);
 
+  // timeZone 在 buildEventRows 内部间接读取全局 store 来烘焙 dayKey/hourLabel，
+  // exhaustive-deps 看不到这层依赖会误报 unnecessary，此处是有意的缓存失效信号。
   const allRows = useMemo(() => {
     const details = eventsAnalyticsData
       ? buildUsageDetailsFromAnalyticsEvents(displayEventItems)
@@ -686,6 +693,9 @@ export function useMonitoringData({
       modelPrices,
       apiKeyDisplayMap
     ).sort((left, right) => right.timestampMs - left.timestampMs);
+    // buildEventRows 把 row.dayKey/row.hourLabel 以全局时区预烘焙，切换时区需重算；
+    // timeZone 属间接依赖，exhaustive-deps 看不到，故在依赖数组处按需禁用其误报。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     apiKeyDisplayMap,
     authFileMap,
@@ -696,6 +706,7 @@ export function useMonitoringData({
     modelPrices,
     sourceInfoMap,
     usage,
+    timeZone,
   ]);
 
   const rangeFilteredRows = useMemo(
@@ -728,7 +739,10 @@ export function useMonitoringData({
             ),
           }
         : buildTimeline(statsRows, timeRange, customTimeRange),
-    [currentAnalyticsData, customTimeRange, statsRows, timeRange]
+    // 时间线小时/日轴标签(buildHourLabel/buildDayLabel)走全局时区；分析数据路径
+    // (buildTimelineFromAnalytics)不经 statsRows，故必须显式依赖 timeZone 才能切换即时更新。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [currentAnalyticsData, customTimeRange, statsRows, timeRange, timeZone]
   );
   const hourlyDistribution = useMemo(
     () =>

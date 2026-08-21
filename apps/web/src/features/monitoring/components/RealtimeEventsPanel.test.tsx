@@ -3,6 +3,7 @@ import type { TFunction } from 'i18next';
 import { describe, expect, it, vi } from 'vitest';
 import type { AccountDisplayMode } from '@/features/monitoring/accountOverviewState';
 import type { MonitoringEventRow } from '@/features/monitoring/hooks/useMonitoringData';
+import { formatInUtc8 } from '@/utils/datetime';
 import styles from '../MonitoringCenterPage.module.scss';
 import { RealtimeEventsPanel, RealtimeEventsPanelActions } from './RealtimeEventsPanel';
 
@@ -215,17 +216,26 @@ const renderActions = (overrides: { exportRows?: PanelRow[]; hasPrices?: boolean
   );
 
 describe('RealtimeEventsPanel', () => {
-  const expectedDate = new Date(baseRow().timestampMs).toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  });
-  const expectedTime = new Date(baseRow().timestampMs).toLocaleTimeString('en-US', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  });
+  // 组件已迁到全局时区渲染；预期值同样走 formatInUtc8，保持与机器本地时区无关。
+  const expectedDate = formatInUtc8(
+    baseRow().timestampMs,
+    {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    },
+    'en-US'
+  );
+  const expectedTime = formatInUtc8(
+    baseRow().timestampMs,
+    {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    },
+    'en-US'
+  );
 
   it('renders CPA v7.1.18 usage details for failed rows', () => {
     const markup = renderPanel(

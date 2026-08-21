@@ -1,15 +1,19 @@
+import { formatDayAxisUtc8, getUtc8Parts } from '@/utils/datetime';
 import { getRangeBounds as getSharedRangeBounds } from '@/shared/model/timeRange';
 import type { MonitoringCustomTimeRange, MonitoringTimeRange } from './types';
 
 export const padNumber = (value: number) => String(value).padStart(2, '0');
 
-export const buildLocalDayKey = (timestampMs: number) => {
-  const date = new Date(timestampMs);
-  return `${date.getFullYear()}-${padNumber(date.getMonth() + 1)}-${padNumber(date.getDate())}`;
-};
+// 图表按「天」分桶的 key，走全局时区（默认 UTC+8），使分桶/日轴标签与全站展示一致，
+// 不再跟随浏览器本地时区。格式仍为 `YYYY-MM-DD`（formatDayAxisUtc8 用 en-CA 保证顺序）。
+export const buildLocalDayKey = (timestampMs: number) =>
+  formatDayAxisUtc8(timestampMs) || '';
 
-export const buildHourLabel = (timestampMs: number) =>
-  `${padNumber(new Date(timestampMs).getHours())}:00`;
+// 小时轴标签 `HH:00`，走全局时区（默认 UTC+8），替换手工 getHours（读浏览器本地时区）。
+export const buildHourLabel = (timestampMs: number) => {
+  const parts = getUtc8Parts(timestampMs);
+  return `${parts ? parts.hour : '00'}:00`;
+};
 
 export const buildDayLabel = (dayKey: string) => dayKey.slice(5).replace('-', '/');
 

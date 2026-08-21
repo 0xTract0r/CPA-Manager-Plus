@@ -15,6 +15,11 @@ export interface FarmBindingView {
   account: string;
   auth_index?: number;
   bound_at: string;
+  // 绑定账号的 CPA 备注名（dto.go bindingView.Note，cpa.AuthFileEntry.Note 的
+  // 容器视角投影，如 "AC11-CLAUDE-GOOGLE"）。供容器池「绑定账号」列优先展示
+  // 备注名而非裸邮箱（#52）。留空表示该账号没有设置 note，或本次请求未能拉到
+  // CPA 账号快照（中性回退，不是「确认没有备注」），前端回退到脱敏邮箱。
+  note?: string;
 }
 
 // GET /api/farm/containers/{id}/... 时序响应共用的分桶资源快照（dto.go
@@ -88,6 +93,13 @@ export interface FarmContainerView {
   // 其它文案。未绑定容器留空（无账号可判定）。
   account_auth_status?: string;
   account_auth_reason?: string;
+  // R5-2 改绑防误绑：该容器上次绑定过的账号标识（备注名 / 邮箱 / auth 文件名，
+  // 编排器 containerView.LastBoundAccount 透传，与 bindingView.Account 同源脱敏
+  // 口径）。**仅解绑过、当前 status=down 的容器有值**——供 UI 显示「上次绑定：X
+  // （已解绑）」，让 operator 一眼看清该容器历史归属，而不是拿裸 device_id hex
+  // 当账号误认。当前有绑定（binding 非空）或从未绑过时缺失（omitempty）。前端用
+  // resolveBindingIdentity / maskAccountEmail 走与全站一致的脱敏展示。
+  last_bound_account?: string;
 }
 
 // 容器状态取值（store.Status* 常量，供前端徽标着色用；未知值按 fallback 灰色处理）
@@ -225,6 +237,26 @@ export interface FarmAccountEntry {
   disabled: boolean;
   last_refresh?: string;
   reauth_url?: string;
+  // 账号卡时间字段（#50，编排器 accountView 内嵌 cpa.AuthFileEntry 透传）：
+  //  - created_at：core 侧该 auth 记录首次装载时间的近似值（RFC3339），**不是**
+  //    Anthropic profile 的账号注册时间（真源需 quota snapshots 端点，编排器未
+  //    接入，见 dto.go 诚实边界注释），前端展示不应称其为「账号注册时间」。
+  //  - first_identity_at：首次登录/接入时间（源自
+  //    account_settings.runtime_identity.current.created_at，RFC3339），是 #50
+  //    描述「首次登录」的等价字段。
+  // 两者均 omitempty，缺失时前端展示 '—'，不伪造。
+  created_at?: string;
+  first_identity_at?: string;
+  // R5-1（AC11）新增账号级时间字段（编排器 accountView 透传，Wave1 起补齐）：
+  //  - account_registered_at：Anthropic profile 的**真实注册时间**（RFC3339），
+  //    区别于 created_at（core 装载近似值）。「创建」列优先展示此字段，缺失才
+  //    降级到 created_at 并标注「装载近似」。omitempty，缺失时按 created_at 兜底。
+  //  - refresh_disabled_at：**真实封禁时刻**（RFC3339，账号级）。是 refresh 被
+  //    core 关停/账号被禁用的时刻，供「封禁」列展示与存活终点钉值（见
+  //    utils/accountTime.ts deriveFarmAccountTimeLabels）。omitempty，未封禁或
+  //    后端未投影时缺失，前端显 '—'（不再是 #57 的"永远待补"占位）。
+  account_registered_at?: string;
+  refresh_disabled_at?: string;
   proxy_url?: string;
   device_id?: string;
   success?: number;
@@ -460,6 +492,18 @@ export interface FarmCapacityResponse {
   proxy_coverage: FarmProxyCoverageView | null;
 }
 
+// PATCH /api/farm/config 请求体（handlers.go handleUpdateConfig）：运行时翻转
+// 「认证即自动供」灰度开关。当前只暴露 auto_provision_enabled 一个可写字段。
+export interface FarmConfigUpdateRequest {
+  auto_provision_enabled: boolean;
+}
+
+// PATCH /api/farm/config 成功响应体（200）：回显设置后的开关真值。前端以此为准
+// 更新展示，而不是乐观假设一定成功（RWMutex 保护，后端设置后的值即返回值）。
+export interface FarmConfigResponse {
+  auto_provision_enabled: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // P0-9 前端·概览 + 下钻 + 告警（design.md 决策6，字段名照抄
 // services/farm-orchestrator/internal/httpapi/dto.go 的 P0-4 只读监测 API 段）
@@ -638,11 +682,16 @@ export interface FarmProbeCadenceView {
 // （services/farm-orchestrator/internal/httpapi/telemetry_beacon.go）
 // ---------------------------------------------------------------------------
 
-// **诚实边界（写进类型也写进 UI）**：beacon 是容器「自报 / 声明」的遥测内容
-// （source ∈ declared/self-report，存储层把未知值归一到 unknown），只证明
-// 「上报管道连通 + 容器声明了什么」，**不构成反关联证明**——它不是从真实出站
-// 流量里抓到的 on-wire 值。真正的 on-wire 抓取管道尚未落地，前端展示时 on-wire
-// 一列必须显式灰置标注「待抓取管道，尚未证明」，不得让界面暗示已抓到真实出站值。
+// **来源边界（写进类型也写进 UI，逐条标注不笼统）**：beacon 列表混合两类来源，
+// 由后端 source_kind 分区（store.TelemetrySourceKind）：
+//   - declared：容器「自报 / 声明」（存储层 source=unknown 折叠），只证明「上报
+//     管道连通 + 容器声明了什么」，**不是**从真实出站流量抓到的 on-wire 值；
+//   - on_wire：mitmproxy / ebpf 在容器出站链路真实抓取（存储层 source=mitmproxy/ebpf）。
+// 展示层必须**逐条按 source_kind 标注**（declared 行标 declared、on_wire 行标
+// on-wire·来源），不得对整列笼统 claim on-wire；即便 on_wire 行也只证明该容器确实
+// 发出过这些请求，不构成跨账号反关联证明。另一件独立的事：指纹自洽卡的「出站实测
+// (on-wire)」一列是把 beacon **逐字段派生**进自洽比对这一步，尚未接入（列内占位），
+// 与「原始 on_wire beacon 是否已实时采集」不是一回事，文案不能混为一谈。
 //
 // GET /api/farm/containers/{id}/beacons?limit=<默认50，上限500> 响应体是**裸 JSON
 // 数组**（不是包裹对象），按 captured_at 降序；空容器返回 []（非 null）；
@@ -667,15 +716,44 @@ export interface FarmContainerBeaconView {
   api_base_url_host: string;
   // 自报入口标识（entrypoint，ParseBeacon 抽取）。
   entrypoint: string;
-  // 上报来源分类：declared / self-report / unknown（存储层归一后的值），
-  // 前端据此提示这些值是「声明/自报」而非「抓包实测」。
+  // 细粒度上报来源（存储层归一后的值）：unknown（declared 折叠）/ mitmproxy /
+  // ebpf。前端优先用 source_kind 分区标注，raw source 仅作细粒度补充展示。
   source: string;
+  // 读路径分区维度（telemetry_beacon.go beaconView.SourceKind）：declared（source=
+  // unknown 折叠）/ on_wire（source=mitmproxy/ebpf 真实出站抓取）。后端恒返回；旧
+  // 后端缺该字段时前端从 source 兜底派生（见 resolveBeaconSourceKind），故声明可选。
+  source_kind?: FarmTelemetrySourceKind;
 }
 
 // GET /api/farm/containers/{id}/beacons 响应体：裸数组（captured_at 降序）。
 export type FarmContainerBeaconsResponse = FarmContainerBeaconView[];
 
-// beacon 自洽卡的三个比对字段（declared 列现在能填，on-wire 列一律灰置待抓取）。
+// beacon 读路径分区维度（store.TelemetrySourceKind / telemetry_beacon.go
+// beaconView.SourceKind）：declared=容器自报/声明；on_wire=mitmproxy/ebpf 真实
+// 出站抓取。前端据此逐条准确标注来源，不对整列笼统 claim on-wire。
+export const FARM_TELEMETRY_SOURCE_KINDS = ['declared', 'on_wire'] as const;
+export type FarmTelemetrySourceKind = (typeof FARM_TELEMETRY_SOURCE_KINDS)[number];
+
+// 对应 source_kind=on_wire 的细粒度 source 值集合（真实出站抓取管道产物）。
+const FARM_ON_WIRE_BEACON_SOURCES: ReadonlySet<string> = new Set(['mitmproxy', 'ebpf']);
+
+/**
+ * 归一某条 beacon 的读路径分区：优先信后端 source_kind；缺失（旧后端）时从细粒度
+ * source 兜底派生（mitmproxy/ebpf → on_wire，其余含 unknown → declared）。供
+ * FarmTelemetryPanel 逐条准确标注来源用。
+ */
+export function resolveBeaconSourceKind(
+  beacon: Pick<FarmContainerBeaconView, 'source' | 'source_kind'>
+): FarmTelemetrySourceKind {
+  if (beacon.source_kind === 'declared' || beacon.source_kind === 'on_wire') {
+    return beacon.source_kind;
+  }
+  return FARM_ON_WIRE_BEACON_SOURCES.has(beacon.source) ? 'on_wire' : 'declared';
+}
+
+// beacon 指纹自洽卡的三个比对字段（declared 列现在能填；on-wire 列是「把 beacon
+// 逐字段派生进自洽比对」这一独立步骤，尚未接入、列内占位——与「原始 on_wire beacon
+// 是否已在下方时间线实时呈现」是两回事，不要混为一谈）。
 export const FARM_TELEMETRY_FINGERPRINT_FIELDS = [
   'device_id',
   'entrypoint',

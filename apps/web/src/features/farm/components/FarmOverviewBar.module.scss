@@ -52,6 +52,35 @@
   min-width: 0;
 }
 
+// 可点磁贴（离线容器 / 活跃告警）：抹掉 button / a 的原生外观，复用卡片样式并补
+// hover / focus-visible / active 态。不设 color，让 tone 类（.ok/.warn/.err/.idle）
+// 继续驱动图标语义色。
+.kpiTileClickable {
+  cursor: pointer;
+  appearance: none;
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    transform 0.05s ease;
+
+  &:hover {
+    border-color: var(--primary-color);
+    background: var(--bg-secondary);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+  }
+
+  &:active {
+    transform: translateY(1px);
+  }
+}
+
 // 语义色三重编码（色 + 图标 + 文案）：图标本身已随 tone 变化含义，边框色再
 // 强化一层，不单靠颜色传达（design.md 决策6 a11y 要求）。
 .ok {

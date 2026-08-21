@@ -160,6 +160,7 @@
 }
 
 .language-menu,
+.timezone-menu,
 .theme-menu,
 .visual-effects-menu {
   position: relative;
@@ -173,6 +174,7 @@
 }
 
 .language-menu-popover,
+.timezone-menu-popover,
 .theme-menu-popover,
 .visual-effects-menu-popover {
   position: absolute;
@@ -187,7 +189,8 @@
   -webkit-backdrop-filter: var(--glass-backdrop-filter);
 }
 
-.language-menu-popover {
+.language-menu-popover,
+.timezone-menu-popover {
   width: max-content;
   min-width: 0;
   max-width: calc(100vw - 24px);
@@ -197,7 +200,8 @@
   gap: 2px;
 }
 
-.language-menu-option {
+.language-menu-option,
+.timezone-menu-option {
   width: auto;
   min-width: 100%;
   border: 0;
@@ -243,6 +247,7 @@
 
 [data-theme='white'] {
   .language-menu-popover,
+  .timezone-menu-popover,
   .theme-menu-popover,
   .visual-effects-menu-popover {
     border-color: color-mix(in srgb, var(--primary-color) 18%, var(--app-border-strong));
@@ -323,6 +328,7 @@
 [data-visual-effects='reduced'] {
   .navbar,
   .language-menu-popover,
+  .timezone-menu-popover,
   .theme-menu-popover,
   .visual-effects-menu-popover,
   .sidebar,
@@ -337,6 +343,7 @@
 @media (prefers-reduced-motion: reduce), (prefers-reduced-transparency: reduce) {
   .navbar,
   .language-menu-popover,
+  .timezone-menu-popover,
   .theme-menu-popover,
   .visual-effects-menu-popover,
   .sidebar,
@@ -545,6 +552,17 @@
     color: var(--sidebar-active-text-color);
     font-weight: 600;
   }
+}
+
+// 农场分组下的持久子导航项（账号状态/容器池/资源/用量）：相对父项「农场」轻微缩进，
+// 视觉上表达从属层级。仅在展开显示标签时缩进；折叠为纯图标态（.collapsed 且非移动端
+// .open）回退默认外边距，保持图标列与其它项对齐。
+.nav-item-sub {
+  margin-left: 30px;
+}
+
+.sidebar.collapsed:not(.open) .nav-item-sub {
+  margin-left: 8px;
 }
 
 .nav-icon {

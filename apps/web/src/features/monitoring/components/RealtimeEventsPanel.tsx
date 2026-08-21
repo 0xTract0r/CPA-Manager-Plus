@@ -41,6 +41,7 @@ import { useNotificationStore } from '@/stores';
 import { copyToClipboard } from '@/utils/clipboard';
 import { downloadBlob } from '@/utils/download';
 import { maskSensitiveText, truncateText } from '@/utils/format';
+import { formatInUtc8 } from '@/utils/datetime';
 import { formatCompactNumber, formatUsd } from '@/utils/usage';
 import {
   buildEventExportCsv,
@@ -297,32 +298,41 @@ const getRealtimeDurationToneClass = (value: number | null | undefined) => {
   return styles.goodText;
 };
 
-const formatRealtimeDateParts = (timestampMs: number, locale: string) => {
-  const date = new Date(timestampMs);
-  return {
-    date: date.toLocaleDateString(locale, {
+const formatRealtimeDateParts = (timestampMs: number, locale: string) => ({
+  date: formatInUtc8(
+    timestampMs,
+    {
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
-    }),
-    time: date.toLocaleTimeString(locale, {
+    },
+    locale
+  ),
+  time: formatInUtc8(
+    timestampMs,
+    {
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',
       hour12: false,
-    }),
-  };
-};
+    },
+    locale
+  ),
+});
 
 const formatHeaderRecoverAt = (value: number | null | undefined, locale: string) => {
   if (!value || !Number.isFinite(value)) return '';
-  return new Date(value).toLocaleString(locale, {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
+  return formatInUtc8(
+    value,
+    {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    },
+    locale
+  );
 };
 
 const buildHeaderDiagnosticParts = (

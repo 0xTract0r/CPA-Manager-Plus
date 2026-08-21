@@ -303,8 +303,10 @@ describe('formatMonitoringSummaryScopeText', () => {
       formatMonitoringSummaryScopeText('custom', localeT, { mode: 'hours', hours: 20 }, 'zh-CN')
     ).toBe('当前统计范围：最近 20 小时');
 
-    const startMs = new Date('2026-07-01T00:00:00').getTime();
-    const endMs = new Date('2026-07-14T12:00:00').getTime();
+    // 用固定 UTC 瞬间：映射到全局展示时区（默认 Asia/Shanghai, UTC+8）恰为
+    // 07-01 00:00 / 07-14 12:00，使断言与运行机器本地时区无关。
+    const startMs = Date.UTC(2026, 5, 30, 16, 0, 0);
+    const endMs = Date.UTC(2026, 6, 14, 4, 0, 0);
     expect(
       formatMonitoringSummaryScopeText(
         'custom',
@@ -325,8 +327,10 @@ describe('formatMonitoringSummaryScopeText', () => {
       formatMonitoringCustomRangeCompactLabel({ mode: 'hours', hours: 20 }, 'zh-CN', localeT)
     ).toBe('最近20小时');
 
-    const startMs = new Date('2026-07-01T00:00:00').getTime();
-    const endMs = new Date('2026-07-14T12:00:00').getTime();
+    // 用固定 UTC 瞬间：映射到全局展示时区（默认 Asia/Shanghai, UTC+8）恰为
+    // 07-01 00:00 / 07-14 12:00，使断言与运行机器本地时区无关。
+    const startMs = Date.UTC(2026, 5, 30, 16, 0, 0);
+    const endMs = Date.UTC(2026, 6, 14, 4, 0, 0);
     expect(
       formatMonitoringCustomRangeCompactLabel({ mode: 'range', startMs, endMs }, 'zh-CN', localeT)
     ).toBe('07/01~07/14');

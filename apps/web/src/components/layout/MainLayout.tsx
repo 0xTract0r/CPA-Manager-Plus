@@ -11,9 +11,13 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { PageTransition } from '@/components/common/PageTransition';
+import { TimezoneMenu } from '@/components/layout/TimezoneMenu';
 import { MainRoutes } from '@/router/MainRoutes';
 import {
+  IconBot,
+  IconChartLine,
   IconGithub,
+  IconModelCluster,
   IconSidebarAuthFiles,
   IconSidebarConfig,
   IconSidebarDashboard,
@@ -26,6 +30,7 @@ import {
   IconSidebarQuota,
   IconSidebarSystem,
   IconSidebarUsage,
+  IconTrendingUp,
 } from '@/components/ui/icons';
 import { INLINE_LOGO_JPEG } from '@/assets/logoInline';
 import {
@@ -67,6 +72,11 @@ const sidebarIcons: Record<string, ReactNode> = {
   monitoring: <IconSidebarMonitor size={SIDEBAR_ICON_SIZE} />,
   // 农场（Device Farm）迁移第一刀：暂复用监控图标，专属图标留后续精修切片。
   farm: <IconSidebarMonitor size={SIDEBAR_ICON_SIZE} />,
+  // 农场持久子导航项图标沿用农场页操作卡的图标风格（账号/容器/资源/用量）。
+  farmAccounts: <IconBot size={SIDEBAR_ICON_SIZE} />,
+  farmContainers: <IconModelCluster size={SIDEBAR_ICON_SIZE} />,
+  farmResources: <IconChartLine size={SIDEBAR_ICON_SIZE} />,
+  farmUsage: <IconTrendingUp size={SIDEBAR_ICON_SIZE} />,
   plugins: <IconSidebarPlugins size={SIDEBAR_ICON_SIZE} />,
   config: <IconSidebarConfig size={SIDEBAR_ICON_SIZE} />,
   logs: <IconSidebarLogs size={SIDEBAR_ICON_SIZE} />,
@@ -232,6 +242,9 @@ type NavItem = {
   shortLabel?: string;
   icon: ReactNode;
   exact?: boolean;
+  // 持久子导航项（农场分组下的账号状态/容器池/资源/用量）加缩进样式，
+  // 视觉上归属到上方的「农场」父项。
+  isSub?: boolean;
 };
 
 interface MainLayoutProps {
@@ -546,6 +559,39 @@ export function MainLayout({ routeBase = '', demoMode = false }: MainLayoutProps
       label: t('nav.farm', { defaultValue: '农场' }),
       shortLabel: navShortLabel('nav.farm', t('nav.farm', { defaultValue: '农场' })),
       icon: sidebarIcons.farm,
+      // 精确匹配：/farm/<section> 子页下父项「农场」不再高亮，交给对应子项。
+      exact: true,
+    },
+    // 农场子导航项：NavLink 真正导航到各自的独立路由整页（账号状态 / 容器池 /
+    // 资源占用 / 用量明细），不再是打开右侧抽屉。容器详情 /farm/containers/:id
+    // 归属「容器池」子项高亮（matchesNavPath 的 startsWith 前缀匹配）。
+    {
+      path: '/farm/accounts',
+      label: t('farm.accounts.title'),
+      shortLabel: t('farm.accounts.title'),
+      icon: sidebarIcons.farmAccounts,
+      isSub: true,
+    },
+    {
+      path: '/farm/containers',
+      label: t('farm.containers.title'),
+      shortLabel: t('farm.containers.title'),
+      icon: sidebarIcons.farmContainers,
+      isSub: true,
+    },
+    {
+      path: '/farm/resources',
+      label: t('farm.resources.title'),
+      shortLabel: t('farm.resources.title'),
+      icon: sidebarIcons.farmResources,
+      isSub: true,
+    },
+    {
+      path: '/farm/usage',
+      label: t('farm.usage.detailTitle'),
+      shortLabel: t('farm.usage.detailTitle'),
+      icon: sidebarIcons.farmUsage,
+      isSub: true,
     },
     ...(fileLogsAvailable
       ? [
@@ -863,6 +909,9 @@ export function MainLayout({ routeBase = '', demoMode = false }: MainLayoutProps
               )}
             </div>
 
+            {/* 全局显示时区开关（TZ2/#49）：与语言/主题并列的全局偏好，非 per-account。 */}
+            <TimezoneMenu />
+
             <div className={`theme-menu ${themeMenuOpen ? 'open' : ''}`} ref={themeMenuRef}>
               <Button
                 variant="ghost"
@@ -999,7 +1048,9 @@ export function MainLayout({ routeBase = '', demoMode = false }: MainLayoutProps
                     to={prefixRouteBase(item.path, routeBase)}
                     end={item.path === '/' || item.exact}
                     className={({ isActive }) =>
-                      `nav-item ${isActive || matchesNavPath(item, currentPath) ? 'active' : ''}`
+                      `nav-item ${item.isSub ? 'nav-item-sub' : ''} ${
+                        isActive || matchesNavPath(item, currentPath) ? 'active' : ''
+                      }`
                     }
                     onClick={() => setSidebarOpen(false)}
                     title={item.label}

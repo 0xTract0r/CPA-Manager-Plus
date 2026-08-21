@@ -35,7 +35,12 @@
 }
 
 .healthGrid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  // 固定 4 列在窄的桌面右列(container 是 1.5fr:1fr 两栏、健康卡挤在 1fr 侧)下会把
+  // 每张卡压到几十像素，标签/数值双双被裁成 "Usag…"。改用与 .systemGrid 一致的
+  // auto-fit + minmax 换行：卡片不够宽时自动换行，而不是强行挤压成 4 列。
+  // minmax 取 240px 是因为最长的健康卡标签(如 "Request Record Reader" / 俄语更长)
+  // 需要这么宽的内容区才不会被省略号截断。
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
 }
 
 .item, .healthItem {
@@ -222,6 +227,23 @@
   .warnText { color: #f59e0b; }
   .errorText { color: #ef4444; }
   .mutedText { color: var(--text-tertiary); }
+}
+
+// 移动端(≤560px，含真机复验的 390 宽度)健康卡是 2 列布局(见上方同断点的
+// .healthGrid 规则)，单卡可用宽度更窄，最长的健康卡标签(如 "Request Record
+// Reader")仍会被基础 .content .label 的单行省略号裁断（实测 clientWidth=105 <
+// scrollWidth=123）。这里只放行 .healthItem 内的标签换行，不动 .item(System
+// Overview，标签本来就短，未复现过截断)。选择器用 3 层类名
+// (.healthItem .content .label) 比基础规则的 .content .label 更具体，且规则本身
+// 写在基础 .content 块之后，双重保证覆盖生效；只在 max-width:560px 内生效，不影响
+// 已验证正常的 1440/768 单行省略号表现。
+@media (max-width: 560px) {
+  .healthItem .content .label {
+    overflow: visible;
+    white-space: normal;
+    word-break: break-word;
+    line-height: 1.3;
+  }
 }
 
 .badge {

@@ -24,10 +24,11 @@ export interface UseFarmContainerBeaconsResult {
  * 短生命周期视图，不常驻），不接入轮询——遥测 beacon 不是高频刷新的运行态指标，
  * 需要最新数据时用户重开抽屉或调用 reload 即可。
  *
- * **诚实边界**：这些 beacon 是容器「自报 / 声明」内容（source ∈
- * declared/self-report/unknown），只证明上报管道连通，不构成反关联 on-wire
- * 证明；展示层（<FarmTelemetryPanel>）据此把 on-wire 一列灰置标注「待抓取
- * 管道」，本 hook 只负责取数与错误态透传，不做任何「已证明」的暗示。
+ * **来源边界**：返回的 beacon 列表混合两类来源，由后端 source_kind 分区
+ * （declared=容器自报/声明；on_wire=mitmproxy/ebpf 真实出站抓取）。本 hook 不做
+ * 过滤、原样透传裸数组；逐条来源标注由展示层（<FarmTelemetryPanel>）按 source_kind
+ * 完成——on_wire 行标 on-wire、declared 行标 declared，绝不对整列笼统 claim on-wire。
+ * 指纹自洽卡的 on-wire 列（逐字段派生）是另一件尚未接入的独立事，与本 hook 无关。
  *
  * 请求失败时把 error 原样透传给调用方就地呈现（AsyncPanel error 态），不吞掉
  * 也不伪造空成功——空列表只应来自后端真实返回的 []（空容器/窗口内无样本）。

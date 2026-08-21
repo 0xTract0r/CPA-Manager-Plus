@@ -35,6 +35,8 @@ import type {
   FarmAlertsResponse,
   FarmBindingResponse,
   FarmCapacityResponse,
+  FarmConfigResponse,
+  FarmConfigUpdateRequest,
   FarmContainerBeaconsResponse,
   FarmContainerDetailView,
   FarmContainerEventsResponse,
@@ -155,6 +157,16 @@ export const farmApi = {
   // 开关 + per-account provisioning 列表。auth-gated，与其它 /api/farm/* 同鉴权；
   // 自动供给关闭时 provisioning 恒为空数组（非 null），前端可直接判空。
   getCapacity: () => farmClient.get<FarmCapacityResponse>('/api/farm/capacity'),
+
+  // 运行时翻转「认证即自动供」灰度开关（PATCH /api/farm/config，handlers.go
+  // handleUpdateConfig）：行为变更端点（开=新认证账号自动建容器接入农场），与其它
+  // 写端点同 farm mgmt-key 中间件鉴权。请求体只带 auto_provision_enabled，成功
+  // 200 回显设置后的真值（RWMutex 保护）。调用方（useFarmAutoProvision）先弹二次
+  // 确认再调用，成功后按响应值/重拉 capacity 刷新，失败保持原值并 toast 报错。
+  // 重启后回落部署侧默认（compose/workflow 注入的 FARM_AUTO_PROVISION_ENABLED），
+  // 该运行时覆盖不持久。
+  updateConfig: (request: FarmConfigUpdateRequest) =>
+    farmClient.patch<FarmConfigResponse>('/api/farm/config', request),
 
   // ---------------------------------------------------------------------
   // P0-9：概览 + 下钻 + 告警消费的只读监测 API（P0-4 已交付，P0-5 见下方注释）

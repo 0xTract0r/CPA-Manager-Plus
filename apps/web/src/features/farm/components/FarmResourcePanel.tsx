@@ -60,14 +60,16 @@ function ResourceBar({
  * "整机含非农场进程"口径说明，原样展示，不另造措辞；取不到时后端已把数值
  * 字段回退为 0，这里不再臆造。
  */
-export function FarmResourcePanel() {
+export function FarmResourcePanel({ hideHeading = false }: { hideHeading?: boolean } = {}) {
   const { t } = useTranslation();
   const { containers, host, loading, error, reload } = useFarmResources();
 
   return (
     <div className={styles.panel} data-testid="farm-resource-panel">
+      {/* hideHeading：作为独立整页（FarmResourcesPage）承载时，标题由页头 h1 提供，
+          这里隐藏面板内重复标题，仅保留刷新动作。 */}
       <div className={styles.header}>
-        <div className={styles.title}>{t('farm.resources.title')}</div>
+        {hideHeading ? <span /> : <div className={styles.title}>{t('farm.resources.title')}</div>}
         <Button
           variant="ghost"
           size="sm"

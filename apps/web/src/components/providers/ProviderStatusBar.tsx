@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { StatusBarData, StatusBlockDetail } from '@/utils/recentRequests';
+import { getUtc8Parts } from '@/utils/datetime';
 import defaultStyles from '@/features/aiProviders/AiProvidersPage.module.scss';
 
 /**
@@ -26,10 +27,9 @@ function rateToColor(rate: number): string {
 }
 
 function formatTime(timestamp: number): string {
-  const date = new Date(timestamp);
-  const h = date.getHours().toString().padStart(2, '0');
-  const m = date.getMinutes().toString().padStart(2, '0');
-  return `${h}:${m}`;
+  // 走全局时区（默认 UTC+8），替换手工 getHours/getMinutes（读浏览器本地时区）。
+  const parts = getUtc8Parts(timestamp);
+  return parts ? `${parts.hour}:${parts.minute}` : '--:--';
 }
 
 function formatSuccessRate(rate: number): string {

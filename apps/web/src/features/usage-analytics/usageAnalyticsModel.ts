@@ -23,6 +23,7 @@ import { buildMonitoringSourceDisplay } from '@/features/monitoring/model/source
 import type { MonitoringAuthMeta, MonitoringChannelMeta } from '@/features/monitoring/model/types';
 import { getRangeBounds as getSharedRangeBounds } from '@/shared/model/timeRange';
 import type { CredentialInfo } from '@/types/sourceInfo';
+import { getUtc8Parts } from '@/utils/datetime';
 import { buildSourceInfoMap } from '@/utils/sourceResolver';
 import { formatCompactNumber, formatUsd } from '@/utils/usage';
 
@@ -579,15 +580,21 @@ export const parseDateTimeLocalValue = (value: string) => {
   return Number.isFinite(timestamp) ? timestamp : null;
 };
 
+// 趋势/时间线图表的分桶轴标签(MM/DD 或 MM/DD HH:00)。走全局时区配置(默认 UTC+8)，
+// 与本页热力图轴、监控页时间线轴(buildHourLabel/buildDayLabel)保持一致，切换全局时区时
+// 随之更新，不再跟随浏览器本地时区。注意：这与自定义范围的 datetime-local 输入
+// (formatDateTimeLocalValue/parseDateTimeLocalValue)是两码事——那两个绑定 HTML 原生
+// datetime-local 控件，天然按浏览器本地时区，故有意保留本地、不在此处迁移。
 export const formatLocalBucketLabel = (
   timestampMs: number,
   granularity: UsageAnalyticsResolvedGranularity
 ) => {
-  const date = new Date(timestampMs);
+  const parts = getUtc8Parts(timestampMs);
+  if (!parts) return '';
   if (granularity === 'day') {
-    return `${padDateUnit(date.getMonth() + 1)}/${padDateUnit(date.getDate())}`;
+    return `${parts.month}/${parts.day}`;
   }
-  return `${padDateUnit(date.getMonth() + 1)}/${padDateUnit(date.getDate())} ${padDateUnit(date.getHours())}:00`;
+  return `${parts.month}/${parts.day} ${parts.hour}:00`;
 };
 
 export const formatLocalDateTime = (timestampMs: number, locale: string) =>

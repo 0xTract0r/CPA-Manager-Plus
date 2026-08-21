@@ -1,5 +1,6 @@
 import type { TFunction } from 'i18next';
 import type { UsageCatchUpRunStatus } from '@/services/api/usageService';
+import { formatInUtc8 } from '@/utils/datetime';
 import type { MonitoringStatusTone } from './types';
 
 export interface UsageCatchUpPresentation {
@@ -36,7 +37,11 @@ export function presentUsageCatchUpStatus(
   if (!found || !status) return null;
 
   const lastRunLabel = status.lastRunAtMs
-    ? new Date(status.lastRunAtMs).toLocaleTimeString(locale)
+    ? formatInUtc8(
+        status.lastRunAtMs,
+        { hour: 'numeric', minute: 'numeric', second: 'numeric' },
+        locale
+      )
     : '--';
   const statusLabel = t(`monitoring.usage_catchup_status_${status.lastStatus}`, {
     defaultValue: status.lastStatus,

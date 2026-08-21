@@ -1101,7 +1101,7 @@
     "account_settings_device_id_source_synthetic": "合成",
     "account_settings_device_id_source_drift": "漂移",
     "account_settings_device_id_source_unknown": "未知",
-    "account_settings_device_id_unprovisioned_warning": "未綁定容器·不可出站——接入農場後才能經住宅代理請求",
+    "account_settings_device_id_unprovisioned_warning": "未綁定容器：若本帳號已配住宅代理，出站仍安全經該代理；未配代理則 fail-closed 不出站。遙測 device_id 未經容器對齊，暫用合成假名（接入農場後轉真）。",
     "account_settings_synthetic_device_id_pending": "尚未派生",
     "account_settings_synthetic_device_id_hint": "唯讀。core 派生的每帳號穩定合成假名；只展示前 16 位 hex，真實值不暴露。為空表示 core 尚未派生。",
     "account_settings_raw_json_details": "進階：原始 auth JSON（可編輯）",
@@ -2529,7 +2529,7 @@
     "column_auths": "憑證數",
     "column_models": "模型數",
     "column_success_rate": "成功率",
-    "column_success_rate_short": "成功",
+    "column_success_rate_short": "成功率",
     "realtime_success_rate_hint": "該帳號 + 供應商 + 模型 + 渠道組合的滾動累計成功率，並非本行單次請求的結果。",
     "column_tokens": "Tokens",
     "column_cost": "花費",
@@ -3891,6 +3891,21 @@
     "english": "English",
     "russian": "Русский"
   },
+  "timezone": {
+    "switch": "顯示時區",
+    "hint": "全站時間顯示時區（全域設定，非按帳號）",
+    "zones": {
+      "local": "瀏覽器本地",
+      "shanghai": "上海",
+      "utc": "UTC",
+      "tokyo": "東京",
+      "kolkata": "印度",
+      "moscow": "莫斯科",
+      "london": "倫敦",
+      "newYork": "紐約",
+      "losAngeles": "洛杉磯"
+    }
+  },
   "theme": {
     "switch": "主題",
     "white": "明亮",
@@ -4024,14 +4039,9 @@
       "connectionSettings": "連線設定",
       "configureNow": "立即設定",
       "notConfiguredDesc": "高階覆蓋填寫的編排器位址或 Admin Key 可能有誤，或該編排器暫時無法存取。請檢查設定，或清空兩項以改用同源代理。",
-      "operationsTitle": "管理入口",
-      "operationsDesc": "長表與明細按需從右側開啟，首屏保持聚焦於健康與告警。",
-      "openSection": "開啟",
-      "accountsEntryDesc": "查看帳號認證態、容器運行態、隔離與重新授權入口。",
-      "containersEntryDesc": "篩選容器池，建立、綁定、解綁、退役並查看詳情。",
-      "resourcesEntryDesc": "查看整機與容器記憶體、CPU 水位及限制口徑。",
-      "usageEntryDesc": "查看帳號與容器的累計 Token、請求數和費用口徑。",
-      "backToContainers": "返回容器池"
+      "backToContainers": "返回容器池",
+      "backToAccounts": "返回帳號列表",
+      "collapseAlerts": "收起"
     },
     "config": {
       "title": "編排器連線設定",
@@ -4101,10 +4111,21 @@
       "funnelBlockedProxy": "{{count}} 待代理",
       "funnelBlockedCapacity": "{{count}} 待容量",
       "funnelAwaitOnboard": "{{count}} 待接入",
-      "funnelNotApplicable": "{{count}} 不適用"
+      "funnelNotApplicable": "{{count}} 不適用",
+      "autoProvisionToggleLabel": "新帳號自動供給",
+      "autoProvisionConfirmEnableTitle": "開啟自動供給？",
+      "autoProvisionConfirmEnableBody": "開啟後：新驗證的帳號（僅新帳號、需已設定住宅代理）將自動建立容器接入農場；fail-closed，無代理不供給；不影響已綁定 / 生產舊帳號。",
+      "autoProvisionConfirmEnableCta": "開啟",
+      "autoProvisionConfirmDisableTitle": "關閉自動供給？",
+      "autoProvisionConfirmDisableBody": "關閉後：驗證帳號不再自動新建容器；已有容器與綁定不受影響，新帳號請在帳號面板手動「接入農場」。",
+      "autoProvisionConfirmDisableCta": "關閉",
+      "autoProvisionConfirmRestartNote": "這是執行階段覆寫、不會持久化：編排器重啟後會回落到部署端預設值。",
+      "autoProvisionToggleSuccessOn": "自動供給已開啟。",
+      "autoProvisionToggleSuccessOff": "自動供給已關閉。",
+      "autoProvisionToggleFailed": "更新自動供給開關失敗"
     },
     "accounts": {
-      "title": "帳號健康",
+      "title": "帳號狀態",
       "desc": "該環境下可用於綁定的帳號清單（來自 CPA 既有驗證檔案健康檢查）。",
       "empty_title": "尚無帳號",
       "empty_desc": "該環境下還沒有可用帳號，請先在 CPA 端上傳驗證檔案。",
@@ -4148,7 +4169,8 @@
       "never": "從未",
       "create_placeholder": "容器編號後綴，例如 acct-07",
       "create_button": "新建容器",
-      "create_success": "容器 {{id}} 已建立"
+      "create_success": "容器 {{id}} 已建立",
+      "show_retired": "顯示已退役"
     },
     "status": {
       "created": "已入池",
@@ -4219,7 +4241,8 @@
       "accountClockCoverage": "覆蓋範圍",
       "accountClockCoverageValue": "{{accounts}} 帳號 / {{containers}} 容器",
       "noteBadgeTitle": "帳號備註 / 別名",
-      "emptyUnlock": "解鎖條件：該環境需有健康容器綁定帳號，且帳號自 CPA 上次重啟後產生過請求；滿足後此處會按帳號/容器列出累計用量。當前測試端可能尚無健康容器或帳號未產生流量。"
+      "emptyUnlock": "解鎖條件：該環境需有健康容器綁定帳號，且帳號自 CPA 上次重啟後產生過請求；滿足後此處會按帳號/容器列出累計用量。當前測試端可能尚無健康容器或帳號未產生流量。",
+      "subtitle": "農場綁定帳號在 CPA 側的累計用量（自 CPA 上次重啟起、記憶體態，不等同探針保活次數）。"
     },
     "resources": {
       "title": "資源佔用",
@@ -4229,7 +4252,8 @@
       "noLimit": "無上限",
       "hostTitle": "整機",
       "hostNote": "整機含非農場行程",
-      "empty": "尚無容器資源資料"
+      "empty": "尚無容器資源資料",
+      "subtitle": "農場容器與主機的記憶體 / CPU 佔用（含整機非農場行程口徑說明）。"
     },
     "accountHealth": {
       "accountHealthColumn": "帳號認證態",
@@ -4239,7 +4263,7 @@
       "authState_operator_disabled": "已停用",
       "authState_unprovisioned": "未綁定",
       "authState_unknown": "未知",
-      "unprovisionedHint": "未綁定容器·不可出站——接入農場後才能經住宅代理請求",
+      "unprovisionedHint": "未綁定容器：若本帳號已配住宅代理，出站仍安全經該代理；未配代理則 fail-closed 不出站。遙測 device_id 未經容器對齊，暫用合成假名（接入農場後轉真）。",
       "quarantineDetail": "{{reason}} · {{at}}",
       "reauthHint": "憑證已失效——請在「認證檔案」頁對該帳號重新授權",
       "cadenceModelNote": "保活探針按指數分佈隨機觸發，只有區間與均值、沒有精確倒數計時（防遙測規律化的刻意設計）。",
@@ -4324,7 +4348,21 @@
       "telemetryAlive_unknown": "遙測未知 · 待採集",
       "telemetryAlive_unknownHint": "尚未接入遙測採集平面，屬於正常態，不代表異常",
       "farmEnrolledBadge_enrolled": "已納管",
-      "farmEnrolledBadge_notEnrolled": "未納管 · 免疫農場治理"
+      "farmEnrolledBadge_notEnrolled": "未納管 · 免疫農場治理",
+      "menuViewTelemetry": "查看遙測",
+      "menuContainerDetail": "容器詳情",
+      "rowMenuLabel": "帳號管理選單",
+      "rowMenuTrigger": "管理",
+      "telemetryAlive_openHint": "查看該容器遙測詳情",
+      "telemetryAlive_openAria": "查看該容器遙測詳情（目前 {{state}}）",
+      "timeColumn": "帳號時間",
+      "timeCreated": "建立",
+      "timeFirstLogin": "首次登入",
+      "timeAlive": "存活",
+      "timeBanned": "封禁",
+      "timeEstimateBadge": "估算",
+      "timeAliveEstimateHint": "缺精確失效時間，按目前時間估算",
+      "timeBannedPending": "封禁時間待後端補充（refresh_disabled_at 未暴露）"
     },
     "overview": {
       "running": "運行中容器",
@@ -4337,7 +4375,9 @@
       "generatedAt": "資料截至",
       "generatedAtNote": "（本次 API 回應生成時間，非精確的 Poller 最近巡檢時刻）",
       "probeCostNotWired": "未接入",
-      "probeCostNotWiredHint": "探針 token cost 匯總待 P1 接入，目前無誠實資料來源"
+      "probeCostNotWiredHint": "探針 token cost 匯總待 P1 接入，目前無誠實資料來源",
+      "downLink": "檢視離線容器",
+      "alertsLink": "檢視活躍告警"
     },
     "alerts": {
       "title": "農場告警",
@@ -4359,6 +4399,8 @@
       "telemetryCategory": "遙測"
     },
     "detail": {
+      "titleLabel": "帳號 · 裝置詳情",
+      "titleAccountUnbound": "未綁定帳號",
       "healthSection": "健康狀態",
       "keepaliveSection": "心跳成功率與延遲（近24h，1h 分桶）",
       "successRate": "成功率",
@@ -4393,7 +4435,13 @@
       "probeTokenGap": "本輪聚合讀取路徑未接入 tokens_total 求和（見交付說明 gaps），暫無法誠實展示趨勢圖，待 P1/store 層補聚合欄後接入。",
       "eventsSection": "狀態 / 告警事件",
       "noOpenEvents": "目前沒有仍在 firing 的事件。",
-      "eventsHistoryGap": "只展示目前仍 firing 的事件，暫非完整歷史時間線（見交付說明 gaps）。"
+      "eventsHistoryGap": "只展示目前仍 firing 的事件，暫非完整歷史時間線（見交付說明 gaps）。",
+      "tab_overview": "概覽",
+      "tab_telemetry": "遙測",
+      "tab_resources": "資源",
+      "tab_cadence": "節奏與用量",
+      "tab_events": "事件",
+      "tabsAria": "容器詳情分區"
     },
     "healthReason": {
       "ok": "健康",
@@ -4411,7 +4459,7 @@
       "docker_missing_orphaned": "Docker 容器缺失（幽靈態）",
       "telemetry_devid_drift": "device_id 漂移（自報值與釘值不一致）",
       "telemetry_devid_collision": "device_id 串號（多容器自報同一 device_id）",
-      "telemetry_host_leak": "出站 host 洩漏（自報目標偏離預期）",
+      "telemetry_host_leak": "多容器共享同一 CPA 後端 host（apiBaseUrlHost 聚類·內在關聯向量）",
       "telemetry_silence": "遙測靜默（久未收到自報 beacon）",
       "telemetry_entrypoint_mismatch": "入口標識不一致（entrypoint 偏離預期）"
     },
@@ -4448,13 +4496,13 @@
       "reauthFailed": "重新授權失敗"
     },
     "telemetry": {
-      "section": "遙測內容（自報 beacon）",
-      "disclaimer": "自報 / 合成 beacon 只證明上報管道連通與容器聲明了什麼，不構成反關聯證明；下方 on-wire（真實出站抓取）列尚未接入，標註為「待抓取管道」，不代表已抓到真實出站值。",
-      "scopeBadge": "口徑：自報 / 聲明，非出站實測",
+      "section": "遙測信標（自報 + on-wire，逐條標註來源）",
+      "disclaimer": "下方是該容器的遙測信標列表，混合兩類來源並逐條標註：「自報 (declared)」是容器聲明/自報的內容，「on-wire」行才是 mitmproxy/ebpf 在容器出站鏈路真實擷取的資料。即便 on-wire 行也只證明該容器確實發出過這些請求，不構成跨帳號反關聯證明。另外，上方指紋自洽卡的「出站實測 (on-wire)」欄是把信標逐欄位派生、與自報值比對的獨立步驟——這一步尚未接入才顯示佔位，與「原始 on-wire 信標是否已擷取」是兩回事。",
+      "scopeBadge": "口徑：信標含自報與 on-wire 兩類·逐條標註來源，指紋逐欄位派生待接入",
       "fieldColumn": "指紋欄位",
       "declaredColumn": "自報 (declared)",
       "onWireColumn": "出站實測 (on-wire)",
-      "onWireBanner": "on-wire 出站抓取管道尚未接入，以下 on-wire 欄均為佔位 / 聲明態，不代表已完成實測。",
+      "onWireBanner": "指紋逐欄位 on-wire 派生尚未接入，以下 on-wire 欄暫為佔位；這只是「把信標逐欄位派生進自洽比對」這一步沒做，原始 on-wire 信標已即時採集——見下方時間線中標註為 on-wire 的行。",
       "field_device_id": "device_id",
       "field_entrypoint": "entrypoint",
       "field_api_base_url_host": "api_base_url_host",
@@ -4464,12 +4512,22 @@
       "fresh": "較新",
       "noBeacons": "視窗內暫無 beacon 上報。",
       "channelDistribution": "通道分佈",
-      "timeline": "beacon 時間線（自報，最新在前）",
+      "timeline": "遙測信標時間線（自報 + on-wire，逐條標註來源，最新在前）",
       "timelineEmpty": "暫無 beacon（空是正常返回，代表該容器尚未上報或未裝配採集）。",
-      "source_declared": "聲明",
-      "source_self-report": "自報",
-      "source_unknown": "未知",
-      "deviceIdFullNote": "此處 device_id 為自報全量值（非列表頁脫敏前 16 位），僅供維運核對自洽性用；漂移/串號/host 洩漏等自洽異常經告警面板呈現。"
+      "timelineColumnTime": "時間",
+      "timelineColumnChannel": "通道",
+      "timelineColumnHostPath": "host / 路徑",
+      "timelineColumnSize": "大小",
+      "timelineShowingRecent": "顯示最近 {{limit}} 筆 · 共 {{count}} 筆",
+      "timelineShowingAll": "已展開全部 {{count}} 筆",
+      "timelineExpand": "展開更多",
+      "timelineCollapse": "收合",
+      "rowSourceOnWire": "on-wire · {{source}}",
+      "rowSourceOnWireFull": "on-wire：{{source}} 在容器出站鏈路真實擷取",
+      "rowSourceDeclared": "自報 · {{source}}",
+      "rowSourceDeclaredFull": "自報：容器聲明 / 自報（{{source}}），非出站擷取",
+      "deviceIdFullNote": "此處 device_id 為自報全量值（非列表頁脫敏前 16 位），僅供維運核對自洽性用；漂移/串號/host 洩漏等自洽異常經告警面板呈現。",
+      "disclaimerSummary": "來源邊界說明（點開）：信標混合自報 + on-wire，不構成跨帳號反關聯證明"
     }
   }
 }

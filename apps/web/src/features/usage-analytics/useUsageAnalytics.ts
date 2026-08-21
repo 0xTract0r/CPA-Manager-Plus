@@ -7,6 +7,7 @@ import { buildMonitoringAuthMetaMap } from '@/features/monitoring/model/authMeta
 import { readString } from '@/features/monitoring/model/base';
 import type { MonitoringChannelMeta } from '@/features/monitoring/model/types';
 import { loadMonitoringMetaPayload } from '@/features/monitoring/services/monitoringMetaService';
+import { useTimezone } from '@/hooks';
 import { useConfigStore } from '@/stores';
 import type { AuthFileItem } from '@/types/authFile';
 import type { CredentialInfo } from '@/types/sourceInfo';
@@ -70,11 +71,6 @@ const EMPTY_USAGE_ANALYTICS_MONITORING_META: UsageAnalyticsMonitoringMeta = {
   channels: [],
 };
 
-const getBrowserTimeZone = () => {
-  if (typeof Intl === 'undefined') return 'UTC';
-  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-};
-
 function useDebouncedValue<T>(value: T, delayMs: number): T {
   const [debouncedValue, setDebouncedValue] = useState(value);
 
@@ -116,7 +112,10 @@ export function useUsageAnalytics() {
   const [selectedHeatmapCell, setSelectedHeatmapCell] = useState<UsageHeatmapCellSelection | null>(
     null
   );
-  const browserTimeZone = useMemo(() => getBrowserTimeZone(), []);
+  // 用量分析的热力图分桶/展示时区改由全局时区配置驱动（默认 UTC+8/Asia/Shanghai），
+  // 与其余前端时间展示统一；TZ2 切换时区后本 hook 随全局配置重渲染。
+  // 注意：返回字段名保留 `browserTimeZone` 仅为兼容既有 props / 测试，语义已是「全局展示时区」。
+  const { timeZone: browserTimeZone } = useTimezone();
   const apiKeyDisplayMap = useMemo(
     () => buildApiKeyDisplayMap(config?.apiKeys || [], apiKeyAliases || []),
     [apiKeyAliases, config?.apiKeys]

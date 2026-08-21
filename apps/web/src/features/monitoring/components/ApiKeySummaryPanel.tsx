@@ -4,6 +4,7 @@ import { IconChevronDown, IconChevronUp, IconCopy, IconInfo, IconKey } from '@/c
 import type { MonitoringApiKeyRow } from '@/features/monitoring/hooks/useMonitoringData';
 import { useNotificationStore } from '@/stores';
 import { copyToClipboard } from '@/utils/clipboard';
+import { formatInUtc8 } from '@/utils/datetime';
 import { formatCompactNumber, formatUsd } from '@/utils/usage';
 import { AccountModelUsageTable, AccountTokenMetricGrid } from './AccountOverviewCard';
 import { MonitoringPanel } from './MonitoringPanel';
@@ -157,7 +158,18 @@ const buildApiKeySummaryMetrics = (
     key: 'latest-request-time',
     label: shortLabel(t, 'monitoring.latest_request_time_short', 'monitoring.latest_request_time'),
     fullLabel: t('monitoring.latest_request_time'),
-    value: new Date(row.lastSeenAt).toLocaleString(locale),
+    value: formatInUtc8(
+      row.lastSeenAt,
+      {
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: 'numeric',
+        second: 'numeric',
+      },
+      locale
+    ),
   },
 ];
 
