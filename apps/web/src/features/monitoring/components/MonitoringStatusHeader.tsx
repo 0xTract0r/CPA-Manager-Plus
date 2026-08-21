@@ -67,7 +67,9 @@ export function MonitoringStatusSummary({
           {lastRefreshedAt
             ? formatInUtc8(
                 lastRefreshedAt,
-                { hour: 'numeric', minute: 'numeric', second: 'numeric' },
+                // #78 全站排查：走标准 timeStyle 路径统一成 24 小时 HH:mm:ss，
+                // 不再用显式 hour/minute/second（那会经 locale 在 en-US 下渲染成 12 小时 AM/PM）。
+                { timeStyle: 'medium' },
                 locale
               )
             : '--'}
