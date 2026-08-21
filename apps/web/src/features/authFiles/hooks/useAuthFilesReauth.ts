@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { isOAuthCancelSuccessful, oauthApi, type OAuthProvider } from '@/services/api/oauth';
 import { useNotificationStore } from '@/stores';
+import { copyToClipboard } from '@/utils/clipboard';
 import type { AuthFileItem } from '@/types';
 
 export type AuthFileReauthState = {
@@ -118,24 +119,28 @@ export function useAuthFilesReauth(options: UseAuthFilesReauthOptions) {
       const url = states[fileName]?.url;
       if (!url) return;
 
-      try {
-        if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
-          throw new Error('Clipboard API unavailable');
-        }
-        await navigator.clipboard.writeText(url);
+      // 复用共享 copyToClipboard：优先 navigator.clipboard.writeText，
+      // 在非安全上下文（如 201 测试端走 http）下自动降级为 execCommand('copy')
+      // 兜底。两者都不可用时（极端场景，例如无 DOM/无用户手势）才提示手动复制，
+      // 并把链接原文放进提示文案，方便用户直接从提示里选中复制。
+      const copied = await copyToClipboard(url);
+      if (copied) {
         showNotification(
           t('auth_files.reauth_copy_success', { defaultValue: 'Authentication link copied' }),
           'success'
         );
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : '';
-        showNotification(
-          t('auth_files.reauth_copy_failed', {
-            defaultValue: 'Failed to copy authentication link',
-          }) + (errorMessage ? `: ${errorMessage}` : ''),
-          'error'
-        );
+        return;
       }
+
+      showNotification(
+        t('auth_files.reauth_copy_manual', {
+          defaultValue:
+            'Could not copy automatically. Please copy this link manually: {{url}}',
+          url,
+        }),
+        'warning',
+        0
+      );
     },
     [showNotification, states, t]
   );

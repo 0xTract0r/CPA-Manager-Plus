@@ -60,22 +60,31 @@ export function NotificationContainer() {
 
   return (
     <div className="notification-container">
-      {animatedNotifications.map((notification) => (
-        <div
-          key={notification.id}
-          className={`notification ${notification.type} ${notification.isExiting ? 'exiting' : 'entering'}`}
-        >
-          <div className="message">{notification.message}</div>
-          <button
-            type="button"
-            className="close-btn"
-            onClick={() => handleClose(notification.id)}
-            aria-label={t('common.close')}
+      {animatedNotifications.map((notification) => {
+        // warning/error 可能承载需要用户立即处理的兜底提示（如手动复制 OAuth
+        // 链接），用 role="alert" + aria-live="assertive" 保证屏幕阅读器打断朗读；
+        // 其余通知用 role="status" + aria-live="polite"，不打断当前朗读但仍会播报。
+        const isUrgent = notification.type === 'warning' || notification.type === 'error';
+        return (
+          <div
+            key={notification.id}
+            className={`notification ${notification.type} ${notification.isExiting ? 'exiting' : 'entering'}`}
+            role={isUrgent ? 'alert' : 'status'}
+            aria-live={isUrgent ? 'assertive' : 'polite'}
+            aria-atomic="true"
           >
-            <IconX size={16} />
-          </button>
-        </div>
-      ))}
+            <div className="message">{notification.message}</div>
+            <button
+              type="button"
+              className="close-btn"
+              onClick={() => handleClose(notification.id)}
+              aria-label={t('common.close')}
+            >
+              <IconX size={16} />
+            </button>
+          </div>
+        );
+      })}
     </div>
   );
 }

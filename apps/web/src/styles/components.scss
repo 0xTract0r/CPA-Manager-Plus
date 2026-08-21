@@ -395,6 +395,11 @@ textarea {
   .message {
     flex: 1;
     font-weight: 500;
+    // 兜底文案可能带无空格长 URL/token（如 OAuth 手动复制链接），需要允许在任意
+    // 位置换行，避免撑破 360px 宽的通知容器；同时保证文本可被鼠标选中复制。
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    user-select: text;
   }
 
   .close-btn {

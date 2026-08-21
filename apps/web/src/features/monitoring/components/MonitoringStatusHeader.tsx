@@ -51,12 +51,16 @@ export function MonitoringStatusSummary({
   const totalCallsLabel = shortLabel(t, 'monitoring.total_calls_short', 'monitoring.total_calls');
 
   return (
+    // 徽章("已连接")与 meta chip 曾是 .statusBar 下两个各自独立 wrap 的兄弟容器
+    // (.statusBadge 单项 + .statusMeta 内部再 wrap)，窄屏下会出现两层各自换行、
+    // 徽章与 chip 错位漂移。现把徽章收作 .statusMeta 的第一个子项，让整条状态行
+    // 只有一层可换行容器，徽章与其余 chip 在同一套断点/wrap 规则下一起换行对齐。
     <div className={styles.statusBar}>
-      <span className={`${styles.statusBadge} ${styles[`tone${connectionTone}`]}`}>
-        <span className={styles.statusDot} aria-hidden="true" />
-        {connectionLabel}
-      </span>
       <div className={styles.statusMeta}>
+        <span className={`${styles.statusBadge} ${styles[`tone${connectionTone}`]}`}>
+          <span className={styles.statusDot} aria-hidden="true" />
+          {connectionLabel}
+        </span>
         <span title={t('monitoring.last_sync')}>
           {lastSyncLabel}: {lastRefreshedAt ? lastRefreshedAt.toLocaleTimeString(locale) : '--'}
         </span>

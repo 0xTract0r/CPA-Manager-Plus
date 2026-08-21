@@ -324,8 +324,10 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).not.toContain('R 0');
     expect(markup).not.toContain('Read 0');
     expect(markup).not.toContain('Create 0');
-    expect(markup).not.toContain('role="tooltip"');
-    expect(markup).not.toContain('aria-describedby=');
+    // 成功行不渲染失败诊断浮层。失败浮层用 .realtimeFailureTooltip，与模型名即时浮层的
+    // .realtimeModelTooltip 是两套机制；模型浮层带 role="tooltip" / aria-describedby 属正常，
+    // 因此这里只针对失败态诊断做负向断言，不再笼统否定 role="tooltip" / aria-describedby。
+    expect(markup).not.toContain(styles.realtimeFailureTooltip);
     expect(markup).not.toContain('HTTP');
   });
 
@@ -348,15 +350,27 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).not.toContain('>Executor: codex<');
   });
 
-  it('keeps long realtime model names constrained with a full title', () => {
+  it('keeps long realtime model names constrained and exposes the full name via an instant tooltip', () => {
     const longModel =
       'claude-opus-4-6-thinking-with-a-very-long-provider-routing-suffix-for-realtime-monitoring';
     const markup = renderPanel(baseRow({ model: longModel, resolvedModel: longModel }));
 
-    expect(markup).toContain(`title="${longModel}"`);
-    expect(markup).toContain(longModel);
+    // 长模型名仍被 .realtimeModelCell / .realtimeModelText 的窄列 nowrap 省略号约束展示。
     expect(markup).toMatch(/class="[^"]*realtimeModelCell[^"]*"/);
     expect(markup).toMatch(/class="[^"]*realtimeModelText[^"]*"/);
+    // 全名不再依赖浏览器原生 title（~1s 延迟），改为即时浮层：role="tooltip" 独立元素，
+    // trigger 通过 aria-describedby 指向同一 tooltip id。
+    expect(markup).not.toContain(`title="${longModel}"`);
+
+    const tooltipMatch = markup.match(
+      /<span id="([^"]+)" role="tooltip"[^>]*realtimeModelTooltip[^>]*>/
+    );
+    expect(tooltipMatch).not.toBeNull();
+    const tooltipId = tooltipMatch?.[1] ?? '';
+    expect(tooltipId).toContain('model-tooltip');
+    expect(markup).toContain(`aria-describedby="${tooltipId}"`);
+    // 浮层主槽内含完整模型全名文案。
+    expect(markup).toMatch(new RegExp(`realtimeModelTooltipPrimary[^>]*>${longModel}</span>`));
   });
 
   it('switches realtime source labels between masked and full display', () => {
