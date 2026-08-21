@@ -2072,6 +2072,8 @@
     "reasoning_effort_short": "強度",
     "service_tier": "服務等級",
     "service_tier_short": "等級",
+    "reasoning_effort_hint": "客戶端本次請求要求的思考強度（reasoning effort），如 minimal/low/medium/high，反映推理深度。",
+    "service_tier_hint": "客戶端請求的服務等級（service tier），絕大多數為 auto；priority/flex/scale 等非預設檔才有區分度。",
     "executor_type": "執行器類型",
     "executor_type_short": "執行器",
     "fail_status_code": "失敗狀態碼",

@@ -2072,6 +2072,8 @@
     "reasoning_effort_short": "Effort",
     "service_tier": "Service Tier",
     "service_tier_short": "Tier",
+    "reasoning_effort_hint": "The reasoning effort requested by the client for this call (e.g. minimal/low/medium/high), reflecting how deep the reasoning goes.",
+    "service_tier_hint": "The service tier requested by the client (service_tier). Most requests use auto; only non-default tiers like priority/flex/scale are meaningfully differentiated.",
     "executor_type": "Executor Type",
     "executor_type_short": "Executor",
     "fail_status_code": "Failure Status Code",

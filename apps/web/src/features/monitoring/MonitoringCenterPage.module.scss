@@ -1595,12 +1595,15 @@
 @include summaryTable.styles;
 @include accountOverview.styles;
 .realtimeTable {
-  // 13 列(含"缓存命中率")实时表：table-layout:fixed + 百分比列宽，使表格 width:100% 铺满
-  // 容器并把 13 列全部放平在同一平面，主内容区(~1152px 可用宽)下零横滚、花费列完整可见。
-  // 各列百分比之和=100%；窄屏(<1200px)由下方 @container 兜底 min-width + tableWrapper 横滚。
-  --realtime-col-source: 14%; // 来源 / API KEY（省略号截断，title 悬浮看全）
-  --realtime-col-model: 12%; // 模型（省略号截断）
-  --realtime-col-effort: 6%; // 强度
+  // 14 列(强度/等级拆成两个独立窄列 + "缓存命中率")实时表：table-layout:fixed + 百分比
+  // 列宽，使表格 width:100% 铺满容器并把 14 列全部放平在同一平面，主内容区(~1152px 可用宽)
+  // 下零横滚、花费列完整可见。各列百分比之和=100%；窄屏(<1200px)由下方 @container 兜底
+  // min-width + tableWrapper 横滚。强度/等级从 source/model 各挪 1% 收窄换出，值都很短
+  // (minimal/medium/priority/auto 等)，配合 ellipsis 兜底不会撑破行高。
+  --realtime-col-source: 13%; // 来源 / API KEY（省略号截断，title 悬浮看全）
+  --realtime-col-model: 11%; // 模型（省略号截断）
+  --realtime-col-effort: 4%; // 强度(reasoning_effort)
+  --realtime-col-tier: 4%; // 等级(service_tier)
   --realtime-col-recent: 6%; // 近况（状态点阵）
   --realtime-col-status: 7%; // 请求状态
   --realtime-col-success: 6%; // 成功率
@@ -1627,33 +1630,36 @@
   width: var(--realtime-col-effort);
 }
 .realtimeTable col:nth-child(4) {
-  width: var(--realtime-col-recent);
+  width: var(--realtime-col-tier);
 }
 .realtimeTable col:nth-child(5) {
-  width: var(--realtime-col-status);
+  width: var(--realtime-col-recent);
 }
 .realtimeTable col:nth-child(6) {
-  width: var(--realtime-col-success);
+  width: var(--realtime-col-status);
 }
 .realtimeTable col:nth-child(7) {
-  width: var(--realtime-col-calls);
+  width: var(--realtime-col-success);
 }
 .realtimeTable col:nth-child(8) {
-  width: var(--realtime-col-tps);
+  width: var(--realtime-col-calls);
 }
 .realtimeTable col:nth-child(9) {
-  width: var(--realtime-col-latency);
+  width: var(--realtime-col-tps);
 }
 .realtimeTable col:nth-child(10) {
-  width: var(--realtime-col-time);
+  width: var(--realtime-col-latency);
 }
 .realtimeTable col:nth-child(11) {
-  width: var(--realtime-col-usage);
+  width: var(--realtime-col-time);
 }
 .realtimeTable col:nth-child(12) {
-  width: var(--realtime-col-cache);
+  width: var(--realtime-col-usage);
 }
 .realtimeTable col:nth-child(13) {
+  width: var(--realtime-col-cache);
+}
+.realtimeTable col:nth-child(14) {
   width: var(--realtime-col-cost);
 }
 
@@ -2166,6 +2172,21 @@
 .tableHeaderInfoIcon {
   display: block;
   color: var(--monitor-muted);
+}
+
+// TableHeaderInfo 的即时浮层触发元素：可聚焦(tabIndex=0)承载 aria-label/aria-describedby，
+// 视觉上只是给信息图标一个 hover/focus 命中区域，不影响表头排版。
+.tableHeaderInfoTrigger {
+  display: inline-flex;
+  align-items: center;
+  outline: none;
+  cursor: help;
+}
+
+.tableHeaderInfoTrigger:focus-visible {
+  outline: 2px solid var(--monitor-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 .logRowFailed td {

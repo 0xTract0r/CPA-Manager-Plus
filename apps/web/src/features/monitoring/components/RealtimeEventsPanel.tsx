@@ -122,6 +122,9 @@ const FAILURE_TOOLTIP_CLOSE_DELAY_MS = 120;
 // "强度/等级"列缺值时的中性占位：只用一个 em dash 字符，不落成裸的 "-"（在等宽字体/
 // 部分渲染环境下容易被读成叉号），也不是任何需要按语言翻译的文案。
 const REASONING_TIER_PLACEHOLDER = '—';
+// service_tier 常见默认档：大小写不敏感匹配，命中则弱化展示；priority/flex/scale 等
+// 非默认档才高亮，帮助一眼分辨"这一行确实要了非默认服务等级"。
+const REASONING_TIER_DEFAULT_VALUES = new Set(['auto', 'default']);
 
 type FailureTooltipPlacement = 'above' | 'below';
 
@@ -140,6 +143,15 @@ const formatReadableText = (value: string | null | undefined) => {
   return trimmed && trimmed !== '-' ? trimmed : '';
 };
 
+// "等级"(service_tier) 单元格样式：auto/default 弱化，priority/flex/scale 等非默认档高亮，
+// 缺失值(REASONING_TIER_PLACEHOLDER)返回 undefined 走中性默认色，不算弱化也不算高亮。
+const getServiceTierToneClass = (formattedValue: string) => {
+  if (formattedValue === '-') return undefined;
+  return REASONING_TIER_DEFAULT_VALUES.has(formattedValue.toLowerCase())
+    ? styles.realtimeServiceTierMuted
+    : styles.realtimeServiceTierHighlight;
+};
+
 const shortLabel = (
   t: TFunction,
   shortKey: string,
@@ -155,19 +167,6 @@ const formatShortHash = (value: string | null | undefined) => {
   const trimmed = formatReadableText(value);
   return trimmed ? `#${trimmed.slice(0, 8)}` : '';
 };
-
-// 表头悬浮说明：复用现有 tableHeaderWithInfo/tableHeaderInfoIcon 样式（见 AccountOverviewPanel），
-// 用 title 承载说明文字，不引入新的 Tooltip 组件。
-function TableHeaderInfo({ label, info }: { label: ReactNode; info: string }) {
-  return (
-    <span className={styles.tableHeaderWithInfo}>
-      <span>{label}</span>
-      <span title={info}>
-        <IconInfo size={13} className={styles.tableHeaderInfoIcon} aria-label={info} />
-      </span>
-    </span>
-  );
-}
 
 const clampNumber = (value: number, min: number, max: number) =>
   Math.min(Math.max(value, min), max);
@@ -470,6 +469,90 @@ const isNodeInside = (element: HTMLElement | null, target: EventTarget | null) =
   if (!element || typeof Node === 'undefined' || !(target instanceof Node)) return false;
   return element.contains(target);
 };
+
+// 表头悬浮说明：与 RealtimeModelCell 同一套 portal + fixed 定位即时浮层手法，取代原生
+// title=（浏览器原生 tooltip 延迟约 0.5-1s 且不可控，触屏点击也不触发）。浮层视觉复用
+// .realtimeModelTooltip 系列样式（信息类提示，非失败态红色描边），不新增一套孤立类。
+function TableHeaderInfo({ label, info }: { label: ReactNode; info: string }) {
+  const triggerRef = useRef<HTMLSpanElement | null>(null);
+  const tooltipId = useId();
+  const [open, setOpen] = useState(false);
+  const [tooltipPosition, setTooltipPosition] = useState<FailureTooltipPosition | null>(null);
+  const isBrowser = typeof document !== 'undefined';
+
+  const updateTooltipPosition = useCallback(() => {
+    if (!triggerRef.current) return;
+    const nextPosition = resolveFailureTooltipPosition(triggerRef.current);
+    if (nextPosition) setTooltipPosition(nextPosition);
+  }, []);
+
+  const showTooltip = useCallback(() => {
+    updateTooltipPosition();
+    setOpen(true);
+  }, [updateTooltipPosition]);
+
+  const hideTooltip = useCallback(() => setOpen(false), []);
+
+  const handleBlur = useCallback(
+    (event: FocusEvent<HTMLElement>) => {
+      if (isNodeInside(triggerRef.current, event.relatedTarget)) return;
+      hideTooltip();
+    },
+    [hideTooltip]
+  );
+
+  useEffect(() => {
+    if (!open || typeof window === 'undefined') return undefined;
+    updateTooltipPosition();
+    window.addEventListener('resize', updateTooltipPosition);
+    window.addEventListener('scroll', updateTooltipPosition, true);
+    return () => {
+      window.removeEventListener('resize', updateTooltipPosition);
+      window.removeEventListener('scroll', updateTooltipPosition, true);
+    };
+  }, [open, updateTooltipPosition]);
+
+  const placement = tooltipPosition?.placement ?? 'below';
+  const tooltipClassName = [
+    styles.realtimeModelTooltip,
+    placement === 'above' ? styles.realtimeModelTooltipAbove : styles.realtimeModelTooltipBelow,
+    open ? styles.realtimeModelTooltipOpen : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  const tooltip = (
+    <span
+      id={tooltipId}
+      role="tooltip"
+      className={tooltipClassName}
+      style={isBrowser ? tooltipPosition?.style : undefined}
+    >
+      {info}
+    </span>
+  );
+
+  return (
+    <span className={styles.tableHeaderWithInfo}>
+      <span>{label}</span>
+      <span
+        ref={triggerRef}
+        tabIndex={0}
+        className={styles.tableHeaderInfoTrigger}
+        aria-describedby={tooltipId}
+        aria-label={info}
+        onMouseEnter={showTooltip}
+        onMouseLeave={hideTooltip}
+        onFocus={showTooltip}
+        onBlur={handleBlur}
+      >
+        <IconInfo size={13} className={styles.tableHeaderInfoIcon} />
+      </span>
+      {!isBrowser ? tooltip : null}
+      {isBrowser && open ? createPortal(tooltip, document.body) : null}
+    </span>
+  );
+}
 
 function RealtimeFailureStatus({ details, tooltipId, t, onCopy }: RealtimeFailureStatusProps) {
   const triggerRef = useRef<HTMLSpanElement | null>(null);
@@ -1242,12 +1325,24 @@ export function RealtimeEventsPanel({
             <col />
             <col />
             <col />
+            <col />
           </colgroup>
           <thead>
             <tr>
               <th>{sourceApiKeyLabel}</th>
               <th>{t('monitoring.column_model')}</th>
-              <th>{reasoningEffortLabel}</th>
+              <th>
+                <TableHeaderInfo
+                  label={reasoningEffortLabel}
+                  info={t('monitoring.reasoning_effort_hint')}
+                />
+              </th>
+              <th>
+                <TableHeaderInfo
+                  label={serviceTierRowLabel}
+                  info={t('monitoring.service_tier_hint')}
+                />
+              </th>
               <th>{recentStatusLabel}</th>
               <th>{requestStatusLabel}</th>
               <th>
@@ -1347,22 +1442,25 @@ export function RealtimeEventsPanel({
                     />
                   </td>
                   <td>
-                    {/* "强度"列实际同时承载 reasoning_effort(强度) + service_tier(等级)两个字段，
-                        但只有一个表头。两行都显式带标签，避免裸值堆叠(尤其两者都可能是
-                        "auto"时无法区分是哪一个)；缺失值用中性占位而非裸 "-"。不新增列/
-                        不改列宽，两行都收在既有 .primaryCell 容器内，照顾窄屏。 */}
-                    <div className={styles.primaryCell}>
-                      <span className={styles.realtimeReasoningBadge}>
-                        {`${reasoningEffortLabel}: ${
-                          reasoningEffort !== '-' ? reasoningEffort : REASONING_TIER_PLACEHOLDER
-                        }`}
-                      </span>
-                      <small>
-                        {`${serviceTierRowLabel}: ${
-                          serviceTier !== '-' ? serviceTier : REASONING_TIER_PLACEHOLDER
-                        }`}
-                      </small>
-                    </div>
+                    {/* 强度(reasoning_effort)独立列：表头已通过 TableHeaderInfo 说明语义，
+                        单元格内不再重复 "强度:" 前缀。 */}
+                    <span className={styles.realtimeReasoningBadge}>
+                      {reasoningEffort !== '-' ? reasoningEffort : REASONING_TIER_PLACEHOLDER}
+                    </span>
+                  </td>
+                  <td>
+                    {/* 等级(service_tier)独立列：auto/default 弱化、priority/flex/scale
+                        等非默认档高亮，缺失值用中性占位色(既不弱化也不高亮)。 */}
+                    <span
+                      className={[
+                        styles.realtimeServiceTierValue,
+                        getServiceTierToneClass(serviceTier),
+                      ]
+                        .filter(Boolean)
+                        .join(' ')}
+                    >
+                      {serviceTier !== '-' ? serviceTier : REASONING_TIER_PLACEHOLDER}
+                    </span>
                   </td>
                   <td>
                     <div className={styles.recentStatusCell}>
@@ -1461,12 +1559,12 @@ export function RealtimeEventsPanel({
             })}
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={13}>{emptyState}</td>
+                <td colSpan={14}>{emptyState}</td>
               </tr>
             ) : null}
             {rows.length > 0 && displayedRows.length === 0 ? (
               <tr>
-                <td colSpan={13}>{emptyState}</td>
+                <td colSpan={14}>{emptyState}</td>
               </tr>
             ) : null}
           </tbody>

@@ -52,6 +52,8 @@ const t = ((key: string, options?: Record<string, unknown>) => {
     'monitoring.events_retention_limited': 'Kept the newest {{loaded}} of {{total}} events',
     'monitoring.reasoning_effort': 'Effort',
     'monitoring.reasoning_effort_short': 'Effort',
+    'monitoring.reasoning_effort_hint': 'Reasoning effort requested by the client for this call.',
+    'monitoring.service_tier_hint': 'Service tier requested by the client for this call.',
     'monitoring.recent_failures': 'Failures',
     'monitoring.recent_status': 'Recent',
     'monitoring.realtime_api_key_hash': 'API Key hash',
@@ -252,13 +254,23 @@ describe('RealtimeEventsPanel', () => {
       })
     );
 
-    expect(markup).toContain('<th>Effort</th>');
+    // 强度(Effort)/等级(Tier)已拆成两个独立表头列，各自挂 TableHeaderInfo 信息图标，
+    // 不再是裸 <th>Effort</th>。
+    expect(markup).toMatch(/<th><span class="[^"]*tableHeaderWithInfo[^"]*"><span>Effort<\/span>/);
+    expect(markup).toMatch(/<th><span class="[^"]*tableHeaderWithInfo[^"]*"><span>Tier<\/span>/);
     expect(markup).toContain('>TPS</th>');
     expect(markup).toContain('Source / API Key');
     expect(markup).not.toContain('>Executor: codex<');
     expect(markup).not.toContain('Executor: codex');
+    // 强度/等级单元格不再带 "Effort: " / "Tier: " 内联前缀（列头已承载语义说明）。
     expect(markup).toContain('medium');
-    expect(markup).toContain('Tier: priority');
+    expect(markup).not.toContain('Effort: medium');
+    expect(markup).toContain('priority');
+    expect(markup).not.toContain('Tier: priority');
+    // "priority" 是非默认服务等级，走高亮 tone class。
+    expect(markup).toMatch(
+      /class="[^"]*realtimeServiceTierValue[^"]*realtimeServiceTierHighlight[^"]*">priority</
+    );
     expect(markup).toContain('client-gpt');
     expect(markup).toContain('gpt-5.4');
     expect(markup).not.toContain('Resolved');
@@ -298,8 +310,8 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).toContain('title="Fetch the raw request/response body for request_id req-trace-42."');
     // 有 request_id 时不应显示「不可溯源」占位。
     expect(markup).not.toContain('Not traceable');
-    // 触发按钮嵌在 source 单元格里，不新增列(仍为 13 列)。
-    expect(markup.match(/<col\b/g)).toHaveLength(13);
+    // 触发按钮嵌在 source 单元格里，不新增列(强度/等级拆列后共 14 列)。
+    expect(markup.match(/<col\b/g)).toHaveLength(14);
   });
 
   it('marks the row as not traceable (not blank) when the request_id is missing', () => {
@@ -308,16 +320,16 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).toContain('Not traceable');
     expect(markup).toContain(styles.realtimeRequestLogUntraceable);
     expect(markup).not.toContain('View raw request');
-    expect(markup.match(/<col\b/g)).toHaveLength(13);
+    expect(markup.match(/<col\b/g)).toHaveLength(14);
   });
 
   it('renders safe defaults when optional usage fields are missing', () => {
     const markup = renderPanel(baseRow({ reasoningTokens: 0 }));
 
     expect(markup).toContain('<colgroup>');
-    expect(markup.match(/<col\b/g)).toHaveLength(13);
+    expect(markup.match(/<col\b/g)).toHaveLength(14);
     expect(markup).not.toContain('Effort -');
-    expect(markup).toContain('<th>Effort</th>');
+    expect(markup).toMatch(/<th><span class="[^"]*tableHeaderWithInfo[^"]*"><span>Effort<\/span>/);
     expect(markup).toContain('>TPS</th>');
     expect(markup).toContain('Success');
     expect(markup).toMatch(/TTFT<\/span><span class="[^"]+">｜<\/span><span class="[^"]+">Elapsed/);
@@ -372,8 +384,11 @@ describe('RealtimeEventsPanel', () => {
     // trigger 通过 aria-describedby 指向同一 tooltip id。
     expect(markup).not.toContain(`title="${longModel}"`);
 
+    // .realtimeModelTooltip 视觉样式现在也被表头 TableHeaderInfo 浮层复用(见下方
+    // "renders the cache hit rate column with header tooltips..." 用例)，因此不能再假定
+    // 该 class 在整页只出现一次；改为直接按 id 命名规则(`-model-tooltip-`)定位模型浮层。
     const tooltipMatch = markup.match(
-      /<span id="([^"]+)" role="tooltip"[^>]*realtimeModelTooltip[^>]*>/
+      /<span id="([^"]*-model-tooltip-[^"]*)" role="tooltip"[^>]*realtimeModelTooltip[^>]*>/
     );
     expect(tooltipMatch).not.toBeNull();
     const tooltipId = tooltipMatch?.[1] ?? '';
@@ -532,15 +547,26 @@ describe('RealtimeEventsPanel', () => {
     // 3 / 12 = 25.0%
     expect(markup).toContain('Cache Hit');
     expect(markup).toContain('25.0%');
-    expect(markup).toContain(
+    // 表头信息浮层改用 TableHeaderInfo 即时浮层(见 RealtimeModelCell 同款 portal 手法)，
+    // 不再依赖浏览器原生 title=(约 0.5-1s 不可控延迟、触屏点击不触发)；信息图标的可访问名
+    // 落在可聚焦 trigger 的 aria-label 上。
+    expect(markup).not.toContain(
       'title="Rolling success rate for this account + provider + model + channel combination, not the result of this single request."'
     );
     expect(markup).toContain(
-      'title="I = input tokens, O = output tokens, R = reasoning tokens; also shows cache read/write tokens when present."'
+      'aria-label="Rolling success rate for this account + provider + model + channel combination, not the result of this single request."'
     );
     expect(markup).toContain(
-      'title="(cachedTokens + cacheReadTokens) / (max(inputTokens, cachedTokens) + cacheReadTokens + cacheCreationTokens) for this single request. Shows “--” when there is no input-side token data."'
+      'aria-label="I = input tokens, O = output tokens, R = reasoning tokens; also shows cache read/write tokens when present."'
     );
+    expect(markup).toContain(
+      'aria-label="(cachedTokens + cacheReadTokens) / (max(inputTokens, cachedTokens) + cacheReadTokens + cacheCreationTokens) for this single request. Shows “--” when there is no input-side token data."'
+    );
+    // 强度/等级两个新表头列同样挂了信息图标。
+    expect(markup).toContain('aria-label="Reasoning effort requested by the client for this call."');
+    expect(markup).toContain('aria-label="Service tier requested by the client for this call."');
+    // 信息图标的即时浮层 trigger 存在(可聚焦、承担 aria-describedby)。
+    expect(markup.match(new RegExp(styles.tableHeaderInfoTrigger, 'g'))?.length).toBe(5);
     // 列顺序：本次用量(Usage) -> 缓存命中率(Cache Hit) -> 花费(Cost)。
     const usageIdx = markup.indexOf('Usage');
     const cacheHitHeaderIdx = markup.indexOf('Cache Hit');
