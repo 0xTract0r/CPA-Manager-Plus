@@ -1,4 +1,5 @@
 import type { TFunction } from 'i18next';
+import { formatInUtc8 } from '@/utils/datetime';
 import {
   type CodexInspectionAction,
   type CodexInspectionAutoActionMode,
@@ -101,10 +102,25 @@ export const HANDLING_FILTERS: HandlingFilter[] = ['all', 'pending', 'no_action'
 export const CODEX_INSPECTION_RESULT_PAGE_SIZE_OPTIONS = [20, 50, 100] as const;
 
 export const formatTimestamp = (value: number, locale: string) =>
-  new Date(value).toLocaleString(locale);
+  formatInUtc8(
+    value,
+    {
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric',
+      second: 'numeric',
+    },
+    locale
+  );
 
 export const formatTime = (value: number, locale: string) =>
-  new Date(value).toLocaleTimeString(locale);
+  formatInUtc8(
+    value,
+    { hour: 'numeric', minute: 'numeric', second: 'numeric' },
+    locale
+  );
 
 export const formatPercent = (value: number | null) =>
   value === null ? '--' : `${value.toFixed(1)}%`;

@@ -294,6 +294,15 @@ export function FarmContainerTable({
                 ? resolveBindingIdentity(container.binding.note, container.binding.account)
                 : null;
 
+              // R5-2 改绑防误绑（回显上次绑定）：解绑过的 down 容器带 last_bound_account
+              // 时，绑定列改显「上次绑定：<脱敏账号>（已解绑）」，让 operator 一眼看清该
+              // 容器历史归属，而不是拿裸 device_id hex 当账号误认。走全站一致的
+              // resolveBindingIdentity 脱敏口径（当作无备注的账号标识脱敏）。
+              const lastBoundIdentity =
+                !container.binding && container.last_bound_account
+                  ? resolveBindingIdentity(undefined, container.last_bound_account)
+                  : null;
+
               const handleRowClick = onSelectContainer
                 ? () => onSelectContainer(container)
                 : undefined;
@@ -418,6 +427,19 @@ export function FarmContainerTable({
                             {bindingIdentity.secondary}
                           </span>
                         ) : null}
+                      </div>
+                    ) : lastBoundIdentity ? (
+                      <div className={styles.bindingCell}>
+                        <span
+                          className={styles.bindingSecondary}
+                          title={container.last_bound_account}
+                          data-testid={`farm-container-last-bound-${container.id}`}
+                        >
+                          {t('farm.containers.last_bound_unbound', {
+                            account: lastBoundIdentity.primary || container.last_bound_account,
+                            defaultValue: '上次绑定：{{account}}（已解绑）',
+                          })}
+                        </span>
                       </div>
                     ) : (
                       <span className={styles.mono}>{t('farm.containers.no_binding')}</span>

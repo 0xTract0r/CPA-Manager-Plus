@@ -92,4 +92,79 @@ describe('deriveFarmAccountTimeLabels', () => {
 
     expect(result.aliveMs).toBeNull();
   });
+
+  // R5-1（AC11）终点修正：needs_reauth 死号有真实封禁时刻时，存活必须钉死到封禁
+  // 时刻、不再退回 now 一路虚涨；有精确终点即不标注估算。
+  it('needs_reauth：有 refresh_disabled_at → 存活钉到封禁时刻、终点不虚涨、不标注估算', () => {
+    const firstLogin = Date.parse('2026-08-12T00:00:00Z');
+    const banned = Date.parse('2026-08-16T00:00:00Z');
+    const result = deriveFarmAccountTimeLabels({
+      createdAt: '2026-08-11T00:00:00Z',
+      firstIdentityAt: '2026-08-12T00:00:00Z',
+      bannedAt: '2026-08-16T00:00:00Z',
+      failureAt: undefined,
+      impaired: true,
+      nowMs: NOW,
+    });
+
+    // 起点=首登、终点=封禁；绝不是 NOW − 首登（那是虚涨 bug）。
+    expect(result.aliveMs).toBe(banned - firstLogin);
+    expect(result.aliveMs).not.toBe(NOW - firstLogin);
+    expect(result.aliveEstimated).toBe(false);
+    expect(result.bannedAtDate?.getTime()).toBe(banned);
+  });
+
+  it('refresh_disabled_at 为 Go 零时间 → 封禁按缺失处理，终点退回 now', () => {
+    const firstLogin = Date.parse('2026-08-12T00:00:00Z');
+    const result = deriveFarmAccountTimeLabels({
+      firstIdentityAt: '2026-08-12T00:00:00Z',
+      bannedAt: '0001-01-01T00:00:00Z',
+      impaired: true,
+      nowMs: NOW,
+    });
+
+    expect(result.bannedAtDate).toBeNull();
+    // 无任何精确终点 → 退回 now 估算并标注。
+    expect(result.aliveMs).toBe(NOW - firstLogin);
+    expect(result.aliveEstimated).toBe(true);
+  });
+
+  it('创建展示优先真实注册时间 account_registered_at，非降级', () => {
+    const registered = Date.parse('2026-08-01T00:00:00Z');
+    const result = deriveFarmAccountTimeLabels({
+      registeredAt: '2026-08-01T00:00:00Z',
+      createdAt: '2026-08-11T00:00:00Z',
+      impaired: false,
+      nowMs: NOW,
+    });
+
+    expect(result.createdAtDate?.getTime()).toBe(registered);
+    expect(result.createdAtIsFallback).toBe(false);
+  });
+
+  it('真实注册时间缺失 → 创建降级到 created_at 并标注 fallback', () => {
+    const created = Date.parse('2026-08-11T00:00:00Z');
+    const result = deriveFarmAccountTimeLabels({
+      registeredAt: undefined,
+      createdAt: '2026-08-11T00:00:00Z',
+      impaired: false,
+      nowMs: NOW,
+    });
+
+    expect(result.createdAtDate?.getTime()).toBe(created);
+    expect(result.createdAtIsFallback).toBe(true);
+  });
+
+  it('存活起点用首次登录，而非创建/注册时刻', () => {
+    const firstLogin = Date.parse('2026-08-10T00:00:00Z');
+    const result = deriveFarmAccountTimeLabels({
+      registeredAt: '2026-08-01T00:00:00Z',
+      createdAt: '2026-08-02T00:00:00Z',
+      firstIdentityAt: '2026-08-10T00:00:00Z',
+      impaired: false,
+      nowMs: NOW,
+    });
+
+    expect(result.aliveMs).toBe(NOW - firstLogin);
+  });
 });

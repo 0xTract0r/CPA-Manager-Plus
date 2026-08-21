@@ -10,6 +10,7 @@ import {
 import { useLocation } from 'react-router-dom';
 import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
+import { useTimezone } from '@/hooks/useTimezone';
 import {
   buildRealtimeMonitorRows,
   getRangeBounds,
@@ -156,6 +157,9 @@ const shortLabel = (t: TFunction, shortKey: string, fallbackKey: string) => {
 
 export function MonitoringCenterPage() {
   const { t, i18n } = useTranslation();
+  // 订阅全局时区：切换时区时账号总览/实时事件/状态条等时间戳随之重渲染，无需刷新。
+  // timeZone 还要显式进入下方范围文案(scope text)的 useMemo 依赖，否则缓存值不随切换更新。
+  const { timeZone } = useTimezone();
   const location = useLocation();
   const config = useConfigStore((state) => state.config);
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
@@ -676,13 +680,19 @@ export function MonitoringCenterPage() {
     () => getRangeBounds(timeRange, accountStatusNowMs, customTimeRange),
     [accountStatusNowMs, customTimeRange, timeRange]
   );
+  // 下面三个范围文案都经 formatInUtc8(读全局时区)渲染起止时刻，必须把 timeZone 纳入
+  // 依赖，否则切换时区后 useMemo 命中旧缓存、文案不即时更新(R5-4 切换滞后根因)。
+  // timeZone 是在被调函数内部间接读取(全局 store)，exhaustive-deps 看不到这层依赖会误报
+  // "unnecessary dependency"，此处的依赖是有意的缓存失效信号，故在依赖数组行按需禁用该规则。
   const accountOverviewScopeText = useMemo(
     () => formatAccountOverviewScopeText(accountStatusBounds, i18n.language, t),
-    [accountStatusBounds, i18n.language, t]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [accountStatusBounds, i18n.language, t, timeZone]
   );
   const monitoringSummaryScopeText = useMemo(
     () => formatMonitoringSummaryScopeText(timeRange, t, customRangeDescriptor, i18n.language),
-    [customRangeDescriptor, i18n.language, t, timeRange]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [customRangeDescriptor, i18n.language, t, timeRange, timeZone]
   );
   // 时间行"自定义"段的紧凑标签：仅在真的处于 custom 档时用描述符还原实际选择，
   // 其余快捷档下 timeRange !== 'custom'，回退到笼统的"自定义"文案(段本身不高亮)。
@@ -691,7 +701,8 @@ export function MonitoringCenterPage() {
       timeRange === 'custom'
         ? formatMonitoringCustomRangeCompactLabel(customRangeDescriptor, i18n.language, t)
         : t('monitoring.range_custom'),
-    [customRangeDescriptor, i18n.language, t, timeRange]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [customRangeDescriptor, i18n.language, t, timeRange, timeZone]
   );
 
   const scopedSummary = monitoringSummary;

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useTimezone } from '@/hooks/useTimezone';
 import {
   buildProviderRows,
   ClaudeEditDrawer,
@@ -47,6 +48,8 @@ const DEFAULT_CLOAK_CONFIG: CloakConfig = {
 
 export function AiProvidersPage() {
   const { t } = useTranslation();
+  // 订阅全局时区：切换时区时提供商状态条（ProviderStatusBar）的时间随之重渲染，无需刷新。
+  useTimezone();
   const { showNotification, showConfirmation } = useNotificationStore();
   const resolvedTheme = useThemeStore((state) => state.resolvedTheme);
   const connectionStatus = useAuthStore((state) => state.connectionStatus);

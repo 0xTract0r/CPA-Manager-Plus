@@ -8,6 +8,7 @@ import type {
   XaiBillingSummary,
 } from '@/types';
 import type { UsageHeaderSnapshot } from '@/services/api/usageService';
+import { formatInUtc8 } from '@/utils/datetime';
 import type {
   MonitoringAccountRow,
   MonitoringApiKeyRow,
@@ -1260,7 +1261,16 @@ export const buildObservedCodexAccountQuotaEntry = (
   const observedQuota = buildObservedCodexQuotaFromHeaderSnapshot(snapshot);
   const planLabel = getCodexPlanLabel(planType, t);
   const observedAtMs = readFiniteTimestamp(snapshot?.timestamp_ms) ?? undefined;
-  const observedAt = observedAtMs ? new Date(observedAtMs).toLocaleString() : '';
+  const observedAt = observedAtMs
+    ? formatInUtc8(observedAtMs, {
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: 'numeric',
+        second: 'numeric',
+      })
+    : '';
   const usedPercent = getHeaderSnapshotUsedPercent(snapshot);
   const recoverAtMS = getHeaderSnapshotRecoverAtMs(snapshot);
   const errorKind = getHeaderSnapshotErrorKind(snapshot);
@@ -1300,7 +1310,16 @@ export const buildObservedCodexAccountQuotaEntry = (
               id: 'usage-header-observed',
               label: t('codex_quota.observed_window', { defaultValue: 'Latest request' }),
               remainingPercent: buildRemainingFromUsedPercent(usedPercent),
-              resetLabel: recoverAtMS ? new Date(recoverAtMS).toLocaleString() : '-',
+              resetLabel: recoverAtMS
+                ? formatInUtc8(recoverAtMS, {
+                    year: 'numeric',
+                    month: 'numeric',
+                    day: 'numeric',
+                    hour: 'numeric',
+                    minute: 'numeric',
+                    second: 'numeric',
+                  })
+                : '-',
               usageLabel:
                 usedPercent !== null
                   ? t('monitoring.account_quota_observed_used', {
@@ -1488,8 +1507,8 @@ export const formatMonitoringCustomRangeCompactLabel = (
     return t('monitoring.custom_days_compact', { count: descriptor.days });
   }
   const dateOptions: Intl.DateTimeFormatOptions = { month: '2-digit', day: '2-digit' };
-  const startLabel = new Date(descriptor.startMs).toLocaleDateString(locale, dateOptions);
-  const endLabel = new Date(descriptor.endMs).toLocaleDateString(locale, dateOptions);
+  const startLabel = formatInUtc8(descriptor.startMs, dateOptions, locale);
+  const endLabel = formatInUtc8(descriptor.endMs, dateOptions, locale);
   return `${startLabel}~${endLabel}`;
 };
 

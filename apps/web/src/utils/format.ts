@@ -9,8 +9,12 @@ import { parseTimestamp } from './timestamp';
  * 面向用户的时区格式化统一走 `utils/datetime`（由全局时区配置驱动，默认 UTC+8）。
  * 这里重新导出 `formatInUtc8`，让历史上从 `@/utils/format` 引入它的调用点
  * （authFiles / quota 等）自动迁移到同一个全局配置，不再各自维护一份 UTC+8 逻辑。
+ * 本模块自身的 `formatDateTime` / `formatUnixTimestamp` 也委托给它，避免再走
+ * 浏览器本地时区（此前的旁路根源）。
  */
-export { formatInUtc8 } from './datetime';
+import { formatInUtc8 } from './datetime';
+
+export { formatInUtc8 };
 
 const resolveDefaultLocale = (): string | undefined => {
   const fromDocument =
@@ -83,7 +87,7 @@ export function formatFileSize(bytes: number): string {
 }
 
 /**
- * 格式化日期时间
+ * 格式化日期时间。走全局时区配置（默认 UTC+8），不再跟随浏览器本地时区。
  */
 export function formatDateTime(date: string | Date, locale?: string): string {
   const d = typeof date === 'string' ? parseTimestamp(date) ?? new Date(date) : date;
@@ -93,18 +97,24 @@ export function formatDateTime(date: string | Date, locale?: string): string {
   }
 
   const resolvedLocale = locale?.trim() || resolveDefaultLocale();
-  return d.toLocaleString(resolvedLocale, {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
+  return formatInUtc8(
+    d,
+    {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    },
+    resolvedLocale,
+    'Invalid Date'
+  );
 }
 
 /**
- * 将 Unix 时间戳（秒/毫秒/微秒/纳秒）格式化为本地时间字符串
+ * 将 Unix 时间戳（秒/毫秒/微秒/纳秒）格式化为字符串。多精度归一后走全局时区配置
+ * （默认 UTC+8）渲染，不再跟随浏览器本地时区。
  */
 export function formatUnixTimestamp(value: unknown, locale?: string): string {
   if (value === null || value === undefined || value === '') return '';
@@ -131,7 +141,21 @@ export function formatUnixTimestamp(value: unknown, locale?: string): string {
   })();
 
   if (Number.isNaN(date.getTime())) return '';
-  return locale ? date.toLocaleString(locale) : date.toLocaleString();
+  // 走全局时区；显式给全字段以匹配 `toLocaleString()` 默认的「日期+时间」形状
+  // （`Intl.DateTimeFormat` 不给 style/字段时只输出日期）。
+  return formatInUtc8(
+    date,
+    {
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric',
+      second: 'numeric',
+    },
+    locale,
+    ''
+  );
 }
 
 /**

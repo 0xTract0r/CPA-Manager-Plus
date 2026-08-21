@@ -104,3 +104,27 @@ describe('FarmContainerTable empty states', () => {
     expect(findByTestId(renderer, 'farm-container-row-c-1')).toHaveLength(1);
   });
 });
+
+// R5-2 改绑防误绑（回显上次绑定）：解绑过的 down 容器带 last_bound_account 时，
+// 绑定列回显「上次绑定：<脱敏账号>（已解绑）」，而不是空占位或裸 device_id。
+describe('FarmContainerTable last-bound回显 (R5-2)', () => {
+  it('shows the last-bound line for an unbound down container carrying last_bound_account', () => {
+    const renderer = renderTable({
+      containers: [
+        baseContainer({ id: 'c-9', status: 'down', last_bound_account: 'acct9@example.com' }),
+      ],
+      groupFilter: 'down',
+    });
+
+    expect(findByTestId(renderer, 'farm-container-last-bound-c-9')).toHaveLength(1);
+  });
+
+  it('omits the last-bound line when the unbound container has no last_bound_account', () => {
+    const renderer = renderTable({
+      containers: [baseContainer({ id: 'c-10', status: 'down' })],
+      groupFilter: 'down',
+    });
+
+    expect(findByTestId(renderer, 'farm-container-last-bound-c-10')).toHaveLength(0);
+  });
+});

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { useTimezone } from '@/hooks/useTimezone';
 import {
   IconBot,
   IconFileText,
@@ -59,6 +60,8 @@ const HEALTH_REFRESH_INTERVAL_MS = 60_000;
 
 export function DashboardPage() {
   const { t, i18n } = useTranslation();
+  // 订阅全局时区：切换时区时整页时间戳（含 HealthAlerts/Version/UsageMetrics 卡）随之重渲染。
+  useTimezone();
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const serverVersion = useAuthStore((state) => state.serverVersion);
   const serverBuildDate = useAuthStore((state) => state.serverBuildDate);

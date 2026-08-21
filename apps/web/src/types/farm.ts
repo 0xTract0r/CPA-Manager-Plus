@@ -93,6 +93,13 @@ export interface FarmContainerView {
   // 其它文案。未绑定容器留空（无账号可判定）。
   account_auth_status?: string;
   account_auth_reason?: string;
+  // R5-2 改绑防误绑：该容器上次绑定过的账号标识（备注名 / 邮箱 / auth 文件名，
+  // 编排器 containerView.LastBoundAccount 透传，与 bindingView.Account 同源脱敏
+  // 口径）。**仅解绑过、当前 status=down 的容器有值**——供 UI 显示「上次绑定：X
+  // （已解绑）」，让 operator 一眼看清该容器历史归属，而不是拿裸 device_id hex
+  // 当账号误认。当前有绑定（binding 非空）或从未绑过时缺失（omitempty）。前端用
+  // resolveBindingIdentity / maskAccountEmail 走与全站一致的脱敏展示。
+  last_bound_account?: string;
 }
 
 // 容器状态取值（store.Status* 常量，供前端徽标着色用；未知值按 fallback 灰色处理）
@@ -237,10 +244,19 @@ export interface FarmAccountEntry {
   //  - first_identity_at：首次登录/接入时间（源自
   //    account_settings.runtime_identity.current.created_at，RFC3339），是 #50
   //    描述「首次登录」的等价字段。
-  // 两者均 omitempty，缺失时前端展示 '—'，不伪造。封禁时间（refresh_disabled_at）
-  // core 尚未投影到任何管理 API JSON，编排器拿不到，暂缺（见 #57，前端显 '—'）。
+  // 两者均 omitempty，缺失时前端展示 '—'，不伪造。
   created_at?: string;
   first_identity_at?: string;
+  // R5-1（AC11）新增账号级时间字段（编排器 accountView 透传，Wave1 起补齐）：
+  //  - account_registered_at：Anthropic profile 的**真实注册时间**（RFC3339），
+  //    区别于 created_at（core 装载近似值）。「创建」列优先展示此字段，缺失才
+  //    降级到 created_at 并标注「装载近似」。omitempty，缺失时按 created_at 兜底。
+  //  - refresh_disabled_at：**真实封禁时刻**（RFC3339，账号级）。是 refresh 被
+  //    core 关停/账号被禁用的时刻，供「封禁」列展示与存活终点钉值（见
+  //    utils/accountTime.ts deriveFarmAccountTimeLabels）。omitempty，未封禁或
+  //    后端未投影时缺失，前端显 '—'（不再是 #57 的"永远待补"占位）。
+  account_registered_at?: string;
+  refresh_disabled_at?: string;
   proxy_url?: string;
   device_id?: string;
   success?: number;

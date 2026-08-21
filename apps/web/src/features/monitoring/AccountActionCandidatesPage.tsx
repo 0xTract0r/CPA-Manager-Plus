@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useTimezone } from '@/hooks/useTimezone';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -57,6 +58,8 @@ const getHeaderEvidence = (candidate: AccountActionCandidate) => ({
 
 export function AccountActionCandidatesPage() {
   const { t } = useTranslation();
+  // 订阅全局时区：切换时区时候选项的时间戳随之重渲染，无需刷新。
+  useTimezone();
   const managementKey = useAuthStore((state) => state.managementKey);
   const { showNotification, showConfirmation } = useNotificationStore();
   const featureAvailability = usePanelFeatureAvailability();

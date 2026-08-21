@@ -37,7 +37,13 @@ export function FarmBindModal({
   const [env, setEnv] = useState<FarmEnv>('test');
   const [accountId, setAccountId] = useState('');
 
-  const unboundContainers = useMemo(() => containers.filter((c) => !c.binding), [containers]);
+  // R5-2 改绑防误绑：可绑定候选只留「无绑定且非 down」的容器。down 容器已被编排器
+  // 后端 fail-closed 拒绝改绑（不应再往一个已解绑/离线的容器上绑账号），前端也不
+  // 把它列进候选，避免 operator 误选。只留 created / 从没绑过的健康候选。
+  const unboundContainers = useMemo(
+    () => containers.filter((c) => !c.binding && c.status !== 'down'),
+    [containers]
+  );
   const { accounts, loading: accountsLoading } = useFarmAccounts(env);
   const availableAccounts = useMemo(() => accounts.filter((a) => !a.disabled), [accounts]);
 

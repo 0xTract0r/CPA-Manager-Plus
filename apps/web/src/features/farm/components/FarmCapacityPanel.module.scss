@@ -228,6 +228,43 @@
   color: var(--text-secondary, var(--text-secondary));
 }
 
+// 「全局自动纳管新号」开关小节：与 .autoProvision 同版式（标题 + 状态徽标同排、
+// 说明另起一行），紧随其后作为并排的第二个开关。刻意用独立类名，避免语义混淆。
+.autoEnroll {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: $spacing-sm;
+  border-top: 1px solid var(--border-color);
+}
+
+.autoEnrollHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.autoEnrollTitle {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+// ToggleSwitch 包裹：把开关推到标题行右侧，label（自动/手动）在开关左侧。
+.autoEnrollControl {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+}
+
+.autoEnrollHint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary, var(--text-secondary));
+}
+
 // per-account 供给状态列表：每行账号 + 环境 chip + 状态徽标。
 .provisioning {
   display: flex;

@@ -4,32 +4,30 @@
 
 import type { TFunction } from 'i18next';
 import type { CodexUsageWindow } from '@/types';
+import { formatInUtc8 } from '@/utils/datetime';
 import { normalizeNumberValue } from './parsers';
+
+const QUOTA_RESET_OPTIONS: Intl.DateTimeFormatOptions = {
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+};
 
 export function formatQuotaResetTime(value?: string): string {
   if (!value) return '-';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '-';
-  return date.toLocaleString(undefined, {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false
-  });
+  // 走全局时区（默认 UTC+8），不再跟随浏览器本地时区。
+  return formatInUtc8(date, QUOTA_RESET_OPTIONS);
 }
 
 export function formatUnixSeconds(value: number | null): string {
   if (!value) return '-';
   const date = new Date(value * 1000);
   if (Number.isNaN(date.getTime())) return '-';
-  return date.toLocaleString(undefined, {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false
-  });
+  return formatInUtc8(date, QUOTA_RESET_OPTIONS);
 }
 
 export function formatCodexResetLabel(window?: CodexUsageWindow | null): string {

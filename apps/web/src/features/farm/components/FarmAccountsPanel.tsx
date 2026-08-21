@@ -704,37 +704,61 @@ export function FarmAccountsPanel({
               ];
 
               // ---------------------------------------------------------
-              // #50 账号时间字段：创建 / 首次登录 / 存活 / 封禁（全部走全局时区展示）。
-              //  - 创建：account.created_at（core 侧记录首次装载近似值，非账号注册时间）。
+              // #50 / R5-1（AC11）账号时间字段：创建 / 首次登录 / 存活 / 封禁
+              // （全部走全局时区展示）。
+              //  - 创建：优先 account.account_registered_at（Anthropic 真实注册时间），
+              //    缺失才降级到 account.created_at（core 装载近似值）并标注「装载近似」。
               //  - 首次登录：account.first_identity_at（runtime_identity.current.created_at）。
-              //  - 存活：健康号 = now − 创建；已失效号（隔离/需重认证）= 失效时间 − 创建。
-              //    失效时间仅 auto_quarantined 有 quarantined_at；needs_reauth 无精确失效
-              //    时间时退回 now 估算并标注「估算」。
-              //  - 封禁：refresh_disabled_at 目前未从 core 透传（#57），显示 '—' 留待补齐。
+              //  - 存活：起点=首次登录、终点=真实封禁 refresh_disabled_at（若有）否则 now；
+              //    封禁缺失但为隔离号时次选 quarantined_at 作终点；两者都缺才退回 now
+              //    估算并标注「估算」。修复：needs_reauth 死号此前终点一路退回 now、存活
+              //    数字虚涨——现在只要有真实封禁时刻就钉死终点。
+              //  - 封禁：account.refresh_disabled_at（真实封禁时刻），有值展示、无值 '—'。
               // ---------------------------------------------------------
-              // #50 零时间兜底 + 存活派生统一走 deriveFarmAccountTimeLabels（纯函数，
-              // 内部复用 parseCoreQuotaTimestamp 拦 Go 零值 0001-01-01T00:00:00Z）。
-              // 失效时刻只对 auto_quarantined 取 quarantined_at；needs_reauth 无精确失效
-              // 时刻 → 按 now 估算并标注。见该 util 顶部注释与回归测试。
+              // 零时间兜底 + 存活派生统一走 deriveFarmAccountTimeLabels（纯函数，内部
+              // 复用 parseCoreQuotaTimestamp 拦 Go 零值 0001-01-01T00:00:00Z）。见该
+              // util 顶部注释与回归测试。
               const aliveImpaired =
                 authState === 'auto_quarantined' || authState === 'needs_reauth';
-              const { createdAtDate, firstIdentityDate, aliveMs, aliveEstimated } =
-                deriveFarmAccountTimeLabels({
-                  createdAt: account.created_at,
-                  firstIdentityAt: account.first_identity_at,
-                  failureAt:
-                    authState === 'auto_quarantined' ? account.quarantined_at : undefined,
-                  impaired: aliveImpaired,
-                  nowMs,
-                });
+              const {
+                createdAtDate,
+                createdAtIsFallback,
+                bannedAtDate,
+                firstIdentityDate,
+                aliveMs,
+                aliveEstimated,
+              } = deriveFarmAccountTimeLabels({
+                registeredAt: account.account_registered_at,
+                createdAt: account.created_at,
+                firstIdentityAt: account.first_identity_at,
+                bannedAt: account.refresh_disabled_at,
+                failureAt:
+                  authState === 'auto_quarantined' ? account.quarantined_at : undefined,
+                impaired: aliveImpaired,
+                nowMs,
+              });
               const createdAtLabel = createdAtDate
                 ? formatDateTimeUtc8(createdAtDate, i18n.language)
                 : '—';
+              // 创建时刻来源提示：真实注册 vs core 装载近似降级（fallback）。
+              const createdAtSourceHint = createdAtDate
+                ? createdAtIsFallback
+                  ? t('farm.accountHealth.timeCreatedFallbackHint', {
+                      defaultValue:
+                        '降级值：core 首次装载近似时刻（非 Anthropic 真实注册时间，后者暂缺）',
+                    })
+                  : t('farm.accountHealth.timeCreatedRealHint', {
+                      defaultValue: 'Anthropic 真实注册时间',
+                    })
+                : undefined;
               const firstIdentityLabel = firstIdentityDate
                 ? formatDateTimeUtc8(firstIdentityDate, i18n.language)
                 : '—';
               const aliveLabel =
                 aliveMs != null ? formatDurationMs(aliveMs, { maxUnits: 2 }) : '—';
+              const bannedAtLabel = bannedAtDate
+                ? formatDateTimeUtc8(bannedAtDate, i18n.language)
+                : '—';
 
               return (
                 <TableRow key={account.name} data-testid={`farm-account-row-${account.name}`}>
@@ -1137,8 +1161,20 @@ export function FarmAccountsPanel({
                         <dd
                           className={`${styles.timeValue} ${styles.mono}`}
                           data-testid={`farm-account-created-${account.name}`}
+                          data-created-fallback={createdAtIsFallback ? 'true' : undefined}
                         >
-                          {createdAtLabel}
+                          <span title={createdAtSourceHint}>{createdAtLabel}</span>
+                          {createdAtDate && createdAtIsFallback ? (
+                            <span
+                              className={styles.timeEstimate}
+                              data-testid={`farm-account-created-fallback-${account.name}`}
+                              title={createdAtSourceHint}
+                            >
+                              {t('farm.accountHealth.timeCreatedFallbackBadge', {
+                                defaultValue: '装载近似',
+                              })}
+                            </span>
+                          ) : null}
                         </dd>
                       </div>
                       <div className={styles.timeRow}>
@@ -1181,14 +1217,19 @@ export function FarmAccountsPanel({
                         <dd
                           className={`${styles.timeValue} ${styles.mono}`}
                           data-testid={`farm-account-banned-${account.name}`}
+                          data-banned={bannedAtDate ? 'true' : undefined}
                         >
-                          <span
-                            title={t('farm.accountHealth.timeBannedPending', {
-                              defaultValue: '封禁时间待后端补充（refresh_disabled_at 未暴露）',
-                            })}
-                          >
-                            —
-                          </span>
+                          {bannedAtDate ? (
+                            <span>{bannedAtLabel}</span>
+                          ) : (
+                            <span
+                              title={t('farm.accountHealth.timeBannedNone', {
+                                defaultValue: '无封禁记录（账号未被封禁，或后端未提供封禁时刻）',
+                              })}
+                            >
+                              —
+                            </span>
+                          )}
                         </dd>
                       </div>
                     </dl>

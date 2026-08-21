@@ -81,8 +81,19 @@ import {
   hasUsageHeaderQuotaSignal,
 } from '@/utils/usageHeaderSnapshots';
 import { normalizeAuthIndex } from '@/utils/authIndex';
+import { formatInUtc8 } from '@/utils/datetime';
 import type { QuotaRenderHelpers } from './QuotaCard';
 import styles from '@/features/quota/QuotaPage.module.scss';
+
+/** `toLocaleString()` 默认的「日期+时间」全字段选项，用于全局时区格式化保持原有形状。 */
+const FULL_DATETIME_OPTIONS: Intl.DateTimeFormatOptions = {
+  year: 'numeric',
+  month: 'numeric',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: 'numeric',
+  second: 'numeric',
+};
 
 type QuotaUpdater<T> = T | ((prev: T) => T);
 
@@ -643,7 +654,7 @@ export const buildObservedCodexQuotaState = (
   const observedQuota = buildObservedCodexQuotaFromHeaderSnapshot(snapshot);
   const usedPercent = getHeaderSnapshotUsedPercent(snapshot);
   const recoverAtMS = getHeaderSnapshotRecoverAtMs(snapshot);
-  const recoverLabel = recoverAtMS ? new Date(recoverAtMS).toLocaleString() : '-';
+  const recoverLabel = recoverAtMS ? formatInUtc8(recoverAtMS, FULL_DATETIME_OPTIONS) : '-';
   const headerPlanType = observedQuota?.planType || getHeaderSnapshotPlanType(snapshot);
   const planType = resolveCodexPlanType(file) ?? (headerPlanType || null);
   const observedWindows = observedQuota?.payload
@@ -717,7 +728,7 @@ export const getSortedCodexResetCreditExpiries = (
 const formatCodexResetCreditExpiryTime = (expiresAt: string): string => {
   const expiresAtMs = new Date(expiresAt).getTime();
   if (!Number.isFinite(expiresAtMs)) return '-';
-  return new Date(expiresAtMs).toLocaleString(undefined, {
+  return formatInUtc8(expiresAtMs, {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -789,7 +800,9 @@ const buildCodexWindowTooltipRows = (
   const fromUsageHeaders = quota.observedFromUsageHeaders === true;
   const timestampMs = fromUsageHeaders ? quota.observedAtMs : quota.fetchedAtMs;
   const fetchedAt =
-    timestampMs && Number.isFinite(timestampMs) ? new Date(timestampMs).toLocaleString() : '--';
+    timestampMs && Number.isFinite(timestampMs)
+      ? formatInUtc8(timestampMs, FULL_DATETIME_OPTIONS)
+      : '--';
 
   return [
     {

@@ -3,6 +3,7 @@ import type { TFunction } from 'i18next';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import type { MonitoringStatusTone } from '@/features/monitoring/hooks/useMonitoringData';
 import type { UsageCatchUpPresentation } from '@/features/monitoring/model/usageCatchUpPresentation';
+import { formatInUtc8 } from '@/utils/datetime';
 import { formatCompactNumber } from '@/utils/usage';
 import styles from '../MonitoringCenterPage.module.scss';
 
@@ -58,7 +59,14 @@ export function MonitoringStatusSummary({
       </span>
       <div className={styles.statusMeta}>
         <span title={t('monitoring.last_sync')}>
-          {lastSyncLabel}: {lastRefreshedAt ? lastRefreshedAt.toLocaleTimeString(locale) : '--'}
+          {lastSyncLabel}:{' '}
+          {lastRefreshedAt
+            ? formatInUtc8(
+                lastRefreshedAt,
+                { hour: 'numeric', minute: 'numeric', second: 'numeric' },
+                locale
+              )
+            : '--'}
         </span>
         <span
           className={scopedFailureCount > 0 ? styles.statusMetaWarn : undefined}
