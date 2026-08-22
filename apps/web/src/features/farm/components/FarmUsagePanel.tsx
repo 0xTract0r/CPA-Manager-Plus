@@ -215,11 +215,14 @@ export function FarmUsagePanel({ hideHeading = false }: { hideHeading?: boolean 
           testId: 'farm-usage-empty',
         }}
       >
-        {/* 用量明细 11 列，769–1180 中等视口横滚会把 Cost(USD) / Requests 两列
-            滚出屏外且无焦点可达（axe scrollable-region-focusable）；用 farm-tablet
-            档把卡片降级上界抬到 ≤1180，整表铺成卡片，所有 token/费用/请求数字段
-            完整可见、无独立滚动区。核心数据零丢弃。 */}
-        <ResponsiveTable breakpoint="farm-tablet">
+        {/* 用量明细 11 列，表格内容自然宽约 1075px；1280 视口主内容可用宽仅 ~970px
+            (视口 − ~313px 侧栏/padding/scrollbar-gutter/面板 padding)，走表格会横滚把
+            最右侧 Requests 列滚出屏外且无焦点可达（axe serious
+            scrollable-region-focusable）。farm-tablet(≤1180) 覆盖不到 1280，故用更高的
+            farm-usage 档（≤1400）把卡片降级上界抬到 1400：1280 走卡片、≥1401（含 1440）
+            才表格且真正放得下。整表铺成卡片时所有 token/费用/请求数字段完整可见、无
+            独立滚动区，核心数据零丢弃。断点推导见 ResponsiveTable.module.scss。 */}
+        <ResponsiveTable breakpoint="farm-usage">
         <Table data-testid="farm-usage-table">
           <TableHeader>
             <TableRow>
