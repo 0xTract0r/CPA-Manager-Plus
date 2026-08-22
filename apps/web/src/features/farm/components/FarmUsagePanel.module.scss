@@ -267,59 +267,16 @@
   color: var(--text-secondary);
 }
 
-// 窄屏（≤768 平板/手机）响应式降级：用量明细表列很多（11 列），窄屏改成堆叠
-// 卡片。每行一张卡片，字段用列头标签（data-label，复用现有 i18n key）纵向排列，
-// 彻底消除横向溢出与右缘半裁——之前窄屏下 Token 表头被裁、需横滚才够到费用/请求数
-// 列的问题不再出现，所有 token 明细字段都完整可见（不再靠折叠列隐藏数据）。
-// 桌面（≥769）维持原表格布局。
+// 响应式降级：用量明细表列很多（11 列），窄/中等视口靠横滚会把 Cost(USD) /
+// Requests 等右侧列滚出屏外且无焦点可达。整表→堆叠卡片的结构降级已收敛到共享
+// 原语 <ResponsiveTable>（ResponsiveTable.module.scss），本面板在 .tsx 里用
+// `breakpoint="farm-tablet"` 把它包住 <Table>，覆盖 ≤1180 全区间——所有 token
+// 明细 / 费用 / 请求数字段都铺成卡片完整可见（不靠折叠列隐藏数据，核心数据零
+// 丢弃）。这里只保留 FarmUsagePanel 专有的窄屏微调（双时钟卡堆叠）。桌面
+// （≥1181，含 1440）维持原表格布局。
 @include mobile {
   // 双时钟卡窄屏改上下堆叠，避免两钟并列被挤到列内溢出/文字截断。
   .clockGrid {
     grid-template-columns: 1fr;
-  }
-
-  .panel {
-    table {
-      display: block;
-      width: 100%;
-    }
-
-    thead {
-      display: none;
-    }
-
-    tbody {
-      display: block;
-    }
-
-    // 卡片四周留均匀间距，与 Table 外层 .wrap 边框之间形成一致的内凹留白，
-    // 呈现「框内悬浮卡片」而非贴边双线。
-    tbody tr {
-      display: block;
-      padding: $spacing-sm $spacing-md;
-      margin: $spacing-sm;
-      border: 1px solid var(--border-color);
-      border-radius: $radius-md;
-      background: var(--bg-primary);
-    }
-
-    tbody td {
-      display: block;
-      padding: 6px 0;
-      border-bottom: none;
-      text-align: left;
-      white-space: normal;
-
-      &::before {
-        content: attr(data-label);
-        display: block;
-        margin-bottom: 3px;
-        font-size: $fs-2xs;
-        font-weight: 600;
-        letter-spacing: 0.03em;
-        text-transform: uppercase;
-        color: var(--text-secondary);
-      }
-    }
   }
 }

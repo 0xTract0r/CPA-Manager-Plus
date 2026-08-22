@@ -13,6 +13,7 @@ import { AsyncPanel } from '@/components/ui/AsyncPanel';
 import { IconInfo } from '@/components/ui/icons';
 import { formatUsd } from '@/utils/usage';
 import { useFarmUsage } from '../hooks/useFarmUsage';
+import { ResponsiveTable } from './ResponsiveTable';
 import {
   FARM_PROBE_CADENCE_SCOPE,
   FARM_USAGE_SCOPE,
@@ -214,6 +215,11 @@ export function FarmUsagePanel({ hideHeading = false }: { hideHeading?: boolean 
           testId: 'farm-usage-empty',
         }}
       >
+        {/* 用量明细 11 列，769–1180 中等视口横滚会把 Cost(USD) / Requests 两列
+            滚出屏外且无焦点可达（axe scrollable-region-focusable）；用 farm-tablet
+            档把卡片降级上界抬到 ≤1180，整表铺成卡片，所有 token/费用/请求数字段
+            完整可见、无独立滚动区。核心数据零丢弃。 */}
+        <ResponsiveTable breakpoint="farm-tablet">
         <Table data-testid="farm-usage-table">
           <TableHeader>
             <TableRow>
@@ -298,6 +304,7 @@ export function FarmUsagePanel({ hideHeading = false }: { hideHeading?: boolean 
             })}
           </TableBody>
         </Table>
+        </ResponsiveTable>
       </AsyncPanel>
     </div>
   );

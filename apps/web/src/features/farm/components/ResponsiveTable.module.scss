@@ -3,62 +3,84 @@
 
 // 共享窄视口表格降级原语（farm 设计系统收敛 E2）。
 //
-// 把宽表在 mobile(≤768) 视口整表降级成堆叠卡片：每行渲染成一张卡片，字段以
-// 「标签（列头）+ 值」纵向排列，标签取自各单元格的 data-label（复用现有列头
-// i18n key，无新增文案），彻底消除横向溢出与右缘半裁——之前窄屏靠 Table 内建
-// .scroll 横滚才够到「操作 / 重新授权」列、状态胶囊贴右缘被切一半的问题不再出现。
+// 把宽表在窄/中等视口整表降级成堆叠卡片：每行渲染成一张卡片，字段以「标签
+// （列头）+ 值」纵向排列，标签取自各单元格的 data-label（复用现有列头 i18n key，
+// 无新增文案），彻底消除横向溢出与右缘半裁——之前窄屏靠 Table 内建 .scroll 横滚
+// 才够到「操作 / 重新授权」列、状态胶囊贴右缘被切一半的问题不再出现。
 //
-// 收敛来源：FarmContainerTable / FarmAccountsPanel 此前各自复制一份结构完全相同
-// 的 table→card 降级块，这里收敛成单一原语。组件本地仅保留列/字段级微调（如
-// containerId 换行、actions 左对齐、筛选控件满宽），不再复制结构。
+// 收敛来源：FarmContainerTable / FarmAccountsPanel / FarmUsagePanel 此前各自复制
+// 一份结构完全相同的 table→card 降级块，这里收敛成单一原语。组件本地仅保留列/
+// 字段级微调（如 containerId 换行、actions 左对齐、筛选控件满宽），不再复制结构。
 //
 // 实现：本类以后代选择器命中内层原生 <table>/<thead>/<tbody>/<tr>/<td>（跨 CSS
 // module 靠标签选择器，标签靠 data-label 属性选择器，均不依赖 <Table> 的 hash
-// 类名）。桌面（≥769）维持原表格布局完全不变。
+// 类名）。
+//
+// 两档断点（.tsx `breakpoint` prop 控制挂哪个类）：
+//   - 默认 .responsiveTable：≤768(mobile) 降级；桌面/中等视口维持原表格。
+//   - .responsiveTableFarmTablet：与默认类叠加使用，补 769–1180(farm-tablet) 区间，
+//     合起来把降级上界抬到 ≤1180。桌面（≥1181，含 1440）维持原表格布局不受影响。
+
+// 卡片降级声明块（供两档断点复用，避免重复）。
+@mixin responsive-table-card {
+  table {
+    display: block;
+    width: 100%;
+  }
+
+  thead {
+    display: none;
+  }
+
+  tbody {
+    display: block;
+  }
+
+  // 卡片四周留均匀间距，与 Table 外层 .wrap 边框之间形成一致的内凹留白，
+  // 呈现「框内悬浮卡片」而非贴边双线。
+  tbody tr {
+    display: block;
+    padding: $spacing-sm $spacing-md;
+    margin: $spacing-sm;
+    border: 1px solid var(--border-color);
+    border-radius: $radius-md;
+    background: var(--bg-primary);
+  }
+
+  tbody td {
+    display: block;
+    padding: 6px 0;
+    border-bottom: none;
+    text-align: left;
+    white-space: normal;
+
+    &::before {
+      content: attr(data-label);
+      display: block;
+      margin-bottom: 3px;
+      // 原 11px 微字，抬到最小合规档 $fs-2xs(12px)（E1）。
+      font-size: $fs-2xs;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      color: var(--text-secondary);
+    }
+  }
+}
+
+// 默认档：≤768 降级卡片（FarmContainerTable 用；桌面/中等视口保持原表格）。
 .responsiveTable {
   @include mobile {
-    table {
-      display: block;
-      width: 100%;
-    }
+    @include responsive-table-card;
+  }
+}
 
-    thead {
-      display: none;
-    }
-
-    tbody {
-      display: block;
-    }
-
-    // 卡片四周留均匀间距，与 Table 外层 .wrap 边框之间形成一致的内凹留白，
-    // 呈现「框内悬浮卡片」而非贴边双线。
-    tbody tr {
-      display: block;
-      padding: $spacing-sm $spacing-md;
-      margin: $spacing-sm;
-      border: 1px solid var(--border-color);
-      border-radius: $radius-md;
-      background: var(--bg-primary);
-    }
-
-    tbody td {
-      display: block;
-      padding: 6px 0;
-      border-bottom: none;
-      text-align: left;
-      white-space: normal;
-
-      &::before {
-        content: attr(data-label);
-        display: block;
-        margin-bottom: 3px;
-        // 原 11px 微字，抬到最小合规档 $fs-2xs(12px)（E1）。
-        font-size: $fs-2xs;
-        font-weight: 600;
-        letter-spacing: 0.03em;
-        text-transform: uppercase;
-        color: var(--text-secondary);
-      }
-    }
+// farm-tablet 档：补 769–1180 区间的卡片降级（账号表 / 用量表用）。与默认类叠加
+// （同一 <div> 同时挂 .responsiveTable + .responsiveTableFarmTablet）：≤768 由默认
+// 类的 @include mobile 承接，769–1180 由本类的 @include farm-tablet 承接，合起来
+// 覆盖整个 ≤1180 区间。桌面（≥1181，含 1440）不匹配任一断点，维持原表格布局。
+.responsiveTableFarmTablet {
+  @include farm-tablet {
+    @include responsive-table-card;
   }
 }
