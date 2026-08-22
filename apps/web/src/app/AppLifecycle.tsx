@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useLanguageStore, useThemeStore, useVisualEffectsStore } from '@/stores';
+import { setTimeZone } from '@/utils/timezone';
 
 export function AppLifecycle() {
   const initializeTheme = useThemeStore((state) => state.initializeTheme);
@@ -24,6 +25,17 @@ export function AppLifecycle() {
   useEffect(() => {
     document.documentElement.lang = language;
   }, [language]);
+
+  // 仅 demo 预览构建（dev:demo / __DEMO_SITE__）：把本地预览默认对齐测试端观感——
+  // 牛皮纸主题 + 简体中文 + Asia/Shanghai(UTC+8)，省得每次手动切；生产构建不含此分支。
+  useEffect(() => {
+    if (!__DEMO_SITE__) {
+      return;
+    }
+    useThemeStore.getState().setTheme('wool');
+    useLanguageStore.getState().setLanguage('zh-CN');
+    setTimeZone('Asia/Shanghai');
+  }, []);
 
   return null;
 }

@@ -737,7 +737,7 @@
   .realtimeTable {
     --realtime-col-source: 21%;
     --realtime-col-model: 12%;
-    --realtime-col-effort: 7%;
+    --realtime-col-reasoning: 7%; // 强度/等级合并列（两行）
     --realtime-col-recent: 6%;
     --realtime-col-status: 7%;
     --realtime-col-success-rate: 7%;
@@ -764,7 +764,7 @@
   }
 
   .realtimeTable col:nth-child(3) {
-    width: var(--realtime-col-effort);
+    width: var(--realtime-col-reasoning);
   }
 
   .realtimeTable col:nth-child(4) {
@@ -1105,42 +1105,21 @@
     font-size: 11px;
   }
 
-  // 强度(reasoning_effort)/等级(service_tier)已拆成两个独立窄列(见 RealtimeEventsPanel)，
-  // 用 inline-block + ellipsis 收窄单值，避免撑破行高或横向溢出。
-  .realtimeReasoningBadge {
-    display: inline-block;
-    max-width: 100%;
-    overflow: hidden;
-    color: var(--monitor-accent-strong);
-    font-size: 11.5px;
-    font-weight: 700;
-    line-height: 1.2;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  // 等级列基础样式；弱化/高亮由 .realtimeServiceTierMuted / .realtimeServiceTierHighlight
-  // 叠加改色，缺失值(无 tone class)落到这里的中性色。
-  .realtimeServiceTierValue {
+  // 强度/等级单列两行(见 RealtimeEventsPanel)，仿"用量"列排版：
+  // 第 1 行 reasoning_effort 主值走 .realtimeReasoningValue(正常墨色、中等字重，克制、
+  // 不再是粗体强调色徽章)；第 2 行 service_tier 走 primaryCell 默认 <small>(灰色弱化，
+  // 见上 .primaryCell small)。整格左对齐(用默认 primaryCell)与其它列一致。
+  // inline-block + ellipsis 收窄单值，避免撑破行高或横向溢出。
+  .realtimeReasoningValue {
     display: inline-block;
     max-width: 100%;
     overflow: hidden;
     color: var(--monitor-ink);
-    font-size: 11.5px;
+    font-size: 12px;
     font-weight: 600;
     line-height: 1.2;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .realtimeServiceTierMuted {
-    color: var(--monitor-muted);
-    font-weight: 500;
-  }
-
-  .realtimeServiceTierHighlight {
-    color: var(--monitor-accent-strong);
-    font-weight: 700;
   }
 
   .mutedCell {

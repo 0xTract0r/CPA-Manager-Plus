@@ -1954,6 +1954,13 @@ const buildMonitoringAnalytics = (
     },
   ];
 
+  // 强度/等级单列两行的代表性分布(按 index % 5 循环)：两个循环在不同位置缺失，使 demo
+  // 监控表能同时呈现全部四态——两者都有(xhigh + auto 灰字)、只有 effort(medium)、
+  // 只有 tier(priority 灰字)、两者都缺(单个 —)，外加另一档非默认 tier(low + flex 灰字)。
+  // service_tier 第二行统一灰色弱化(无 tier= 前缀、无高亮)。只影响该列展示，不改其它 demo 用途。
+  const reasoningEffortDemoCycle = ['xhigh', 'medium', undefined, undefined, 'low'] as const;
+  const serviceTierDemoCycle = ['auto', undefined, 'priority', undefined, 'flex'] as const;
+
   const events: DemoMonitoringEventRow[] = Array.from({ length: 72 }, (_, index) => {
     const profile = eventProfiles[index % eventProfiles.length];
     const failed = index % 9 === 0 || index % 22 === 0;
@@ -1985,8 +1992,8 @@ const buildMonitoringAnalytics = (
           ? 'demo-gemini-prod'
           : undefined,
       resolved_model: profile.model,
-      reasoning_effort: index % 4 === 0 ? 'medium' : undefined,
-      service_tier: index % 5 === 0 ? 'priority' : 'standard',
+      reasoning_effort: reasoningEffortDemoCycle[index % reasoningEffortDemoCycle.length],
+      service_tier: serviceTierDemoCycle[index % serviceTierDemoCycle.length],
       executor_type: profile.executor,
       input_tokens: inputTokens,
       output_tokens: outputTokens,

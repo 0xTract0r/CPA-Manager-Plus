@@ -1595,15 +1595,14 @@
 @include summaryTable.styles;
 @include accountOverview.styles;
 .realtimeTable {
-  // 14 列(强度/等级拆成两个独立窄列 + "缓存命中率")实时表：table-layout:fixed + 百分比
-  // 列宽，使表格 width:100% 铺满容器并把 14 列全部放平在同一平面，主内容区(~1152px 可用宽)
+  // 13 列(强度/等级合并为单列两行 + "缓存命中率")实时表：table-layout:fixed + 百分比
+  // 列宽，使表格 width:100% 铺满容器并把 13 列全部放平在同一平面，主内容区(~1152px 可用宽)
   // 下零横滚、花费列完整可见。各列百分比之和=100%；窄屏(<1200px)由下方 @container 兜底
-  // min-width + tableWrapper 横滚。强度/等级从 source/model 各挪 1% 收窄换出，值都很短
-  // (minimal/medium/priority/auto 等)，配合 ellipsis 兜底不会撑破行高。
+  // min-width + tableWrapper 横滚。强度/等级合并列两行(第 1 行 reasoning_effort 主值、
+  // 第 2 行 service_tier 灰色弱化小字)，给足宽度放下 "priority" 等值不撑破。
   --realtime-col-source: 13%; // 来源 / API KEY（省略号截断，title 悬浮看全）
   --realtime-col-model: 11%; // 模型（省略号截断）
-  --realtime-col-effort: 4%; // 强度(reasoning_effort)
-  --realtime-col-tier: 4%; // 等级(service_tier)
+  --realtime-col-reasoning: 8%; // 强度/等级合并列（两行：reasoning_effort 主值 / service_tier 灰字）
   --realtime-col-recent: 6%; // 近况（状态点阵）
   --realtime-col-status: 7%; // 请求状态
   --realtime-col-success: 6%; // 成功率
@@ -1627,39 +1626,36 @@
   width: var(--realtime-col-model);
 }
 .realtimeTable col:nth-child(3) {
-  width: var(--realtime-col-effort);
+  width: var(--realtime-col-reasoning);
 }
 .realtimeTable col:nth-child(4) {
-  width: var(--realtime-col-tier);
-}
-.realtimeTable col:nth-child(5) {
   width: var(--realtime-col-recent);
 }
-.realtimeTable col:nth-child(6) {
+.realtimeTable col:nth-child(5) {
   width: var(--realtime-col-status);
 }
-.realtimeTable col:nth-child(7) {
+.realtimeTable col:nth-child(6) {
   width: var(--realtime-col-success);
 }
-.realtimeTable col:nth-child(8) {
+.realtimeTable col:nth-child(7) {
   width: var(--realtime-col-calls);
 }
-.realtimeTable col:nth-child(9) {
+.realtimeTable col:nth-child(8) {
   width: var(--realtime-col-tps);
 }
-.realtimeTable col:nth-child(10) {
+.realtimeTable col:nth-child(9) {
   width: var(--realtime-col-latency);
 }
-.realtimeTable col:nth-child(11) {
+.realtimeTable col:nth-child(10) {
   width: var(--realtime-col-time);
 }
-.realtimeTable col:nth-child(12) {
+.realtimeTable col:nth-child(11) {
   width: var(--realtime-col-usage);
 }
-.realtimeTable col:nth-child(13) {
+.realtimeTable col:nth-child(12) {
   width: var(--realtime-col-cache);
 }
-.realtimeTable col:nth-child(14) {
+.realtimeTable col:nth-child(13) {
   width: var(--realtime-col-cost);
 }
 
