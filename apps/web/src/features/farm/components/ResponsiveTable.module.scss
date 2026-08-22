@@ -75,12 +75,36 @@
   }
 }
 
-// farm-tablet 档：补 769–1180 区间的卡片降级（账号表 / 用量表用）。与默认类叠加
+// farm-tablet 档：补 769–1180 区间的卡片降级（账号表用）。与默认类叠加
 // （同一 <div> 同时挂 .responsiveTable + .responsiveTableFarmTablet）：≤768 由默认
 // 类的 @include mobile 承接，769–1180 由本类的 @include farm-tablet 承接，合起来
 // 覆盖整个 ≤1180 区间。桌面（≥1181，含 1440）不匹配任一断点，维持原表格布局。
+// 适用列数较少的宽表（账号表 5–6 列在 ≤1180 才放不下）。
 .responsiveTableFarmTablet {
   @include farm-tablet {
+    @include responsive-table-card;
+  }
+}
+
+// 用量表专用卡片上界（比 farm-tablet 的 1180 更高，独立断点，不复用共享 token）。
+//
+// 为何用量表要比账号表更高的断点：用量明细是 11 列（账号表只 5–6 列），表格内容
+// 自然宽约 1075px；而农场主内容可用宽 ≈ 视口 − 侧栏(210) − .main-content padding(40)
+// − scrollbar-gutter(~15) − .panel padding($spacing-lg 24×2=48) ≈ 视口 − 313。故表格
+// 要真正放得下需视口 ≥ 1075 + 313 ≈ 1388px。实测：1280 视口仅 ~970px 可用（1280−313
+// ≈967）< 1075，用表格会横滚把最右侧 Requests 列滚出屏外、且滚动区行内无可聚焦元素
+// （axe serious scrollable-region-focusable）——这正是 farm-tablet(≤1180) 覆盖不到、
+// 1280 仍走表格导致的回归。
+//
+// 取上界 1400px（≥ 实测临界 ~1388 并留安全余量，又 < 1440 以保住既有 1440 表格档）：
+//   - <1400 走卡片：含 1280(可用 ~967)、1366(可用 ~1053) 等真正放不下 11 列的视口；
+//   - ≥1401 走表格且真正放得下：1401 可用 ~1088 ≥ 1075，1440 可用 ~1127 ≥ 1075。
+// 与默认类叠加：≤768 由 .responsiveTable @include mobile 承接，769–1400 由本类承接，
+// 合起来覆盖整个 ≤1400 区间，无缝无重叠。桌面（≥1401，含 1440）维持原表格布局。
+$farm-usage-card-max: 1400px;
+
+.responsiveTableFarmUsage {
+  @media (min-width: #{$breakpoint-mobile + 1}) and (max-width: #{$farm-usage-card-max}) {
     @include responsive-table-card;
   }
 }

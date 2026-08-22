@@ -267,13 +267,15 @@
   color: var(--text-secondary);
 }
 
-// 响应式降级：用量明细表列很多（11 列），窄/中等视口靠横滚会把 Cost(USD) /
-// Requests 等右侧列滚出屏外且无焦点可达。整表→堆叠卡片的结构降级已收敛到共享
-// 原语 <ResponsiveTable>（ResponsiveTable.module.scss），本面板在 .tsx 里用
-// `breakpoint="farm-tablet"` 把它包住 <Table>，覆盖 ≤1180 全区间——所有 token
-// 明细 / 费用 / 请求数字段都铺成卡片完整可见（不靠折叠列隐藏数据，核心数据零
-// 丢弃）。这里只保留 FarmUsagePanel 专有的窄屏微调（双时钟卡堆叠）。桌面
-// （≥1181，含 1440）维持原表格布局。
+// 响应式降级：用量明细表列很多（11 列，比账号表更宽），窄/中等视口靠横滚会把
+// Cost(USD) / Requests 等右侧列滚出屏外且无焦点可达。整表→堆叠卡片的结构降级已
+// 收敛到共享原语 <ResponsiveTable>（ResponsiveTable.module.scss），本面板在 .tsx 里
+// 用 `breakpoint="farm-usage"` 把它包住 <Table>，覆盖 ≤1400 全区间——比账号表用的
+// farm-tablet(≤1180) 更高，因为 11 列表格需 ~1075px 内容宽，1280 视口主内容可用宽
+// 仅 ~970px 仍放不下（详见 ResponsiveTable.module.scss `$farm-usage-card-max` 注释）。
+// 所有 token 明细 / 费用 / 请求数字段都铺成卡片完整可见（不靠折叠列隐藏数据，核心
+// 数据零丢弃）。这里只保留 FarmUsagePanel 专有的窄屏微调（双时钟卡堆叠）。桌面
+// （≥1401，含 1440）维持原表格布局。
 @include mobile {
   // 双时钟卡窄屏改上下堆叠，避免两钟并列被挤到列内溢出/文字截断。
   .clockGrid {
