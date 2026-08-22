@@ -4258,6 +4258,12 @@
       "subtitle": "農場容器與主機的記憶體 / CPU 佔用（含整機非農場行程口徑說明）。"
     },
     "accountHealth": {
+      "expandColumnLabel": "展開詳情",
+      "expandRowLabel": "展開或收合 {{name}} 的詳情",
+      "cadenceSummaryAvg": "均值 {{value}}",
+      "detailLabel": "帳號詳情",
+      "detailDeviceTitle": "裝置 / 出站",
+      "detailFreshnessTitle": "狀態新鮮度",
       "accountHealthColumn": "帳號認證態",
       "authState_healthy": "已認證",
       "authState_needs_reauth": "需重新認證",

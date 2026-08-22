@@ -4258,6 +4258,12 @@
       "subtitle": "农场容器与宿主机的内存 / CPU 占用（含整机非农场进程口径说明）。"
     },
     "accountHealth": {
+      "expandColumnLabel": "展开详情",
+      "expandRowLabel": "展开或收起 {{name}} 的详情",
+      "cadenceSummaryAvg": "均值 {{value}}",
+      "detailLabel": "账号详情",
+      "detailDeviceTitle": "设备 / 出站",
+      "detailFreshnessTitle": "状态新鲜度",
       "accountHealthColumn": "账号认证态",
       "authState_healthy": "已认证",
       "authState_needs_reauth": "需重新认证",

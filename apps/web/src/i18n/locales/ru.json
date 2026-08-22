@@ -4249,6 +4249,12 @@
       "subtitle": "Использование памяти / CPU контейнерами фермы и хостом (с учётом процессов вне фермы на всём хосте)."
     },
     "accountHealth": {
+      "expandColumnLabel": "Показать детали",
+      "expandRowLabel": "Развернуть или свернуть детали {{name}}",
+      "cadenceSummaryAvg": "Среднее {{value}}",
+      "detailLabel": "Детали аккаунта",
+      "detailDeviceTitle": "Устройство / исходящий",
+      "detailFreshnessTitle": "Актуальность состояния",
       "accountHealthColumn": "Статус аутентификации аккаунта",
       "authState_healthy": "Аутентифицирован",
       "authState_needs_reauth": "Требуется повторная аутентификация",
