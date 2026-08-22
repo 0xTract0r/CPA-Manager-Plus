@@ -11,6 +11,135 @@
   background: var(--bg-primary, var(--bg-primary));
 }
 
+// FP-1「账号行降密度」——行展开控件 + 低频信息详情区。
+// 主表每行只留「名称 · 账号态 · 容器态 · 节奏摘要 · 操作」五列 + 前导展开列，
+// device_id 明细 / 出站 / 遥测 / 完整节奏 / 状态新鲜度 / 账号时间四件套 / 最近
+// 刷新等低频信息默认收进行展开，消除桌面「贴纸墙」并防 1440 视口横向溢出。
+
+// 展开触发列：窄固定列，仅容纳一个无边框 chevron 按钮。
+.expandColumn {
+  width: 36px;
+  padding-right: 0;
+}
+
+// chevron 展开按钮：透明背景 + hover 反馈 + 焦点态；展开时旋转 90°（收起朝右、
+// 展开朝下），与容量说明卡 .capacityNoticeHeader::after 的旋转指示同一语言。
+.expandToggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: $radius-sm;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    transform 0.15s ease,
+    background 0.15s ease,
+    color 0.15s ease;
+
+  &:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--focus-ring, var(--accent, #4c8bf5));
+    outline-offset: 1px;
+  }
+}
+
+.expandToggleOpen {
+  transform: rotate(90deg);
+}
+
+// 屏幕阅读器专用文本（展开列头可访问名，不占可见空间）。
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+// 整行可点收起/展开（鼠标便捷入口，键盘/朗读走前导 chevron 按钮）。
+.clickableRow {
+  cursor: pointer;
+
+  &:hover {
+    background: var(--bg-tertiary);
+  }
+}
+
+// 行展开详情区外壳：轻底色区分于主行，分区网格随视口自适应换列，桌面多列并排、
+// 窄屏单列堆叠，天然不横向溢出。
+.detailRow > td {
+  background: var(--bg-tertiary);
+}
+
+.detailGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: $spacing-md;
+  padding: $spacing-sm 0;
+}
+
+.detailSection {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-xs;
+  min-width: 0;
+}
+
+// 分区标题：小号大写 muted 标签，与 <ResponsiveTable> 卡片模式的 data-label
+// 风格一致（同一「字段名」视觉语言）。
+.detailSectionTitle {
+  margin: 0;
+  font-size: $fs-2xs;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.detailSectionBody {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+  font-size: $fs-xs;
+  color: var(--text-primary);
+  min-width: 0;
+}
+
+// 详情区内一行徽标组：横向排布、间距统一 8px（$spacing-sm）。
+.detailBadgeRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: $spacing-sm;
+}
+
+// 状态新鲜度分区里「账号态 / 容器态」前导小标签。
+.detailInlineLabel {
+  font-size: $fs-2xs;
+  font-weight: 600;
+  color: var(--text-tertiary);
+}
+
+// 节奏一行摘要（主表节奏列）：单行、次级正文字号，实测均值即真实观测。
+.cadenceSummary {
+  font-size: $fs-xs;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
 // 容量分配模型正名说明卡（spec REQ-5）：视觉复用站内既有 info 提示配方
 // （UsagePage .previewNotice 同一 primary 低透明度 tint），不新造颜色 token；
 // 三条经计算在浅色/纯白/深色三套主题下前景对背景对比度均 ≥4.5:1（浅色 ~4.9:1，
@@ -163,7 +292,8 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  // FP-1：徽标间距统一 8px（$spacing-sm），消除全表 4/6px 混用。
+  gap: $spacing-sm;
 }
 
 .nameCellSecondary {
@@ -345,7 +475,8 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  // FP-1：徽标间距统一 8px（$spacing-sm）。
+  gap: $spacing-sm;
 }
 
 // 与 FarmContainerTable 的 binding env chip 同一视觉语言（中性小标签），

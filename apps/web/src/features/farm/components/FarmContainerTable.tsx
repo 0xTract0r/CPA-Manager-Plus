@@ -23,7 +23,9 @@ import {
   deviceAlignmentToBadgeVariant,
   farmHealthVariantToBadgeVariant,
   healthReasonToFarmHealthVariant,
+  normalizeFarmTelemetryAliveState,
   successRateToFarmHealthVariant,
+  telemetryAliveStateToBadgeVariant,
 } from '../utils/health';
 import styles from './FarmContainerTable.module.scss';
 
@@ -249,6 +251,11 @@ export function FarmContainerTable({
               <TableHead>{t('farm.containers.column_keepalive')}</TableHead>
               <TableHead>{t('farm.containers.column_resource')}</TableHead>
               <TableHead>{t('farm.containers.column_success_rate')}</TableHead>
+              {/* TP-3「舰队级遥测列」：telemetry_alive 三态（该容器 device_id 是否观测到
+                  真实 on-wire 出站）+ 心跳龄；与运行态/账号认证态是三个独立维度。 */}
+              <TableHead>
+                {t('farm.containers.column_telemetry', { defaultValue: '遥测' })}
+              </TableHead>
               {/* 密度改造：低频列「设备对齐 / 下次探针预估」移入容器详情页
                   （farm-detail-device-id / farm-detail-next-estimate），默认列压到
                   7 列；设备对齐仅在漂移/未知等需处理态时压成设备列内的紧凑徽标提示。 */}
@@ -281,6 +288,15 @@ export function FarmContainerTable({
                 : '—';
 
               const successRateVariant = successRateToFarmHealthVariant(container.success_rate_24h);
+
+              // TP-3 舰队级遥测：三态经 normalizeFarmTelemetryAliveState 兜底，缺字段/
+              // 非法值一律显 unknown（muted），不臆造成 alive/silent（与账号页同款口径）。
+              const telemetryAliveState = normalizeFarmTelemetryAliveState(container.telemetry_alive);
+              const telemetryAliveVariant = telemetryAliveStateToBadgeVariant(telemetryAliveState);
+              const telemetryAliveLabel = t(
+                `farm.accountHealth.telemetryAlive_${telemetryAliveState}`,
+                { defaultValue: telemetryAliveState }
+              );
 
               const deviceAlignmentVariant = deviceAlignmentToBadgeVariant(container.device_id_alignment);
               // 只在漂移/未知等需处理态冒出设备对齐徽标；正常的 container_synced 不渲染以减噪。
@@ -398,6 +414,43 @@ export function FarmContainerTable({
                     ) : (
                       <span className={styles.mono}>—</span>
                     )}
+                  </TableCell>
+                  <TableCell
+                    data-label={t('farm.containers.column_telemetry', { defaultValue: '遥测' })}
+                    data-testid={`farm-container-telemetry-cell-${container.id}`}
+                  >
+                    <div className={styles.telemetryCell}>
+                      <span
+                        className={`status-badge ${telemetryAliveVariant}`}
+                        data-telemetry-alive={telemetryAliveState}
+                        data-testid={`farm-container-telemetry-alive-${container.id}`}
+                        title={t('farm.containers.column_telemetry_hint', {
+                          defaultValue:
+                            '遥测存活：该容器 device_id 是否观测到真实 on-wire 出站（alive 在报 / silent 曾报近期静默 / unknown 未知）',
+                        })}
+                      >
+                        {telemetryAliveLabel}
+                      </span>
+                      {/* 心跳龄：取 last_keepalive_at 的相对时间（真实保活时间戳），明确
+                          标注为「心跳」——舰队列表契约不含逐容器最近信标时间戳，故用心跳
+                          龄作遥测新鲜度旁证，不臆造成信标时间。 */}
+                      {container.last_keepalive_at ? (
+                        <span
+                          className={styles.telemetryHeartbeat}
+                          title={formatDateTimeUtc8(container.last_keepalive_at, i18n.language)}
+                          data-testid={`farm-container-telemetry-heartbeat-${container.id}`}
+                        >
+                          {t('farm.containers.telemetry_heartbeat_age', {
+                            defaultValue: '心跳 {{age}}',
+                            age: formatRelativeFromNow(
+                              container.last_keepalive_at,
+                              nowMs,
+                              i18n.language
+                            ),
+                          })}
+                        </span>
+                      ) : null}
+                    </div>
                   </TableCell>
                   <TableCell data-label={t('farm.containers.column_binding')}>
                     {container.binding && bindingIdentity ? (

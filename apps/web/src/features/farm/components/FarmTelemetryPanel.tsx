@@ -13,6 +13,8 @@ import {
 import { formatDateTimeUtc8, formatInUtc8 } from '@/utils/datetime';
 import { formatFileSize } from '@/utils/format';
 import { useFarmContainerBeacons } from '../hooks/useFarmContainerBeacons';
+import { maskTelemetryFingerprint } from '../utils/identity';
+import { displayFingerprintValue, fingerprintFieldsClash } from '../utils/telemetry';
 // E3：改为自有 module.scss（不再借用 FarmContainerDetail.module.scss），见该
 // 文件顶部注释——结构类取值与 FarmContainerDetail 对应同名类保持一致，纯样式
 // 来源迁移，视觉不变；新增的自洽卡网格类 / on-wire 横幅类是本次重做新增。
@@ -66,22 +68,42 @@ function computeChannelDistribution(beacons: FarmContainerBeaconView[]): Channel
     .sort((a, b) => b.count - a.count || a.channel.localeCompare(b.channel));
 }
 
-// 从最新一条 beacon（数组已按 captured_at 降序）取某个指纹字段的「自报」值。
-function declaredFieldValue(
-  latest: FarmContainerBeaconView | undefined,
+// 从某条 beacon（已按 source_kind 选好——declared 列传最近一条 declared beacon，
+// on-wire 列传最近一条 on_wire beacon）取某个指纹字段的值。字段本身是后端
+// ParseBeacon 在入库时抽取好的（見 telemetry_beacon.go handleIngestBeacons），
+// 前端不解析原始 body，只是按 source_kind 分区挑「该来源最近一条」。
+function fieldValueFromBeacon(
+  beacon: FarmContainerBeaconView | undefined,
   field: FarmTelemetryFingerprintField
 ): string {
-  if (!latest) return '';
-  return latest[field] ?? '';
+  if (!beacon) return '';
+  return beacon[field] ?? '';
 }
 
-// 指纹自洽卡 on-wire 列的「逐字段派生值」：把原始 beacon 逐字段派生进自洽比对
-// 这一步尚未接入，故恒返回 null——注意这跟「原始 on_wire beacon 是否已实时采集」
-// 是两回事（后者已在下方时间线逐条呈现，见 resolveBeaconSourceKind 标注）。独立抽
-// 成函数（而非渲染里直接写 null）是为了逐字段派生接入后只需替换这一处实现——撞红
-// 判定、面板级横幅可见性、单元格渲染分支都无需改动。
-function onWireFieldValue(_field: FarmTelemetryFingerprintField): string | null {
-  return null;
+// 指纹自洽卡 declared 列：最近一条 declared beacon 的字段值。
+function declaredFieldValue(
+  latestDeclared: FarmContainerBeaconView | undefined,
+  field: FarmTelemetryFingerprintField
+): string {
+  return fieldValueFromBeacon(latestDeclared, field);
+}
+
+// 指纹自洽卡 on-wire 列（TP-1「点亮 on-wire 逐字段」）：取「最近一条
+// source_kind=on_wire 的 beacon」（真实 mitmproxy/ebpf 出站抓取，见
+// resolveBeaconSourceKind），读它已由服务端抽取好的字段值。
+//
+// 返回值三态语义（调用方据此区分「真占位」vs「有实测但为空」）：
+//   - null：从未观测到任何 on_wire beacon（该容器/该窗口内），列仍是中性占位。
+//   - ''（空串）：观测到过 on_wire beacon，但该字段这次抓取没能提取出值（如
+//     datadog_logs 通道没有 device_id 字段，ParseBeacon 如实留空、不编造）——
+//     这不是「未接入」，是「这条真实请求确实没带这个字段」，不应误判为占位。
+//   - 非空串：该字段的实测值。
+function onWireFieldValue(
+  latestOnWire: FarmContainerBeaconView | undefined,
+  field: FarmTelemetryFingerprintField
+): string | null {
+  if (!latestOnWire) return null;
+  return fieldValueFromBeacon(latestOnWire, field);
 }
 
 /**
@@ -94,12 +116,21 @@ function onWireFieldValue(_field: FarmTelemetryFingerprintField): string | null 
  * 容器出站链路真实抓取。即便 on_wire 行也只证明该容器确实发出过这些请求，**不构
  * 成跨账号反关联证明**，绝不对整列笼统 claim on-wire。
  *
- * 另一件独立的事：指纹自洽卡的「出站实测 (on-wire)」一列是把 beacon **逐字段派
- * 生**进自洽比对这一步，尚未接入，因此该列显示中性占位符，并由卡顶一条面板级横
- * 幅统一说明「逐字段派生待接入，但原始 on_wire beacon 已在时间线实时呈现」，绝不
- * 用 declared 值冒充实测填 on-wire 列。declared 与 on-wire 逐字段值不一致时才撞
- * 红——由于该列逐字段值目前恒为空，撞红逻辑已实现但休眠（永不误红），待逐字段派
- * 生接入后（届时横幅按「是否已有任意字段被派生」自动收起）自然生效。
+ * 另一件相关的事（TP-1 已接入）：指纹自洽卡的「出站实测 (on-wire)」一列取「最近
+ * 一条 source_kind=on_wire 的 beacon」，读它已由服务端 ParseBeacon 抽取好的字段
+ * 值——前端不解析原始 body。从未观测到任何 on_wire beacon 时该列仍是中性占位
+ * （真占位，不是「尚未接入」），由卡顶一条面板级横幅统一说明；一旦观测到任意
+ * on_wire beacon，横幅自动收起（见 onWireCaptured）。declared 与 on-wire 同一字段
+ * 都有实测值且不一致时撞红（见 clash 判定，仅当 on-wire 侧确有值才比较，避免把
+ * 「这条实测请求没带这个字段」误判成冲突）。
+ *
+ * TP-2「每容器遥测内容更丰富」：面板另增一节「遥测字段速览」，把 declared/on-wire
+ * 各自最近一条 beacon 的全部已知字段（channel/host/path/body_bytes/captured_at/
+ * source 以及脱敏后的 device_id/api_base_url_host/entrypoint）铺开展示，而不是只
+ * 有指纹自洽卡的 3 个比对字段。session_id/app_version/user_type/event_names 四个
+ * 字段服务端已解析落库但对外只读接口尚未暴露（见 types/farm.ts
+ * FarmContainerBeaconView 同名字段注释），前端已前瞻声明类型、存在性门控渲染
+ * （不渲染，不是显示占位符），后端补齐后自动点亮。
  *
  * 取数走 useFarmContainerBeacons（GET .../beacons，裸数组、captured_at 降序）：
  * 失败态经 AsyncPanel 如实呈现，不吞不伪造；空容器（后端返回 []）在数据态内
@@ -129,6 +160,19 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
   }
 
   const latestBeacon = beacons[0];
+  // TP-1：declared 列与 on-wire 列各取「该来源最近一条」，不是同一条 beacon 的
+  // 两个视角——beacons 已按 captured_at 降序，`.find` 拿到的就是各自最近一条。
+  const latestDeclaredBeacon = useMemo(
+    () => beacons.find((b) => resolveBeaconSourceKind(b) === 'declared'),
+    [beacons]
+  );
+  const latestOnWireBeacon = useMemo(
+    () => beacons.find((b) => resolveBeaconSourceKind(b) === 'on_wire'),
+    [beacons]
+  );
+  // TP-2「字段速览」快照：优先展示最近一条 on-wire 信标（真实出站抓取，最具权威），
+  // 无 on-wire 时回退最近一条信标（自报），下方按 source_kind 明确标注来源，不冒充。
+  const spreadBeacon = latestOnWireBeacon ?? latestBeacon;
   const channelDistribution = useMemo(() => computeChannelDistribution(beacons), [beacons]);
   const visibleBeacons = timelineExpanded
     ? beacons
@@ -143,11 +187,11 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
     return nowMs - ms > FARM_BEACON_STALE_THRESHOLD_MS;
   }, [latestCapturedAt, nowMs]);
 
-  // on-wire 采集管道是否已对任意指纹字段产生过实测值。onWireFieldValue 目前
-  // 恒为 null，因此这里恒为 false、面板级横幅恒定可见；管道接入后自然收敛。
-  const onWireCaptured = FARM_TELEMETRY_FINGERPRINT_FIELDS.some(
-    (field) => onWireFieldValue(field) !== null
-  );
+  // on-wire 采集管道是否已观测到该容器的任意 on_wire beacon（TP-1）：只要存在
+  // 一条即为 true，与「这条 beacon 具体哪些字段抽取出了值」无关——即便某条
+  // on_wire beacon 因通道限制（如 datadog_logs 没有 device_id）导致某个字段为
+  // 空串，也不能倒推回「没抓到 on-wire 数据」。面板级横幅据此收起。
+  const onWireCaptured = Boolean(latestOnWireBeacon);
 
   if (!container) return null;
 
@@ -177,13 +221,13 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
         <p className={styles.probeTokenBadge}>
           {t('farm.telemetry.disclaimer', {
             defaultValue:
-              '下方是该容器的遥测信标列表，混合两类来源并逐条标注：「自报 (declared)」是容器声明/自报的内容，「on-wire」行才是 mitmproxy/ebpf 在容器出站链路真实抓取的数据。即便 on-wire 行也只证明该容器确实发出过这些请求，不构成跨账号反关联证明。另外，上方指纹自洽卡的「出站实测 (on-wire)」列是把信标逐字段派生、与自报值比对的独立步骤——这一步尚未接入才显示占位，与「原始 on-wire 信标是否已抓取」是两回事。',
+              '下方是该容器的遥测信标列表，混合两类来源并逐条标注：「自报 (declared)」是容器声明/自报的内容，「on-wire」行才是 mitmproxy/ebpf 在容器出站链路真实抓取的数据。即便 on-wire 行也只证明该容器确实发出过这些请求，不构成跨账号反关联证明。上方指纹自洽卡的「出站实测 (on-wire)」列取最近一条 on-wire 信标已由服务端抽取好的字段与自报值逐字段比对——该容器暂未抓到 on-wire 信标时该列显占位（真占位，不是功能未接入）。',
           })}
         </p>
       </details>
       <span className={styles.scopeBadge} data-testid="farm-telemetry-scope">
         {t('farm.telemetry.scopeBadge', {
-          defaultValue: '口径：信标含自报与 on-wire 两类·逐条标注来源，指纹逐字段派生待接入',
+          defaultValue: '口径：信标含自报与 on-wire 两类·逐条标注来源，指纹逐字段派生已接入',
         })}
       </span>
 
@@ -209,29 +253,37 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
             </span>
           </div>
 
-          {/* 面板级横幅：只说明本列（指纹自洽卡 on-wire 列）的「逐字段派生」尚未
-              接入、列内占位；仅当没有任何字段被派生出 on-wire 值时展示，逐字段派生
-              接入后自动收起。注意与时间线里标注为 on-wire 的行区分——那些是原始
-              on_wire beacon，已实时采集，不是「尚未接入」。 */}
+          {/* 面板级横幅（TP-1）：逐字段 on-wire 派生**已接入**，只是该容器在当前
+              窗口内还没观测到任何 on_wire 信标（mitmproxy/ebpf 出站抓取），所以下方
+              on-wire 列暂为中性占位。一旦抓到任意 on_wire 信标即自动点亮并与自报值
+              逐字段比对，横幅随之收起（见 onWireCaptured）。这是「该容器还没产生真实
+              出站抓取」，不是「功能没接入」。 */}
           {!onWireCaptured && (
             <p className={styles.onWireBanner} data-testid="farm-telemetry-onwire-banner">
               {t('farm.telemetry.onWireBanner', {
                 defaultValue:
-                  '指纹逐字段 on-wire 派生尚未接入，以下 on-wire 列暂为占位；这只是「把信标逐字段派生进自洽比对」这一步没做，原始 on-wire 信标已实时采集——见下方时间线中标注为 on-wire 的行。',
+                  '该容器当前窗口内暂未观测到 on-wire 信标（mitmproxy/ebpf 出站抓取），下方「出站实测」列暂为占位；逐字段派生已接入，一旦抓到任意 on-wire 信标即自动点亮并与自报值比对。',
               })}
             </p>
           )}
 
           {FARM_TELEMETRY_FINGERPRINT_FIELDS.map((field) => {
-            const declared = declaredFieldValue(latestBeacon, field);
-            // 撞红逻辑保留但休眠：只有 on-wire 有值且与 declared 不一致才置红。
-            // onWireFieldValue 目前恒返回 null → 永不误红。
-            const onWire = onWireFieldValue(field);
-            const clash = onWire !== null && declared !== onWire;
+            // TP-1：declared 取「最近一条 declared beacon」、on-wire 取「最近一条
+            // source_kind=on_wire beacon」的**原始值**——先用原始值判等/撞红
+            // （fingerprintFieldsClash），再各自脱敏展示（displayFingerprintValue，
+            // 仅 device_id 这类高熵字段前 12+后 4 折叠），顺序不能反（否则会把首尾
+            // 恰好相同的两个不同值误判为一致，见 utils/identity.ts 注释）。
+            const declaredRaw = declaredFieldValue(latestDeclaredBeacon, field);
+            const onWireRaw = onWireFieldValue(latestOnWireBeacon, field);
+            const onWirePending = onWireRaw === null;
+            const clash = fingerprintFieldsClash(declaredRaw, onWireRaw);
+            const declaredDisplay = displayFingerprintValue(field, declaredRaw);
+            const onWireDisplay = onWirePending
+              ? ''
+              : displayFingerprintValue(field, onWireRaw ?? '');
             const declaredClassName = `${styles.mono} ${styles.consistencyValue}${
               clash ? ` ${styles.consistencyValueClash}` : ''
             }`;
-            const onWirePending = onWire === null;
             const onWireClassName = onWirePending
               ? `${styles.mono} ${styles.onWirePlaceholder}`
               : declaredClassName;
@@ -247,19 +299,214 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
                   {t(`farm.telemetry.field_${field}`, { defaultValue: field })}
                 </span>
                 <span data-testid={`farm-telemetry-declared-${field}`} className={declaredClassName}>
-                  {declared || '—'}
+                  {declaredDisplay || '—'}
                 </span>
                 <span
                   data-testid={`farm-telemetry-onwire-${field}`}
                   data-pending={onWirePending ? 'true' : 'false'}
                   className={onWireClassName}
                 >
-                  {onWirePending ? '—' : onWire || '—'}
+                  {onWirePending ? '—' : onWireDisplay || '—'}
                 </span>
               </div>
             );
           })}
         </div>
+
+        {/* TP-2「每容器遥测内容更丰富」：把最近一条信标已抽取好的字段铺开展示，不
+            只 host——设备 ID / 会话 ID（脱敏）/ API base host / 入口 / 客户端版本 /
+            用户类型 / 事件名 / 通道 / host / 路径 / 请求体大小 / 采集时间。source_kind
+            逐条标注来源。session_id/app_version/user_type/event_names 四个字段服务端
+            已落库但只读端点尚未序列化（见 types/farm.ts FarmContainerBeaconView 注释），
+            此处**存在性门控**——缺失时整行不渲染（不显示占位符、不臆造），后端补齐后
+            自动点亮。device_id/session_id 走 maskTelemetryFingerprint 脱敏（前 12+后 4）。 */}
+        {spreadBeacon ? (
+          (() => {
+            const spreadKind = resolveBeaconSourceKind(spreadBeacon);
+            const spreadIsOnWire = spreadKind === 'on_wire';
+            const spreadRawSource =
+              spreadBeacon.source || (spreadIsOnWire ? 'mitmproxy' : 'declared');
+            const maskedDeviceId = maskTelemetryFingerprint(spreadBeacon.device_id);
+            const maskedSessionId = maskTelemetryFingerprint(spreadBeacon.session_id);
+            const eventNames = spreadBeacon.event_names?.filter(Boolean) ?? [];
+            return (
+              <div className={styles.chartCol} data-testid="farm-telemetry-field-spread">
+                <span className={styles.chartLabel}>
+                  {t('farm.telemetry.fieldSpread', {
+                    defaultValue: '最近一条信标字段速览（脱敏，逐字段来自服务端抽取）',
+                  })}
+                </span>
+                <div className={styles.fieldSpreadGrid}>
+                  <span className={styles.fieldSpreadLabel}>
+                    {t('farm.telemetry.spreadSource', { defaultValue: '来源' })}
+                  </span>
+                  <span
+                    className={`status-badge ${spreadIsOnWire ? 'success' : 'muted'} ${styles.fieldSpreadBadge}`}
+                    data-testid="farm-telemetry-spread-source"
+                    data-source-kind={spreadKind}
+                  >
+                    {spreadIsOnWire
+                      ? t('farm.telemetry.rowSourceOnWire', {
+                          defaultValue: 'on-wire · {{source}}',
+                          source: spreadRawSource,
+                        })
+                      : t('farm.telemetry.rowSourceDeclared', {
+                          defaultValue: '自报 · {{source}}',
+                          source: spreadRawSource,
+                        })}
+                  </span>
+
+                  <span className={styles.fieldSpreadLabel}>
+                    {t('farm.telemetry.spreadCapturedAt', { defaultValue: '采集时间' })}
+                  </span>
+                  <span
+                    className={styles.fieldSpreadValue}
+                    data-testid="farm-telemetry-spread-captured-at"
+                  >
+                    {formatDateTimeUtc8(spreadBeacon.captured_at, i18n.language)}
+                  </span>
+
+                  <span className={styles.fieldSpreadLabel}>
+                    {t('farm.telemetry.spreadChannel', { defaultValue: '通道' })}
+                  </span>
+                  <span
+                    className={styles.fieldSpreadValue}
+                    data-testid="farm-telemetry-spread-channel"
+                  >
+                    {spreadBeacon.channel || 'unknown'}
+                  </span>
+
+                  {maskedDeviceId ? (
+                    <>
+                      <span className={styles.fieldSpreadLabel}>
+                        {t('farm.telemetry.field_device_id', { defaultValue: 'device_id' })}
+                      </span>
+                      <span
+                        className={styles.fieldSpreadValue}
+                        data-testid="farm-telemetry-spread-device-id"
+                        title={t('farm.telemetry.maskedHint', {
+                          defaultValue: '展示脱敏（前 12 + 后 4），完整值仅服务端保留',
+                        })}
+                      >
+                        {maskedDeviceId}
+                      </span>
+                    </>
+                  ) : null}
+
+                  {maskedSessionId ? (
+                    <>
+                      <span className={styles.fieldSpreadLabel}>
+                        {t('farm.telemetry.field_session_id', { defaultValue: 'session_id' })}
+                      </span>
+                      <span
+                        className={styles.fieldSpreadValue}
+                        data-testid="farm-telemetry-spread-session-id"
+                        title={t('farm.telemetry.maskedHint', {
+                          defaultValue: '展示脱敏（前 12 + 后 4），完整值仅服务端保留',
+                        })}
+                      >
+                        {maskedSessionId}
+                      </span>
+                    </>
+                  ) : null}
+
+                  {spreadBeacon.api_base_url_host ? (
+                    <>
+                      <span className={styles.fieldSpreadLabel}>
+                        {t('farm.telemetry.field_api_base_url_host', {
+                          defaultValue: 'api_base_url_host',
+                        })}
+                      </span>
+                      <span
+                        className={styles.fieldSpreadValue}
+                        data-testid="farm-telemetry-spread-api-base-host"
+                      >
+                        {spreadBeacon.api_base_url_host}
+                      </span>
+                    </>
+                  ) : null}
+
+                  {spreadBeacon.entrypoint ? (
+                    <>
+                      <span className={styles.fieldSpreadLabel}>
+                        {t('farm.telemetry.field_entrypoint', { defaultValue: 'entrypoint' })}
+                      </span>
+                      <span
+                        className={styles.fieldSpreadValue}
+                        data-testid="farm-telemetry-spread-entrypoint"
+                      >
+                        {spreadBeacon.entrypoint}
+                      </span>
+                    </>
+                  ) : null}
+
+                  {spreadBeacon.app_version ? (
+                    <>
+                      <span className={styles.fieldSpreadLabel}>
+                        {t('farm.telemetry.spreadAppVersion', { defaultValue: '客户端版本' })}
+                      </span>
+                      <span
+                        className={styles.fieldSpreadValue}
+                        data-testid="farm-telemetry-spread-app-version"
+                      >
+                        {spreadBeacon.app_version}
+                      </span>
+                    </>
+                  ) : null}
+
+                  {spreadBeacon.user_type ? (
+                    <>
+                      <span className={styles.fieldSpreadLabel}>
+                        {t('farm.telemetry.spreadUserType', { defaultValue: '用户类型' })}
+                      </span>
+                      <span
+                        className={styles.fieldSpreadValue}
+                        data-testid="farm-telemetry-spread-user-type"
+                      >
+                        {spreadBeacon.user_type}
+                      </span>
+                    </>
+                  ) : null}
+
+                  {eventNames.length > 0 ? (
+                    <>
+                      <span className={styles.fieldSpreadLabel}>
+                        {t('farm.telemetry.spreadEventNames', { defaultValue: '事件名' })}
+                      </span>
+                      <span
+                        className={styles.fieldSpreadValue}
+                        data-testid="farm-telemetry-spread-event-names"
+                      >
+                        {eventNames.join('、')}
+                      </span>
+                    </>
+                  ) : null}
+
+                  <span className={styles.fieldSpreadLabel}>
+                    {t('farm.telemetry.spreadHostPath', { defaultValue: 'host / 路径' })}
+                  </span>
+                  <span
+                    className={styles.fieldSpreadValue}
+                    data-testid="farm-telemetry-spread-host-path"
+                    title={`${spreadBeacon.host}${spreadBeacon.path}`}
+                  >
+                    {`${spreadBeacon.host}${spreadBeacon.path}`}
+                  </span>
+
+                  <span className={styles.fieldSpreadLabel}>
+                    {t('farm.telemetry.spreadBodyBytes', { defaultValue: '请求体大小' })}
+                  </span>
+                  <span
+                    className={styles.fieldSpreadValue}
+                    data-testid="farm-telemetry-spread-body-bytes"
+                  >
+                    {formatFileSize(spreadBeacon.body_bytes)}
+                  </span>
+                </div>
+              </div>
+            );
+          })()
+        ) : null}
 
         {/* 新鲜度：最近一条 beacon 时间 + 陈旧启发式标记（展示用，非精确 SLA）。 */}
         <div
@@ -447,7 +694,7 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
         <p className={styles.hintText}>
           {t('farm.telemetry.deviceIdFullNote', {
             defaultValue:
-              '此处 device_id 为自报全量值（非列表页脱敏前 16 位），仅供运维核对自洽性用；漂移/串号/host 泄漏等自洽异常经告警面板呈现。',
+              '此处 device_id / session_id 展示均脱敏（前 12 + 后 4），完整值仅服务端保留、不经该只读接口回吐前端；判等/撞红在服务端与前端均以原始值为准，脱敏只作展示。漂移/串号/host 泄漏等自洽异常经告警面板呈现。',
           })}
         </p>
       </AsyncPanel>

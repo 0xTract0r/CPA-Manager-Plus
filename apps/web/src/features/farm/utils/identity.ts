@@ -60,3 +60,28 @@ export function resolveBindingIdentity(
   }
   return { primary: maskedAccount || normalizedAccount, secondary: '', hasNote: false };
 }
+
+/**
+ * 遥测指纹字段脱敏口径（TP-1/TP-2「每容器遥测内容抓取」，与上方账号邮箱脱敏是
+ * 两套独立策略，服务不同字段）：device_id / session_id 这类高熵定长哈希/UUID
+ * 保留前 12 位 + 后 4 位，中间用省略号折叠。与容器列表 `device_id_masked`
+ * （只保留前 16 位、无后缀）刻意不同——运维核对跨容器/跨账号漂移、串号、
+ * 事故取证时，首尾两段比只暴露前缀更容易目视排除掉“前缀相同但确实是两个不同
+ * 设备”的情形。可见字符预算与列表页一致（12+4=16 位），不额外多暴露。
+ *
+ * 注意：这里只处理**展示层**掩码，禁止用掩码后的字符串做相等性比较（会把两个
+ * 真实不同但首尾恰好相同的值误判为一致）——调用方必须先用原始值判等/撞红，
+ * 再各自独立地把两侧原始值分别喂进本函数得到展示串（参见
+ * FarmTelemetryPanel.tsx 指纹自洽卡的 clash 判定顺序）。
+ *
+ * 短于「前 12 + 后 4」总长度（16）的输入无法有意义地折叠中段，原样返回；
+ * 空/未定义返回空串。
+ */
+export function maskTelemetryFingerprint(value?: string): string {
+  const trimmed = value?.trim() ?? '';
+  if (!trimmed) return '';
+  const PREFIX_LEN = 12;
+  const SUFFIX_LEN = 4;
+  if (trimmed.length <= PREFIX_LEN + SUFFIX_LEN) return trimmed;
+  return `${trimmed.slice(0, PREFIX_LEN)}…${trimmed.slice(-SUFFIX_LEN)}`;
+}

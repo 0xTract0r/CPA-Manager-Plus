@@ -160,6 +160,42 @@
   opacity: 0.85;
 }
 
+// TP-2「字段速览」两栏 label|value 网格：左列字段名固定窄列，右列值吃剩余空间
+// 并允许 break-all（device_id/host 这类长串完整展示不溢出窄抽屉）。与
+// .consistencyGrid（三栏比对）刻意分开——这是「单条信标全字段铺开」的详情视图，
+// 不是 declared vs on-wire 的两列对照。只复用既有 token，不新增 token。
+.fieldSpreadGrid {
+  display: grid;
+  grid-template-columns: minmax(88px, auto) minmax(0, 1fr);
+  gap: 4px $spacing-sm;
+  align-items: baseline;
+}
+
+.fieldSpreadLabel {
+  font-size: $fs-2xs;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.fieldSpreadValue {
+  font-family: $font-mono;
+  font-size: 12px;
+  color: var(--text-primary);
+  word-break: break-all;
+  min-width: 0;
+}
+
+// 「来源」行的 status-badge：清零全局默认 margin-bottom，避免撑高网格首行。
+.fieldSpreadBadge {
+  align-self: center;
+
+  &:global(.status-badge) {
+    margin-bottom: 0;
+  }
+}
+
 .deviceIdRow {
   display: flex;
   align-items: center;

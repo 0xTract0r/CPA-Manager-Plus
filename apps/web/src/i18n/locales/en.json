@@ -4257,6 +4257,12 @@
       "subtitle": "Memory / CPU usage of farm containers and the host (includes the whole-host, non-farm-process caveat)."
     },
     "accountHealth": {
+      "expandColumnLabel": "Expand details",
+      "expandRowLabel": "Expand or collapse details for {{name}}",
+      "cadenceSummaryAvg": "Avg {{value}}",
+      "detailLabel": "Account details",
+      "detailDeviceTitle": "Device / egress",
+      "detailFreshnessTitle": "State freshness",
       "accountHealthColumn": "Account Auth Status",
       "authState_healthy": "Authenticated",
       "authState_needs_reauth": "Re-auth required",
