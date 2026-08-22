@@ -122,9 +122,6 @@ const FAILURE_TOOLTIP_CLOSE_DELAY_MS = 120;
 // "强度/等级"列缺值时的中性占位：只用一个 em dash 字符，不落成裸的 "-"（在等宽字体/
 // 部分渲染环境下容易被读成叉号），也不是任何需要按语言翻译的文案。
 const REASONING_TIER_PLACEHOLDER = '—';
-// service_tier 常见默认档：大小写不敏感匹配，命中则弱化展示；priority/flex/scale 等
-// 非默认档才高亮，帮助一眼分辨"这一行确实要了非默认服务等级"。
-const REASONING_TIER_DEFAULT_VALUES = new Set(['auto', 'default']);
 
 type FailureTooltipPlacement = 'above' | 'below';
 
@@ -141,15 +138,6 @@ const formatOptionalText = (value: string | null | undefined) => {
 const formatReadableText = (value: string | null | undefined) => {
   const trimmed = String(value || '').trim();
   return trimmed && trimmed !== '-' ? trimmed : '';
-};
-
-// "等级"(service_tier) 单元格样式：auto/default 弱化，priority/flex/scale 等非默认档高亮，
-// 缺失值(REASONING_TIER_PLACEHOLDER)返回 undefined 走中性默认色，不算弱化也不算高亮。
-const getServiceTierToneClass = (formattedValue: string) => {
-  if (formattedValue === '-') return undefined;
-  return REASONING_TIER_DEFAULT_VALUES.has(formattedValue.toLowerCase())
-    ? styles.realtimeServiceTierMuted
-    : styles.realtimeServiceTierHighlight;
 };
 
 const shortLabel = (
@@ -1215,13 +1203,6 @@ export function RealtimeEventsPanel({
     'monitoring.reasoning_effort_short',
     'monitoring.reasoning_effort'
   );
-  // 服务等级(service_tier)行内标签：与表头 reasoningEffortLabel 同法在行外一次性求值，
-  // 不再放进 displayedRows.map 内逐行重复调用 shortLabel。
-  const serviceTierRowLabel = shortLabel(
-    t,
-    'monitoring.service_tier_short',
-    'monitoring.service_tier'
-  );
   const recentStatusLabel = shortLabel(
     t,
     'monitoring.recent_status_short',
@@ -1309,7 +1290,6 @@ export function RealtimeEventsPanel({
             <col />
             <col />
             <col />
-            <col />
           </colgroup>
           <thead>
             <tr>
@@ -1318,13 +1298,7 @@ export function RealtimeEventsPanel({
               <th>
                 <TableHeaderInfo
                   label={reasoningEffortLabel}
-                  info={t('monitoring.reasoning_effort_hint')}
-                />
-              </th>
-              <th>
-                <TableHeaderInfo
-                  label={serviceTierRowLabel}
-                  info={t('monitoring.service_tier_hint')}
+                  info={t('monitoring.reasoning_tier_hint')}
                 />
               </th>
               <th>{recentStatusLabel}</th>
@@ -1426,25 +1400,21 @@ export function RealtimeEventsPanel({
                     />
                   </td>
                   <td>
-                    {/* 强度(reasoning_effort)独立列：表头已通过 TableHeaderInfo 说明语义，
-                        单元格内不再重复 "强度:" 前缀。 */}
-                    <span className={styles.realtimeReasoningBadge}>
-                      {reasoningEffort !== '-' ? reasoningEffort : REASONING_TIER_PLACEHOLDER}
-                    </span>
-                  </td>
-                  <td>
-                    {/* 等级(service_tier)独立列：auto/default 弱化、priority/flex/scale
-                        等非默认档高亮，缺失值用中性占位色(既不弱化也不高亮)。 */}
-                    <span
-                      className={[
-                        styles.realtimeServiceTierValue,
-                        getServiceTierToneClass(serviceTier),
-                      ]
-                        .filter(Boolean)
-                        .join(' ')}
-                    >
-                      {serviceTier !== '-' ? serviceTier : REASONING_TIER_PLACEHOLDER}
-                    </span>
+                    {/* 强度/等级单列两行，仿"用量"列排版：第 1 行 reasoning_effort 主值(正常墨色)、
+                        第 2 行 service_tier 灰色弱化小字(无 tier= 前缀、无中文，语义靠列头信息图标)。
+                        左对齐与其它列一致。仅有值的行才渲染；两者皆缺时只显一个 —。 */}
+                    <div className={styles.primaryCell}>
+                      {reasoningEffort === '-' && serviceTier === '-' ? (
+                        <span className={styles.realtimeReasoningValue}>{REASONING_TIER_PLACEHOLDER}</span>
+                      ) : (
+                        <>
+                          {reasoningEffort !== '-' && (
+                            <span className={styles.realtimeReasoningValue}>{reasoningEffort}</span>
+                          )}
+                          {serviceTier !== '-' && <small>{serviceTier}</small>}
+                        </>
+                      )}
+                    </div>
                   </td>
                   <td>
                     <div className={styles.recentStatusCell}>
@@ -1543,12 +1513,12 @@ export function RealtimeEventsPanel({
             })}
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={14}>{emptyState}</td>
+                <td colSpan={13}>{emptyState}</td>
               </tr>
             ) : null}
             {rows.length > 0 && displayedRows.length === 0 ? (
               <tr>
-                <td colSpan={14}>{emptyState}</td>
+                <td colSpan={13}>{emptyState}</td>
               </tr>
             ) : null}
           </tbody>
