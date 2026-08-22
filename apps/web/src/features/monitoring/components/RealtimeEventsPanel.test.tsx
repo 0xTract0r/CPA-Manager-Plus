@@ -52,8 +52,8 @@ const t = ((key: string, options?: Record<string, unknown>) => {
     'monitoring.events_retention_limited': 'Kept the newest {{loaded}} of {{total}} events',
     'monitoring.reasoning_effort': 'Effort',
     'monitoring.reasoning_effort_short': 'Effort',
-    'monitoring.reasoning_effort_hint': 'Reasoning effort requested by the client for this call.',
-    'monitoring.service_tier_hint': 'Service tier requested by the client for this call.',
+    'monitoring.reasoning_tier_hint':
+      'Line 1 is the reasoning effort; line 2, in dimmed small text, is the requested service tier.',
     'monitoring.recent_failures': 'Failures',
     'monitoring.recent_status': 'Recent',
     'monitoring.realtime_api_key_hash': 'API Key hash',
@@ -239,23 +239,24 @@ describe('RealtimeEventsPanel', () => {
       })
     );
 
-    // 强度(Effort)/等级(Tier)已拆成两个独立表头列，各自挂 TableHeaderInfo 信息图标，
-    // 不再是裸 <th>Effort</th>。
+    // 强度/等级合并为单列两行：只有一个合并表头(复用 Effort 短名 + tableHeaderWithInfo
+    // 信息图标)，不再有独立的 Tier 表头列。
     expect(markup).toMatch(/<th><span class="[^"]*tableHeaderWithInfo[^"]*"><span>Effort<\/span>/);
-    expect(markup).toMatch(/<th><span class="[^"]*tableHeaderWithInfo[^"]*"><span>Tier<\/span>/);
+    expect(markup).not.toMatch(/<th><span class="[^"]*tableHeaderWithInfo[^"]*"><span>Tier<\/span>/);
     expect(markup).toContain('>TPS</th>');
     expect(markup).toContain('Source / API Key');
     expect(markup).not.toContain('>Executor: codex<');
     expect(markup).not.toContain('Executor: codex');
-    // 强度/等级单元格不再带 "Effort: " / "Tier: " 内联前缀（列头已承载语义说明）。
+    // 单列两行(仿"用量"列)：第 1 行 effort 主值(无前缀)，第 2 行 service_tier 灰色小字
+    // (无 tier= 前缀、无 tone class，靠列头信息图标说明语义)。
     expect(markup).toContain('medium');
     expect(markup).not.toContain('Effort: medium');
-    expect(markup).toContain('priority');
+    expect(markup).not.toContain('tier=priority');
     expect(markup).not.toContain('Tier: priority');
-    // "priority" 是非默认服务等级，走高亮 tone class。
-    expect(markup).toMatch(
-      /class="[^"]*realtimeServiceTierValue[^"]*realtimeServiceTierHighlight[^"]*">priority</
-    );
+    // 第 2 行是纯 service_tier 值的灰色弱化小字(primaryCell 默认 <small>)，不带 tone/前缀。
+    expect(markup).toMatch(/<small>priority<\/small>/);
+    // effort 主值走 realtimeReasoningValue span，与 tier 小字同在 primaryCell 里。
+    expect(markup).toMatch(/<span class="[^"]*realtimeReasoningValue[^"]*">medium<\/span>/);
     expect(markup).toContain('client-gpt');
     expect(markup).toContain('gpt-5.4');
     expect(markup).not.toContain('Resolved');
@@ -295,8 +296,8 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).toContain('title="Fetch the raw request/response body for request_id req-trace-42."');
     // 有 request_id 时不应显示「不可溯源」占位。
     expect(markup).not.toContain('Not traceable');
-    // 触发按钮嵌在 source 单元格里，不新增列(强度/等级拆列后共 14 列)。
-    expect(markup.match(/<col\b/g)).toHaveLength(14);
+    // 触发按钮嵌在 source 单元格里，不新增列(强度/等级合并为单列后共 13 列)。
+    expect(markup.match(/<col\b/g)).toHaveLength(13);
   });
 
   it('marks the row as not traceable (not blank) when the request_id is missing', () => {
@@ -305,14 +306,14 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).toContain('Not traceable');
     expect(markup).toContain(styles.realtimeRequestLogUntraceable);
     expect(markup).not.toContain('View raw request');
-    expect(markup.match(/<col\b/g)).toHaveLength(14);
+    expect(markup.match(/<col\b/g)).toHaveLength(13);
   });
 
   it('renders safe defaults when optional usage fields are missing', () => {
     const markup = renderPanel(baseRow({ reasoningTokens: 0 }));
 
     expect(markup).toContain('<colgroup>');
-    expect(markup.match(/<col\b/g)).toHaveLength(14);
+    expect(markup.match(/<col\b/g)).toHaveLength(13);
     expect(markup).not.toContain('Effort -');
     expect(markup).toMatch(/<th><span class="[^"]*tableHeaderWithInfo[^"]*"><span>Effort<\/span>/);
     expect(markup).toContain('>TPS</th>');
@@ -547,11 +548,13 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).toContain(
       'aria-label="(cachedTokens + cacheReadTokens) / (max(inputTokens, cachedTokens) + cacheReadTokens + cacheCreationTokens) for this single request. Shows “--” when there is no input-side token data."'
     );
-    // 强度/等级两个新表头列同样挂了信息图标。
-    expect(markup).toContain('aria-label="Reasoning effort requested by the client for this call."');
-    expect(markup).toContain('aria-label="Service tier requested by the client for this call."');
-    // 信息图标的即时浮层 trigger 存在(可聚焦、承担 aria-describedby)。
-    expect(markup.match(new RegExp(styles.tableHeaderInfoTrigger, 'g'))?.length).toBe(5);
+    // 强度/等级合并为单列后只有一个合并表头挂信息图标，浮层说明两行(reasoning effort +
+    // service tier 灰色小字)；不再有独立的 Service tier 表头浮层。
+    expect(markup).toContain('aria-label="Line 1 is the reasoning effort; line 2, in dimmed small text, is the requested service tier.');
+    expect(markup).not.toContain('aria-label="Service tier requested by the client for this call."');
+    // 信息图标的即时浮层 trigger 存在(可聚焦、承担 aria-describedby)：Effort(合并) / Success /
+    // Usage / Cache Hit 共 4 个。
+    expect(markup.match(new RegExp(styles.tableHeaderInfoTrigger, 'g'))?.length).toBe(4);
     // 列顺序：本次用量(Usage) -> 缓存命中率(Cache Hit) -> 花费(Cost)。
     const usageIdx = markup.indexOf('Usage');
     const cacheHitHeaderIdx = markup.indexOf('Cache Hit');
