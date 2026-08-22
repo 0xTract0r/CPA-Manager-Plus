@@ -419,7 +419,10 @@ export function FarmAccountsPanel({
           testId: 'farm-accounts-empty',
         }}
       >
-        <ResponsiveTable>
+        {/* 账号表 6 列（含展开列 + ⋯管理操作列）无 sticky-right 兜底，769–1180
+            中等视口横滚会把「管理」按钮裁到屏外且键盘不可达；用 farm-tablet 档把
+            卡片降级上界抬到 ≤1180，整表铺成卡片，操作完整可见可达。 */}
+        <ResponsiveTable breakpoint="farm-tablet">
         <Table data-testid="farm-accounts-table">
           <TableHeader>
             <TableRow>
