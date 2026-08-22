@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { maskAccountEmail, resolveBindingIdentity, stripJsonSuffix } from './identity';
+import {
+  maskAccountEmail,
+  maskTelemetryFingerprint,
+  resolveBindingIdentity,
+  stripJsonSuffix,
+} from './identity';
 
 describe('maskAccountEmail', () => {
   it('掩盖邮箱本地部分，保留域名', () => {
@@ -81,5 +86,39 @@ describe('resolveBindingIdentity', () => {
       secondary: '',
       hasNote: false,
     });
+  });
+});
+
+// TP-1/TP-2：device_id/session_id 这类高熵指纹字段的展示脱敏（前 12 + 后 4）。
+describe('maskTelemetryFingerprint', () => {
+  it('64 位 sha256 十六进制串：保留前 12 + 后 4，中间折叠', () => {
+    expect(
+      maskTelemetryFingerprint(
+        'e6b4c2aa114af4db9d2568e2810eb312d61bdfea0a1f219053e5191ed683ca48'
+      )
+    ).toBe('e6b4c2aa114a…ca48');
+  });
+
+  it('恰好等于前后长度之和（16 位）时原样返回，不折叠', () => {
+    expect(maskTelemetryFingerprint('0123456789abcdef')).toBe('0123456789abcdef');
+  });
+
+  it('超过 16 位一位（17 位）即开始折叠中段', () => {
+    expect(maskTelemetryFingerprint('0123456789abcdefg')).toBe('0123456789ab…defg');
+  });
+
+  it('短串（<=16 位）原样返回，不产生省略号', () => {
+    expect(maskTelemetryFingerprint('short-id')).toBe('short-id');
+  });
+
+  it('空/未定义返回空串', () => {
+    expect(maskTelemetryFingerprint(undefined)).toBe('');
+    expect(maskTelemetryFingerprint('   ')).toBe('');
+  });
+
+  it('掩码后的字符串不应被当作相等性判据（示例：不同尾段的两个值掩码结果不同）', () => {
+    const a = maskTelemetryFingerprint('e6b4c2aa114af4db9d2568e2810eb312d61bdfea0a1f219053e5191ed683ca48');
+    const b = maskTelemetryFingerprint('e6b4c2aa114af4db9d2568e2810eb312d61bdfea0a1f219053e5191ed683cxyz');
+    expect(a).not.toBe(b);
   });
 });

@@ -70,6 +70,30 @@
   font-size: $fs-2xs;
 }
 
+// TP-3「舰队级遥测列」：telemetry_alive 三态徽标（主）+ 心跳龄相对时间（次）纵向
+// 堆叠，与设备格同款两行布局，行高不膨胀。心跳龄取 last_keepalive_at（真实保活
+// 时间戳，明确标注为「心跳」而非信标时间——舰队列表契约不含逐容器信标时间戳）。
+.telemetryCell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+
+  // status-badge 全局默认带 margin-bottom（独立展示用），进两行格里会撑高、破坏
+  // 与相邻列的竖向对齐，这里清零。
+  :global(.status-badge) {
+    margin-bottom: 0;
+  }
+}
+
+.telemetryHeartbeat {
+  font-family: $font-mono;
+  font-size: $fs-2xs;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
 .mono {
   font-family: $font-mono;
   font-size: $fs-xs;

@@ -93,6 +93,19 @@ export interface FarmContainerView {
   // 其它文案。未绑定容器留空（无账号可判定）。
   account_auth_status?: string;
   account_auth_reason?: string;
+  // TP-3「舰队级遥测」点亮：TR7 遥测存活三态（farmrunner.DecideTelemetryAlive）
+  // 判定结果，逐字对应 dto.go containerView.TelemetryAlive（services/farm-orchestrator/
+  // internal/httpapi/dto.go / observability.go computeTelemetryAlive）——判的是
+  // 「该容器 device_id 是否观测到真实 on-wire 出站」，与 status/health_reason
+  // （容器运行态）、account_auth_status（账号认证态）是三个完全独立的维度，不
+  // 互相替代。后端该字段**恒返回**三态之一（无 omitempty），这里仍声明可选是
+  // 防御式取舍——旧编排器版本/字段裁剪场景下缺失时前端不应崩溃，一律经
+  // normalizeFarmTelemetryAliveState 归一到 unknown（utils/health.ts），不臆造
+  // 成 alive/silent。与 FarmAccountEntry.telemetry_alive 是同一份判定结果在两个
+  // DTO 上的镜像（dto.go accountView.TelemetryAlive 注释：「镜像该账号当前绑定
+  // 容器的 TelemetryAlive」）；本字段独立声明是因为未绑定容器同样有值（判的是
+  // 容器/device_id 本身，不依赖账号绑定）。
+  telemetry_alive?: FarmTelemetryAliveState;
   // R5-2 改绑防误绑：该容器上次绑定过的账号标识（备注名 / 邮箱 / auth 文件名，
   // 编排器 containerView.LastBoundAccount 透传，与 bindingView.Account 同源脱敏
   // 口径）。**仅解绑过、当前 status=down 的容器有值**——供 UI 显示「上次绑定：X
@@ -689,9 +702,14 @@ export interface FarmProbeCadenceView {
 //   - on_wire：mitmproxy / ebpf 在容器出站链路真实抓取（存储层 source=mitmproxy/ebpf）。
 // 展示层必须**逐条按 source_kind 标注**（declared 行标 declared、on_wire 行标
 // on-wire·来源），不得对整列笼统 claim on-wire；即便 on_wire 行也只证明该容器确实
-// 发出过这些请求，不构成跨账号反关联证明。另一件独立的事：指纹自洽卡的「出站实测
-// (on-wire)」一列是把 beacon **逐字段派生**进自洽比对这一步，尚未接入（列内占位），
-// 与「原始 on_wire beacon 是否已实时采集」不是一回事，文案不能混为一谈。
+// 发出过这些请求，不构成跨账号反关联证明。另一件相关的事：指纹自洽卡的「出站实测
+// (on-wire)」一列是把 beacon **逐字段派生**进自洽比对——TP-1 已接入：取「最近一条
+// source_kind=on_wire 的 beacon」自身已由后端 ParseBeacon 抽取好的
+// device_id/api_base_url_host/entrypoint 字段展示（前端不解析原始 body，字段抽取
+// 全在服务端完成，见 telemetry_beacon.go handleIngestBeacons）；从未观测到任何
+// on_wire beacon 时该列仍是中性占位（真占位，不是「尚未接入」），与「原始 on_wire
+// beacon 是否已实时采集」这件独立的事共用同一个信号（见 FarmTelemetryPanel.tsx
+// onWireCaptured）。
 //
 // GET /api/farm/containers/{id}/beacons?limit=<默认50，上限500> 响应体是**裸 JSON
 // 数组**（不是包裹对象），按 captured_at 降序；空容器返回 []（非 null）；
@@ -723,6 +741,30 @@ export interface FarmContainerBeaconView {
   // unknown 折叠）/ on_wire（source=mitmproxy/ebpf 真实出站抓取）。后端恒返回；旧
   // 后端缺该字段时前端从 source 兜底派生（见 resolveBeaconSourceKind），故声明可选。
   source_kind?: FarmTelemetrySourceKind;
+
+  // ---------------------------------------------------------------------------
+  // TP-2「每容器遥测内容更丰富」前瞻声明（**当前恒缺失，诚实标注**）：
+  // services/farm-orchestrator/internal/telemetry.ParseBeacon 已经从
+  // statsig_eval/event_logging/datadog_logs 三条通道 best-effort 抽取出
+  // SessionID/AppVersion/UserType/EventNames，且 store.TelemetryBeacon 已经落库
+  // 了这四个字段（internal/store/models.go）——但对外只读端点 GET
+  // /api/farm/containers/{id}/beacons 的 beaconView/beaconViewFrom
+  // （internal/httpapi/telemetry_beacon.go）**尚未把它们序列化进响应体**，只暴露
+  // device_id/api_base_url_host/entrypoint 三个字段。这四个字段照抄既有
+  // TR7/TR8 过渡期约定（见 FarmAccountEntry.farm_enrolled/telemetry_alive 同名
+  // 注释）提前声明，供后端补齐后前端零改动自然点亮；在此之前，任何消费方都会
+  // 拿到 undefined，渲染层必须存在性门控（不渲染，不是显示占位符），绝不假造。
+  // ---------------------------------------------------------------------------
+  /** 自报 session_id（ParseBeacon 抽取）。后端未暴露前恒 undefined，见上方说明。 */
+  session_id?: string;
+  /** 自报客户端/SDK 版本（statsig_eval 通道 attributes.appVersion，或 event_logging
+   * 通道 event_data.env.version）。后端未暴露前恒 undefined，见上方说明。 */
+  app_version?: string;
+  /** 自报用户类型（如 "external"）。后端未暴露前恒 undefined，见上方说明。 */
+  user_type?: string;
+  /** event_logging/datadog_logs 通道批内出现过的事件名列表（按出现顺序）。
+   * statsig_eval/control/other 通道恒为空。后端未暴露前恒 undefined，见上方说明。 */
+  event_names?: string[];
 }
 
 // GET /api/farm/containers/{id}/beacons 响应体：裸数组（captured_at 降序）。
@@ -751,9 +793,11 @@ export function resolveBeaconSourceKind(
   return FARM_ON_WIRE_BEACON_SOURCES.has(beacon.source) ? 'on_wire' : 'declared';
 }
 
-// beacon 指纹自洽卡的三个比对字段（declared 列现在能填；on-wire 列是「把 beacon
-// 逐字段派生进自洽比对」这一独立步骤，尚未接入、列内占位——与「原始 on_wire beacon
-// 是否已在下方时间线实时呈现」是两回事，不要混为一谈）。
+// beacon 指纹自洽卡的三个比对字段：declared 列取「最近一条 declared beacon」，
+// on-wire 列取「最近一条 source_kind=on_wire 的 beacon」（TP-1 已接入，见
+// FarmTelemetryPanel.tsx declaredFieldValue/onWireFieldValue）——两列都是「该
+// 来源最近一次自报/实测到的值」，不是同一条 beacon 的两个视角，declared 与
+// on-wire 天然可能来自不同请求。
 export const FARM_TELEMETRY_FINGERPRINT_FIELDS = [
   'device_id',
   'entrypoint',
