@@ -28,7 +28,9 @@ export interface UseFarmContainerBeaconsResult {
  * （declared=容器自报/声明；on_wire=mitmproxy/ebpf 真实出站抓取）。本 hook 不做
  * 过滤、原样透传裸数组；逐条来源标注由展示层（<FarmTelemetryPanel>）按 source_kind
  * 完成——on_wire 行标 on-wire、declared 行标 declared，绝不对整列笼统 claim on-wire。
- * 指纹自洽卡的 on-wire 列（逐字段派生）是另一件尚未接入的独立事，与本 hook 无关。
+ * 指纹自洽卡的 on-wire 列已接入「逐字段各取该来源最近一条带值的信标」派生（见
+ * <FarmTelemetryPanel> pickLatestBeaconFieldValue），本 hook 只原样透传裸数组、不参与
+ * 选值。
  *
  * 请求失败时把 error 原样透传给调用方就地呈现（AsyncPanel error 态），不吞掉
  * 也不伪造空成功——空列表只应来自后端真实返回的 []（空容器/窗口内无样本）。
