@@ -97,9 +97,11 @@ export function FarmIdentityLineagePanel({ container }: FarmIdentityLineagePanel
       ? t(`farm.lineage.endReason_${endReason}`, { defaultValue: endReason })
       : t('farm.lineage.ongoing', { defaultValue: 'Ongoing' });
 
-  // 审计横幅只在「确实成功查询过该账号」时展示——避免 loading/error 中间态或
-  // 尚未查询时用初始值 false 误显「审计通过」。
-  const showAuditBanner = Boolean(account) && !loading && !error;
+  // 审计横幅只在「确实成功查询过该账号 **且有谱系记录**」时展示——避免 loading/error
+  // 中间态或尚未查询时用初始值 false 误显「审计通过」；也避免零记录账号（epochs=[]）
+  // 无任何数据却给出「审计通过：从未跨住宅复用」的安全背书（观感误导）。零记录时只
+  // 保留下方 AsyncPanel 的空态，不叠审计横幅。
+  const showAuditBanner = Boolean(account) && !loading && !error && records.length > 0;
 
   return (
     <div data-testid="farm-lineage-panel">

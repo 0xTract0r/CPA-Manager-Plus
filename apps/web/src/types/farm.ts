@@ -132,8 +132,11 @@ export interface FarmContainerView {
   // declared 列换成「预期(pin)」逐字段对照 on-wire 实测——不一致即撞红=泄露。后端
   // containerView 恒填充（每容器创建即有 device_id），这里仍声明可选是防御旧编排器/字段
   // 裁剪，缺失时前端不渲染 pin 列。三字段语义：
-  //   - device_id_masked：注册表钉死的 device_id 脱敏（前12+后4，**绝不明文**）；与 on-wire
-  //     beacon 的 reported_fields.device_id 同款脱敏口径逐字比对，不一致=撞红=真泄露。
+  //   - device_id_masked：注册表钉死的 device_id 脱敏（**绝不明文**）。**精确格式**=前 12 字符
+  //     + U+2026 省略号「…」+ 后 4 字符，须与前端 utils/identity.ts maskTelemetryFingerprint、
+  //     后端 maskIdentifierMiddle 逐字节一致——pin 与 on-wire 撞红判定依赖两端产出同款脱敏串
+  //     逐字比对，改任一端脱敏格式（前缀/后缀长度、省略号字符）都必须同步另一端，否则会把同一
+  //     device_id 误判成撞红=泄露。与 on-wire beacon 的 reported_fields.device_id 同款脱敏口径比对。
   //   - entrypoint：常量 "cli"（真实 Claude CLI 交互态自报值）；on-wire 自报非 cli 即信号。
   //   - api_base_url_host：遥测该发的**官方端点**语义（api.anthropic.com）；on-wire 若出现
   //     自有 CPA 主机=host_leak 泄露。

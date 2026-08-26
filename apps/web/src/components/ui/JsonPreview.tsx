@@ -209,7 +209,13 @@ export function JsonPreview({ value, totalBytes, ariaLabel, className, testId }:
         data-testid={testId ? `${testId}-scroll` : undefined}
       >
         <pre className={styles.pre}>
-          <code>{tokens ? renderTokens(tokens) : displayText}</code>
+          {/* 兜底（截断致 JSON 破损 / 本就非 JSON）路径同样把脱敏占位符拆成 pill：
+              displayText 里的 ***REDACTED*** 复用 StringTokenSpan 的拆分逻辑渲成「已脱敏」
+              pill，避免占位符以字面量文本泄到界面（无安全泄漏，仅视觉与美化路径不一致）。
+              兜底文本不着色，colorClass 传空串。 */}
+          <code>
+            {tokens ? renderTokens(tokens) : <StringTokenSpan text={displayText} colorClass="" />}
+          </code>
         </pre>
       </div>
 

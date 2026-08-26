@@ -2,6 +2,7 @@ import { act } from 'react';
 import { create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import type {
+  FarmContainerBeaconView,
   FarmContainerView,
   FarmEgressProbeView,
   FarmTelemetrySilenceStateView,
@@ -35,11 +36,24 @@ vi.mock('@/hooks/useTimezone', () => ({
   useTimezone: () => undefined,
 }));
 
-// 遥测面板的 beacon 数据源固定返回空列表：本组测试只覆盖「遥测停摆四态」区块，
-// 该区块只依赖 container.telemetry_silence / telemetry_silence_state，与 beacon 列表无关。
+// 遥测面板的 beacon 数据源：默认返回空列表——「遥测停摆四态」区块只依赖
+// container.telemetry_silence / telemetry_silence_state，与 beacon 列表无关，保持既有
+// 用例绿。改成 vi.fn()（useFarmContainerBeaconsMock）后可按用例用 mockReturnValueOnce
+// 覆盖返回值：指纹卡 pin 撞红=泄露用例喂一条 on-wire beacon，覆盖此前从未被 render
+// 测试触达的红分支（逐字段泄露标记 + device_id 额外告警盒）。vi.hoisted 与仓库其余
+// 测试同款（见 FarmIdentityLineagePanel.test.tsx）。
+const { useFarmContainerBeaconsMock } = vi.hoisted(() => ({
+  useFarmContainerBeaconsMock: vi.fn(() => ({
+    beacons: [] as FarmContainerBeaconView[],
+    loading: false,
+    error: '',
+    reload: async () => {},
+  })),
+}));
+
 vi.mock('../hooks/useFarmContainerBeacons', () => ({
   FARM_CONTAINER_BEACONS_DEFAULT_LIMIT: 50,
-  useFarmContainerBeacons: () => ({ beacons: [], loading: false, error: '', reload: async () => {} }),
+  useFarmContainerBeacons: useFarmContainerBeaconsMock,
 }));
 
 const STALE_SILENCE = { is_stale: true, minutes_since_last: 40, threshold_minutes: 30 };
@@ -85,6 +99,13 @@ const nodesByTestId = (renderer: ReactTestRenderer, testId: string): ReactTestIn
 
 const firstByTestId = (renderer: ReactTestRenderer, testId: string): ReactTestInstance | undefined =>
   nodesByTestId(renderer, testId)[0];
+
+// 递归收集某个 ReactTestInstance 的可见文本（拼接所有子字符串节点），用于断言「泄露」
+// 类**非颜色文案**节点确实渲染（不只靠红色 class 传达，满足 WCAG 1.4.1）。
+const collectText = (instance: ReactTestInstance): string =>
+  instance.children
+    .map((child) => (typeof child === 'string' ? child : collectText(child)))
+    .join('');
 
 describe('FarmTelemetryPanel 遥测停摆四态诊断 (farm-egress-resilience Change A)', () => {
   it('代理死：诊断盒 error 变体 + 代理直连探针标不通', () => {
@@ -213,13 +234,11 @@ describe('FarmTelemetryPanel 遥测停摆四态诊断 (farm-egress-resilience Ch
 // farm-proxy-rotation §5「指纹卡 pin」：把指纹自洽卡的 declared 列换成「预期(pin)」，
 // 数据源改读 container.fingerprint_pin，逐字段对照 on-wire 实测；不一致即撞红=泄露。
 //
-// 本文件顶部 vi.mock('../hooks/useFarmContainerBeacons', ...) 是静态工厂（非
-// vi.fn()），恒返回空 beacons，未按用例可配置——故这里 onWireCaptured 恒为
-// false、on-wire 恒是「从未观测」pending 占位，clash 恒为 false。这组用例只覆盖
-// pin 存在 / 缺失两态的渲染与存在性门控；clash=true（撞红=泄露，含逐字段泄露
-// 标记 + device_id 额外告警盒）需要能按用例返回不同 on-wire beacon 的 mock，
-// 当前共享静态 mock 不支持，未在这里覆盖——留给集成阶段把 useFarmContainerBeacons
-// 的 mock 换成 vi.fn() 后补一组真撞红场景（见交接 gaps）。
+// 本文件顶部 useFarmContainerBeacons 已换成 vi.fn()（useFarmContainerBeaconsMock），
+// 默认恒返回空 beacons：pin 存在 / 缺失两态的渲染与存在性门控用例照旧走默认空 beacons
+// （onWireCaptured=false、on-wire 恒「从未观测」pending 占位、clash=false）。撞红=泄露
+// （clash=true）用例单独用 mockReturnValueOnce 喂一条 on-wire beacon，覆盖此前无 render
+// 测试触达的红分支：逐字段泄露标记（含非颜色文案）+ device_id 额外告警盒（error 变体）。
 describe('FarmTelemetryPanel 指纹自洽卡 pin (farm-proxy-rotation §5)', () => {
   const pinContainer = (
     fingerprint_pin?: FarmContainerView['fingerprint_pin']
@@ -272,5 +291,63 @@ describe('FarmTelemetryPanel 指纹自洽卡 pin (farm-proxy-rotation §5)', () 
     expect(header).toBeDefined();
     expect(typeof header?.props.title).toBe('string');
     expect((header?.props.title as string).length).toBeGreaterThan(0);
+  });
+
+  // 撞红=泄露（clash=true）：喂一条 on-wire beacon，其自报 device_id 脱敏后与 pin 钉死的
+  // device_id_masked 不一致 → device_id 撞红。覆盖此前从未被 render 测试触达的红分支
+  // （逐字段泄露标记 + device_id 额外告警盒），前置条件三者齐备：pin 存在 + onWireCaptured
+  // + 两侧脱敏串不等。
+  it('device_id 撞红=泄露：逐字段泄露标记（含非颜色文案）+ device_id 额外告警盒（error）渲染', () => {
+    // on-wire 原始 device_id（读路径全量不脱敏）经 maskTelemetryFingerprint（前12+…+后4）
+    // 得 ffffffffffff…3333，与 pin 的 e6b4c2aa114a…ca48 不一致 → 只 device_id 撞红；
+    // entrypoint / api_base_url_host 与 pin 一致，隔离出「仅 device_id 泄露」场景。
+    useFarmContainerBeaconsMock.mockReturnValueOnce({
+      beacons: [
+        {
+          captured_at: '2026-08-26T00:00:00Z',
+          channel: 'otel_metrics',
+          host: 'api.anthropic.com',
+          path: '/v1/metrics',
+          body_bytes: 42,
+          device_id: 'ffffffffffff0000aaaabbbbcccc3333',
+          api_base_url_host: 'api.anthropic.com',
+          entrypoint: 'cli',
+          source: 'mitmproxy',
+          source_kind: 'on_wire',
+        },
+      ],
+      loading: false,
+      error: '',
+      reload: async () => {},
+    });
+    const renderer = renderPanel(
+      pinContainer({
+        device_id_masked: 'e6b4c2aa114a…ca48',
+        entrypoint: 'cli',
+        api_base_url_host: 'api.anthropic.com',
+      })
+    );
+
+    // (a) device_id 行撞红：data-clash=true + 逐字段泄露标记节点渲染，且带**非颜色文案**
+    // （t 在测试里返回 key，断言 leak 标签文本存在即证明有独立文案节点，不只靠红色 class）。
+    const deviceRow = firstByTestId(renderer, 'farm-telemetry-consistency-row-device_id');
+    expect(deviceRow?.props['data-clash']).toBe('true');
+    const leak = firstByTestId(renderer, 'farm-telemetry-pin-leak-device_id');
+    expect(leak).toBeDefined();
+    expect(collectText(leak!)).toContain('farm.telemetry.pin.leak');
+    // leak 标记还带一句解释 title（屏幕阅读器 / 色弱用户可读），再证不单靠颜色。
+    expect(typeof leak?.props.title).toBe('string');
+    expect((leak?.props.title as string).length).toBeGreaterThan(0);
+
+    // (b) device_id 额外告警盒渲染，且是 error 变体（复用 silenceStateBox error 视觉）。
+    const alert = firstByTestId(renderer, 'farm-telemetry-pin-device-id-alert');
+    expect(alert).toBeDefined();
+    expect(alert?.props['data-silence-variant']).toBe('error');
+
+    // 与 pin 一致的字段（entrypoint / api_base_url_host）不应误红。
+    for (const field of ['entrypoint', 'api_base_url_host']) {
+      const row = firstByTestId(renderer, `farm-telemetry-consistency-row-${field}`);
+      expect(row?.props['data-clash']).toBe('false');
+    }
   });
 });
