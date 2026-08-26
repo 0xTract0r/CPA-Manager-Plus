@@ -19,6 +19,7 @@ import {
 } from '../utils/health';
 import { maskTelemetryFingerprint } from '../utils/identity';
 import { displayFingerprintValue, fingerprintFieldsClash } from '../utils/telemetry';
+import { BeaconDetailBody } from './FarmBeaconDetailBody';
 import styles from './FarmTelemetryPanel.module.scss';
 
 // beacon 时间线默认只渲染最近 N 条，避免容器上报密集时一次性渲染成百上千行把
@@ -97,12 +98,11 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
 
   const latestBeacon = beacons[0];
 
-  // 按 source_kind 分区（保持 captured_at 降序）：逐字段选值时各自取「该来源最近一条
-  // 带该值」的 beacon，而不是整列绑定同一条 beacon（修横线的核心）。
-  const declaredBeacons = useMemo(
-    () => beacons.filter((b) => resolveBeaconSourceKind(b) === 'declared'),
-    [beacons]
-  );
+  // on-wire 一侧仍按 source_kind 分区（保持 captured_at 降序）：逐字段选值时取
+  // 「该来源最近一条带该值」的 beacon，而不是整列绑定同一条 beacon（修横线的核心）。
+  // farm-proxy-rotation §5：指纹卡的「declared」列已换成「预期(pin)」，数据源改读
+  // container.fingerprint_pin（见下方指纹自洽卡渲染段），不再需要按 declared 分区
+  // beacon，故此处不再声明 declaredBeacons（避免 noUnusedLocals 编译错误）。
   const onWireBeacons = useMemo(
     () => beacons.filter((b) => resolveBeaconSourceKind(b) === 'on_wire'),
     [beacons]
@@ -191,15 +191,26 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
         loadingTestId="farm-telemetry-loading"
         errorTestId="farm-telemetry-error"
       >
-        {/* 指纹自洽卡：declared（自报）vs on-wire（出站实测），逐字段各取该来源最近一条
-            带值的 beacon。 */}
+        {/* 指纹自洽卡（farm-proxy-rotation §5「指纹卡 pin」）：预期 (pin，编排器钉给该
+            容器的意图身份，container.fingerprint_pin) vs on-wire（出站实测），逐字段
+            对照；不一致即撞红=泄露。判等逻辑等价于 utils/telemetry.ts 新增的
+            pinFieldClash（该文件是这段逻辑的规范实现 + 单测锁定），本文件因 NOCLASH
+            冻结 import 行未直接 import，下方内联复刻同款判等，只复用本文件已导入的
+            fingerprintFieldsClash / displayFingerprintValue，留给集成阶段收敛成同一份。 */}
         <div className={styles.estimateBox} data-testid="farm-telemetry-consistency">
           <div className={`${styles.consistencyGrid} ${styles.consistencyHeaderRow}`}>
             <span className={styles.chartLabel}>
               {t('farm.telemetry.fieldColumn', { defaultValue: '指纹字段' })}
             </span>
-            <span className={styles.chartLabel}>
-              {t('farm.telemetry.declaredColumn', { defaultValue: '自报 (declared)' })}
+            <span
+              className={styles.chartLabel}
+              data-testid="farm-telemetry-pin-column-header"
+              title={t('farm.telemetry.pin.columnHint', {
+                defaultValue:
+                  '编排器钉给该容器的预期指纹；on-wire 实测逐字段与它对照——任一不一致即泄露。',
+              })}
+            >
+              {t('farm.telemetry.pin.column', { defaultValue: '预期 (pin)' })}
             </span>
             <span className={styles.chartLabel}>
               {t('farm.telemetry.onWireColumn', { defaultValue: '出站实测 (on-wire)' })}
@@ -211,70 +222,152 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
             <p className={styles.onWireBanner} data-testid="farm-telemetry-onwire-banner">
               {t('farm.telemetry.onWireBanner', {
                 defaultValue:
-                  '该容器当前窗口内暂未观测到 on-wire 信标（mitmproxy/ebpf 出站抓取），下方「出站实测」列暂为占位；逐字段派生已接入，一旦抓到任意 on-wire 信标即自动点亮并与自报值比对。',
+                  '该容器当前窗口内暂未观测到 on-wire 信标（mitmproxy/ebpf 出站抓取），下方「出站实测」列暂为占位；逐字段派生已接入，一旦抓到任意 on-wire 信标即自动点亮并与预期(pin)值比对。',
               })}
             </p>
           )}
 
-          {FARM_TELEMETRY_FINGERPRINT_FIELDS.map((field) => {
-            // 逐字段选「该来源最近一条带值」的原始值：先用原始值判等/撞红，再各自脱敏
-            // 展示（顺序不能反，见 utils/telemetry.ts 注释）。
-            const declaredRaw = pickLatestBeaconFieldValue(declaredBeacons, field);
-            const onWireRaw = onWireCaptured
-              ? pickLatestBeaconFieldValue(onWireBeacons, field)
-              : null;
-            const onWirePending = onWireRaw === null;
-            const clash = fingerprintFieldsClash(declaredRaw, onWireRaw);
-            const declaredDisplay = displayFingerprintValue(field, declaredRaw);
-            const onWireDisplay = onWirePending
-              ? ''
-              : displayFingerprintValue(field, onWireRaw ?? '');
-            const declaredHasValue = declaredDisplay !== '';
-            const clashClassName = clash ? ` ${styles.consistencyValueClash}` : '';
-            const onWireClassName = onWirePending
-              ? `${styles.mono} ${styles.onWirePlaceholder}`
-              : `${styles.mono} ${styles.consistencyValue}${clashClassName}`;
+          {/* pin 卡存在性门控：container.fingerprint_pin 整体缺失时（旧编排器/字段裁剪
+              防御，正常情况后端恒填充，见 types/farm.ts FarmContainerView 注释）不渲染
+              任何 pin 值，只标一行诚实占位横幅；下方逐字段仍复用同一套渲染，pinRaw 全空
+              时 fingerprintFieldsClash 空串即不比较，自然不会误撞红。 */}
+          {!container.fingerprint_pin && (
+            <p className={styles.onWireBanner} data-testid="farm-telemetry-pin-missing-banner">
+              {t('farm.telemetry.pin.missingBanner', {
+                defaultValue:
+                  '该容器暂无编排器钉死的预期指纹（旧编排器未下发或字段被裁剪），下方「预期(pin)」列暂为占位，不构成泄露判定依据。',
+              })}
+            </p>
+          )}
+
+          {(() => {
+            const pin = container.fingerprint_pin;
+            const rows = FARM_TELEMETRY_FINGERPRINT_FIELDS.map((field) => {
+              // pin 侧不走 beacon，直接读容器的意图身份三字段；device_id 一项后端起就
+              // 只下发脱敏值（绝不明文，见 types/farm.ts 注释），这里不再二次脱敏。
+              let pinRaw = '';
+              if (pin) {
+                if (field === 'device_id') pinRaw = pin.device_id_masked;
+                else if (field === 'entrypoint') pinRaw = pin.entrypoint;
+                else if (field === 'api_base_url_host') pinRaw = pin.api_base_url_host;
+              }
+              // on-wire 侧不变：逐字段选「该来源最近一条带值」的原始值，先判等/撞红、
+              // 再脱敏展示（顺序不能反，见 utils/telemetry.ts 注释）。
+              const onWireRaw = onWireCaptured
+                ? pickLatestBeaconFieldValue(onWireBeacons, field)
+                : null;
+              const onWirePending = onWireRaw === null;
+              const onWireDisplay = onWirePending
+                ? ''
+                : displayFingerprintValue(field, onWireRaw ?? '');
+              // 撞红=泄露：on-wire 原始值先按 displayFingerprintValue 同款规则处理，
+              // 与 pinRaw 落到同一表示层级（device_id 两侧都是脱敏串，其余两个低熵
+              // 字段两侧都是原始值）后再复用 fingerprintFieldsClash 的三态判等语义。
+              const clash = fingerprintFieldsClash(pinRaw, onWireDisplay);
+              const pinHasValue = pinRaw !== '';
+              const clashClassName = clash ? ` ${styles.consistencyValueClash}` : '';
+              const onWireClassName = onWirePending
+                ? `${styles.mono} ${styles.onWirePlaceholder}`
+                : `${styles.mono} ${styles.consistencyValue}${clashClassName}`;
+              return {
+                field,
+                pinRaw,
+                pinHasValue,
+                onWirePending,
+                onWireDisplay,
+                clash,
+                clashClassName,
+                onWireClassName,
+              };
+            });
+            const deviceIdClash = rows.find((r) => r.field === 'device_id')?.clash ?? false;
             return (
-              <div
-                key={field}
-                data-testid={`farm-telemetry-consistency-row-${field}`}
-                data-field={field}
-                data-clash={clash ? 'true' : 'false'}
-                className={`${styles.consistencyGrid} ${styles.consistencyRow}`}
-              >
-                <span className={styles.mono}>
-                  {t(`farm.telemetry.field_${field}`, { defaultValue: field })}
-                </span>
-                {declaredHasValue ? (
-                  <span
-                    data-testid={`farm-telemetry-declared-${field}`}
-                    className={`${styles.mono} ${styles.consistencyValue}${clashClassName}`}
+              <>
+                {rows.map((row) => (
+                  <div
+                    key={row.field}
+                    data-testid={`farm-telemetry-consistency-row-${row.field}`}
+                    data-field={row.field}
+                    data-clash={row.clash ? 'true' : 'false'}
+                    className={`${styles.consistencyGrid} ${styles.consistencyRow}`}
                   >
-                    {declaredDisplay}
-                  </span>
-                ) : (
-                  <span
-                    data-testid={`farm-telemetry-declared-${field}`}
-                    data-declared-empty="true"
-                    className={styles.declaredNotCollected}
-                    title={t('farm.telemetry.declaredNotCollectedHint', {
-                      defaultValue:
-                        '自报 (declared) 通道未接入该字段的独立声明源；此处不编造值。当前指纹以出站实测 (on-wire) 为准。',
-                    })}
+                    <span className={styles.mono}>
+                      {t(`farm.telemetry.pin.label_${row.field}`, { defaultValue: row.field })}
+                    </span>
+                    {row.pinHasValue ? (
+                      <span
+                        data-testid={`farm-telemetry-pin-${row.field}`}
+                        className={`${styles.mono} ${styles.consistencyValue}${row.clashClassName}`}
+                      >
+                        {row.pinRaw}
+                        {row.clash && (
+                          // 撞红不能只靠红色文字传达（WCAG 1.4.1）：叠加图标 + 「泄露」
+                          // 文案，title 再带一句解释，屏幕阅读器与色弱用户都能读到。
+                          <span
+                            className={styles.consistencyValueClash}
+                            data-testid={`farm-telemetry-pin-leak-${row.field}`}
+                            title={t('farm.telemetry.pin.leakHint', {
+                              defaultValue: 'on-wire 实测与 pin 不一致——指纹泄露。',
+                            })}
+                          >
+                            {' '}
+                            <span aria-hidden="true">⚠</span>{' '}
+                            {t('farm.telemetry.pin.leak', { defaultValue: '泄露' })}
+                          </span>
+                        )}
+                      </span>
+                    ) : (
+                      <span
+                        data-testid={`farm-telemetry-pin-${row.field}`}
+                        data-pin-empty="true"
+                        className={styles.declaredNotCollected}
+                        title={t('farm.telemetry.pin.notPinnedHint', {
+                          defaultValue:
+                            '编排器未给该容器钉死这个字段的预期值（旧编排器/字段裁剪）；此处不编造值，也不据此判定泄露。',
+                        })}
+                      >
+                        {t('farm.telemetry.pin.notPinned', { defaultValue: '未配置 (pin)' })}
+                      </span>
+                    )}
+                    <span
+                      data-testid={`farm-telemetry-onwire-${row.field}`}
+                      data-pending={row.onWirePending ? 'true' : 'false'}
+                      className={row.onWireClassName}
+                    >
+                      {row.onWirePending ? '—' : row.onWireDisplay || '—'}
+                    </span>
+                  </div>
+                ))}
+                {/* device_id 撞红是最强的身份泄露信号：除了逐字段的红字 + 「泄露」文案，
+                    额外叠一个更显眼的告警盒（图标 + 加粗文案，同样不单靠颜色，满足
+                    WCAG 1.4.1）。复用 .silenceStateBox 的 error 变体视觉，不新增样式类
+                    （本文件 scss module 冻结，见 NOCLASH 分工）。 */}
+                {deviceIdClash && (
+                  <div
+                    className={styles.silenceStateBox}
+                    data-silence-variant="error"
+                    data-testid="farm-telemetry-pin-device-id-alert"
                   >
-                    {t('farm.telemetry.declaredNotCollected', { defaultValue: '未采集 / 不适用' })}
-                  </span>
+                    <div className={styles.silenceStateHead}>
+                      <span aria-hidden="true">⚠️</span>
+                      <span className="status-badge error">
+                        {t('farm.telemetry.pin.deviceIdMismatchWarning', {
+                          defaultValue:
+                            'device_id 不一致：on-wire 值与钉死的 device_id 不同——大概率身份泄露，请排查。',
+                        })}
+                      </span>
+                    </div>
+                    <p className={styles.silenceStateConclusion}>
+                      {t('farm.telemetry.pin.deviceIdMismatchHint', {
+                        defaultValue:
+                          '钉死的 device_id 与 on-wire device_id 在同款脱敏后仍不匹配。',
+                      })}
+                    </p>
+                  </div>
                 )}
-                <span
-                  data-testid={`farm-telemetry-onwire-${field}`}
-                  data-pending={onWirePending ? 'true' : 'false'}
-                  className={onWireClassName}
-                >
-                  {onWirePending ? '—' : onWireDisplay || '—'}
-                </span>
-              </div>
+              </>
             );
-          })}
+          })()}
         </div>
 
         {/* 字段速览：优先最近一条 on-wire 信标（真实出站抓取），无则回退自报。device_id/
@@ -939,215 +1032,5 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
         {selectedBeacon ? <BeaconDetailBody beacon={selectedBeacon} /> : null}
       </Drawer>
     </section>
-  );
-}
-
-/**
- * 信标详情抽屉正文：展示单条 beacon 的完整上报内容——概要 + reported_fields（脱敏）+
- * 事件名 + body_preview（脱敏预览）+ process_signal（进程退出信号，null 时诚实标注
- * 无信号且不代表进程还活着）。只展示脱敏值，不解析原始 body，不编造缺失字段。
- */
-function BeaconDetailBody({ beacon }: { beacon: FarmContainerBeaconView }) {
-  const { t, i18n } = useTranslation();
-  useTimezone();
-
-  const sourceKind = resolveBeaconSourceKind(beacon);
-  const isOnWire = sourceKind === 'on_wire';
-  const rawSource = beacon.source || (isOnWire ? 'mitmproxy' : 'declared');
-  const rf = beacon.reported_fields;
-  const eventNames = beacon.event_names?.filter(Boolean) ?? [];
-  const ps = beacon.process_signal;
-  const bodyPreview = beacon.body_preview ?? '';
-
-  // reported_fields 逐字段渲染：缺失显 '—'（诚实，代表这条 beacon 没带该字段）。
-  const reportedRows: Array<{ key: string; label: string; value: string; masked?: boolean }> = [
-    { key: 'device_id', label: t('farm.telemetry.field_device_id', { defaultValue: 'device_id' }), value: rf?.device_id ?? '', masked: true },
-    { key: 'session_id', label: t('farm.telemetry.field_session_id', { defaultValue: 'session_id' }), value: rf?.session_id ?? '', masked: true },
-    { key: 'api_base_url_host', label: t('farm.telemetry.field_api_base_url_host', { defaultValue: 'api_base_url_host' }), value: rf?.api_base_url_host ?? '' },
-    { key: 'deployment_environment', label: t('farm.telemetry.spreadDeploymentEnv', { defaultValue: '部署环境' }), value: rf?.deployment_environment ?? '' },
-    { key: 'sdk_version', label: t('farm.telemetry.spreadSdkVersion', { defaultValue: 'SDK 版本' }), value: rf?.sdk_version ?? '' },
-    { key: 'hostname', label: t('farm.telemetry.spreadHostname', { defaultValue: 'hostname' }), value: rf?.hostname ?? '' },
-    { key: 'channel', label: t('farm.telemetry.spreadChannel', { defaultValue: '通道' }), value: rf?.channel ?? '' },
-  ];
-
-  return (
-    <div className={styles.drawerBody} data-testid="farm-telemetry-beacon-drawer">
-      {/* 概要 */}
-      <div className={styles.drawerSection}>
-        <div className={styles.fieldSpreadGrid}>
-          <span className={styles.fieldSpreadLabel}>
-            {t('farm.telemetry.spreadSource', { defaultValue: '来源' })}
-          </span>
-          <span
-            className={`status-badge ${isOnWire ? 'success' : 'muted'} ${styles.fieldSpreadBadge}`}
-            data-source-kind={sourceKind}
-          >
-            {isOnWire
-              ? t('farm.telemetry.rowSourceOnWire', { defaultValue: 'on-wire · {{source}}', source: rawSource })
-              : t('farm.telemetry.rowSourceDeclared', { defaultValue: '自报 · {{source}}', source: rawSource })}
-          </span>
-
-          <span className={styles.fieldSpreadLabel}>
-            {t('farm.telemetry.spreadCapturedAt', { defaultValue: '采集时间' })}
-          </span>
-          <span className={styles.fieldSpreadValue}>
-            {formatDateTimeUtc8(beacon.captured_at, i18n.language)}
-          </span>
-
-          <span className={styles.fieldSpreadLabel}>
-            {t('farm.telemetry.spreadHostPath', { defaultValue: 'host / 路径' })}
-          </span>
-          <span className={styles.fieldSpreadValue}>{`${beacon.host}${beacon.path}`}</span>
-
-          <span className={styles.fieldSpreadLabel}>
-            {t('farm.telemetry.spreadBodyBytes', { defaultValue: '请求体大小' })}
-          </span>
-          <span className={styles.fieldSpreadValue}>{formatFileSize(beacon.body_bytes)}</span>
-        </div>
-      </div>
-
-      {/* reported_fields（脱敏） */}
-      <div className={styles.drawerSection}>
-        <span className={styles.drawerSectionTitle}>
-          {t('farm.telemetry.drawerReportedFields', { defaultValue: '上报字段（reported_fields，脱敏）' })}
-        </span>
-        <div className={styles.fieldSpreadGrid} data-testid="farm-telemetry-drawer-reported">
-          {reportedRows.map((row) => (
-            <FragmentRow key={row.key} label={row.label} value={row.value} masked={row.masked} />
-          ))}
-        </div>
-      </div>
-
-      {/* 事件名 */}
-      <div className={styles.drawerSection}>
-        <span className={styles.drawerSectionTitle}>
-          {t('farm.telemetry.drawerEventNames', { defaultValue: '事件名（event_names）' })}
-        </span>
-        {eventNames.length > 0 ? (
-          <div className={styles.eventNameChips} data-testid="farm-telemetry-drawer-events">
-            {eventNames.map((name, i) => (
-              <span key={`${name}-${i}`} className="status-badge muted">
-                {name}
-              </span>
-            ))}
-          </div>
-        ) : (
-          <span className={styles.hintText}>
-            {t('farm.telemetry.drawerNoEventNames', {
-              defaultValue: '该信标无事件名（仅 event_logging / datadog_logs 通道会带）。',
-            })}
-          </span>
-        )}
-      </div>
-
-      {/* body_preview（脱敏预览） */}
-      <div className={styles.drawerSection}>
-        <span className={styles.drawerSectionTitle}>
-          {t('farm.telemetry.drawerBodyPreview', { defaultValue: '请求体预览（脱敏，≤2048 字符）' })}
-        </span>
-        {bodyPreview ? (
-          <pre className={styles.bodyPreview} data-testid="farm-telemetry-drawer-body-preview">
-            {bodyPreview}
-          </pre>
-        ) : (
-          <span className={styles.hintText}>
-            {t('farm.telemetry.drawerNoBodyPreview', {
-              defaultValue: '无请求体预览（该信标未携带可展示的 body，或编排器未提供该字段）。',
-            })}
-          </span>
-        )}
-      </div>
-
-      {/* process_signal（进程退出信号） */}
-      <div className={styles.drawerSection}>
-        <span className={styles.drawerSectionTitle}>
-          {t('farm.telemetry.drawerProcessSignal', { defaultValue: '进程退出信号（process_signal）' })}
-        </span>
-        {ps ? (
-          <div className={styles.fieldSpreadGrid} data-testid="farm-telemetry-drawer-process-signal">
-            <span className={styles.fieldSpreadLabel}>
-              {t('farm.telemetry.psTerminated', { defaultValue: '已终止' })}
-            </span>
-            <span className={styles.fieldSpreadValue}>
-              {ps.terminated
-                ? t('common.yes', { defaultValue: '是' })
-                : t('common.no', { defaultValue: '否' })}
-            </span>
-
-            <span className={styles.fieldSpreadLabel}>
-              {t('farm.telemetry.psExitCode', { defaultValue: '退出码' })}
-            </span>
-            <span className={styles.fieldSpreadValue}>
-              {ps.last_exit_code != null
-                ? String(ps.last_exit_code)
-                : t('farm.telemetry.psExitCodeNone', { defaultValue: '无（信号未带退出码）' })}
-            </span>
-
-            {ps.run_phase ? (
-              <>
-                <span className={styles.fieldSpreadLabel}>
-                  {t('farm.telemetry.psRunPhase', { defaultValue: '运行阶段' })}
-                </span>
-                <span className={styles.fieldSpreadValue}>{ps.run_phase}</span>
-              </>
-            ) : null}
-
-            <span className={styles.fieldSpreadLabel}>
-              {t('farm.telemetry.psSignalSource', { defaultValue: '信号来源' })}
-            </span>
-            <span className={styles.fieldSpreadValue}>{ps.source || '—'}</span>
-
-            <span className={styles.fieldSpreadLabel}>
-              {t('farm.telemetry.psObservedAt', { defaultValue: '观测时间' })}
-            </span>
-            <span className={styles.fieldSpreadValue}>
-              {ps.observed_at ? formatDateTimeUtc8(ps.observed_at, i18n.language) : '—'}
-            </span>
-
-            <span className={styles.drawerCaveat} data-caveat="true">
-              {t('farm.telemetry.psCaveat', {
-                defaultValue:
-                  '这是遥测最后一次观测到的信号，不是编排器实时进程探测；不代表容器进程当前还活着或已退出。',
-              })}
-            </span>
-          </div>
-        ) : (
-          <div data-testid="farm-telemetry-drawer-process-signal-none">
-            <span className="status-badge muted">
-              {t('farm.telemetry.psNoSignal', { defaultValue: '无信号' })}
-            </span>
-            <p className={styles.drawerCaveat}>
-              {t('farm.telemetry.psNoSignalCaveat', {
-                defaultValue:
-                  '该信标未携带进程退出信号（当前仅 datadog_logs 的 terminated 事件会带）。无信号既不代表进程还活着、也不代表异常——只代表这条上报没有携带退出信号。',
-              })}
-            </p>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// reported_fields 一行：label | value；空值显 '—'（诚实缺失）；masked=true 的字段
-// 由服务端已脱敏，仅加 tooltip 说明，不再前端二次处理。
-function FragmentRow({ label, value, masked }: { label: string; value: string; masked?: boolean }) {
-  const { t } = useTranslation();
-  return (
-    <>
-      <span className={styles.fieldSpreadLabel}>{label}</span>
-      <span
-        className={styles.fieldSpreadValue}
-        title={
-          masked && value
-            ? t('farm.telemetry.maskedHint', {
-                defaultValue: '展示脱敏（前 12 + 后 4），完整值仅服务端保留',
-              })
-            : undefined
-        }
-      >
-        {value || '—'}
-      </span>
-    </>
   );
 }

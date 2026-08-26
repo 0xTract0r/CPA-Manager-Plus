@@ -43,6 +43,10 @@ import {
   canViewAuthFileAuditHistory,
   supportsAuthFileWebsockets,
 } from '@/features/authFiles/constants';
+// §2（farm-proxy-rotation）换代理二次确认门禁：账号是「已纳入农场的 Claude 账号」
+// 且本次保存实际改动了 proxy_url 时，确认后调 POST /api/farm/rotate-proxy。
+import { useFarmRotateProxy } from '@/features/farm/hooks/useFarmRotateProxy';
+import type { FarmEnv } from '@/types/farm';
 import { AccountFastImpactPanel } from './AccountFastImpactPanel';
 import { AuthFilesReauthHistoryPanel } from './AuthFilesReauthHistoryPanel';
 import { AuthFilesStatusHistoryPanel } from './AuthFilesStatusHistoryPanel';
@@ -79,6 +83,26 @@ function formatObservationSeenAt(value: string | undefined): string {
     undefined,
     raw
   );
+}
+
+/**
+ * 从 `editor.originalSerializedRequest`（PATCH 基线序列化 JSON，顶层含
+ * `proxy_url` 字段，定义见 useAuthFilesAccountSettings.ts normalizeSettings /
+ * buildPatchRequest）解析出「本次编辑前」的 proxy_url 基线，用于 §2 判断本次
+ * 保存是否真的改动了 proxy_url（而非只改了 note/disabled 等其它白名单字段），
+ * 避免误触发换代理二次确认。
+ *
+ * 返回 `undefined` 表示解析失败（理论上不会发生，防御式兜底）——调用方按
+ * fail-closed 处理：宁可多问一次换代理确认，也不要因为解析异常静默漏掉。
+ */
+function parseOriginalProxyUrl(originalSerializedRequest: string | undefined): string | null | undefined {
+  if (!originalSerializedRequest) return undefined;
+  try {
+    const parsed = JSON.parse(originalSerializedRequest) as { proxy_url?: unknown };
+    return typeof parsed.proxy_url === 'string' ? parsed.proxy_url : null;
+  } catch {
+    return undefined;
+  }
 }
 
 export type AuthFilesAccountSettingsModalProps = {
@@ -1216,6 +1240,9 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
   const { t } = useTranslation();
   const resolvedTheme = useThemeStore((state) => state.resolvedTheme);
   const showConfirmation = useNotificationStore((state) => state.showConfirmation);
+  // §2（farm-proxy-rotation）换代理二次确认门禁；hook 本身不含确认弹窗（确认文案
+  // 挂在本组件），只负责已确认后发起 POST /api/farm/rotate-proxy + toast 结果。
+  const { rotateProxy } = useFarmRotateProxy();
   const {
     disableControls,
     editor,
@@ -1283,6 +1310,17 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
   const deviceIdSource = editor?.deviceIdSource;
   const isFarmContainerSynced = farmBound === true || deviceIdSource === 'container_synced';
   const isFarmUnprovisionedClaude = farmBound === false && isClaudeProvider;
+  // §2 硬 gate：只对「已纳入农场的 Claude 账号」拦换代理保存——必须是
+  // isClaudeProvider && farmBound===true，**不是** isClaudeManagedPolicy（那个对
+  // 无 clientVersionObservations 的 codex 号也可能为 false-negative/正，边界不精确）。
+  // codex、非农场（farmBound 为 false/undefined）一律不拦，proxy_url 照常直接保存。
+  const isFarmRotateGated = isClaudeProvider && farmBound === true;
+  // 本次编辑是否真的改了 proxy_url（不是 note/disabled 等其它字段单独改动）。
+  // 解析失败（parseOriginalProxyUrl 返回 undefined）按已改动处理，fail-closed。
+  const originalProxyUrl = editor ? parseOriginalProxyUrl(editor.originalSerializedRequest) : undefined;
+  const normalizedProxyUrl = editor ? editor.proxyUrl.trim() || null : null;
+  const proxyUrlChanged =
+    Boolean(editor) && (originalProxyUrl === undefined || normalizedProxyUrl !== originalProxyUrl);
   const identityModelStrategy = isClaudeManagedPolicy
     ? t('auth_files.account_settings_identity_strategy_claude', {
         defaultValue: 'Claude per-account identity binding',
@@ -1477,6 +1515,61 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
             defaultValue: 'Proxy configured',
           });
 
+  // 编排器当前只服务 farm env=test（同 FarmAccountsPanel.tsx 既有做法：
+  // 「环境（test/prod）对本部署无意义——编排器当前只服务 test，生产账号不会出现
+  // 在这个列表里」），账号设置弹窗尚无独立的 env 选择维度，固定 'test' 与既有
+  // 农场页保持一致；农场编排器支持生产 env 后需同步补上真实来源。
+  const farmRotateEnv: FarmEnv = 'test';
+
+  /**
+   * §2：换代理二次确认门禁。仅当账号命中 isFarmRotateGated（已纳入农场的
+   * Claude 账号）且本次保存实际改动了 proxy_url 时才拦截：先弹二次确认说明
+   * 会新建容器 + 新 device_id + 旧容器退役（superseded）+ 短暂 fail-closed
+   * 窗口 + 保卷宽限；确认后显式带上编辑框里的新 proxy_url 调用
+   * POST /api/farm/rotate-proxy（confirm:true，不依赖账号设置 PATCH 先落库到
+   * CPA 的时序——显式传值直接被后端采用为新容器代理），轮换成功后才继续走
+   * 原有 onSave() 把 proxy_url 等字段真正 PATCH 进 CPA account-settings；
+   * 轮换失败则不保存，避免 CPA 侧 proxy_url 与农场容器实际出口不一致。
+   * 非 Claude / 非农场 / codex 账号，或本次没有实际改动 proxy_url，一律不弹
+   * 此确认，直接走原有 onSave()，不触发任何容器动作。
+   */
+  const handleSaveClick = () => {
+    if (!editor || !isFarmRotateGated || !proxyUrlChanged) {
+      onSave();
+      return;
+    }
+    const accountId = editor.fileName;
+    const nextProxyUrl = editor.proxyUrl.trim();
+    showConfirmation({
+      title: t('farm.rotate.title'),
+      message: (
+        <div data-testid="account-settings-rotate-proxy-confirm">
+          <p>{t('farm.rotate.body')}</p>
+          <ul style={{ margin: '8px 0 0', paddingLeft: '20px' }}>
+            <li>{t('farm.rotate.consequenceNewContainer')}</li>
+            <li>{t('farm.rotate.consequenceNewDeviceId')}</li>
+            <li>{t('farm.rotate.consequenceOldSuperseded')}</li>
+            <li>{t('farm.rotate.consequenceFailClosedWindow')}</li>
+            <li>{t('farm.rotate.consequenceVolumeGrace')}</li>
+          </ul>
+        </div>
+      ),
+      confirmText: t('farm.rotate.confirmLabel'),
+      cancelText: t('farm.rotate.cancelLabel'),
+      variant: 'primary',
+      onConfirm: async () => {
+        const result = await rotateProxy({
+          account_id: accountId,
+          env: farmRotateEnv,
+          proxy_url: nextProxyUrl,
+        });
+        if (result) {
+          onSave();
+        }
+      },
+    });
+  };
+
   return (
     <Modal
       open={Boolean(editor)}
@@ -1511,7 +1604,7 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
             {t('common.copy')}
           </Button>
           <Button
-            onClick={onSave}
+            onClick={handleSaveClick}
             loading={editor?.saving === true}
             disabled={
               disableControls ||

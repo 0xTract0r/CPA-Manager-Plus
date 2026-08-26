@@ -209,3 +209,68 @@ describe('FarmTelemetryPanel 遥测停摆四态诊断 (farm-egress-resilience Ch
     expect(nodesByTestId(renderer, 'farm-telemetry-stale-warning')).toHaveLength(1);
   });
 });
+
+// farm-proxy-rotation §5「指纹卡 pin」：把指纹自洽卡的 declared 列换成「预期(pin)」，
+// 数据源改读 container.fingerprint_pin，逐字段对照 on-wire 实测；不一致即撞红=泄露。
+//
+// 本文件顶部 vi.mock('../hooks/useFarmContainerBeacons', ...) 是静态工厂（非
+// vi.fn()），恒返回空 beacons，未按用例可配置——故这里 onWireCaptured 恒为
+// false、on-wire 恒是「从未观测」pending 占位，clash 恒为 false。这组用例只覆盖
+// pin 存在 / 缺失两态的渲染与存在性门控；clash=true（撞红=泄露，含逐字段泄露
+// 标记 + device_id 额外告警盒）需要能按用例返回不同 on-wire beacon 的 mock，
+// 当前共享静态 mock 不支持，未在这里覆盖——留给集成阶段把 useFarmContainerBeacons
+// 的 mock 换成 vi.fn() 后补一组真撞红场景（见交接 gaps）。
+describe('FarmTelemetryPanel 指纹自洽卡 pin (farm-proxy-rotation §5)', () => {
+  const pinContainer = (
+    fingerprint_pin?: FarmContainerView['fingerprint_pin']
+  ): FarmContainerView => ({
+    id: 'c-pin-1',
+    device_id_masked: 'dev-***',
+    status: 'running',
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+    fingerprint_pin,
+  });
+
+  it('pin 缺失（旧编排器/字段裁剪防御）：整卡不渲染 pin 值，只标存在性门控横幅', () => {
+    const renderer = renderPanel(pinContainer(undefined));
+    expect(nodesByTestId(renderer, 'farm-telemetry-pin-missing-banner')).toHaveLength(1);
+    for (const field of ['device_id', 'entrypoint', 'api_base_url_host']) {
+      const cell = firstByTestId(renderer, `farm-telemetry-pin-${field}`);
+      expect(cell?.props['data-pin-empty']).toBe('true');
+    }
+    // 空 pin 不会误撞红：既无逐字段泄露标记，也无 device_id 额外告警盒。
+    expect(nodesByTestId(renderer, 'farm-telemetry-pin-device-id-alert')).toHaveLength(0);
+  });
+
+  it('pin 存在（三字段齐全）：不渲染存在性门控横幅，逐字段用 pin 值渲染且不误撞红', () => {
+    const renderer = renderPanel(
+      pinContainer({
+        device_id_masked: 'e6b4c2aa114a…ca48',
+        entrypoint: 'cli',
+        api_base_url_host: 'api.anthropic.com',
+      })
+    );
+    expect(nodesByTestId(renderer, 'farm-telemetry-pin-missing-banner')).toHaveLength(0);
+    for (const field of ['device_id', 'entrypoint', 'api_base_url_host']) {
+      const cell = firstByTestId(renderer, `farm-telemetry-pin-${field}`);
+      expect(cell?.props['data-pin-empty']).toBeUndefined();
+      const row = firstByTestId(renderer, `farm-telemetry-consistency-row-${field}`);
+      // 共享 beacons mock 恒返回 []，on-wire 恒未观测：不应误撞红。
+      expect(row?.props['data-clash']).toBe('false');
+    }
+    expect(nodesByTestId(renderer, 'farm-telemetry-pin-device-id-alert')).toHaveLength(0);
+    // on-wire 列在「从未观测」时是 pending 占位，不是撞红态。
+    expect(firstByTestId(renderer, 'farm-telemetry-onwire-device_id')?.props['data-pending']).toBe(
+      'true'
+    );
+  });
+
+  it('pin 列表头带 columnHint 说明（title），不是裸文案', () => {
+    const renderer = renderPanel(pinContainer(undefined));
+    const header = firstByTestId(renderer, 'farm-telemetry-pin-column-header');
+    expect(header).toBeDefined();
+    expect(typeof header?.props.title).toBe('string');
+    expect((header?.props.title as string).length).toBeGreaterThan(0);
+  });
+});

@@ -127,6 +127,21 @@ export interface FarmContainerView {
   // （不 omitempty），这里仍声明可选是防御旧编排器/字段裁剪——缺失时前端回退既有
   // telemetry_silence 的 is_stale 呈现，见 FarmTelemetryPanel。
   telemetry_silence_state?: FarmTelemetrySilenceStateView;
+  // farm-proxy-rotation §5「指纹卡 pin」：容器的**意图身份**（编排器钉给该容器的预期
+  // 指纹，dto.go fingerprintPinView / observability.go:565）。供遥测页指纹自洽卡把死掉的
+  // declared 列换成「预期(pin)」逐字段对照 on-wire 实测——不一致即撞红=泄露。后端
+  // containerView 恒填充（每容器创建即有 device_id），这里仍声明可选是防御旧编排器/字段
+  // 裁剪，缺失时前端不渲染 pin 列。三字段语义：
+  //   - device_id_masked：注册表钉死的 device_id 脱敏（前12+后4，**绝不明文**）；与 on-wire
+  //     beacon 的 reported_fields.device_id 同款脱敏口径逐字比对，不一致=撞红=真泄露。
+  //   - entrypoint：常量 "cli"（真实 Claude CLI 交互态自报值）；on-wire 自报非 cli 即信号。
+  //   - api_base_url_host：遥测该发的**官方端点**语义（api.anthropic.com）；on-wire 若出现
+  //     自有 CPA 主机=host_leak 泄露。
+  fingerprint_pin?: {
+    device_id_masked: string;
+    entrypoint: string;
+    api_base_url_host: string;
+  };
 }
 
 // telemetry_silence 对外形状（dto.go telemetrySilenceView，字段名严格对齐、不要改名）。
@@ -970,4 +985,149 @@ const FARM_TELEMETRY_ALERT_REASON_SET: ReadonlySet<string> = new Set(FARM_TELEME
 /** 判定某个 alert.reason 是否属于「遥测自洽类」（供 UI 分类标注，不改严重度）。 */
 export function isFarmTelemetryAlertReason(reason: string | undefined): boolean {
   return typeof reason === 'string' && FARM_TELEMETRY_ALERT_REASON_SET.has(reason);
+}
+
+// ---------------------------------------------------------------------------
+// farm-proxy-rotation §1「代理轮换」：POST /api/farm/rotate-proxy（rotation.go
+// rotateProxyRequest / rotateProxyResponse）+ §1 半自动触发建议（GET
+// /api/farm/rotation-suggestions）。字段名照抄后端结构体 JSON tag。
+// ---------------------------------------------------------------------------
+
+// 轮换原因（store IdentityLineageReason* 里可作为**请求 reason** 的子集；provisioned
+// 是初始绑定进入原因，不作为轮换请求 reason，后端 normalizeRotationReason 会 400）。
+//   - manual_rotation：operator 主动换代理（前端换代理时已把新代理写进 CPA，现取即新代理，
+//     故无需显式传 proxy_url）。
+//   - proxy_failure：半自动——探测到代理死、operator 确认后轮换（后端要求显式传新 proxy_url，
+//     否则 proxy_change_required：只能取到旧代理，换 device_id 不换出口=白换）。
+//   - ip_drift：住宅出口 IP 漂移触发的轮换（同 proxy_failure，要求显式传新 proxy_url）。
+export const FARM_ROTATION_REASONS = ['manual_rotation', 'proxy_failure', 'ip_drift'] as const;
+export type FarmRotationReason = (typeof FARM_ROTATION_REASONS)[number];
+
+// POST /api/farm/rotate-proxy 请求体（rotation.go rotateProxyRequest）。
+export interface FarmRotateProxyRequest {
+  account_id: string;
+  env: FarmEnv;
+  // 可选：给了直接用作新容器代理；不给则后端从 CPA 现取该账号当前 proxy_url（前端换代理
+  // 时已把新代理写进 CPA，现取即新代理）。取不到一律 fail-closed（no_available_proxy）。
+  // reason=proxy_failure / ip_drift 时后端强制要求显式传（否则 proxy_change_required）。
+  proxy_url?: string;
+  // 轮换原因，缺省=manual_rotation（后端 normalizeRotationReason）。
+  reason?: FarmRotationReason;
+  // 操作人（落身份谱系 operator 列），可选。
+  operator?: string;
+  // **必须为 true**：后端把「绝不未确认自动换」（O1）硬编码到端点边界，false/缺省一律 400。
+  // 前端二次确认弹窗点「确认轮换」后才带 confirm=true 发起。
+  confirm: boolean;
+}
+
+// POST /api/farm/rotate-proxy 成功响应体（rotation.go rotateProxyResponse）。
+export interface FarmRotateProxyResponse {
+  account: string;
+  env: string;
+  old_container_id: string;
+  new_container_id: string;
+  // 新容器 device_id 脱敏（前12+后4，绝不明文）。
+  new_device_id_masked: string;
+  reason: string;
+  // true=旧容器已归档退役、end_reason=superseded（区别死号 dead/disabled）；false=新容器已
+  // 切上但旧容器退役失败（留 down 空壳可人工退役，谱系仍已标 superseded），见 detail。
+  superseded: boolean;
+  detail?: string;
+}
+
+// 轮换 gate / 契约守卫机器可读拒绝码（rotation.go rotationCode* 常量，供前端按 code 分支，
+// 不解析中文 message）。fail-closed 无可用代理时后端复用 onboard 的 no_available_proxy
+// （见 FARM_ONBOARD_ERROR_CODES），故轮换错误处理需同时覆盖该码。
+//   - not_farm_account：账号无 active 农场容器绑定（未纳入农场）。
+//   - not_claude_provider：账号 provider 明确非 Claude（codex/其它 provider 不触发容器动作）。
+//   - provider_unverifiable：无法核验 provider（auth-files 读失败 / 查无此号）。
+//   - proxy_change_required：reason=proxy_failure/ip_drift 但未显式传新 proxy_url。
+//   - proxy_unchanged：新代理与旧容器当前 epoch 出口 proxy_hash 相同（换 device_id 不换出口）。
+export const FARM_ROTATION_ERROR_CODES = [
+  'not_farm_account',
+  'not_claude_provider',
+  'provider_unverifiable',
+  'proxy_change_required',
+  'proxy_unchanged',
+] as const;
+export type FarmRotationErrorCode = (typeof FARM_ROTATION_ERROR_CODES)[number];
+
+// GET /api/farm/rotation-suggestions?env= 单条「建议更换代理」提示（rotation.go
+// rotationSuggestionView）。复用 Change A 每账号代理直连探针，只列判为 proxy_dead 的
+// Claude 农场号；**只产建议、绝不自动换**（O1）。
+export interface FarmRotationSuggestionView {
+  account: string;
+  container_id: string;
+  device_id_masked?: string;
+  // 恒 "proxy_dead"（本端点只列代理死）。
+  state: string;
+  reason: string;
+  recommended_action: string;
+  // 探针判定时间（RFC3339）；探针缺失时省略。
+  probe_checked_at?: string;
+}
+
+// GET /api/farm/rotation-suggestions 响应体（rotation.go rotationSuggestionsResponse）。
+export interface FarmRotationSuggestionsResponse {
+  env: string;
+  suggestions: FarmRotationSuggestionView[];
+  // 恒 false——固化「绝不自动换、需 operator 一键确认」契约到 DTO（O1）。
+  auto_rotate: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// farm-proxy-rotation SURV1「持久化身份谱系 / 更换记录」：GET
+// /api/farm/identity-lineage?account=&env=（identity_lineage.go
+// identityLineageEpochView / identityLineageResponse）。append-only 审计账本，
+// device_id / 代理只以稳定哈希 + 脱敏串落库，绝不明文（D4）。
+// ---------------------------------------------------------------------------
+
+// 身份 epoch **进入**原因（store IdentityLineageReason*，含仅用于初始绑定的 provisioned）。
+export const FARM_IDENTITY_LINEAGE_REASONS = [
+  'provisioned',
+  'manual_rotation',
+  'proxy_failure',
+  'ip_drift',
+] as const;
+export type FarmIdentityLineageReason = (typeof FARM_IDENTITY_LINEAGE_REASONS)[number];
+
+// 身份 epoch **离场**原因（store IdentityLineageEndReason*）。
+//   - superseded：被代理轮换取代（区别 dead/disabled 死号退役）。
+//   - retired：普通退役（死号 / 人工退役 / 幽灵收敛）。
+//   - reopened：容器 reauth 重绑前收口旧 epoch（防重复未结束行）。
+export const FARM_IDENTITY_LINEAGE_END_REASONS = ['superseded', 'retired', 'reopened'] as const;
+export type FarmIdentityLineageEndReason = (typeof FARM_IDENTITY_LINEAGE_END_REASONS)[number];
+
+// 身份谱系单个 epoch 的对外形状（identity_lineage.go identityLineageEpochView，脱敏，
+// 不含明文）。每条 = 账号→容器→device_id→代理→出口 IP 的一段时间区间。
+export interface FarmIdentityLineageRecord {
+  container_id: string;
+  // device_id 脱敏（前12+后4）。
+  device_id_masked: string;
+  // 稳定哈希（hex(SHA256)，**非明文**）：供前端/审计跨 epoch 比对「是否同一 device_id」。
+  device_id_hash: string;
+  // proxy_url 脱敏（redact userinfo，保留 scheme://host:port）；无代理时省略。
+  proxy_masked?: string;
+  // 观测到的住宅出口 IP（明文留存，审计对象）；未观测到时省略。
+  egress_ip?: string;
+  reason: string;
+  operator?: string;
+  // epoch 开始时间（RFC3339）。
+  start_at: string;
+  // epoch 结束时间（RFC3339）；未结束（current=true）时省略。
+  end_at?: string;
+  end_reason?: string;
+  // true=当前仍在生效的 epoch（end_at 为 NULL）。
+  current: boolean;
+}
+
+// GET /api/farm/identity-lineage 响应体（identity_lineage.go identityLineageResponse）。
+export interface FarmIdentityLineageResponse {
+  account: string;
+  env?: string;
+  // 按 start_at 降序（最近在前）。
+  epochs: FarmIdentityLineageRecord[];
+  // true=审计发现**同一 device_id 曾出现在两个不同住宅出口**（反关联不变量被破坏的信号）。
+  // 正常系统恒 false（D1 每次换 IP 必换 device_id）。
+  cross_ip_reuse_detected: boolean;
 }

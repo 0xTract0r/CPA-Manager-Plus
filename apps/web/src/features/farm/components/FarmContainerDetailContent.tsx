@@ -11,6 +11,7 @@ import { formatFileSize } from '@/utils/format';
 import { formatDurationMs } from '@/utils/usage/latency';
 import { formatUsd } from '@/utils/usage';
 import { useFarmContainerDetail } from '../hooks/useFarmContainerDetail';
+import { FarmIdentityLineagePanel } from './FarmIdentityLineagePanel';
 import { FarmTelemetryPanel } from './FarmTelemetryPanel';
 import {
   deviceAlignmentToBadgeVariant,
@@ -33,9 +34,11 @@ import {
 import styles from './FarmContainerDetail.module.scss';
 
 // 账号·设备详情分区（IA 重设计，用户已审批 U11/决策②）：把此前 10 段纵向堆叠
-// （遥测埋在第 8 段、要滚很久）并成 5 个 SegmentedTabs 分区。deepLink initialTab
+// （遥测埋在第 8 段、要滚很久）并成 SegmentedTabs 分区。deepLink initialTab
 // 让账号页的遥测入口能一键直达「遥测」分区，无需滚动。
-export type FarmDetailTab = 'overview' | 'telemetry' | 'resources' | 'cadence' | 'events';
+// 'lineage'（farm-proxy-rotation SURV1）：第 6 个分区，身份/代理变更历史
+// （§3 切片新增，见 <FarmIdentityLineagePanel>）。
+export type FarmDetailTab = 'overview' | 'telemetry' | 'resources' | 'cadence' | 'events' | 'lineage';
 
 const FARM_DETAIL_TAB_IDBASE = 'farm-detail-tab';
 
@@ -159,6 +162,7 @@ export function FarmContainerDetailContent({
     { id: 'resources', label: t('farm.detail.tab_resources', { defaultValue: '资源' }) },
     { id: 'cadence', label: t('farm.detail.tab_cadence', { defaultValue: '节奏与用量' }) },
     { id: 'events', label: t('farm.detail.tab_events', { defaultValue: '事件' }) },
+    { id: 'lineage', label: t('farm.lineage.tab', { defaultValue: '身份谱系' }) },
   ];
 
   const panelProps = (tab: FarmDetailTab) => ({
@@ -629,6 +633,15 @@ export function FarmContainerDetailContent({
                       })}
                     </p>
                   </section>
+                </div>
+              ) : null}
+
+              {activeTab === 'lineage' ? (
+                <div {...panelProps('lineage')}>
+                  {/* §3：身份/代理变更历史（farm-proxy-rotation SURV1，持久化谱系）。
+                      detail 继承 FarmContainerView，与 <FarmTelemetryPanel> 同款 container
+                      prop 传参口径。 */}
+                  <FarmIdentityLineagePanel container={detail} />
                 </div>
               ) : null}
             </>
