@@ -120,6 +120,26 @@ describe('JsonPreview', () => {
     expect(markup).not.toContain('***REDACTED***');
   });
 
+  it('脱敏 pill（截断/解析失败兜底态）：parse 失败回退原文时 ***REDACTED*** 同样渲成「已脱敏」pill，不泄字面量', () => {
+    // 服务端在 2048 处硬切让 JSON 语法破损（JSON.parse 必失败 → 走兜底原文分支），
+    // 但被截断前已把敏感值替换成 ***REDACTED***：兜底路径也必须把占位符挖成 pill，
+    // 绝不能把 ***REDACTED*** 字面量泄到界面（对应组件里兜底分支同样过 StringTokenSpan）。
+    const value = '{"authorization":"***REDACTED***","note":"abc…(truncated)';
+    expect(() => JSON.parse(value)).toThrow();
+    expect(value.endsWith('…(truncated)')).toBe(true);
+
+    const markup = renderToStaticMarkup(<JsonPreview value={value} totalBytes={4096} />);
+
+    // 兜底态（parse 失败）仍把占位符渲成琥珀「已脱敏」pill：
+    expect(markup).toContain('data-testid="json-preview-redacted-pill"');
+    expect(markup).toContain('已脱敏');
+    // 占位符字面量不得原样出现——已被 pill 整体替换：
+    expect(markup).not.toContain('***REDACTED***');
+    // 且确实走的是截断兜底分支（截断 banner 在、占位符两侧原文保留）：
+    expect(markup).toContain('data-testid="json-preview-truncated-banner"');
+    expect(markup).toContain('abc…(truncated)');
+  });
+
   it('折叠/展开：短预览不出现折叠按钮，直接完整展示', () => {
     const value = JSON.stringify({ a: 1 });
     const markup = renderToStaticMarkup(<JsonPreview value={value} />);

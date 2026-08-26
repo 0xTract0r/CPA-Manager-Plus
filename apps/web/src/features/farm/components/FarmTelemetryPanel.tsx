@@ -10,7 +10,7 @@ import {
   type FarmContainerBeaconView,
   type FarmContainerView,
 } from '@/types/farm';
-import { formatDateTimeUtc8, formatInUtc8 } from '@/utils/datetime';
+import { formatCompactStampUtc8, formatDateTimeUtc8 } from '@/utils/datetime';
 import { formatFileSize } from '@/utils/format';
 import { useFarmContainerBeacons } from '../hooks/useFarmContainerBeacons';
 import {
@@ -26,16 +26,9 @@ import styles from './FarmTelemetryPanel.module.scss';
 // ~640px 窄抽屉挤成字墙；超出部分靠「展开更多」按需加载。
 const BEACON_TIMELINE_DEFAULT_LIMIT = 20;
 
-// beacon 时间线单元格的紧凑时间戳格式：MM/DD HH:mm:ss（24 小时制），完整时间戳
-// （含 UTC+8 标注）放进 title 悬浮可查。
-const BEACON_TIMESTAMP_COMPACT_OPTIONS: Intl.DateTimeFormatOptions = {
-  month: '2-digit',
-  day: '2-digit',
-  hour: '2-digit',
-  minute: '2-digit',
-  second: '2-digit',
-  hour12: false,
-};
+// beacon 时间线单元格的紧凑时间戳走 formatCompactStampUtc8：`MM/DD HH:mm:ss`（24 小时制，
+// 分隔符与 locale 无关，绝不掺 en-US 的 `,` 逗号——否则列宽随 locale 抖动把秒挤掉，P1-3）；
+// 完整含 UTC±H 标注的时间戳放进 title 悬浮备查。
 
 interface FarmTelemetryPanelProps {
   container: FarmContainerView | null;
@@ -333,6 +326,18 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
                       data-testid={`farm-telemetry-onwire-${row.field}`}
                       data-pending={row.onWirePending ? 'true' : 'false'}
                       className={row.onWireClassName}
+                      // 「—」跨区一致性（U-review P2）：on-wire 列的横线不再是无解释的
+                      // 裸占位——统一挂 title 说明「该字段在本窗口的 on-wire 信标里没出现
+                      // （如 datadog_logs 通道天然不带 device_id），非泄露也非数据丢失」，
+                      // 与逐条来源标注口径一致。
+                      title={
+                        row.onWirePending
+                          ? t('farm.telemetry.onWirePendingDashHint', {
+                              defaultValue:
+                                '「—」表示当前窗口内没有 on-wire 信标携带该字段（例如 datadog_logs 通道天然不带 device_id）——既非泄露也非数据丢失。',
+                            })
+                          : undefined
+                      }
                     >
                       {row.onWirePending ? '—' : row.onWireDisplay || '—'}
                     </span>
@@ -864,12 +869,7 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
               <ul className={styles.eventList} data-testid="farm-telemetry-timeline">
                 {visibleBeacons.map((beacon, index) => {
                   const hostPath = `${beacon.host}${beacon.path}`;
-                  const capturedAtCompact = formatInUtc8(
-                    beacon.captured_at,
-                    BEACON_TIMESTAMP_COMPACT_OPTIONS,
-                    undefined,
-                    '—'
-                  );
+                  const capturedAtCompact = formatCompactStampUtc8(beacon.captured_at, '—');
                   const capturedAtFull = formatDateTimeUtc8(beacon.captured_at, i18n.language);
                   const sourceKind = resolveBeaconSourceKind(beacon);
                   const isOnWire = sourceKind === 'on_wire';

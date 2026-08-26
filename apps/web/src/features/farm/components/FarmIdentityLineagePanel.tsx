@@ -103,12 +103,47 @@ export function FarmIdentityLineagePanel({ container }: FarmIdentityLineagePanel
   // 保留下方 AsyncPanel 的空态，不叠审计横幅。
   const showAuditBanner = Boolean(account) && !loading && !error && records.length > 0;
 
+  // 「换代理后新身份」过渡提示（farm-proxy-rotation §6）：换代理时旧容器 epoch 被
+  // end_reason=superseded 收口、并合成全新 device_id 起一个新 epoch，于是遥测卡会从
+  // 新 device_id 从零重新计数——若不解释，用户容易误判成「历史遥测数据丢了」。
+  // 判定信号（诚实、只用已接入的 §3 identity-lineage 数据，不臆造）：存在当前 epoch，
+  // 且存在一个 **被 superseded 收口** 的历史 epoch，其 device_id 稳定哈希与当前不同。
+  //   - superseded 专指「被代理轮换取代」（区别 retired 死号/人工退役），精确锁定
+  //     「换代理后」这一语境，不把普通退役误报成换代理。
+  //   - device_id_hash 是后端为「跨 epoch 判等是否同一 device_id」下发的稳定哈希（非
+  //     明文），两侧都有值且不相等才算真的换了身份；缺哈希则保守不提示。
+  const currentEpoch = records.find((r) => r.current) ?? null;
+  const newIdentityAfterRotation = Boolean(
+    currentEpoch &&
+      records.some(
+        (r) =>
+          !r.current &&
+          r.end_reason === 'superseded' &&
+          r.device_id_hash &&
+          currentEpoch.device_id_hash &&
+          r.device_id_hash !== currentEpoch.device_id_hash
+      )
+  );
+  const showNewIdentityBanner = showAuditBanner && newIdentityAfterRotation;
+
   return (
     <div data-testid="farm-lineage-panel">
       <section className={styles.section} data-testid="farm-lineage-section">
         <h3 className={styles.sectionTitle}>
           {t('farm.lineage.title', { defaultValue: '身份 / 代理变更历史' })}
         </h3>
+
+        {showNewIdentityBanner ? (
+          <p className={styles.newIdentityNotice} data-testid="farm-lineage-new-identity">
+            <strong>
+              {t('farm.lineage.newIdentity.title', { defaultValue: '新身份（换代理后重置）' })}
+            </strong>{' '}
+            {t('farm.lineage.newIdentity.banner', {
+              defaultValue:
+                '换代理后账号已切换到全新 device_id，遥测卡从新 device_id 重新计数；上一个身份见下方谱系，这不是数据丢失。',
+            })}
+          </p>
+        ) : null}
 
         {showAuditBanner ? (
           <div data-testid="farm-lineage-cross-ip-audit">

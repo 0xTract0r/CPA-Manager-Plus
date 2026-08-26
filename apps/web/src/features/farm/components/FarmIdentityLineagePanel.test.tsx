@@ -263,6 +263,61 @@ describe('FarmIdentityLineagePanel (farm-proxy-rotation SURV1 §3)', () => {
     expect(firstByTestId(renderer, 'farm-lineage-error')).toBeUndefined();
   });
 
+  it('epochs=[]：不渲染跨 IP 审计「审计通过」横幅（零数据不给安全背书），只留空态', async () => {
+    // 查询成功但零记录：showAuditBanner=false（records.length===0），审计容器/pill/「审计
+    // 通过」文案都不应出现——只保留下方空态。守护此前的修复不回退。
+    mocks.getIdentityLineage.mockResolvedValueOnce(lineageResponse([], false));
+    const renderer = await renderPanel(boundContainer());
+    expect(firstByTestId(renderer, 'farm-lineage-empty')).toBeDefined();
+    expect(firstByTestId(renderer, 'farm-lineage-cross-ip-audit')).toBeUndefined();
+    expect(firstByTestId(renderer, 'farm-lineage-cross-ip-pill')).toBeUndefined();
+    expect(textOf(renderer)).not.toContain('farm.lineage.crossIpNone');
+  });
+
+  it('换代理后新身份（§6）：存在被 superseded 收口且 device_id 与当前不同的历史 epoch 时，渲染过渡提示', async () => {
+    const epochs = [
+      epoch({ device_id_hash: 'hash-current', reason: 'manual_rotation', current: true }),
+      epoch({
+        device_id_hash: 'hash-old',
+        end_at: '2026-08-10T00:00:00Z',
+        end_reason: 'superseded',
+        current: false,
+      }),
+    ];
+    mocks.getIdentityLineage.mockResolvedValueOnce(lineageResponse(epochs, false));
+    const renderer = await renderPanel(boundContainer());
+    expect(firstByTestId(renderer, 'farm-lineage-new-identity')).toBeDefined();
+    expect(textOf(renderer)).toContain('farm.lineage.newIdentity.banner');
+  });
+
+  it('换代理后新身份（§6）：仅初始 provisioned 当前 epoch（无历史）时不渲染过渡提示', async () => {
+    mocks.getIdentityLineage.mockResolvedValueOnce(
+      lineageResponse(
+        [epoch({ device_id_hash: 'hash-current', reason: 'provisioned', current: true })],
+        false
+      )
+    );
+    const renderer = await renderPanel(boundContainer());
+    expect(firstByTestId(renderer, 'farm-lineage-new-identity')).toBeUndefined();
+  });
+
+  it('换代理后新身份（§6）：历史 epoch 是 retired（死号/人工退役）而非 superseded 时不误报', async () => {
+    // end_reason=retired 是普通退役，不是「被代理轮换取代」——superseded 门控确保不把
+    // 退役误报成「换代理后新身份」。
+    const epochs = [
+      epoch({ device_id_hash: 'hash-current', current: true }),
+      epoch({
+        device_id_hash: 'hash-old',
+        end_at: '2026-08-10T00:00:00Z',
+        end_reason: 'retired',
+        current: false,
+      }),
+    ];
+    mocks.getIdentityLineage.mockResolvedValueOnce(lineageResponse(epochs, false));
+    const renderer = await renderPanel(boundContainer());
+    expect(firstByTestId(renderer, 'farm-lineage-new-identity')).toBeUndefined();
+  });
+
   it('请求失败：error 态呈现真实错误信息，不吞错误、不臆造空成功', async () => {
     mocks.getIdentityLineage.mockRejectedValueOnce(new Error('upstream identity-lineage 500'));
     const renderer = await renderPanel(boundContainer());

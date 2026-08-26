@@ -4561,7 +4561,11 @@
       "maskedHint": "展示脱敏（前 12 + 后 4），完整值仅服务端保留。",
       "empty": "该账号暂无身份谱系记录。",
       "loading": "正在加载身份谱系…",
-      "error": "加载身份谱系失败：{{message}}"
+      "error": "加载身份谱系失败：{{message}}",
+      "newIdentity": {
+        "title": "新身份（换代理后重置）",
+        "banner": "换代理后该账号已切换到全新 device_id，遥测卡从新 device_id 重新计数；上一个身份见下方谱系，这不是数据丢失。"
+      }
     },
     "telemetry": {
       "pin": {
@@ -4597,6 +4601,7 @@
       "field_entrypoint": "entrypoint",
       "field_api_base_url_host": "api_base_url_host",
       "onWirePending": "待抓取管道 · 尚未证明",
+      "onWirePendingDashHint": "「—」表示当前窗口内没有 on-wire 信标携带该字段（例如 datadog_logs 通道天然不带 device_id）——既非泄露也非数据丢失。",
       "freshness": "遥测新鲜度",
       "stale": "偏旧",
       "fresh": "较新",

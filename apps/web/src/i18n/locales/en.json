@@ -4561,7 +4561,11 @@
       "maskedHint": "Masked for display (first 12 + last 4); the full value is kept server-side only.",
       "empty": "No identity lineage records for this account yet.",
       "loading": "Loading identity lineage…",
-      "error": "Failed to load identity lineage: {{message}}"
+      "error": "Failed to load identity lineage: {{message}}",
+      "newIdentity": {
+        "title": "New identity (reset after proxy rotation)",
+        "banner": "After the proxy rotation this account switched to a brand-new device_id, so the telemetry card re-counts from that new device_id. The previous identity is in the lineage below — this is not data loss."
+      }
     },
     "telemetry": {
       "pin": {
@@ -4597,6 +4601,7 @@
       "field_entrypoint": "entrypoint",
       "field_api_base_url_host": "api_base_url_host",
       "onWirePending": "Capture pipeline pending · not yet proven",
+      "onWirePendingDashHint": "A dash \"—\" means no on-wire beacon in this window carried this field (e.g. the datadog_logs channel naturally has no device_id) — it is neither a leak nor lost data.",
       "freshness": "Telemetry freshness",
       "stale": "Stale",
       "fresh": "Recent",

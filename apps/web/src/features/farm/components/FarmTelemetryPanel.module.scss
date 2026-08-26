@@ -275,7 +275,9 @@
   margin: 0;
   font-size: 12px;
   color: var(--text-secondary);
-  opacity: 0.85;
+  // 去掉此前的 opacity:0.85（U-review P2 a11y）：叠在 --text-secondary(#5f6c7b) 上会把
+  // 12px 小灰字的对比度从 ~5.36:1 拉到 ~3.91:1，跌破 WCAG AA 正文 4.5:1；去掉后回到
+  // token 原色即达标，不改共享 token。
 }
 
 // TP-2「字段速览」两栏 label|value 网格：左列字段名固定窄列，右列值吃剩余空间
@@ -308,6 +310,10 @@
 // 「来源」行的 status-badge：清零全局默认 margin-bottom，避免撑高网格首行。
 .fieldSpreadBadge {
   align-self: center;
+  // 网格项会被 blockify（CSS Grid 规范），inline-flex 徽标默认 justify-self:stretch
+  // 被拉成整格宽度（U-review P2：source 徽标全宽拉伸）；显式 start 让它回到「按内容
+  // 宽度、左对齐」，不再横铺一整行。
+  justify-self: start;
 
   &:global(.status-badge) {
     margin-bottom: 0;
@@ -369,11 +375,13 @@
 // 不再单独占一列，把列数收敛到验收要求的 4 列。
 .eventGrid {
   display: grid;
-  // 时间列宽按 "MM/DD HH:mm:ss"（14 字符，等宽字体）留够空间，避免自己被
-  // text-ellipsis 截断；「内容」列（通道 + 来源 + 事件名 + 关键上报字段，竖向堆叠）
-  // 给一个弹性中列（min 140px 保底）；大小列固定窄宽右对齐；host/路径吃掉窄抽屉
-  // （~640px 内容区）里剩下的全部空间，是唯一预期会触发截断的列。
-  grid-template-columns: 104px minmax(140px, 1.3fr) minmax(0, 1fr) 56px;
+  // 时间列宽按 "MM/DD HH:mm:ss"（14 字符，等宽 12px ≈ 101px）留够空间并留余量，避免
+  // 秒位被 text-ellipsis 截断（P1-3：此前 104px + locale 逗号 `08/24, 17:15:…` 把秒吞掉，
+  // 现改用 formatCompactStampUtc8 去逗号 + 列宽抬到 120px 双保险）；「内容」列（通道 +
+  // 来源 + 事件名 + 关键上报字段，竖向堆叠）给一个弹性中列（min 140px 保底）；大小列固定
+  // 窄宽右对齐；host/路径吃掉窄抽屉（~640px 内容区）里剩下的全部空间，是唯一预期会触发
+  // 截断的列。
+  grid-template-columns: 120px minmax(140px, 1.3fr) minmax(0, 1fr) 56px;
   gap: 0 $spacing-sm;
   align-items: center;
 
