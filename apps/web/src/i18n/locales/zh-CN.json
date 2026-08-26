@@ -4534,7 +4534,41 @@
       "rowSourceDeclared": "自报 · {{source}}",
       "rowSourceDeclaredFull": "自报：容器声明 / 自报（{{source}}），非出站抓取",
       "deviceIdFullNote": "此处 device_id 为自报全量值（非列表页脱敏前 16 位），仅供运维核对自洽性用；漂移/串号/host 泄漏等自洽异常经告警面板呈现。",
-      "disclaimerSummary": "来源边界说明（点开）：信标混合自报 + on-wire，不构成跨账号反关联证明"
+      "disclaimerSummary": "来源边界说明（点开）：信标混合自报 + on-wire，不构成跨账号反关联证明",
+      "minutesSinceLast": "约 {{minutes}} 分钟前",
+      "silenceState": {
+        "label_active": "遥测在报",
+        "label_proxy_dead": "代理死",
+        "label_egress_blackhole": "出站黑洞",
+        "label_process_dead": "进程死",
+        "label_idle_no_request": "正常无请求",
+        "label_indeterminate": "待确认",
+        "conclusion_proxy_dead": "代理直连探针失败：该账号住宅代理不可达。",
+        "conclusion_egress_blackhole": "代理活但出站 canary 失败 / redsocks 连接表饱和：容器内出站黑洞，换代理无用。",
+        "conclusion_process_dead": "最近一条 beacon 携带进程终止信号：容器内进程可能已退出。",
+        "conclusion_idle_no_request": "出站探针全通、无进程死信号：网络正常，只是这段时间没有产生请求。",
+        "conclusion_indeterminate": "证据不足（缺新鲜出站探针，又无进程死信号）：无法区分「出站黑洞」与「正常没请求」，不臆断。",
+        "actionLabel": "建议动作",
+        "action_proxy_dead": "换代理（代理直连探针失败）",
+        "action_egress_blackhole": "疏通 / 重置 redsocks（换代理无用：代理活但出站黑洞 / 连接表饱和）",
+        "action_process_dead": "查进程（最近一条 beacon 携带进程终止信号）",
+        "action_idle_no_request": "无需处理（探针全通，静默是正常没请求）",
+        "action_indeterminate": "待确认：证据不足（缺新鲜探针），需人工核实或补探针",
+        "silenceDuration": "已静默约 {{minutes}} 分钟（门槛 {{threshold}} 分钟）",
+        "probeHeading": "出站探针快照",
+        "probeStale": "探针已过期",
+        "probeStaleHint": "探针已超新鲜度窗口，四态判定已不信任它描述当下网络态。",
+        "probeProxyDirect": "代理直连",
+        "probeEgressCanary": "出站 canary",
+        "probeRedsocks": "redsocks 连接表",
+        "probeOk": "通",
+        "probeFail": "不通",
+        "probeSaturated": "饱和（recvQ {{recvQ}} / backlog {{backlog}} / closeWait {{closeWait}}）",
+        "probeNotSaturated": "正常",
+        "probeCheckedAt": "探针时间：{{time}}",
+        "probeNone": "无出站探针快照（探针未上报 / 未装配）——缺网络层判据，无法区分出站黑洞与正常没请求，只能落进程死或待确认，绝不臆断。",
+        "processTerminated": "最近一条 beacon 携带进程终止信号。"
+      }
     }
   }
 }

@@ -4534,7 +4534,41 @@
       "rowSourceDeclared": "自報 · {{source}}",
       "rowSourceDeclaredFull": "自報：容器聲明 / 自報（{{source}}），非出站擷取",
       "deviceIdFullNote": "此處 device_id 為自報全量值（非列表頁脫敏前 16 位），僅供維運核對自洽性用；漂移/串號/host 洩漏等自洽異常經告警面板呈現。",
-      "disclaimerSummary": "來源邊界說明（點開）：信標混合自報 + on-wire，不構成跨帳號反關聯證明"
+      "disclaimerSummary": "來源邊界說明（點開）：信標混合自報 + on-wire，不構成跨帳號反關聯證明",
+      "minutesSinceLast": "約 {{minutes}} 分鐘前",
+      "silenceState": {
+        "label_active": "遙測回報中",
+        "label_proxy_dead": "代理死",
+        "label_egress_blackhole": "出站黑洞",
+        "label_process_dead": "行程死",
+        "label_idle_no_request": "正常無請求",
+        "label_indeterminate": "待確認",
+        "conclusion_proxy_dead": "代理直連探針失敗：該帳號住宅代理不可達。",
+        "conclusion_egress_blackhole": "代理活但出站 canary 失敗 / redsocks 連線表飽和：容器內出站黑洞，換代理無用。",
+        "conclusion_process_dead": "最近一條 beacon 攜帶行程終止訊號：容器內行程可能已退出。",
+        "conclusion_idle_no_request": "出站探針全通、無行程死訊號：網路正常，只是這段時間沒有產生請求。",
+        "conclusion_indeterminate": "證據不足（缺新鮮出站探針，又無行程死訊號）：無法區分「出站黑洞」與「正常沒請求」，不臆斷。",
+        "actionLabel": "建議動作",
+        "action_proxy_dead": "換代理（代理直連探針失敗）",
+        "action_egress_blackhole": "疏通 / 重置 redsocks（換代理無用：代理活但出站黑洞 / 連線表飽和）",
+        "action_process_dead": "查行程（最近一條 beacon 攜帶行程終止訊號）",
+        "action_idle_no_request": "無需處理（探針全通，靜默是正常沒請求）",
+        "action_indeterminate": "待確認：證據不足（缺新鮮探針），需人工核實或補探針",
+        "silenceDuration": "已靜默約 {{minutes}} 分鐘（門檻 {{threshold}} 分鐘）",
+        "probeHeading": "出站探針快照",
+        "probeStale": "探針已過期",
+        "probeStaleHint": "探針已超新鮮度窗口，四態判定已不信任它描述當下網路態。",
+        "probeProxyDirect": "代理直連",
+        "probeEgressCanary": "出站 canary",
+        "probeRedsocks": "redsocks 連線表",
+        "probeOk": "通",
+        "probeFail": "不通",
+        "probeSaturated": "飽和（recvQ {{recvQ}} / backlog {{backlog}} / closeWait {{closeWait}}）",
+        "probeNotSaturated": "正常",
+        "probeCheckedAt": "探針時間：{{time}}",
+        "probeNone": "無出站探針快照（探針未回報 / 未裝配）——缺網路層判據，無法區分出站黑洞與正常沒請求，只能落行程死或待確認，絕不臆斷。",
+        "processTerminated": "最近一條 beacon 攜帶行程終止訊號。"
+      }
     }
   }
 }

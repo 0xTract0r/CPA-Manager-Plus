@@ -13,6 +13,10 @@ import {
 import { formatDateTimeUtc8, formatInUtc8 } from '@/utils/datetime';
 import { formatFileSize } from '@/utils/format';
 import { useFarmContainerBeacons } from '../hooks/useFarmContainerBeacons';
+import {
+  normalizeFarmTelemetrySilenceState,
+  telemetrySilenceStateToBadgeVariant,
+} from '../utils/health';
 import { maskTelemetryFingerprint } from '../utils/identity';
 import { displayFingerprintValue, fingerprintFieldsClash } from '../utils/telemetry';
 import styles from './FarmTelemetryPanel.module.scss';
@@ -129,6 +133,25 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
   const minutesSinceLast =
     silence && silence.minutes_since_last >= 0 ? Math.round(silence.minutes_since_last) : null;
   const latestCapturedAt = latestBeacon?.captured_at;
+
+  // 「遥测停摆四态」（farm-egress-resilience Change A）：代理死 / 出站黑洞 / 进程死 /
+  // 正常无请求 / 待确认，取代单一「偏旧」。以后端 telemetry_silence_state 为权威判据，
+  // 归一化兜底把缺失/未知值落到 indeterminate（待确认，绝不臆断乐观结论）。字段整体
+  // 缺失（旧编排器未透传）时 silenceStateView 为空，回退既有 is_stale 呈现。
+  const silenceStateView = container.telemetry_silence_state;
+  const silenceState = silenceStateView
+    ? normalizeFarmTelemetrySilenceState(silenceStateView.state)
+    : null;
+  const silenceProbe = silenceStateView?.probe ?? null;
+  const silenceProcessTerminated = silenceStateView?.process_terminated ?? false;
+  // active 表示遥测在流动、压根没停摆——不进四态诊断盒，只在新鲜度徽标显「较新」。
+  // 「从未观测」容器且既无探针又无进程死信号时，state 只会是 indeterminate；此时
+  // 「从未观测」徽标已是最诚实的表述，不再叠一个「待确认」盒制造噪声——只有真正
+  // 有可行动证据（探针快照 / 进程终止信号）时才展开诊断盒。
+  const showSilenceDiagnosis =
+    silenceState != null &&
+    silenceState !== 'active' &&
+    (!neverObserved || silenceProbe != null || silenceProcessTerminated);
 
   return (
     <section
@@ -467,6 +490,7 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
           data-testid="farm-telemetry-freshness"
           data-stale={isStale ? 'true' : 'false'}
           data-never-observed={neverObserved ? 'true' : 'false'}
+          data-silence-state={silenceState ?? ''}
         >
           <span className={styles.chartLabel}>
             {t('farm.telemetry.freshness', { defaultValue: '遥测新鲜度' })}
@@ -484,6 +508,29 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
             >
               {t('farm.telemetry.neverObserved', { defaultValue: '从未观测' })}
             </span>
+          ) : silenceState ? (
+            // 四态徽标：以后端 telemetry_silence_state 为准，取代单一 偏旧/较新 二元。
+            // active=较新(success)、idle_no_request=正常无请求(muted)、proxy_dead/
+            // egress_blackhole/process_dead=确证故障(error)、indeterminate=待确认(warning)。
+            <>
+              <span
+                className={`status-badge ${telemetrySilenceStateToBadgeVariant(silenceState)}`}
+                data-testid="farm-telemetry-freshness-badge"
+                data-silence-state={silenceState}
+              >
+                {t(`farm.telemetry.silenceState.label_${silenceState}`, {
+                  defaultValue: silenceState,
+                })}
+              </span>
+              {minutesSinceLast != null ? (
+                <span className={styles.hintText}>
+                  {t('farm.telemetry.minutesSinceLast', {
+                    defaultValue: '约 {{minutes}} 分钟前',
+                    minutes: minutesSinceLast,
+                  })}
+                </span>
+              ) : null}
+            </>
           ) : !silence ? (
             <span
               className="status-badge muted"
@@ -515,7 +562,142 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
             </>
           )}
         </div>
-        {isStale && silence ? (
+        {/* 遥测停摆四态诊断盒（farm-egress-resilience Change A）：取代单一「遥测太旧」，
+            按 state 显具体结论 + 建议动作 + 探针证据。诚实边界：indeterminate 显式
+            「待确认」，绝不臆断「正常」。字段整体缺失（旧编排器）时回退下方 staleWarning。 */}
+        {showSilenceDiagnosis && silenceState ? (
+          <div
+            className={styles.silenceStateBox}
+            data-testid="farm-telemetry-silence-state"
+            data-silence-state={silenceState}
+            data-silence-variant={telemetrySilenceStateToBadgeVariant(silenceState)}
+          >
+            <div className={styles.silenceStateHead}>
+              <span
+                className={`status-badge ${telemetrySilenceStateToBadgeVariant(silenceState)}`}
+                data-testid="farm-telemetry-silence-state-badge"
+              >
+                {t(`farm.telemetry.silenceState.label_${silenceState}`, {
+                  defaultValue: silenceState,
+                })}
+              </span>
+              {minutesSinceLast != null && silence ? (
+                <span className={styles.hintText}>
+                  {t('farm.telemetry.silenceState.silenceDuration', {
+                    defaultValue: '已静默约 {{minutes}} 分钟（门槛 {{threshold}} 分钟）',
+                    minutes: minutesSinceLast,
+                    threshold: Math.round(silence.threshold_minutes),
+                  })}
+                </span>
+              ) : null}
+            </div>
+            <p
+              className={styles.silenceStateConclusion}
+              data-testid="farm-telemetry-silence-conclusion"
+            >
+              {t(`farm.telemetry.silenceState.conclusion_${silenceState}`, {
+                defaultValue: silenceState,
+              })}
+            </p>
+            <p className={styles.silenceStateAction} data-testid="farm-telemetry-silence-action">
+              <span className={styles.silenceStateActionLabel}>
+                {t('farm.telemetry.silenceState.actionLabel', { defaultValue: '建议动作' })}
+              </span>
+              <span>
+                {t(`farm.telemetry.silenceState.action_${silenceState}`, {
+                  defaultValue: silenceState,
+                })}
+              </span>
+            </p>
+            {silenceProbe ? (
+              <div className={styles.silenceStateProbe} data-testid="farm-telemetry-silence-probe">
+                <span className={styles.silenceStateProbeHead}>
+                  {t('farm.telemetry.silenceState.probeHeading', { defaultValue: '出站探针快照' })}
+                  {silenceProbe.stale ? (
+                    <span
+                      className="status-badge muted"
+                      data-testid="farm-telemetry-silence-probe-stale"
+                      title={t('farm.telemetry.silenceState.probeStaleHint', {
+                        defaultValue: '探针已超新鲜度窗口，四态判定已不信任它描述当下网络态。',
+                      })}
+                    >
+                      {t('farm.telemetry.silenceState.probeStale', { defaultValue: '探针已过期' })}
+                    </span>
+                  ) : null}
+                </span>
+                <div className={styles.silenceStateProbeGrid}>
+                  <span className={styles.silenceStateProbeLabel}>
+                    {t('farm.telemetry.silenceState.probeProxyDirect', { defaultValue: '代理直连' })}
+                  </span>
+                  <span
+                    data-testid="farm-telemetry-silence-probe-proxy"
+                    data-ok={silenceProbe.proxy_direct_ok ? 'true' : 'false'}
+                  >
+                    {silenceProbe.proxy_direct_ok
+                      ? t('farm.telemetry.silenceState.probeOk', { defaultValue: '通' })
+                      : t('farm.telemetry.silenceState.probeFail', { defaultValue: '不通' })}
+                  </span>
+                  <span className={styles.silenceStateProbeLabel}>
+                    {t('farm.telemetry.silenceState.probeEgressCanary', {
+                      defaultValue: '出站 canary',
+                    })}
+                  </span>
+                  <span
+                    data-testid="farm-telemetry-silence-probe-canary"
+                    data-ok={silenceProbe.egress_canary_ok ? 'true' : 'false'}
+                  >
+                    {silenceProbe.egress_canary_ok
+                      ? t('farm.telemetry.silenceState.probeOk', { defaultValue: '通' })
+                      : t('farm.telemetry.silenceState.probeFail', { defaultValue: '不通' })}
+                  </span>
+                  <span className={styles.silenceStateProbeLabel}>
+                    {t('farm.telemetry.silenceState.probeRedsocks', {
+                      defaultValue: 'redsocks 连接表',
+                    })}
+                  </span>
+                  <span
+                    data-testid="farm-telemetry-silence-probe-redsocks"
+                    data-saturated={silenceProbe.redsocks_saturated ? 'true' : 'false'}
+                  >
+                    {silenceProbe.redsocks_saturated
+                      ? t('farm.telemetry.silenceState.probeSaturated', {
+                          defaultValue:
+                            '饱和（recvQ {{recvQ}} / backlog {{backlog}} / closeWait {{closeWait}}）',
+                          recvQ: silenceProbe.redsocks_recv_q,
+                          backlog: silenceProbe.redsocks_backlog,
+                          closeWait: silenceProbe.redsocks_close_wait,
+                        })
+                      : t('farm.telemetry.silenceState.probeNotSaturated', { defaultValue: '正常' })}
+                  </span>
+                </div>
+                <span className={styles.hintText}>
+                  {t('farm.telemetry.silenceState.probeCheckedAt', {
+                    defaultValue: '探针时间：{{time}}',
+                    time: formatDateTimeUtc8(silenceProbe.checked_at, i18n.language),
+                  })}
+                </span>
+              </div>
+            ) : (
+              <p className={styles.hintText} data-testid="farm-telemetry-silence-probe-none">
+                {t('farm.telemetry.silenceState.probeNone', {
+                  defaultValue:
+                    '无出站探针快照（探针未上报 / 未装配）——缺网络层判据，无法区分出站黑洞与正常没请求，只能落进程死或待确认，绝不臆断。',
+                })}
+              </p>
+            )}
+            {silenceProcessTerminated ? (
+              <p
+                className={styles.hintText}
+                data-testid="farm-telemetry-silence-proc-terminated"
+              >
+                {t('farm.telemetry.silenceState.processTerminated', {
+                  defaultValue: '最近一条 beacon 携带进程终止信号。',
+                })}
+              </p>
+            ) : null}
+          </div>
+        ) : silenceState == null && isStale && silence ? (
+          // 回退：编排器未返回四态字段（旧版本）时，保留既有单态「遥测太旧」告警。
           <p className={styles.staleWarning} data-testid="farm-telemetry-stale-warning">
             {t('farm.telemetry.staleWarning', {
               defaultValue:

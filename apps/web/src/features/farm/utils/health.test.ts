@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { FARM_TELEMETRY_ALIVE_STATES, type FarmTelemetryAliveState } from '@/types/farm';
+import {
+  FARM_TELEMETRY_ALIVE_STATES,
+  FARM_TELEMETRY_SILENCE_STATES,
+  type FarmTelemetryAliveState,
+  type FarmTelemetrySilenceState,
+} from '@/types/farm';
 import {
   FARM_ACCOUNT_AUTH_STATES,
   FARM_CONTAINER_LIFECYCLES,
@@ -11,11 +16,14 @@ import {
   farmBoundToOutboundPlatform,
   farmEnrolledToBadgeVariant,
   normalizeFarmTelemetryAliveState,
+  normalizeFarmTelemetrySilenceState,
   provisioningStateToFarmHealthVariant,
   telemetryAliveStateToBadgeVariant,
+  telemetrySilenceStateToBadgeVariant,
   type FarmAccountAuthState,
   type FarmContainerLifecycle,
   type FarmHealthVariant,
+  type StatusBadgeVariant,
 } from './health';
 
 // ---------------------------------------------------------------------------
@@ -361,4 +369,38 @@ describe('containerLifecycleToFarmHealthVariant', () => {
       expect(validVariants).toContain(containerLifecycleToFarmHealthVariant(lifecycle));
     }
   });
+});
+
+// farm-egress-resilience Change A：遥测停摆四态归一化 + 徽标变体。
+describe('normalizeFarmTelemetrySilenceState 诚实兜底', () => {
+  for (const state of FARM_TELEMETRY_SILENCE_STATES) {
+    it(`枚举值 ${state} 原样保留`, () => {
+      expect(normalizeFarmTelemetrySilenceState(state)).toBe(state);
+    });
+  }
+
+  it('undefined / 空串 / 未知字面值一律回退 indeterminate（待确认），绝不臆断乐观结论', () => {
+    const notOptimistic: FarmTelemetrySilenceState[] = ['active', 'idle_no_request'];
+    for (const bad of [undefined, '', 'some_future_state', 'ACTIVE', 'idle']) {
+      const got = normalizeFarmTelemetrySilenceState(bad);
+      expect(got).toBe('indeterminate');
+      expect(notOptimistic).not.toContain(got);
+    }
+  });
+});
+
+describe('telemetrySilenceStateToBadgeVariant 语义色', () => {
+  const expected: Record<FarmTelemetrySilenceState, StatusBadgeVariant> = {
+    active: 'success',
+    idle_no_request: 'muted',
+    proxy_dead: 'error',
+    egress_blackhole: 'error',
+    process_dead: 'error',
+    indeterminate: 'warning',
+  };
+  for (const state of FARM_TELEMETRY_SILENCE_STATES) {
+    it(`${state} → ${expected[state]}`, () => {
+      expect(telemetrySilenceStateToBadgeVariant(state)).toBe(expected[state]);
+    });
+  }
 });

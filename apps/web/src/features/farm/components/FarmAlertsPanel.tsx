@@ -8,6 +8,10 @@ import { Select } from '@/components/ui/Select';
 import { isFarmTelemetryAlertReason, type FarmAlertEntry } from '@/types/farm';
 import { formatDateTimeUtc8 } from '@/utils/datetime';
 import { useFarmAlerts } from '../hooks/useFarmAlerts';
+import {
+  normalizeFarmTelemetrySilenceState,
+  telemetrySilenceStateToBadgeVariant,
+} from '../utils/health';
 import styles from './FarmAlertsPanel.module.scss';
 
 const SEVERITY_TO_PILL: Record<FarmAlertEntry['severity'], HealthPillStatus> = {
@@ -111,6 +115,21 @@ export function FarmAlertsPanel({ mode = 'full', onViewAll }: FarmAlertsPanelPro
             const pillLabel = resolved
               ? t('farm.alerts.resolvedLabel')
               : t(`farm.alerts.severity_${alert.severity}`, { defaultValue: alert.severity });
+            // telemetry_silence 告警的「遥测停摆四态」子类型（farm-egress-resilience
+            // Change A）：后端把四态诊断写进 detail.silence_state（不新增独立 reason，
+            // 保历史兼容，见 telemetry_silence.go）。据此把单一「遥测静默」细分为
+            // 代理死 / 出站黑洞 / 进程死 / 正常无请求 / 待确认；缺失或非枚举值经
+            // normalize 落到 indeterminate（待确认），绝不臆断。active 不产告警、
+            // 兜底不渲染子标签。
+            const rawSilenceState =
+              alert.reason === 'telemetry_silence' && alert.detail
+                ? alert.detail['silence_state']
+                : undefined;
+            const silenceStateSub =
+              typeof rawSilenceState === 'string'
+                ? normalizeFarmTelemetrySilenceState(rawSilenceState)
+                : null;
+            const showSilenceSub = silenceStateSub != null && silenceStateSub !== 'active';
             return (
               <li
                 key={alert.id}
@@ -143,6 +162,25 @@ export function FarmAlertsPanel({ mode = 'full', onViewAll }: FarmAlertsPanelPro
                           style={{ marginRight: 6 }}
                         >
                           {t('farm.alerts.telemetryCategory', { defaultValue: '遥测' })}
+                        </span>
+                      ) : null}
+                      {/* 遥测停摆四态子类型标签：把「遥测静默」细分为具体根因/结论
+                          （代理死 / 出站黑洞 / 进程死 / 正常无请求 / 待确认），语义色
+                          按四态派生（error=确证故障、warning=待确认、muted=正常无请求）。
+                          诚实边界：待确认显式标出，不臆断「正常」。 */}
+                      {showSilenceSub && silenceStateSub ? (
+                        <span
+                          className={`status-badge ${telemetrySilenceStateToBadgeVariant(silenceStateSub)}`}
+                          data-testid={`farm-alert-silence-state-${alert.id}`}
+                          data-silence-state={silenceStateSub}
+                          style={{ marginRight: 6 }}
+                          title={t(`farm.telemetry.silenceState.conclusion_${silenceStateSub}`, {
+                            defaultValue: silenceStateSub,
+                          })}
+                        >
+                          {t(`farm.telemetry.silenceState.label_${silenceStateSub}`, {
+                            defaultValue: silenceStateSub,
+                          })}
                         </span>
                       ) : null}
                       {t(`farm.healthReason.${alert.reason}`, { defaultValue: alert.reason })}

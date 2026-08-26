@@ -4534,7 +4534,41 @@
       "rowSourceDeclared": "declared · {{source}}",
       "rowSourceDeclaredFull": "declared: container self-reported ({{source}}), not an outbound capture",
       "deviceIdFullNote": "device_id here is the full self-reported value (not the list page's masked first 16 chars), for ops self-consistency checks only; drift / collision / host-leak anomalies surface in the alerts panel.",
-      "disclaimerSummary": "Source scope (expand): signals mix declared + on-wire, not a cross-account correlation proof"
+      "disclaimerSummary": "Source scope (expand): signals mix declared + on-wire, not a cross-account correlation proof",
+      "minutesSinceLast": "~{{minutes}} min ago",
+      "silenceState": {
+        "label_active": "Reporting",
+        "label_proxy_dead": "Proxy dead",
+        "label_egress_blackhole": "Egress blackhole",
+        "label_process_dead": "Process dead",
+        "label_idle_no_request": "Idle, no requests",
+        "label_indeterminate": "Unconfirmed",
+        "conclusion_proxy_dead": "Direct proxy probe failed: this account's residential proxy is unreachable.",
+        "conclusion_egress_blackhole": "Proxy is alive but the egress canary failed / the redsocks connection table is saturated: egress blackhole inside the container — swapping the proxy won't help.",
+        "conclusion_process_dead": "The latest beacon carries a process-termination signal: the in-container process may have exited.",
+        "conclusion_idle_no_request": "All egress probes pass and there is no process-death signal: the network is fine, there simply were no requests in this window.",
+        "conclusion_indeterminate": "Insufficient evidence (no fresh egress probe and no process-death signal): cannot separate an egress blackhole from a genuinely idle container — not guessing.",
+        "actionLabel": "Recommended action",
+        "action_proxy_dead": "Swap the proxy (direct proxy probe failed)",
+        "action_egress_blackhole": "Unblock / reset redsocks (swapping the proxy won't help: proxy alive but egress blackhole / saturated connection table)",
+        "action_process_dead": "Check the process (latest beacon carries a process-termination signal)",
+        "action_idle_no_request": "No action needed (all probes pass; the silence is just no requests)",
+        "action_indeterminate": "Unconfirmed: insufficient evidence (no fresh probe) — verify manually or add probes",
+        "silenceDuration": "Silent for ~{{minutes}} min (threshold {{threshold}} min)",
+        "probeHeading": "Egress probe snapshot",
+        "probeStale": "Probe expired",
+        "probeStaleHint": "The probe is past its freshness window; the four-state decision no longer trusts it to describe the current network state.",
+        "probeProxyDirect": "Direct proxy",
+        "probeEgressCanary": "Egress canary",
+        "probeRedsocks": "redsocks table",
+        "probeOk": "OK",
+        "probeFail": "Fail",
+        "probeSaturated": "Saturated (recvQ {{recvQ}} / backlog {{backlog}} / closeWait {{closeWait}})",
+        "probeNotSaturated": "Normal",
+        "probeCheckedAt": "Probed at: {{time}}",
+        "probeNone": "No egress probe snapshot (probe not reported / not wired) — without a network-layer signal an egress blackhole cannot be told apart from a genuinely idle container, so this can only resolve to process-dead or unconfirmed, never a guess.",
+        "processTerminated": "The latest beacon carries a process-termination signal."
+      }
     }
   }
 }

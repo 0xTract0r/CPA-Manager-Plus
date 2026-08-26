@@ -119,6 +119,14 @@ export interface FarmContainerView {
   // 回答更基础的「这个容器最近有没有产生过任何上报」。后端对 containerView 恒返回，
   // 这里仍声明可选是防御旧编排器/字段裁剪，缺失时前端按「未知」处理不臆造。
   telemetry_silence?: FarmTelemetrySilenceView;
+  // 「遥测停摆四态」判定（farm-egress-resilience Change A，dto.go
+  // containerView.TelemetrySilenceState / telemetrySilenceStateView）：综合最新出站
+  // 探针（proxy_direct / egress_canary / redsocks 饱和）+ 既有 process_signal + 静默
+  // 时长，判「代理死 / 出站黑洞 / 进程死 / 正常无请求」四态之一，取代单一「遥测旧了」；
+  // 无法确证时为 indeterminate（待确认，诚实边界，绝不臆断）。后端恒返回一个 state
+  // （不 omitempty），这里仍声明可选是防御旧编排器/字段裁剪——缺失时前端回退既有
+  // telemetry_silence 的 is_stale 呈现，见 FarmTelemetryPanel。
+  telemetry_silence_state?: FarmTelemetrySilenceStateView;
 }
 
 // telemetry_silence 对外形状（dto.go telemetrySilenceView，字段名严格对齐、不要改名）。
@@ -131,6 +139,70 @@ export interface FarmTelemetrySilenceView {
   minutes_since_last: number;
   // 判定 is_stale 的门槛（分钟）。
   threshold_minutes: number;
+}
+
+// 「遥测停摆四态」字面值（farm-egress-resilience Change A，与后端
+// farmrunner.SilenceState* 常量逐字对齐、不要改名；判定纯函数见
+// services/farm-orchestrator/internal/farmrunner/telemetrysilencestate.go）：
+//  - active           遥测仍在流动（非停摆）——诚实基线值，不属四态诊断。
+//  - proxy_dead       代理死（proxy_direct 探针失败）→ 换代理。
+//  - egress_blackhole 出站黑洞 / redsocks 饱和（代理活但 canary 失败或连接表饱和）
+//                     → 疏通 / 重置 redsocks（换代理无用）。
+//  - process_dead     进程死（最近一条 beacon 携带进程终止信号）→ 查进程。
+//  - idle_no_request  正常无请求（探针全通证明网络通、无进程死信号）→ 无需处理。
+//  - indeterminate    待确认（证据不足：缺新鲜探针又无进程死信号，无法区分黑洞与
+//                     正常没请求）——诚实边界，绝不臆断。
+// 归一化/兜底逻辑见 features/farm/utils/health.ts normalizeFarmTelemetrySilenceState
+// （非枚举值一律回退 indeterminate，绝不臆断成乐观结论）。
+export const FARM_TELEMETRY_SILENCE_STATES = [
+  'active',
+  'proxy_dead',
+  'egress_blackhole',
+  'process_dead',
+  'idle_no_request',
+  'indeterminate',
+] as const;
+export type FarmTelemetrySilenceState = (typeof FARM_TELEMETRY_SILENCE_STATES)[number];
+
+// 单个出站 canary 目标探测结果（dto.go egressCanaryTargetView，字段名严格对齐）。
+export interface FarmEgressCanaryTargetView {
+  host: string;
+  ok: boolean;
+  latency_ms: number;
+  err?: string;
+}
+
+// 最新出站探针快照（dto.go egressProbeView，字段名严格对齐、不要改名）：驱动四态
+// 网络层判据，供前端排障展示原始探针结论。stale=true 表示探针距今超过新鲜度窗口、
+// 四态判定已不信任它描述「当下」。**不带任何真实账号 token**（探针本就只探连通性，
+// 见 spec「探针不带 token」）。
+export interface FarmEgressProbeView {
+  checked_at: string;
+  stale: boolean;
+  proxy_direct_ok: boolean;
+  proxy_direct_err?: string;
+  egress_canary_ok: boolean;
+  egress_canary_targets: FarmEgressCanaryTargetView[];
+  redsocks_recv_q: number;
+  redsocks_backlog: number;
+  redsocks_close_wait: number;
+  redsocks_saturated: boolean;
+}
+
+// 「遥测停摆四态」对外形状（dto.go telemetrySilenceStateView，字段名严格对齐）。
+export interface FarmTelemetrySilenceStateView {
+  // state 取 FARM_TELEMETRY_SILENCE_STATES 之一；诚实边界：无法确证时为
+  // indeterminate（待确认），不臆断。后端恒返回，前端经
+  // normalizeFarmTelemetrySilenceState 兜底非枚举值到 indeterminate。
+  state: string;
+  // 后端给出的建议动作（中文单串，仅供排障参考）；前端主展示走 i18n 按 state
+  // 派生的本地化文案（4 语言），不直接依赖这个中文串，故声明可选。active 无动作。
+  recommended_action?: string;
+  // 最近一条 beacon 是否携带进程终止信号（既有 process_signal 投影）。
+  process_terminated: boolean;
+  // 驱动网络层判据的最新探针快照；从未收到探针 / 探针存储未装配时为 null
+  // （此时 state 只能落 process_dead 或 indeterminate，绝不臆断黑洞 / idle）。
+  probe: FarmEgressProbeView | null;
 }
 
 // 容器状态取值（store.Status* 常量，供前端徽标着色用；未知值按 fallback 灰色处理）

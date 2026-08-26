@@ -154,6 +154,100 @@
   line-height: 1.5;
 }
 
+// 遥测停摆四态诊断盒（farm-egress-resilience Change A）：结论 + 建议动作 + 探针证据。
+// 底色/边框按 data-silence-variant 派生的语义色（复用既有 --color-* token，不新造）：
+// error=danger（确证故障）、warning=待确认、muted=正常无请求（benign 中性）。与
+// .staleWarning 同款「低透明度 tint + 边框」观感，只是按 variant 换色，不引入新设计体系。
+.silenceStateBox {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: $radius-sm;
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.5;
+  // 默认（warning / indeterminate 待确认）：琥珀色 tint。
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 40%, transparent);
+
+  &[data-silence-variant='error'] {
+    background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+    border-color: color-mix(in srgb, var(--color-danger) 40%, transparent);
+  }
+
+  // 正常无请求（idle_no_request）：benign，中性底色不误导成异常。
+  &[data-silence-variant='muted'] {
+    background: color-mix(in srgb, var(--text-secondary) 8%, transparent);
+    border-color: var(--border-color);
+  }
+}
+
+.silenceStateHead {
+  display: flex;
+  align-items: center;
+  gap: $spacing-sm;
+  flex-wrap: wrap;
+
+  // 盒内徽标清零全局默认 margin-bottom，避免撑高首行。
+  :global(.status-badge) {
+    margin-bottom: 0;
+  }
+}
+
+.silenceStateConclusion {
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.silenceStateAction {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.silenceStateActionLabel {
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.silenceStateProbe {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 4px;
+  border-top: 1px dashed var(--border-color);
+}
+
+.silenceStateProbeHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-weight: 600;
+  color: var(--text-secondary);
+
+  :global(.status-badge) {
+    margin-bottom: 0;
+  }
+}
+
+// 探针证据两列 label|value 网格：左列固定窄列，右列吃剩余空间。复用既有 token。
+.silenceStateProbeGrid {
+  display: grid;
+  grid-template-columns: minmax(88px, auto) minmax(0, 1fr);
+  gap: 2px $spacing-sm;
+  align-items: baseline;
+}
+
+.silenceStateProbeLabel {
+  font-size: $fs-2xs;
+  color: var(--text-secondary);
+}
+
 // E3：on-wire 未接入时的单元格中性占位——面板级横幅（.onWireBanner）已经
 // 统一说明「以下为占位/声明态」，这里不再重复逐格「待抓取管道 · 尚未证明」
 // 灰底徽标，只保留一个不抢视觉的中性占位符，消除此前「整表灰墙」的观感。

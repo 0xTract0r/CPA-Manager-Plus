@@ -13,8 +13,10 @@
 
 import {
   FARM_TELEMETRY_ALIVE_STATES,
+  FARM_TELEMETRY_SILENCE_STATES,
   type FarmAccountStateView,
   type FarmTelemetryAliveState,
+  type FarmTelemetrySilenceState,
 } from '@/types/farm';
 
 /** 与 --health-ok/warn/err/idle 一一对应的健康四态。 */
@@ -464,4 +466,48 @@ export function telemetryAliveStateToBadgeVariant(
   if (state === 'alive') return 'success';
   if (state === 'silent') return 'warning';
   return 'muted';
+}
+
+const TELEMETRY_SILENCE_STATE_SET: ReadonlySet<string> = new Set(FARM_TELEMETRY_SILENCE_STATES);
+
+/**
+ * 归一化「遥测停摆四态」原始值到枚举内。诚实边界（farm-egress-resilience Change A
+ * spec「无法确证时 SHALL 显示待确认而非臆断」）：非枚举之一的任何输入（含
+ * undefined——旧编排器未透传，或后端未来出现未知字面值）一律回退 **indeterminate
+ * （待确认）**，绝不回退成 active / idle_no_request 这类乐观结论——宁可显「待确认」
+ * 也不臆断「正常」。
+ */
+export function normalizeFarmTelemetrySilenceState(
+  value: string | undefined
+): FarmTelemetrySilenceState {
+  if (value && TELEMETRY_SILENCE_STATE_SET.has(value)) {
+    return value as FarmTelemetrySilenceState;
+  }
+  return 'indeterminate';
+}
+
+/**
+ * 「遥测停摆四态」→ status-badge 变体（语义色对齐既有 success/warning/error/muted，
+ * 不新造颜色 token）：
+ *  - active           → success（遥测在报，健康）
+ *  - idle_no_request  → muted（停摆但探针证明网络通、benign「正常没请求」，无需处理）
+ *  - proxy_dead / egress_blackhole / process_dead → error（确证的可行动故障，需处理）
+ *  - indeterminate    → warning（证据不足，待人工确认——不是确证故障，也绝不当健康）
+ */
+export function telemetrySilenceStateToBadgeVariant(
+  state: FarmTelemetrySilenceState
+): StatusBadgeVariant {
+  switch (state) {
+    case 'active':
+      return 'success';
+    case 'idle_no_request':
+      return 'muted';
+    case 'proxy_dead':
+    case 'egress_blackhole':
+    case 'process_dead':
+      return 'error';
+    case 'indeterminate':
+    default:
+      return 'warning';
+  }
 }
