@@ -2,42 +2,27 @@ import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useTimezone } from '@/hooks/useTimezone';
 import { AsyncPanel } from '@/components/ui/AsyncPanel';
-import { useInterval } from '@/hooks/useInterval';
+import { Drawer } from '@/components/ui/Drawer';
 import {
   FARM_TELEMETRY_FINGERPRINT_FIELDS,
+  pickLatestBeaconFieldValue,
   resolveBeaconSourceKind,
   type FarmContainerBeaconView,
   type FarmContainerView,
-  type FarmTelemetryFingerprintField,
 } from '@/types/farm';
 import { formatDateTimeUtc8, formatInUtc8 } from '@/utils/datetime';
 import { formatFileSize } from '@/utils/format';
 import { useFarmContainerBeacons } from '../hooks/useFarmContainerBeacons';
 import { maskTelemetryFingerprint } from '../utils/identity';
 import { displayFingerprintValue, fingerprintFieldsClash } from '../utils/telemetry';
-// E3：改为自有 module.scss（不再借用 FarmContainerDetail.module.scss），见该
-// 文件顶部注释——结构类取值与 FarmContainerDetail 对应同名类保持一致，纯样式
-// 来源迁移，视觉不变；新增的自洽卡网格类 / on-wire 横幅类是本次重做新增。
 import styles from './FarmTelemetryPanel.module.scss';
 
-// 前端展示用遥测新鲜度门槛：仅作 UI 陈旧标记的启发式阈值，**不是**后端精确
-// 定义的 telemetry_silence 判据。beacon 是自报上报、间隔本身不固定，这里取
-// 30min 作为「明显偏旧」的保守提示线并显式标注为展示启发式，不冒充精确 SLA。
-export const FARM_BEACON_STALE_THRESHOLD_MS = 30 * 60 * 1000;
-
-// 陈旧判定用的「当前时刻」时钟节拍：React 19 render-purity 规则不允许在 render
-// 期间直接读 Date.now()。对齐 FarmAccountsPanel 既有做法——用一个每 30s 刷新
-// 的 state 时钟（对齐本模块轮询节拍），render 只读这个稳定值。
-const STALE_CLOCK_TICK_MS = 30 * 1000;
-
 // beacon 时间线默认只渲染最近 N 条，避免容器上报密集时一次性渲染成百上千行把
-// ~640px 窄抽屉挤成字墙；超出部分靠「展开更多」按需加载，而不是虚拟滚动
-// （量级通常在数百条内，一次性挂载全部 DOM 也可接受，这里只是收敛默认视图）。
+// ~640px 窄抽屉挤成字墙；超出部分靠「展开更多」按需加载。
 const BEACON_TIMELINE_DEFAULT_LIMIT = 20;
 
-// beacon 时间线单元格的紧凑时间戳格式：MM/DD HH:mm:ss（24 小时制），比
-// formatDateTimeUtc8 的完整 dateStyle/timeStyle 短得多，适合固定宽度的网格列；
-// 完整时间戳（含 UTC+8 标注）放进 title，悬浮可查。
+// beacon 时间线单元格的紧凑时间戳格式：MM/DD HH:mm:ss（24 小时制），完整时间戳
+// （含 UTC+8 标注）放进 title 悬浮可查。
 const BEACON_TIMESTAMP_COMPACT_OPTIONS: Intl.DateTimeFormatOptions = {
   month: '2-digit',
   day: '2-digit',
@@ -68,74 +53,25 @@ function computeChannelDistribution(beacons: FarmContainerBeaconView[]): Channel
     .sort((a, b) => b.count - a.count || a.channel.localeCompare(b.channel));
 }
 
-// 从某条 beacon（已按 source_kind 选好——declared 列传最近一条 declared beacon，
-// on-wire 列传最近一条 on_wire beacon）取某个指纹字段的值。字段本身是后端
-// ParseBeacon 在入库时抽取好的（見 telemetry_beacon.go handleIngestBeacons），
-// 前端不解析原始 body，只是按 source_kind 分区挑「该来源最近一条」。
-function fieldValueFromBeacon(
-  beacon: FarmContainerBeaconView | undefined,
-  field: FarmTelemetryFingerprintField
-): string {
-  if (!beacon) return '';
-  return beacon[field] ?? '';
-}
-
-// 指纹自洽卡 declared 列：最近一条 declared beacon 的字段值。
-function declaredFieldValue(
-  latestDeclared: FarmContainerBeaconView | undefined,
-  field: FarmTelemetryFingerprintField
-): string {
-  return fieldValueFromBeacon(latestDeclared, field);
-}
-
-// 指纹自洽卡 on-wire 列（TP-1「点亮 on-wire 逐字段」）：取「最近一条
-// source_kind=on_wire 的 beacon」（真实 mitmproxy/ebpf 出站抓取，见
-// resolveBeaconSourceKind），读它已由服务端抽取好的字段值。
-//
-// 返回值三态语义（调用方据此区分「真占位」vs「有实测但为空」）：
-//   - null：从未观测到任何 on_wire beacon（该容器/该窗口内），列仍是中性占位。
-//   - ''（空串）：观测到过 on_wire beacon，但该字段这次抓取没能提取出值（如
-//     datadog_logs 通道没有 device_id 字段，ParseBeacon 如实留空、不编造）——
-//     这不是「未接入」，是「这条真实请求确实没带这个字段」，不应误判为占位。
-//   - 非空串：该字段的实测值。
-function onWireFieldValue(
-  latestOnWire: FarmContainerBeaconView | undefined,
-  field: FarmTelemetryFingerprintField
-): string | null {
-  if (!latestOnWire) return null;
-  return fieldValueFromBeacon(latestOnWire, field);
-}
-
 /**
- * 每容器遥测面板（用户⑤「每容器遥测内容抓取」）：declared vs on-wire 两列
- * 指纹自洽卡 + beacon 时间线 + 通道分布 + 新鲜度。插在 <FarmContainerDetail>
- * 的「device_id 对齐」section 旁。
+ * 每容器遥测面板（用户⑤「每容器遥测内容抓取」）：declared vs on-wire 两列指纹自洽卡
+ * + beacon 时间线（可点开看完整上报内容）+ 通道分布 + 基于后端 telemetry_silence 的
+ * 新鲜度/静默告警。插在 <FarmContainerDetail> 的「device_id 对齐」section 旁。
  *
- * **来源边界（贯穿整个 UI，逐条标注不笼统）**：beacon 时间线混合两类来源，按
- * 后端 source_kind 逐条标注——declared=容器自报/声明，on_wire=mitmproxy/ebpf 在
- * 容器出站链路真实抓取。即便 on_wire 行也只证明该容器确实发出过这些请求，**不构
- * 成跨账号反关联证明**，绝不对整列笼统 claim on-wire。
+ * **来源边界（贯穿整个 UI，逐条标注不笼统）**：beacon 时间线混合两类来源，按后端
+ * source_kind 逐条标注——declared=容器自报/声明，on_wire=mitmproxy/ebpf 在容器出站链路
+ * 真实抓取。即便 on_wire 行也只证明该容器确实发出过这些请求，**不构成跨账号反关联
+ * 证明**。
  *
- * 另一件相关的事（TP-1 已接入）：指纹自洽卡的「出站实测 (on-wire)」一列取「最近
- * 一条 source_kind=on_wire 的 beacon」，读它已由服务端 ParseBeacon 抽取好的字段
- * 值——前端不解析原始 body。从未观测到任何 on_wire beacon 时该列仍是中性占位
- * （真占位，不是「尚未接入」），由卡顶一条面板级横幅统一说明；一旦观测到任意
- * on_wire beacon，横幅自动收起（见 onWireCaptured）。declared 与 on-wire 同一字段
- * 都有实测值且不一致时撞红（见 clash 判定，仅当 on-wire 侧确有值才比较，避免把
- * 「这条实测请求没带这个字段」误判成冲突）。
+ * **本轮修复的横线根因**：指纹自洽卡此前对每列只读「该来源最近一条」beacon，而指纹
+ * 字段分通道上报、最近那条常常不带某字段（如 datadog_logs 通道天然没有 device_id），
+ * 于是整格误显横线「—」。现改为**逐字段各取该来源最近一条真正带值的 beacon**
+ * （pickLatestBeaconFieldValue，纯函数 + 单测锁定），只有窗口内所有 beacon 都不带该
+ * 字段时才回退占位。「自报 (declared)」列没有真值时不再显裸横线，而是诚实标注
+ * 「未采集 / 不适用」并在 tooltip 说明 declared 未接入独立声明源、绝不编造值。
  *
- * TP-2「每容器遥测内容更丰富」：面板另增一节「遥测字段速览」，把 declared/on-wire
- * 各自最近一条 beacon 的全部已知字段（channel/host/path/body_bytes/captured_at/
- * source 以及脱敏后的 device_id/api_base_url_host/entrypoint）铺开展示，而不是只
- * 有指纹自洽卡的 3 个比对字段。session_id/app_version/user_type/event_names 四个
- * 字段服务端已解析落库但对外只读接口尚未暴露（见 types/farm.ts
- * FarmContainerBeaconView 同名字段注释），前端已前瞻声明类型、存在性门控渲染
- * （不渲染，不是显示占位符），后端补齐后自动点亮。
- *
- * 取数走 useFarmContainerBeacons（GET .../beacons，裸数组、captured_at 降序）：
- * 失败态经 AsyncPanel 如实呈现，不吞不伪造；空容器（后端返回 []）在数据态内
- * 以内联空提示处理，而不是把整卡（含来源边界说明）替换成空态卡片——逐条来源
- * 标注与 on-wire 列口径说明在任何数据量下都必须可见。
+ * 取数走 useFarmContainerBeacons（GET .../beacons，裸数组、captured_at 降序）：失败态
+ * 经 AsyncPanel 如实呈现，不吞不伪造；空容器（后端返回 []）以内联空提示处理。
  */
 export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
   const { t, i18n } = useTranslation();
@@ -144,56 +80,55 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
   const containerId = container?.id ?? null;
   const { beacons, loading, error } = useFarmContainerBeacons(containerId);
 
-  // render-purity：now 存进 state（惰性初始化 + 30s tick），render 只读稳定值。
-  const [nowMs, setNowMs] = useState(() => Date.now());
-  useInterval(() => setNowMs(Date.now()), STALE_CLOCK_TICK_MS);
-
-  // beacon 时间线默认折叠到最近 N 条；切换容器时重置，避免上一个容器「已展开」
-  // 的状态漏到下一个容器上（历史条数不同，沿用旧展开态没有意义）。这里按 React
-  // 官方「渲染期间调整 state」模式实现（而非 useEffect 里同步 setState），
-  // 靠比对上一次渲染的 containerId 判断是否需要重置，避免多触发一次 commit。
+  // 时间线折叠 + 详情抽屉选中项：切换容器时重置，避免上一个容器状态漏到下一个。
+  // 按 React 官方「渲染期间调整 state」模式实现（比对上一次 containerId）。
   const [timelineExpanded, setTimelineExpanded] = useState(false);
+  const [selectedBeaconIndex, setSelectedBeaconIndex] = useState<number | null>(null);
   const [prevContainerId, setPrevContainerId] = useState(containerId);
   if (containerId !== prevContainerId) {
     setPrevContainerId(containerId);
     setTimelineExpanded(false);
+    setSelectedBeaconIndex(null);
   }
 
   const latestBeacon = beacons[0];
-  // TP-1：declared 列与 on-wire 列各取「该来源最近一条」，不是同一条 beacon 的
-  // 两个视角——beacons 已按 captured_at 降序，`.find` 拿到的就是各自最近一条。
-  const latestDeclaredBeacon = useMemo(
-    () => beacons.find((b) => resolveBeaconSourceKind(b) === 'declared'),
+
+  // 按 source_kind 分区（保持 captured_at 降序）：逐字段选值时各自取「该来源最近一条
+  // 带该值」的 beacon，而不是整列绑定同一条 beacon（修横线的核心）。
+  const declaredBeacons = useMemo(
+    () => beacons.filter((b) => resolveBeaconSourceKind(b) === 'declared'),
     [beacons]
   );
-  const latestOnWireBeacon = useMemo(
-    () => beacons.find((b) => resolveBeaconSourceKind(b) === 'on_wire'),
+  const onWireBeacons = useMemo(
+    () => beacons.filter((b) => resolveBeaconSourceKind(b) === 'on_wire'),
     [beacons]
   );
-  // TP-2「字段速览」快照：优先展示最近一条 on-wire 信标（真实出站抓取，最具权威），
-  // 无 on-wire 时回退最近一条信标（自报），下方按 source_kind 明确标注来源，不冒充。
-  const spreadBeacon = latestOnWireBeacon ?? latestBeacon;
+  // 只要观测到任意一条 on_wire beacon 即为 true（与「具体哪些字段抽到了值」无关）。
+  const onWireCaptured = onWireBeacons.length > 0;
+
+  // 字段速览快照：优先最近一条 on-wire（真实出站抓取，最具权威），无则回退最近一条
+  // （自报），下方按 source_kind 明确标注来源。
+  const spreadBeacon = onWireBeacons[0] ?? latestBeacon;
+
   const channelDistribution = useMemo(() => computeChannelDistribution(beacons), [beacons]);
   const visibleBeacons = timelineExpanded
     ? beacons
     : beacons.slice(0, BEACON_TIMELINE_DEFAULT_LIMIT);
   const hasMoreBeacons = beacons.length > BEACON_TIMELINE_DEFAULT_LIMIT;
 
-  const latestCapturedAt = latestBeacon?.captured_at;
-  const stale = useMemo(() => {
-    if (!latestCapturedAt) return false;
-    const ms = new Date(latestCapturedAt).getTime();
-    if (!Number.isFinite(ms)) return false;
-    return nowMs - ms > FARM_BEACON_STALE_THRESHOLD_MS;
-  }, [latestCapturedAt, nowMs]);
-
-  // on-wire 采集管道是否已观测到该容器的任意 on_wire beacon（TP-1）：只要存在
-  // 一条即为 true，与「这条 beacon 具体哪些字段抽取出了值」无关——即便某条
-  // on_wire beacon 因通道限制（如 datadog_logs 没有 device_id）导致某个字段为
-  // 空串，也不能倒推回「没抓到 on-wire 数据」。面板级横幅据此收起。
-  const onWireCaptured = Boolean(latestOnWireBeacon);
+  const selectedBeacon =
+    selectedBeaconIndex != null ? beacons[selectedBeaconIndex] : undefined;
 
   if (!container) return null;
+
+  // 新鲜度/静默：一律以后端 telemetry_silence 为准（权威判据），不再用前端启发式时钟。
+  // minutes_since_last === -1 是「从未观测」哨兵，绝不格式化成「-1 分钟前」。
+  const silence = container.telemetry_silence;
+  const neverObserved = silence ? silence.minutes_since_last < 0 : beacons.length === 0;
+  const isStale = silence?.is_stale ?? false;
+  const minutesSinceLast =
+    silence && silence.minutes_since_last >= 0 ? Math.round(silence.minutes_since_last) : null;
+  const latestCapturedAt = latestBeacon?.captured_at;
 
   return (
     <section
@@ -205,13 +140,7 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
         {t('farm.telemetry.section', { defaultValue: '遥测信标（自报 + on-wire，逐条标注来源）' })}
       </h3>
 
-      {/* 来源边界：显眼免责声明，警示色轻底，防止被当成反关联实测证据。
-          准确化（U2 复核）：下方时间线混合两类来源、逐条标注——declared 行是容器
-          自报/声明，on-wire 行才是 mitmproxy/ebpf 在出站链路真实抓取，不能对整列
-          笼统说「都是 on-wire」。另一件独立的事是「把 beacon 逐字段派生进指纹自洽
-          卡 on-wire 列」尚未接入，与「原始 on_wire beacon 已实时采集」不是一回事。 */}
-      {/* progressive disclosure：来源边界免责声明较长（多段），默认收起，只留一行
-          警示摘要占位，operator 需要完整口径时点开；避免长段落落地即占遥测 tab 首屏。 */}
+      {/* 来源边界免责声明：progressive disclosure，默认收起，只留一行警示摘要。 */}
       <details className={styles.disclaimerDisclosure} data-testid="farm-telemetry-disclaimer">
         <summary className={styles.disclaimerSummary}>
           {t('farm.telemetry.disclaimerSummary', {
@@ -221,13 +150,13 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
         <p className={styles.probeTokenBadge}>
           {t('farm.telemetry.disclaimer', {
             defaultValue:
-              '下方是该容器的遥测信标列表，混合两类来源并逐条标注：「自报 (declared)」是容器声明/自报的内容，「on-wire」行才是 mitmproxy/ebpf 在容器出站链路真实抓取的数据。即便 on-wire 行也只证明该容器确实发出过这些请求，不构成跨账号反关联证明。上方指纹自洽卡的「出站实测 (on-wire)」列取最近一条 on-wire 信标已由服务端抽取好的字段与自报值逐字段比对——该容器暂未抓到 on-wire 信标时该列显占位（真占位，不是功能未接入）。',
+              '下方是该容器的遥测信标列表，混合两类来源并逐条标注：「自报 (declared)」是容器声明/自报的内容，「on-wire」行才是 mitmproxy/ebpf 在容器出站链路真实抓取的数据。即便 on-wire 行也只证明该容器确实发出过这些请求，不构成跨账号反关联证明。上方指纹自洽卡逐字段取「该来源最近一条带值的信标」比对；「自报」列没有真值时显「未采集/不适用」（不编造），「出站实测」列该容器暂无 on-wire 信标时显占位。',
           })}
         </p>
       </details>
       <span className={styles.scopeBadge} data-testid="farm-telemetry-scope">
         {t('farm.telemetry.scopeBadge', {
-          defaultValue: '口径：信标含自报与 on-wire 两类·逐条标注来源，指纹逐字段派生已接入',
+          defaultValue: '口径：信标含自报与 on-wire 两类·逐条标注来源，指纹逐字段选最近带值',
         })}
       </span>
 
@@ -239,7 +168,8 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
         loadingTestId="farm-telemetry-loading"
         errorTestId="farm-telemetry-error"
       >
-        {/* 指纹自洽卡：declared（自报，现在能填）vs on-wire（待抓取，占位）。 */}
+        {/* 指纹自洽卡：declared（自报）vs on-wire（出站实测），逐字段各取该来源最近一条
+            带值的 beacon。 */}
         <div className={styles.estimateBox} data-testid="farm-telemetry-consistency">
           <div className={`${styles.consistencyGrid} ${styles.consistencyHeaderRow}`}>
             <span className={styles.chartLabel}>
@@ -253,11 +183,7 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
             </span>
           </div>
 
-          {/* 面板级横幅（TP-1）：逐字段 on-wire 派生**已接入**，只是该容器在当前
-              窗口内还没观测到任何 on_wire 信标（mitmproxy/ebpf 出站抓取），所以下方
-              on-wire 列暂为中性占位。一旦抓到任意 on_wire 信标即自动点亮并与自报值
-              逐字段比对，横幅随之收起（见 onWireCaptured）。这是「该容器还没产生真实
-              出站抓取」，不是「功能没接入」。 */}
+          {/* on-wire 列占位横幅：该容器当前窗口内还没观测到任何 on_wire 信标时展示。 */}
           {!onWireCaptured && (
             <p className={styles.onWireBanner} data-testid="farm-telemetry-onwire-banner">
               {t('farm.telemetry.onWireBanner', {
@@ -268,25 +194,23 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
           )}
 
           {FARM_TELEMETRY_FINGERPRINT_FIELDS.map((field) => {
-            // TP-1：declared 取「最近一条 declared beacon」、on-wire 取「最近一条
-            // source_kind=on_wire beacon」的**原始值**——先用原始值判等/撞红
-            // （fingerprintFieldsClash），再各自脱敏展示（displayFingerprintValue，
-            // 仅 device_id 这类高熵字段前 12+后 4 折叠），顺序不能反（否则会把首尾
-            // 恰好相同的两个不同值误判为一致，见 utils/identity.ts 注释）。
-            const declaredRaw = declaredFieldValue(latestDeclaredBeacon, field);
-            const onWireRaw = onWireFieldValue(latestOnWireBeacon, field);
+            // 逐字段选「该来源最近一条带值」的原始值：先用原始值判等/撞红，再各自脱敏
+            // 展示（顺序不能反，见 utils/telemetry.ts 注释）。
+            const declaredRaw = pickLatestBeaconFieldValue(declaredBeacons, field);
+            const onWireRaw = onWireCaptured
+              ? pickLatestBeaconFieldValue(onWireBeacons, field)
+              : null;
             const onWirePending = onWireRaw === null;
             const clash = fingerprintFieldsClash(declaredRaw, onWireRaw);
             const declaredDisplay = displayFingerprintValue(field, declaredRaw);
             const onWireDisplay = onWirePending
               ? ''
               : displayFingerprintValue(field, onWireRaw ?? '');
-            const declaredClassName = `${styles.mono} ${styles.consistencyValue}${
-              clash ? ` ${styles.consistencyValueClash}` : ''
-            }`;
+            const declaredHasValue = declaredDisplay !== '';
+            const clashClassName = clash ? ` ${styles.consistencyValueClash}` : '';
             const onWireClassName = onWirePending
               ? `${styles.mono} ${styles.onWirePlaceholder}`
-              : declaredClassName;
+              : `${styles.mono} ${styles.consistencyValue}${clashClassName}`;
             return (
               <div
                 key={field}
@@ -298,9 +222,26 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
                 <span className={styles.mono}>
                   {t(`farm.telemetry.field_${field}`, { defaultValue: field })}
                 </span>
-                <span data-testid={`farm-telemetry-declared-${field}`} className={declaredClassName}>
-                  {declaredDisplay || '—'}
-                </span>
+                {declaredHasValue ? (
+                  <span
+                    data-testid={`farm-telemetry-declared-${field}`}
+                    className={`${styles.mono} ${styles.consistencyValue}${clashClassName}`}
+                  >
+                    {declaredDisplay}
+                  </span>
+                ) : (
+                  <span
+                    data-testid={`farm-telemetry-declared-${field}`}
+                    data-declared-empty="true"
+                    className={styles.declaredNotCollected}
+                    title={t('farm.telemetry.declaredNotCollectedHint', {
+                      defaultValue:
+                        '自报 (declared) 通道未接入该字段的独立声明源；此处不编造值。当前指纹以出站实测 (on-wire) 为准。',
+                    })}
+                  >
+                    {t('farm.telemetry.declaredNotCollected', { defaultValue: '未采集 / 不适用' })}
+                  </span>
+                )}
                 <span
                   data-testid={`farm-telemetry-onwire-${field}`}
                   data-pending={onWirePending ? 'true' : 'false'}
@@ -313,21 +254,18 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
           })}
         </div>
 
-        {/* TP-2「每容器遥测内容更丰富」：把最近一条信标已抽取好的字段铺开展示，不
-            只 host——设备 ID / 会话 ID（脱敏）/ API base host / 入口 / 客户端版本 /
-            用户类型 / 事件名 / 通道 / host / 路径 / 请求体大小 / 采集时间。source_kind
-            逐条标注来源。session_id/app_version/user_type/event_names 四个字段服务端
-            已落库但只读端点尚未序列化（见 types/farm.ts FarmContainerBeaconView 注释），
-            此处**存在性门控**——缺失时整行不渲染（不显示占位符、不臆造），后端补齐后
-            自动点亮。device_id/session_id 走 maskTelemetryFingerprint 脱敏（前 12+后 4）。 */}
+        {/* 字段速览：优先最近一条 on-wire 信标（真实出站抓取），无则回退自报。device_id/
+            session_id 优先读后端已脱敏的 reported_fields，缺失才回退顶层并前端脱敏。 */}
         {spreadBeacon ? (
           (() => {
             const spreadKind = resolveBeaconSourceKind(spreadBeacon);
             const spreadIsOnWire = spreadKind === 'on_wire';
             const spreadRawSource =
               spreadBeacon.source || (spreadIsOnWire ? 'mitmproxy' : 'declared');
-            const maskedDeviceId = maskTelemetryFingerprint(spreadBeacon.device_id);
-            const maskedSessionId = maskTelemetryFingerprint(spreadBeacon.session_id);
+            const rf = spreadBeacon.reported_fields;
+            const deviceId = rf?.device_id || maskTelemetryFingerprint(spreadBeacon.device_id);
+            const sessionId = rf?.session_id ?? '';
+            const apiBaseHost = rf?.api_base_url_host || spreadBeacon.api_base_url_host;
             const eventNames = spreadBeacon.event_names?.filter(Boolean) ?? [];
             return (
               <div className={styles.chartCol} data-testid="farm-telemetry-field-spread">
@@ -376,7 +314,7 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
                     {spreadBeacon.channel || 'unknown'}
                   </span>
 
-                  {maskedDeviceId ? (
+                  {deviceId ? (
                     <>
                       <span className={styles.fieldSpreadLabel}>
                         {t('farm.telemetry.field_device_id', { defaultValue: 'device_id' })}
@@ -388,12 +326,12 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
                           defaultValue: '展示脱敏（前 12 + 后 4），完整值仅服务端保留',
                         })}
                       >
-                        {maskedDeviceId}
+                        {deviceId}
                       </span>
                     </>
                   ) : null}
 
-                  {maskedSessionId ? (
+                  {sessionId ? (
                     <>
                       <span className={styles.fieldSpreadLabel}>
                         {t('farm.telemetry.field_session_id', { defaultValue: 'session_id' })}
@@ -405,12 +343,12 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
                           defaultValue: '展示脱敏（前 12 + 后 4），完整值仅服务端保留',
                         })}
                       >
-                        {maskedSessionId}
+                        {sessionId}
                       </span>
                     </>
                   ) : null}
 
-                  {spreadBeacon.api_base_url_host ? (
+                  {apiBaseHost ? (
                     <>
                       <span className={styles.fieldSpreadLabel}>
                         {t('farm.telemetry.field_api_base_url_host', {
@@ -421,7 +359,7 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
                         className={styles.fieldSpreadValue}
                         data-testid="farm-telemetry-spread-api-base-host"
                       >
-                        {spreadBeacon.api_base_url_host}
+                        {apiBaseHost}
                       </span>
                     </>
                   ) : null}
@@ -440,30 +378,44 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
                     </>
                   ) : null}
 
-                  {spreadBeacon.app_version ? (
+                  {rf?.sdk_version ? (
                     <>
                       <span className={styles.fieldSpreadLabel}>
-                        {t('farm.telemetry.spreadAppVersion', { defaultValue: '客户端版本' })}
+                        {t('farm.telemetry.spreadSdkVersion', { defaultValue: 'SDK 版本' })}
                       </span>
                       <span
                         className={styles.fieldSpreadValue}
-                        data-testid="farm-telemetry-spread-app-version"
+                        data-testid="farm-telemetry-spread-sdk-version"
                       >
-                        {spreadBeacon.app_version}
+                        {rf.sdk_version}
                       </span>
                     </>
                   ) : null}
 
-                  {spreadBeacon.user_type ? (
+                  {rf?.deployment_environment ? (
                     <>
                       <span className={styles.fieldSpreadLabel}>
-                        {t('farm.telemetry.spreadUserType', { defaultValue: '用户类型' })}
+                        {t('farm.telemetry.spreadDeploymentEnv', { defaultValue: '部署环境' })}
                       </span>
                       <span
                         className={styles.fieldSpreadValue}
-                        data-testid="farm-telemetry-spread-user-type"
+                        data-testid="farm-telemetry-spread-deployment-env"
                       >
-                        {spreadBeacon.user_type}
+                        {rf.deployment_environment}
+                      </span>
+                    </>
+                  ) : null}
+
+                  {rf?.hostname ? (
+                    <>
+                      <span className={styles.fieldSpreadLabel}>
+                        {t('farm.telemetry.spreadHostname', { defaultValue: 'hostname' })}
+                      </span>
+                      <span
+                        className={styles.fieldSpreadValue}
+                        data-testid="farm-telemetry-spread-hostname"
+                      >
+                        {rf.hostname}
                       </span>
                     </>
                   ) : null}
@@ -508,32 +460,71 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
           })()
         ) : null}
 
-        {/* 新鲜度：最近一条 beacon 时间 + 陈旧启发式标记（展示用，非精确 SLA）。 */}
+        {/* 新鲜度 / 静默：以后端 telemetry_silence 为准。从未观测显「从未观测」（不是
+            -1 分钟前）；is_stale 时浮出「遥测太旧」告警，带诚实 caveat。 */}
         <div
           className={styles.deviceIdRow}
           data-testid="farm-telemetry-freshness"
-          data-stale={stale ? 'true' : 'false'}
+          data-stale={isStale ? 'true' : 'false'}
+          data-never-observed={neverObserved ? 'true' : 'false'}
         >
           <span className={styles.chartLabel}>
             {t('farm.telemetry.freshness', { defaultValue: '遥测新鲜度' })}
           </span>
           {latestCapturedAt ? (
+            <span className={styles.mono}>{formatDateTimeUtc8(latestCapturedAt, i18n.language)}</span>
+          ) : null}
+          {neverObserved ? (
+            <span
+              className="status-badge muted"
+              data-testid="farm-telemetry-freshness-badge"
+              title={t('farm.telemetry.neverObservedHint', {
+                defaultValue: '该容器从未观测到任何 beacon 上报（没有基线可比），不代表异常。',
+              })}
+            >
+              {t('farm.telemetry.neverObserved', { defaultValue: '从未观测' })}
+            </span>
+          ) : !silence ? (
+            <span
+              className="status-badge muted"
+              data-testid="farm-telemetry-freshness-badge"
+              title={t('farm.telemetry.freshnessUnknownHint', {
+                defaultValue: '编排器未返回 telemetry_silence，无法判定新鲜度。',
+              })}
+            >
+              {t('farm.telemetry.freshnessUnknown', { defaultValue: '新鲜度未知' })}
+            </span>
+          ) : (
             <>
-              <span className={styles.mono}>
-                {formatDateTimeUtc8(latestCapturedAt, i18n.language)}
-              </span>
-              <span className={`status-badge ${stale ? 'warning' : 'success'}`}>
-                {stale
+              <span
+                className={`status-badge ${isStale ? 'warning' : 'success'}`}
+                data-testid="farm-telemetry-freshness-badge"
+              >
+                {isStale
                   ? t('farm.telemetry.stale', { defaultValue: '偏旧' })
                   : t('farm.telemetry.fresh', { defaultValue: '较新' })}
               </span>
+              {minutesSinceLast != null ? (
+                <span className={styles.hintText}>
+                  {t('farm.telemetry.minutesSinceLast', {
+                    defaultValue: '约 {{minutes}} 分钟前',
+                    minutes: minutesSinceLast,
+                  })}
+                </span>
+              ) : null}
             </>
-          ) : (
-            <span className={styles.hintText} data-testid="farm-telemetry-freshness-empty">
-              {t('farm.telemetry.noBeacons', { defaultValue: '窗口内暂无 beacon 上报。' })}
-            </span>
           )}
         </div>
+        {isStale && silence ? (
+          <p className={styles.staleWarning} data-testid="farm-telemetry-stale-warning">
+            {t('farm.telemetry.staleWarning', {
+              defaultValue:
+                '遥测太旧：最近一条上报距今约 {{minutes}} 分钟，已超过 {{threshold}} 分钟门槛，可能是容器进程退出/异常——但也可能只是这段时间没有产生请求。采集平面区分不了「没有请求」和「采集链路本身挂了」，请结合容器运行态 / 账号态一起判断，不要仅凭此单独下线容器。',
+              minutes: minutesSinceLast ?? '—',
+              threshold: Math.round(silence.threshold_minutes),
+            })}
+          </p>
+        ) : null}
 
         {/* 通道分布：按后端自算 channel 归并计数。 */}
         <div className={styles.chartCol}>
@@ -559,14 +550,9 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
           </div>
         </div>
 
-        {/* 遥测信标时间线：最近若干条上报（captured_at 降序），混合 declared /
-            on-wire 两类来源，逐条在「通道」列下方标注（on-wire 行=mitmproxy/ebpf
-            真实出站抓取，declared 行=容器自报），不对整列笼统 claim on-wire。逐字段
-            派生进指纹自洽卡 on-wire 列是另一件尚未接入的独立事，见上方 disclaimer /
-            onWireBanner。列表用对齐网格行（.eventGrid）：时间 | 通道+来源 | host/路
-            径 | 大小，列头对齐、跨行竖向对齐；host/路径单行截断 + title 悬浮显全；
-            默认只渲染最近 N 条，超出靠「展开更多」按需加载，避免容器上报密集时把
-            窄抽屉挤成一堵乱字墙。 */}
+        {/* 遥测信标时间线：captured_at 降序，混合 declared / on-wire 两类，逐条标注来源。
+            每行可点击→抽屉显示该条完整上报内容。内容列展示通道 + 事件名 + 关键上报字段，
+            不再只有网址 + 大小。 */}
         <div className={styles.chartCol}>
           <span className={styles.chartLabel}>
             {t('farm.telemetry.timeline', {
@@ -581,12 +567,17 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
             </p>
           ) : (
             <>
+              <p className={styles.hintText} data-testid="farm-telemetry-timeline-hint">
+                {t('farm.telemetry.timelineClickHint', {
+                  defaultValue: '点击任意一条查看该信标的完整上报内容（脱敏）。',
+                })}
+              </p>
               <div className={`${styles.eventGrid} ${styles.eventListHeader}`}>
                 <span className={styles.eventHeaderCell}>
                   {t('farm.telemetry.timelineColumnTime', { defaultValue: '时间' })}
                 </span>
                 <span className={styles.eventHeaderCell}>
-                  {t('farm.telemetry.timelineColumnChannel', { defaultValue: '通道' })}
+                  {t('farm.telemetry.timelineColumnContent', { defaultValue: '内容' })}
                 </span>
                 <span className={styles.eventHeaderCell}>
                   {t('farm.telemetry.timelineColumnHostPath', { defaultValue: 'host / 路径' })}
@@ -605,58 +596,115 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
                     '—'
                   );
                   const capturedAtFull = formatDateTimeUtc8(beacon.captured_at, i18n.language);
-                  // 逐条按后端 source_kind 准确标注来源：on_wire=mitmproxy/ebpf 真实
-                  // 出站抓取，declared=容器自报，不对整列笼统 claim on-wire（U2 复核）。
                   const sourceKind = resolveBeaconSourceKind(beacon);
                   const isOnWire = sourceKind === 'on_wire';
                   const rawSource = beacon.source || (isOnWire ? 'mitmproxy' : 'declared');
+                  const eventNames = beacon.event_names?.filter(Boolean) ?? [];
+                  const rf = beacon.reported_fields;
+                  // 关键上报字段（内容列速览）：优先脱敏后的 device_id，退 hostname/api host。
+                  const keyReported =
+                    rf?.device_id || rf?.hostname || rf?.api_base_url_host || '';
+                  const hasProcessSignal = beacon.process_signal != null;
                   return (
                     <li
                       key={`${beacon.captured_at}-${index}`}
-                      className={`${styles.eventGrid} ${styles.eventItem}`}
+                      className={styles.eventItem}
                       data-testid={`farm-telemetry-beacon-${index}`}
                       data-source-kind={sourceKind}
                     >
-                      <span className={`${styles.mono} ${styles.eventTimeCell}`} title={capturedAtFull}>
-                        {capturedAtCompact}
-                      </span>
-                      <span className={styles.eventChannelCell}>
-                        <span className="status-badge muted">{beacon.channel || 'unknown'}</span>
+                      <button
+                        type="button"
+                        className={`${styles.eventGrid} ${styles.eventRowButton}`}
+                        data-testid={`farm-telemetry-beacon-open-${index}`}
+                        onClick={() => setSelectedBeaconIndex(index)}
+                        aria-label={t('farm.telemetry.beaconOpenAria', {
+                          defaultValue: '查看 {{time}} 的信标详情',
+                          time: capturedAtFull,
+                        })}
+                      >
                         <span
-                          className={`${styles.eventSourceHint} ${
-                            isOnWire ? styles.eventSourceOnWire : styles.eventSourceDeclared
-                          }`}
-                          data-testid={`farm-telemetry-beacon-source-${index}`}
-                          data-source-kind={sourceKind}
-                          title={
-                            isOnWire
-                              ? t('farm.telemetry.rowSourceOnWireFull', {
-                                  defaultValue: 'on-wire：{{source}} 在容器出站链路真实抓取',
-                                  source: rawSource,
-                                })
-                              : t('farm.telemetry.rowSourceDeclaredFull', {
-                                  defaultValue: '自报：容器声明 / 自报（{{source}}），非出站抓取',
-                                  source: rawSource,
-                                })
-                          }
+                          className={`${styles.mono} ${styles.eventTimeCell}`}
+                          title={capturedAtFull}
                         >
-                          {isOnWire
-                            ? t('farm.telemetry.rowSourceOnWire', {
-                                defaultValue: 'on-wire · {{source}}',
-                                source: rawSource,
-                              })
-                            : t('farm.telemetry.rowSourceDeclared', {
-                                defaultValue: '自报 · {{source}}',
-                                source: rawSource,
-                              })}
+                          {capturedAtCompact}
                         </span>
-                      </span>
-                      <span className={`${styles.mono} ${styles.eventHostCell}`} title={hostPath}>
-                        {hostPath}
-                      </span>
-                      <span className={`${styles.hintText} ${styles.eventSizeCell}`}>
-                        {formatFileSize(beacon.body_bytes)}
-                      </span>
+                        <span className={styles.eventContentCell}>
+                          <span className={styles.eventContentTop}>
+                            <span className="status-badge muted">
+                              {beacon.channel || 'unknown'}
+                            </span>
+                            <span
+                              className={`${styles.eventSourceHint} ${
+                                isOnWire ? styles.eventSourceOnWire : styles.eventSourceDeclared
+                              }`}
+                              data-testid={`farm-telemetry-beacon-source-${index}`}
+                              data-source-kind={sourceKind}
+                              title={
+                                isOnWire
+                                  ? t('farm.telemetry.rowSourceOnWireFull', {
+                                      defaultValue: 'on-wire：{{source}} 在容器出站链路真实抓取',
+                                      source: rawSource,
+                                    })
+                                  : t('farm.telemetry.rowSourceDeclaredFull', {
+                                      defaultValue: '自报：容器声明 / 自报（{{source}}），非出站抓取',
+                                      source: rawSource,
+                                    })
+                              }
+                            >
+                              {isOnWire
+                                ? t('farm.telemetry.rowSourceOnWire', {
+                                    defaultValue: 'on-wire · {{source}}',
+                                    source: rawSource,
+                                  })
+                                : t('farm.telemetry.rowSourceDeclared', {
+                                    defaultValue: '自报 · {{source}}',
+                                    source: rawSource,
+                                  })}
+                            </span>
+                            {hasProcessSignal ? (
+                              <span
+                                className="status-badge warning"
+                                data-testid={`farm-telemetry-beacon-procsignal-${index}`}
+                                title={t('farm.telemetry.rowProcessSignalHint', {
+                                  defaultValue:
+                                    '该信标携带进程退出信号（点开看详情）；不代表进程当前状态。',
+                                })}
+                              >
+                                {t('farm.telemetry.rowProcessSignal', { defaultValue: '进程信号' })}
+                              </span>
+                            ) : null}
+                          </span>
+                          {eventNames.length > 0 ? (
+                            <span
+                              className={styles.eventContentMeta}
+                              title={eventNames.join('、')}
+                              data-testid={`farm-telemetry-beacon-events-${index}`}
+                            >
+                              {t('farm.telemetry.rowEventNames', {
+                                defaultValue: '事件：{{names}}',
+                                names: eventNames.join('、'),
+                              })}
+                            </span>
+                          ) : null}
+                          {keyReported ? (
+                            <span
+                              className={`${styles.mono} ${styles.eventContentMeta}`}
+                              title={keyReported}
+                            >
+                              {t('farm.telemetry.rowKeyField', {
+                                defaultValue: 'id：{{value}}',
+                                value: keyReported,
+                              })}
+                            </span>
+                          ) : null}
+                        </span>
+                        <span className={`${styles.mono} ${styles.eventHostCell}`} title={hostPath}>
+                          {hostPath}
+                        </span>
+                        <span className={`${styles.hintText} ${styles.eventSizeCell}`}>
+                          {formatFileSize(beacon.body_bytes)}
+                        </span>
+                      </button>
                     </li>
                   );
                 })}
@@ -698,6 +746,226 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
           })}
         </p>
       </AsyncPanel>
+
+      {/* 信标详情抽屉：时间线某条被点击时打开，展示该条完整上报内容（脱敏）。 */}
+      <Drawer
+        open={selectedBeacon != null}
+        onClose={() => setSelectedBeaconIndex(null)}
+        width={520}
+        title={t('farm.telemetry.beaconDrawerTitle', { defaultValue: '信标上报详情（脱敏）' })}
+      >
+        {selectedBeacon ? <BeaconDetailBody beacon={selectedBeacon} /> : null}
+      </Drawer>
     </section>
+  );
+}
+
+/**
+ * 信标详情抽屉正文：展示单条 beacon 的完整上报内容——概要 + reported_fields（脱敏）+
+ * 事件名 + body_preview（脱敏预览）+ process_signal（进程退出信号，null 时诚实标注
+ * 无信号且不代表进程还活着）。只展示脱敏值，不解析原始 body，不编造缺失字段。
+ */
+function BeaconDetailBody({ beacon }: { beacon: FarmContainerBeaconView }) {
+  const { t, i18n } = useTranslation();
+  useTimezone();
+
+  const sourceKind = resolveBeaconSourceKind(beacon);
+  const isOnWire = sourceKind === 'on_wire';
+  const rawSource = beacon.source || (isOnWire ? 'mitmproxy' : 'declared');
+  const rf = beacon.reported_fields;
+  const eventNames = beacon.event_names?.filter(Boolean) ?? [];
+  const ps = beacon.process_signal;
+  const bodyPreview = beacon.body_preview ?? '';
+
+  // reported_fields 逐字段渲染：缺失显 '—'（诚实，代表这条 beacon 没带该字段）。
+  const reportedRows: Array<{ key: string; label: string; value: string; masked?: boolean }> = [
+    { key: 'device_id', label: t('farm.telemetry.field_device_id', { defaultValue: 'device_id' }), value: rf?.device_id ?? '', masked: true },
+    { key: 'session_id', label: t('farm.telemetry.field_session_id', { defaultValue: 'session_id' }), value: rf?.session_id ?? '', masked: true },
+    { key: 'api_base_url_host', label: t('farm.telemetry.field_api_base_url_host', { defaultValue: 'api_base_url_host' }), value: rf?.api_base_url_host ?? '' },
+    { key: 'deployment_environment', label: t('farm.telemetry.spreadDeploymentEnv', { defaultValue: '部署环境' }), value: rf?.deployment_environment ?? '' },
+    { key: 'sdk_version', label: t('farm.telemetry.spreadSdkVersion', { defaultValue: 'SDK 版本' }), value: rf?.sdk_version ?? '' },
+    { key: 'hostname', label: t('farm.telemetry.spreadHostname', { defaultValue: 'hostname' }), value: rf?.hostname ?? '' },
+    { key: 'channel', label: t('farm.telemetry.spreadChannel', { defaultValue: '通道' }), value: rf?.channel ?? '' },
+  ];
+
+  return (
+    <div className={styles.drawerBody} data-testid="farm-telemetry-beacon-drawer">
+      {/* 概要 */}
+      <div className={styles.drawerSection}>
+        <div className={styles.fieldSpreadGrid}>
+          <span className={styles.fieldSpreadLabel}>
+            {t('farm.telemetry.spreadSource', { defaultValue: '来源' })}
+          </span>
+          <span
+            className={`status-badge ${isOnWire ? 'success' : 'muted'} ${styles.fieldSpreadBadge}`}
+            data-source-kind={sourceKind}
+          >
+            {isOnWire
+              ? t('farm.telemetry.rowSourceOnWire', { defaultValue: 'on-wire · {{source}}', source: rawSource })
+              : t('farm.telemetry.rowSourceDeclared', { defaultValue: '自报 · {{source}}', source: rawSource })}
+          </span>
+
+          <span className={styles.fieldSpreadLabel}>
+            {t('farm.telemetry.spreadCapturedAt', { defaultValue: '采集时间' })}
+          </span>
+          <span className={styles.fieldSpreadValue}>
+            {formatDateTimeUtc8(beacon.captured_at, i18n.language)}
+          </span>
+
+          <span className={styles.fieldSpreadLabel}>
+            {t('farm.telemetry.spreadHostPath', { defaultValue: 'host / 路径' })}
+          </span>
+          <span className={styles.fieldSpreadValue}>{`${beacon.host}${beacon.path}`}</span>
+
+          <span className={styles.fieldSpreadLabel}>
+            {t('farm.telemetry.spreadBodyBytes', { defaultValue: '请求体大小' })}
+          </span>
+          <span className={styles.fieldSpreadValue}>{formatFileSize(beacon.body_bytes)}</span>
+        </div>
+      </div>
+
+      {/* reported_fields（脱敏） */}
+      <div className={styles.drawerSection}>
+        <span className={styles.drawerSectionTitle}>
+          {t('farm.telemetry.drawerReportedFields', { defaultValue: '上报字段（reported_fields，脱敏）' })}
+        </span>
+        <div className={styles.fieldSpreadGrid} data-testid="farm-telemetry-drawer-reported">
+          {reportedRows.map((row) => (
+            <FragmentRow key={row.key} label={row.label} value={row.value} masked={row.masked} />
+          ))}
+        </div>
+      </div>
+
+      {/* 事件名 */}
+      <div className={styles.drawerSection}>
+        <span className={styles.drawerSectionTitle}>
+          {t('farm.telemetry.drawerEventNames', { defaultValue: '事件名（event_names）' })}
+        </span>
+        {eventNames.length > 0 ? (
+          <div className={styles.eventNameChips} data-testid="farm-telemetry-drawer-events">
+            {eventNames.map((name, i) => (
+              <span key={`${name}-${i}`} className="status-badge muted">
+                {name}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <span className={styles.hintText}>
+            {t('farm.telemetry.drawerNoEventNames', {
+              defaultValue: '该信标无事件名（仅 event_logging / datadog_logs 通道会带）。',
+            })}
+          </span>
+        )}
+      </div>
+
+      {/* body_preview（脱敏预览） */}
+      <div className={styles.drawerSection}>
+        <span className={styles.drawerSectionTitle}>
+          {t('farm.telemetry.drawerBodyPreview', { defaultValue: '请求体预览（脱敏，≤2048 字符）' })}
+        </span>
+        {bodyPreview ? (
+          <pre className={styles.bodyPreview} data-testid="farm-telemetry-drawer-body-preview">
+            {bodyPreview}
+          </pre>
+        ) : (
+          <span className={styles.hintText}>
+            {t('farm.telemetry.drawerNoBodyPreview', {
+              defaultValue: '无请求体预览（该信标未携带可展示的 body，或编排器未提供该字段）。',
+            })}
+          </span>
+        )}
+      </div>
+
+      {/* process_signal（进程退出信号） */}
+      <div className={styles.drawerSection}>
+        <span className={styles.drawerSectionTitle}>
+          {t('farm.telemetry.drawerProcessSignal', { defaultValue: '进程退出信号（process_signal）' })}
+        </span>
+        {ps ? (
+          <div className={styles.fieldSpreadGrid} data-testid="farm-telemetry-drawer-process-signal">
+            <span className={styles.fieldSpreadLabel}>
+              {t('farm.telemetry.psTerminated', { defaultValue: '已终止' })}
+            </span>
+            <span className={styles.fieldSpreadValue}>
+              {ps.terminated
+                ? t('common.yes', { defaultValue: '是' })
+                : t('common.no', { defaultValue: '否' })}
+            </span>
+
+            <span className={styles.fieldSpreadLabel}>
+              {t('farm.telemetry.psExitCode', { defaultValue: '退出码' })}
+            </span>
+            <span className={styles.fieldSpreadValue}>
+              {ps.last_exit_code != null
+                ? String(ps.last_exit_code)
+                : t('farm.telemetry.psExitCodeNone', { defaultValue: '无（信号未带退出码）' })}
+            </span>
+
+            {ps.run_phase ? (
+              <>
+                <span className={styles.fieldSpreadLabel}>
+                  {t('farm.telemetry.psRunPhase', { defaultValue: '运行阶段' })}
+                </span>
+                <span className={styles.fieldSpreadValue}>{ps.run_phase}</span>
+              </>
+            ) : null}
+
+            <span className={styles.fieldSpreadLabel}>
+              {t('farm.telemetry.psSignalSource', { defaultValue: '信号来源' })}
+            </span>
+            <span className={styles.fieldSpreadValue}>{ps.source || '—'}</span>
+
+            <span className={styles.fieldSpreadLabel}>
+              {t('farm.telemetry.psObservedAt', { defaultValue: '观测时间' })}
+            </span>
+            <span className={styles.fieldSpreadValue}>
+              {ps.observed_at ? formatDateTimeUtc8(ps.observed_at, i18n.language) : '—'}
+            </span>
+
+            <span className={styles.drawerCaveat} data-caveat="true">
+              {t('farm.telemetry.psCaveat', {
+                defaultValue:
+                  '这是遥测最后一次观测到的信号，不是编排器实时进程探测；不代表容器进程当前还活着或已退出。',
+              })}
+            </span>
+          </div>
+        ) : (
+          <div data-testid="farm-telemetry-drawer-process-signal-none">
+            <span className="status-badge muted">
+              {t('farm.telemetry.psNoSignal', { defaultValue: '无信号' })}
+            </span>
+            <p className={styles.drawerCaveat}>
+              {t('farm.telemetry.psNoSignalCaveat', {
+                defaultValue:
+                  '该信标未携带进程退出信号（当前仅 datadog_logs 的 terminated 事件会带）。无信号既不代表进程还活着、也不代表异常——只代表这条上报没有携带退出信号。',
+              })}
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// reported_fields 一行：label | value；空值显 '—'（诚实缺失）；masked=true 的字段
+// 由服务端已脱敏，仅加 tooltip 说明，不再前端二次处理。
+function FragmentRow({ label, value, masked }: { label: string; value: string; masked?: boolean }) {
+  const { t } = useTranslation();
+  return (
+    <>
+      <span className={styles.fieldSpreadLabel}>{label}</span>
+      <span
+        className={styles.fieldSpreadValue}
+        title={
+          masked && value
+            ? t('farm.telemetry.maskedHint', {
+                defaultValue: '展示脱敏（前 12 + 后 4），完整值仅服务端保留',
+              })
+            : undefined
+        }
+      >
+        {value || '—'}
+      </span>
+    </>
   );
 }

@@ -113,6 +113,24 @@ export interface FarmContainerView {
   // 当账号误认。当前有绑定（binding 非空）或从未绑过时缺失（omitempty）。前端用
   // resolveBindingIdentity / maskAccountEmail 走与全站一致的脱敏展示。
   last_bound_account?: string;
+  // TP「遥测静默」信号（dto.go containerView.TelemetrySilence / telemetrySilenceView）：
+  // 与 telemetry_alive 是两个独立维度——telemetry_alive 只认 on-wire 采集来源；
+  // telemetry_silence 不区分来源，任意一条 beacon（含自报）都刷新「最近活动时间」，
+  // 回答更基础的「这个容器最近有没有产生过任何上报」。后端对 containerView 恒返回，
+  // 这里仍声明可选是防御旧编排器/字段裁剪，缺失时前端按「未知」处理不臆造。
+  telemetry_silence?: FarmTelemetrySilenceView;
+}
+
+// telemetry_silence 对外形状（dto.go telemetrySilenceView，字段名严格对齐、不要改名）。
+export interface FarmTelemetrySilenceView {
+  // 最近一条 beacon 距今是否已超过 threshold_minutes。
+  is_stale: boolean;
+  // 距最近一条 beacon 的分钟数；**哨兵值 -1 表示从未观测到任何 beacon**（没有基线可
+  // 比），不是「刚好 0 分钟前」——消费方必须识别这个哨兵值，不能直接格式化成
+  // 「-1 分钟前」展示（见 FarmTelemetryPanel 新鲜度区）。
+  minutes_since_last: number;
+  // 判定 is_stale 的门槛（分钟）。
+  threshold_minutes: number;
 }
 
 // 容器状态取值（store.Status* 常量，供前端徽标着色用；未知值按 fallback 灰色处理）
@@ -743,28 +761,58 @@ export interface FarmContainerBeaconView {
   source_kind?: FarmTelemetrySourceKind;
 
   // ---------------------------------------------------------------------------
-  // TP-2「每容器遥测内容更丰富」前瞻声明（**当前恒缺失，诚实标注**）：
-  // services/farm-orchestrator/internal/telemetry.ParseBeacon 已经从
-  // statsig_eval/event_logging/datadog_logs 三条通道 best-effort 抽取出
-  // SessionID/AppVersion/UserType/EventNames，且 store.TelemetryBeacon 已经落库
-  // 了这四个字段（internal/store/models.go）——但对外只读端点 GET
-  // /api/farm/containers/{id}/beacons 的 beaconView/beaconViewFrom
-  // （internal/httpapi/telemetry_beacon.go）**尚未把它们序列化进响应体**，只暴露
-  // device_id/api_base_url_host/entrypoint 三个字段。这四个字段照抄既有
-  // TR7/TR8 过渡期约定（见 FarmAccountEntry.farm_enrolled/telemetry_alive 同名
-  // 注释）提前声明，供后端补齐后前端零改动自然点亮；在此之前，任何消费方都会
-  // 拿到 undefined，渲染层必须存在性门控（不渲染，不是显示占位符），绝不假造。
+  // TP「每条 beacon 到底上报了什么」（**后端已序列化**，见 telemetry_beacon.go
+  // beaconView / reportedFieldsView / processSignalView）。此前这里是「前瞻声明、
+  // 恒缺失」的占位注释——已失真并更正：GET /api/farm/containers/{id}/beacons 现在
+  // 会返回下面这批字段，前端据此渲染每条 beacon 的完整上报内容（脱敏）。为兼容旧
+  // 编排器仍声明可选，缺失时按存在性门控处理（不渲染、不臆造）。
+  //
+  // 已删除的 flat 前瞻字段 session_id?/app_version?/user_type?：后端从未把它们放在
+  // beacon 顶层，真正的位置是 reported_fields.session_id / reported_fields.sdk_version
+  // （user_type 后端无对应字段，一并去除，不再挂永不点亮的空声明）。
   // ---------------------------------------------------------------------------
-  /** 自报 session_id（ParseBeacon 抽取）。后端未暴露前恒 undefined，见上方说明。 */
-  session_id?: string;
-  /** 自报客户端/SDK 版本（statsig_eval 通道 attributes.appVersion，或 event_logging
-   * 通道 event_data.env.version）。后端未暴露前恒 undefined，见上方说明。 */
-  app_version?: string;
-  /** 自报用户类型（如 "external"）。后端未暴露前恒 undefined，见上方说明。 */
-  user_type?: string;
-  /** event_logging/datadog_logs 通道批内出现过的事件名列表（按出现顺序）。
-   * statsig_eval/control/other 通道恒为空。后端未暴露前恒 undefined，见上方说明。 */
+  /** 该 beacon 携带的事件名列表（telemetry_beacon.go beaconView.EventNames，仅
+   * event_logging/datadog_logs 通道非空）。后端恒返回数组（无则空数组）；旧编排器
+   * 缺该字段时为 undefined，渲染层 `?? []` 兜底。 */
   event_names?: string[];
+  /** 脱敏后的结构化上报字段（telemetry_beacon.go reportedFieldsView）。device_id/
+   * session_id 已由服务端脱敏（前 12 + 后 4），其余为低敏元数据原样透传；字段缺失
+   * 为空串。旧编排器缺该对象时为 undefined，访问前用 `?.` 兜底。 */
+  reported_fields?: FarmBeaconReportedFields;
+  /** 原始上报体的脱敏预览（≤2048 字符，密钥类模式已 ***REDACTED***，见后端
+   * beacon_redact.go）。旧编排器缺失时为 undefined。 */
+  body_preview?: string;
+  /** 从上报体解析到的进程退出信号（telemetry_beacon.go processSignalView）。
+   * **是遥测最后一次观测到的信号，不是实时进程探测**——不代表进程当前还活着/已
+   * 退出。当前唯一来源是 datadog_logs 的 terminated 事件，其余情况后端恒返回 null
+   * （诚实默认态，不是缺陷）。旧编排器缺该字段时为 undefined。 */
+  process_signal?: FarmBeaconProcessSignal | null;
+}
+
+// reported_fields 对外形状（telemetry_beacon.go reportedFieldsView，键名严格对齐、
+// 不要改名）。device_id/session_id 已由服务端脱敏（前 12 + 后 4）；其余为低敏元数据
+// （部署环境 / SDK 版本 / 写死常量 hostname / 通道分类），原样透传。字段缺失为空串。
+export interface FarmBeaconReportedFields {
+  device_id: string;
+  session_id: string;
+  api_base_url_host: string;
+  deployment_environment: string;
+  sdk_version: string;
+  hostname: string;
+  channel: string;
+}
+
+// process_signal 对外形状（telemetry_beacon.go processSignalView，键名严格对齐）。
+export interface FarmBeaconProcessSignal {
+  // 可空整数（后端 *int）：null 表示这条终止信号没带退出码。
+  last_exit_code: number | null;
+  terminated: boolean;
+  // 进程终止时的运行阶段（真实样本恒为 "draining_commands"，omitempty）；缺失留空。
+  run_phase?: string;
+  // 该信号从哪个通道抽取（排障用）。
+  source: string;
+  // 观测到该信号的时间（RFC3339 字符串）。
+  observed_at: string;
 }
 
 // GET /api/farm/containers/{id}/beacons 响应体：裸数组（captured_at 降序）。
@@ -793,17 +841,43 @@ export function resolveBeaconSourceKind(
   return FARM_ON_WIRE_BEACON_SOURCES.has(beacon.source) ? 'on_wire' : 'declared';
 }
 
-// beacon 指纹自洽卡的三个比对字段：declared 列取「最近一条 declared beacon」，
-// on-wire 列取「最近一条 source_kind=on_wire 的 beacon」（TP-1 已接入，见
-// FarmTelemetryPanel.tsx declaredFieldValue/onWireFieldValue）——两列都是「该
-// 来源最近一次自报/实测到的值」，不是同一条 beacon 的两个视角，declared 与
-// on-wire 天然可能来自不同请求。
+// beacon 指纹自洽卡的三个比对字段：declared 列与 on-wire 列各自在自己来源分区内，
+// 逐字段取「最近一条真正带该字段值」的 beacon（见下方 pickLatestBeaconFieldValue 与
+// FarmTelemetryPanel.tsx）。指纹字段分通道上报、最近一条 beacon 常不带某字段，所以不能
+// 整列只读「最近一条 beacon」，必须逐字段回退到最近带值那条；两列都是「该来源最近一次
+// 自报/实测到的值」，不是同一条 beacon 的两个视角，declared 与 on-wire 天然可能来自不同请求。
 export const FARM_TELEMETRY_FINGERPRINT_FIELDS = [
   'device_id',
   'entrypoint',
   'api_base_url_host',
 ] as const;
 export type FarmTelemetryFingerprintField = (typeof FARM_TELEMETRY_FINGERPRINT_FIELDS)[number];
+
+/**
+ * 指纹自洽卡逐字段选值（纯函数，被单测锁定）：从**已按 captured_at 降序**的 beacon
+ * 列表里，为某个指纹字段挑「最近一条真正带值」的值。
+ *
+ * 为什么不能只读最近一条（本次修复的横线根因）：指纹字段分通道上报，最近那条 beacon
+ * 常常不带某个字段（如 datadog_logs 通道天然没有 device_id），只读最近一条会让该字段
+ * 误显横线「—」、看起来像「没采到」；实际上更早一条 beacon 已带过该值。这里逐字段回退
+ * 到「最近一条带该值」的 beacon，只有窗口内**所有** beacon 都不带该字段时才返回空串
+ * （调用方据此回退占位）。
+ *
+ * 入参 beacons 应已是同一来源（declared 或 on_wire）过滤 + captured_at 降序的子列表；
+ * 过滤与排序在调用方完成，本函数只做「按顺序找第一条非空」，保持单一职责、易测。
+ */
+export function pickLatestBeaconFieldValue(
+  beacons: readonly FarmContainerBeaconView[],
+  field: FarmTelemetryFingerprintField
+): string {
+  for (const beacon of beacons) {
+    const value = beacon[field];
+    if (typeof value === 'string' && value !== '') {
+      return value;
+    }
+  }
+  return '';
+}
 
 // beacon 遥测自洽评估器产出、经既有 GET /api/farm/alerts 点亮的新 reason 码
 // （services/farm-orchestrator/internal/farmrunner/beaconanomaly.go）。severity
