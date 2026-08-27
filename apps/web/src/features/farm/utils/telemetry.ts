@@ -95,16 +95,33 @@ export function pinFieldRawValue(
 }
 
 /**
+ * 掩码省略号分隔符归一：同一 raw device_id 经两端脱敏后只差中段的省略号字符——
+ * 后端 maskIdentifierMiddle 产出三个 ASCII 点「...」（pin.device_id_masked /
+ * reported_fields.device_id 走的都是它），前端 maskTelemetryFingerprint
+ * （displayFingerprintValue 对高熵字段调用）产出 U+2026 单字符「…」。判等前必须把
+ * 两种分隔符折成同一种，否则会把底层完全相同的 device_id 误判成撞红=泄露
+ * （§5 指纹卡假撞红根因：pin 侧「...」vs on-wire 侧「…」精确比对恒不等）。
+ * 只影响比对表示，不改展示串；低熵字段（host/entrypoint）不含这两种序列，归一为
+ * 无操作（`api.anthropic.com` 是单点，`\.{3}` 不命中），故三字段可安全共用。
+ */
+const MASK_ELLIPSIS_SEPARATOR_RE = /…|\.{3}/g;
+export function normalizeMaskSeparator(value: string): string {
+  return value.replace(MASK_ELLIPSIS_SEPARATOR_RE, '…');
+}
+
+/**
  * 「预期(pin)」与 on-wire 实测同一字段是否撞红（=泄露）。复用
  * fingerprintFieldsClash 的三态判等语义（never observed / 该来源本次未带值 / 真
- * 撞红），只是比较前先把 on-wire 原始值按 displayFingerprintValue 同款规则处理
- * 一遍，落到与 pinRaw 相同的表示层级再比。
+ * 撞红），比较前先把 on-wire 原始值按 displayFingerprintValue 同款规则处理一遍，
+ * 落到与 pinRaw 相同的表示层级，再对两侧做 normalizeMaskSeparator 掩码分隔符归一。
  *
  * 这不是绕开「必须用原始值判等」的硬约束：pin.device_id_masked 从后端起就只有
  * 脱敏值（绝不下发明文 device_id，见 types/farm.ts fingerprint_pin 注释），前端
- * 压根拿不到可比的原始 pin 值，「两侧都按同款规则脱敏后比对」已经是这个场景下能
- * 做到的最强判据；entrypoint / api_base_url_host 是低熵字段，displayFingerprintValue
- * 对它们原样返回，等价仍是原始值比较，不受影响。
+ * 压根拿不到可比的原始 pin 值，「两侧都按同款规则脱敏 + 分隔符归一后比对」已经是
+ * 这个场景下能做到的最强判据；分隔符归一是必需项——后端 pin 用「...」、前端 on-wire
+ * 脱敏用「…」，不归一就会让底层同一 device_id 恒撞红（§5 假撞红）。
+ * entrypoint / api_base_url_host 是低熵字段，displayFingerprintValue 对它们原样返回、
+ * 归一亦为无操作，等价仍是原始值比较，不受影响。
  */
 export function pinFieldClash(
   field: FarmFingerprintPinField,
@@ -112,5 +129,8 @@ export function pinFieldClash(
   onWireRaw: string | null
 ): boolean {
   const onWireComparable = onWireRaw === null ? null : displayFingerprintValue(field, onWireRaw);
-  return fingerprintFieldsClash(pinRaw, onWireComparable);
+  return fingerprintFieldsClash(
+    normalizeMaskSeparator(pinRaw),
+    onWireComparable === null ? null : normalizeMaskSeparator(onWireComparable)
+  );
 }

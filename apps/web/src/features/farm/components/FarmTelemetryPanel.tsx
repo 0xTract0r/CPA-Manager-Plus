@@ -18,7 +18,7 @@ import {
   telemetrySilenceStateToBadgeVariant,
 } from '../utils/health';
 import { maskTelemetryFingerprint } from '../utils/identity';
-import { displayFingerprintValue, fingerprintFieldsClash } from '../utils/telemetry';
+import { displayFingerprintValue, pinFieldClash } from '../utils/telemetry';
 import { BeaconDetailBody } from './FarmBeaconDetailBody';
 import styles from './FarmTelemetryPanel.module.scss';
 
@@ -186,10 +186,9 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
       >
         {/* 指纹自洽卡（farm-proxy-rotation §5「指纹卡 pin」）：预期 (pin，编排器钉给该
             容器的意图身份，container.fingerprint_pin) vs on-wire（出站实测），逐字段
-            对照；不一致即撞红=泄露。判等逻辑等价于 utils/telemetry.ts 新增的
-            pinFieldClash（该文件是这段逻辑的规范实现 + 单测锁定），本文件因 NOCLASH
-            冻结 import 行未直接 import，下方内联复刻同款判等，只复用本文件已导入的
-            fingerprintFieldsClash / displayFingerprintValue，留给集成阶段收敛成同一份。 */}
+            对照；不一致即撞红=泄露。判等已收敛为直接调用 utils/telemetry.ts 的 canonical
+            pinFieldClash（脱敏 + 掩码分隔符归一 + 三态判等，单测锁定），不再内联复刻——
+            集成阶段消除了原先「后端 pin『...』vs 前端 on-wire『…』精确比对恒撞红」的 §5 假撞红。 */}
         <div className={styles.estimateBox} data-testid="farm-telemetry-consistency">
           <div className={`${styles.consistencyGrid} ${styles.consistencyHeaderRow}`}>
             <span className={styles.chartLabel}>
@@ -253,10 +252,13 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
               const onWireDisplay = onWirePending
                 ? ''
                 : displayFingerprintValue(field, onWireRaw ?? '');
-              // 撞红=泄露：on-wire 原始值先按 displayFingerprintValue 同款规则处理，
-              // 与 pinRaw 落到同一表示层级（device_id 两侧都是脱敏串，其余两个低熵
-              // 字段两侧都是原始值）后再复用 fingerprintFieldsClash 的三态判等语义。
-              const clash = fingerprintFieldsClash(pinRaw, onWireDisplay);
+              // 撞红=泄露：判定改走 utils/telemetry.ts 的 canonical pinFieldClash——它内部
+              // 先把 on-wire 原始值按 displayFingerprintValue 同款规则脱敏、再对两侧做掩码
+              // 分隔符归一（后端 pin 的「...」↔ 前端脱敏的「…」），落到同一表示层级后判等，
+              // 避免底层同一 device_id 因两端省略号字符不同被误判成撞红=泄露（§5 假撞红根因）。
+              // 注意：这里传 onWireRaw（未脱敏原始值），脱敏与归一都在 pinFieldClash 内完成；
+              // onWireDisplay 仅用于展示，不参与比对。
+              const clash = pinFieldClash(field, pinRaw, onWireRaw);
               const pinHasValue = pinRaw !== '';
               const clashClassName = clash ? ` ${styles.consistencyValueClash}` : '';
               const onWireClassName = onWirePending
