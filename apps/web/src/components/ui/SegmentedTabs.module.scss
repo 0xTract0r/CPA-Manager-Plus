@@ -6,6 +6,13 @@
   gap: 4px;
   width: fit-content;
   max-width: 100%;
+  // 窄视口关键项：作为 flex 父容器（如 farm 详情 .tabsRow）的 flex item 时，
+  // 默认 min-width:auto 等于 nowrap 标签的 min-content 之和（6 个 tab ≈ 700px），
+  // 会压过 max-width:100% 把 root 撑到超出视口、令自身 overflow-x:auto 失效、
+  // 标签溢出到屏外且无法滚动/点击。min-width:0 允许 root 收缩回容器宽度，
+  // 由下面的 overflow-x:auto 接管横向滚动。非 flex 父容器下 fit-content 已自适应，
+  // 此项无副作用（375 可滚，768/1440 内容本就放得下，视觉不变）。
+  min-width: 0;
   padding: 4px;
   border: 1px solid color-mix(in srgb, var(--border-color) 82%, transparent);
   border-radius: 14px;
