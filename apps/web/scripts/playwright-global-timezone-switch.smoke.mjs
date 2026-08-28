@@ -17,7 +17,7 @@
  *
  * 文件命名：刻意用 `*.smoke.mjs` 而非 `*.smoke.spec.mjs`。cpamp 的 apps/web 直接跑裸
  * `vitest run`（无独立 vitest/playwright 配置、无 include/exclude 分流），vitest 默认会把
- * `**/*.spec.*` 收进单测集；本 Playwright 用例 import 了 @playwright/test（vitest 环境未装），
+ * 文件名匹配 .spec.* 的用例收进单测集；本 Playwright 用例 import 了 @playwright/test（vitest 环境未装），
  * 若带 `.spec` 会被 `npx vitest run` 误收并报「Cannot find package '@playwright/test'」。本仓库
  * 的 Playwright smoke 一律由显式路径运行（见下方命令），文件名不需要 `.spec` 也能被 Playwright
  * 直接执行，故去掉 `.spec` 以避开 vitest 默认收集。
