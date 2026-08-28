@@ -1,4 +1,11 @@
-import { useCallback, useMemo, useRef, type ComponentType, type KeyboardEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  type ComponentType,
+  type KeyboardEvent,
+} from 'react';
 import {
   IconKey,
   IconSidebarMonitor,
@@ -54,6 +61,18 @@ export function MonitoringTabsBar<Id extends string>({
     const node = buttonRefs.current.get(tabId);
     node?.focus();
   }, []);
+
+  // 走查修复：`variant="cards"` 的胶囊标签组窄容器下退化为横向滚动（见 .tabsBarCards
+  // 的 overflow-x:auto），单靠滚动条本身不保证用户能看到当前激活的标签（如"实时"）。
+  // 挂载/切换时把激活按钮滚入可视区（inline:'nearest' 只在真正超出视口时才滚动，
+  // 不会在已可见时产生多余跳动）。react-test-renderer 的宿主 ref 默认是 null、
+  // jsdom 部分环境也可能不实现 scrollIntoView，因此做双重防御性判空。
+  useEffect(() => {
+    const node = buttonRefs.current.get(activeTab);
+    if (node && typeof node.scrollIntoView === 'function') {
+      node.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+    }
+  }, [activeTab]);
 
   const handleKeyDown = useCallback(
     (event: KeyboardEvent<HTMLButtonElement>, currentId: Id) => {
