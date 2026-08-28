@@ -120,7 +120,8 @@ const FAILURE_TOOLTIP_MAX_WIDTH = 420;
 const FAILURE_TOOLTIP_MAX_HEIGHT = 240;
 const FAILURE_TOOLTIP_CLOSE_DELAY_MS = 120;
 // "强度/等级"列缺值时的中性占位：只用一个 em dash 字符，不落成裸的 "-"（在等宽字体/
-// 部分渲染环境下容易被读成叉号），也不是任何需要按语言翻译的文案。
+// 部分渲染环境下容易被读成叉号），也不是任何需要按语言翻译的文案。effort 与 tier
+// 皆缺失时，整格只显这一个占位（第 2 行不渲染）。
 const REASONING_TIER_PLACEHOLDER = '—';
 
 type FailureTooltipPlacement = 'above' | 'below';
@@ -138,6 +139,15 @@ const formatOptionalText = (value: string | null | undefined) => {
 const formatReadableText = (value: string | null | undefined) => {
   const trimmed = String(value || '').trim();
   return trimmed && trimmed !== '-' ? trimmed : '';
+};
+
+// 强度/等级单元格的原生 title 兜底：不管 effort/tier 是否被抑制展示，hover 都能看到
+// 完整的两个值（含被隐藏的 auto/default）。故意用固定英文标签而非 i18n 文案——这是
+// 面向排障的原始字段名提示，不是面向最终用户的翻译文案。
+const buildReasoningTierNativeTitle = (row: MonitoringEventRow) => {
+  const effort = formatReadableText(row.reasoningEffort) || REASONING_TIER_PLACEHOLDER;
+  const tier = formatReadableText(row.serviceTier) || REASONING_TIER_PLACEHOLDER;
+  return `Effort: ${effort} · Tier: ${tier}`;
 };
 
 const shortLabel = (
@@ -233,6 +243,7 @@ const buildRealtimeApiKeyDisplay = (row: MonitoringEventRow, t: TFunction) => {
   return {
     display,
     title: titleParts.join('\n'),
+    titleParts,
   };
 };
 
@@ -441,6 +452,50 @@ const isNodeInside = (element: HTMLElement | null, target: EventTarget | null) =
   if (!element || typeof Node === 'undefined' || !(target instanceof Node)) return false;
   return element.contains(target);
 };
+
+// 即时浮层共享状态机：与 RealtimeModelCell / RealtimeTimeCell 内联实现的
+// open/position/show/hide/resize-scroll 重定位逻辑完全一致，抽成 hook 供来源主名和
+// API Key 值两处新增单元格复用，避免第三、四次照抄整段状态机。RealtimeModelCell /
+// RealtimeTimeCell 本身保持原样不改动，缩小本次改动影响面。
+function useInstantTooltip<T extends HTMLElement>() {
+  const triggerRef = useRef<T | null>(null);
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<FailureTooltipPosition | null>(null);
+
+  const updatePosition = useCallback(() => {
+    if (!triggerRef.current) return;
+    const nextPosition = resolveFailureTooltipPosition(triggerRef.current);
+    if (nextPosition) setPosition(nextPosition);
+  }, []);
+
+  const show = useCallback(() => {
+    updatePosition();
+    setOpen(true);
+  }, [updatePosition]);
+
+  const hide = useCallback(() => setOpen(false), []);
+
+  const handleBlur = useCallback(
+    (event: FocusEvent<HTMLElement>) => {
+      if (isNodeInside(triggerRef.current, event.relatedTarget)) return;
+      hide();
+    },
+    [hide]
+  );
+
+  useEffect(() => {
+    if (!open || typeof window === 'undefined') return undefined;
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+    return () => {
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
+    };
+  }, [open, updatePosition]);
+
+  return { triggerRef, open, position, show, hide, handleBlur };
+}
 
 // 表头悬浮说明：与 RealtimeModelCell 同一套 portal + fixed 定位即时浮层手法，取代原生
 // title=（浏览器原生 tooltip 延迟约 0.5-1s 且不可控，触屏点击也不触发）。浮层视觉复用
@@ -775,7 +830,13 @@ function RealtimeModelCell({ model, resolvedModel, tooltipId }: RealtimeModelCel
       onFocus={showTooltip}
       onBlur={handleBlur}
     >
-      <span className={`${styles.monoCell} ${styles.realtimeModelText}`}>{model}</span>
+      {/* 主行 2 行限行换行(line-clamp)，取代旧的单行硬省略；副行(resolved model)继续沿用
+          单行 nowrap 省略号，不受影响。超过 2 行/仍截断时仍由下方即时浮层兜底看全名。 */}
+      <span
+        className={`${styles.monoCell} ${styles.realtimeModelText} ${styles.realtimeModelTextClamp}`}
+      >
+        {model}
+      </span>
       {resolvedModel ? (
         <small className={`${styles.monoCell} ${styles.realtimeModelText}`}>{resolvedModel}</small>
       ) : null}
@@ -785,41 +846,286 @@ function RealtimeModelCell({ model, resolvedModel, tooltipId }: RealtimeModelCel
   );
 }
 
+type RealtimeTimeCellProps = {
+  dateText: string;
+  timeText: string;
+  tooltipId: string;
+};
+
+// 时间列即时浮层：与 RealtimeModelCell 同一套 portal + fixed 定位 tooltip 手法。日期/时间
+// 两行各自用 .realtimeTimeLine 的单行省略号收窄到列宽内，缩略后不再有办法看到完整时间戳；
+// 这里 hover/focus 用浮层展示同一份未截断的 date/time 文本（拼接展示，不需要额外取数据——
+// CSS 省略号只是视觉裁切，DOM 里的文本本来就是完整的），不依赖浏览器原生 title=
+// （~0.5-1s 不可控延迟、触屏点击不触发）。
+function RealtimeTimeCell({ dateText, timeText, tooltipId }: RealtimeTimeCellProps) {
+  const triggerRef = useRef<HTMLDivElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [tooltipPosition, setTooltipPosition] = useState<FailureTooltipPosition | null>(null);
+  const isBrowser = typeof document !== 'undefined';
+
+  const updateTooltipPosition = useCallback(() => {
+    if (!triggerRef.current) return;
+    const nextPosition = resolveFailureTooltipPosition(triggerRef.current);
+    if (nextPosition) setTooltipPosition(nextPosition);
+  }, []);
+
+  const showTooltip = useCallback(() => {
+    updateTooltipPosition();
+    setOpen(true);
+  }, [updateTooltipPosition]);
+
+  const hideTooltip = useCallback(() => setOpen(false), []);
+
+  const handleBlur = useCallback(
+    (event: FocusEvent<HTMLElement>) => {
+      if (isNodeInside(triggerRef.current, event.relatedTarget)) return;
+      hideTooltip();
+    },
+    [hideTooltip]
+  );
+
+  useEffect(() => {
+    if (!open || typeof window === 'undefined') return undefined;
+    updateTooltipPosition();
+    window.addEventListener('resize', updateTooltipPosition);
+    window.addEventListener('scroll', updateTooltipPosition, true);
+    return () => {
+      window.removeEventListener('resize', updateTooltipPosition);
+      window.removeEventListener('scroll', updateTooltipPosition, true);
+    };
+  }, [open, updateTooltipPosition]);
+
+  const placement = tooltipPosition?.placement ?? 'below';
+  const tooltipClassName = [
+    styles.realtimeModelTooltip,
+    placement === 'above' ? styles.realtimeModelTooltipAbove : styles.realtimeModelTooltipBelow,
+    open ? styles.realtimeModelTooltipOpen : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  const tooltip = (
+    <span
+      id={tooltipId}
+      role="tooltip"
+      className={tooltipClassName}
+      style={isBrowser ? tooltipPosition?.style : undefined}
+    >
+      <span className={`${styles.realtimeModelTooltipPrimary} ${styles.monoCell}`}>
+        {`${dateText} ${timeText}`}
+      </span>
+    </span>
+  );
+
+  return (
+    <div
+      ref={triggerRef}
+      className={styles.realtimeTimeCell}
+      tabIndex={0}
+      aria-describedby={tooltipId}
+      onMouseEnter={showTooltip}
+      onMouseLeave={hideTooltip}
+      onFocus={showTooltip}
+      onBlur={handleBlur}
+    >
+      <span className={styles.realtimeTimeLine}>{dateText}</span>
+      <span className={styles.realtimeTimeLine}>{timeText}</span>
+      {!isBrowser ? tooltip : null}
+      {isBrowser && open ? createPortal(tooltip, document.body) : null}
+    </div>
+  );
+}
+
+type RealtimeTooltipBubbleProps = {
+  tooltipId: string;
+  placement: FailureTooltipPlacement;
+  open: boolean;
+  style?: CSSProperties;
+  lines: string[];
+};
+
+// 浮层气泡本体：来源主名 / API Key 值两处新增单元格共用，样式沿用 RealtimeModelCell 的
+// .realtimeModelTooltip 系列 class（信息类提示，非失败态红色描边），不新增一套孤立样式。
+// 首行走加粗主色（对应可见但被裁切的文案本身，未截断版本），其余行走弱化灰色（对应原先
+// 塞进原生 title= 的补充信息，如掩码值/哈希/执行器类型），呈现方式与 RealtimeModelCell 的
+// primary/secondary 两行一致。
+function RealtimeTooltipBubble({
+  tooltipId,
+  placement,
+  open,
+  style,
+  lines,
+}: RealtimeTooltipBubbleProps) {
+  const tooltipClassName = [
+    styles.realtimeModelTooltip,
+    placement === 'above' ? styles.realtimeModelTooltipAbove : styles.realtimeModelTooltipBelow,
+    open ? styles.realtimeModelTooltipOpen : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  return (
+    <span id={tooltipId} role="tooltip" className={tooltipClassName} style={style}>
+      {lines.map((line, index) => (
+        <span
+          key={`${tooltipId}-line-${index}`}
+          className={
+            index === 0 ? styles.realtimeModelTooltipPrimary : styles.realtimeModelTooltipSecondary
+          }
+        >
+          {line}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+type RealtimeSourceNameCellProps = {
+  text: string;
+  tooltipId: string;
+};
+
+// 来源第 1 行主名即时浮层：与 RealtimeModelCell/RealtimeTimeCell 同一套 portal + fixed
+// 定位手法（见 useInstantTooltip）。可见文案仍由 `.realtimeTable .logTypeCell
+// .primaryCell > span` 的省略号裁切（未改动该 CSS），这里 hover/focus 用未裁切的完整
+// 来源名即时展开；显式 title="" 覆盖祖先 .primaryCell 上的原生 title=(该 title 承载来源
+// 单元格整体的补充信息，用于兜底 hover 到本组件未覆盖的空白/元数据区域)，避免 hover 到
+// 本触发元素时浏览器原生 tooltip 与本组件的 portal tooltip 同时出现。
+function RealtimeSourceNameCell({ text, tooltipId }: RealtimeSourceNameCellProps) {
+  const { triggerRef, open, position, show, hide, handleBlur } =
+    useInstantTooltip<HTMLSpanElement>();
+  const isBrowser = typeof document !== 'undefined';
+
+  const bubble = (
+    <RealtimeTooltipBubble
+      tooltipId={tooltipId}
+      placement={position?.placement ?? 'below'}
+      open={open}
+      style={isBrowser ? position?.style : undefined}
+      lines={[text]}
+    />
+  );
+
+  return (
+    <span
+      ref={triggerRef}
+      title=""
+      tabIndex={0}
+      aria-describedby={tooltipId}
+      onMouseEnter={show}
+      onMouseLeave={hide}
+      onFocus={show}
+      onBlur={handleBlur}
+    >
+      <span>{text}</span>
+      {!isBrowser ? bubble : null}
+      {isBrowser && open ? createPortal(bubble, document.body) : null}
+    </span>
+  );
+}
+
+type RealtimeApiKeyValueCellProps = {
+  text: string;
+  tooltipLines: string[];
+  tooltipId: string;
+};
+
+// API Key 值即时浮层：原先把掩码值/哈希/执行器类型塞进这一行自带的原生 title=，这里改用
+// 同款 portal 浮层展示同等信息，不再依赖浏览器原生 tooltip 的 ~0.5-1s 不可控延迟；首行是
+// 可见文案本身（未截断），其余行是原来 title= 里的补充信息。显式 title="" 覆盖祖先
+// .primaryCell 上的原生 title，理由同 RealtimeSourceNameCell。
+function RealtimeApiKeyValueCell({ text, tooltipLines, tooltipId }: RealtimeApiKeyValueCellProps) {
+  const { triggerRef, open, position, show, hide, handleBlur } = useInstantTooltip<HTMLElement>();
+  const isBrowser = typeof document !== 'undefined';
+
+  const bubble = (
+    <RealtimeTooltipBubble
+      tooltipId={tooltipId}
+      placement={position?.placement ?? 'below'}
+      open={open}
+      style={isBrowser ? position?.style : undefined}
+      lines={tooltipLines}
+    />
+  );
+
+  return (
+    <small
+      ref={triggerRef}
+      className={styles.realtimeApiKeyLine}
+      title=""
+      tabIndex={0}
+      aria-describedby={tooltipId}
+      onMouseEnter={show}
+      onMouseLeave={hide}
+      onFocus={show}
+      onBlur={handleBlur}
+    >
+      {text}
+      {!isBrowser ? bubble : null}
+      {isBrowser && open ? createPortal(bubble, document.body) : null}
+    </small>
+  );
+}
+
 // 每个 "标签 数值" 段必须作为不可断整体渲染（见下方 realtimeUsageSegment 样式），
 // 否则窄列 + word-break:break-word 会把紧凑数字（如 "200.0K"）从中间断行。
-// 段落之间允许在 " · " 分隔符处换行，因此分隔符本身不进入 nowrap span。
+// 段落之间允许换行，换行点落在相邻两个 .realtimeUsageSegment（inline-block）之间。
+//
+// 走查迭代：段间分隔点曾在"后缀"（行尾悬挂 "·"）与"前缀"（换行时点落到下一行段首，
+// 如缓存明细行首 "· 缓存读取 140"）之间反复——二者都是"一行点串 + 换行"的固有毛病。
+// 定稿：核心 token（I/O）保持 inline-block + 前缀点分隔、同排一行；明细段（推理 R /
+// 缓存创建 / 缓存读取）改为各自独立成行、行首不带点（见 realtimeUsageDetailLine），
+// 从根上避免换行处露出前导/悬挂点。
 const buildRealtimeTokenSummary = (row: MonitoringEventRow, t: TFunction): ReactNode => {
-  const parts = [
+  // 核心 token：输入/输出，inline-block、段间用前缀点连一行（窄用量列也放得下这两段）。
+  const inlineParts = [
     `I ${formatCompactNumber(row.inputTokens)}`,
     `O ${formatCompactNumber(row.outputTokens)}`,
   ];
+  // 明细段（推理/缓存）：各自独立成行、行首不带分隔点。走查确认核心诉求是"换行处不露点"——
+  // 一行点串在窄用量列必然换行、把前缀点甩到行首（推理 R、缓存明细都会），故次要明细一律逐行、无点。
+  const detailLines: string[] = [];
   if (row.reasoningTokens > 0) {
-    parts.push(`R ${formatCompactNumber(row.reasoningTokens)}`);
+    detailLines.push(`R ${formatCompactNumber(row.reasoningTokens)}`);
   }
   // 细分缓存字段（读/写）齐全时，裸 "C"（legacy CompatibleCachedTokens）语义空洞且常为 0，不再展示；
   // 只有细分字段全为 0 而 legacy cachedTokens > 0（旧数据未拆分）时才用 "缓存 X" 兜底，避免信息丢失。
   const hasCacheBreakdown = row.cacheCreationTokens > 0 || row.cacheReadTokens > 0;
   if (!hasCacheBreakdown && row.cachedTokens > 0) {
-    parts.push(
+    detailLines.push(
       `${shortLabel(t, 'monitoring.cached_tokens_short', 'monitoring.cached_tokens', 'Cached')} ${formatCompactNumber(row.cachedTokens)}`
     );
   }
   if (row.cacheCreationTokens > 0) {
-    parts.push(
+    detailLines.push(
       `${shortLabel(t, 'monitoring.cache_creation_tokens_short', 'monitoring.cache_creation_tokens', 'Cache create')} ${formatCompactNumber(row.cacheCreationTokens)}`
     );
   }
   if (row.cacheReadTokens > 0) {
-    parts.push(
+    detailLines.push(
       `${shortLabel(t, 'monitoring.cache_read_tokens_short', 'monitoring.cache_read_tokens', 'Cache read')} ${formatCompactNumber(row.cacheReadTokens)}`
     );
   }
-  return parts.map((part, index) => (
-    <span key={`${index}-${part}`} className={styles.realtimeUsageSegment}>
-      {part}
-      {index < parts.length - 1 ? ' · ' : ''}
-    </span>
-  ));
+  // 分隔符前导字符用不换行空格（U+00A0），而非普通空格：普通空格恰好落在
+  // 本段（.realtimeUsageSegment，inline-block）自身内容的最前面，会被当成该
+  // inline-block 自身内部的行首空白，被 CSS 空白折叠规则裁掉（真机走查坐实会
+  // 渲染成无间距的 "620\u00b7 O 210"）；U+00A0 不参与折叠，原样保留可见间距。
+  const usageSegmentSeparator = '\u00A0\u00B7 ';
+
+  return (
+    <>
+      {inlineParts.map((part, index) => (
+        <span key={`inline-${index}-${part}`} className={styles.realtimeUsageSegment}>
+          {`${index > 0 ? usageSegmentSeparator : ''}${part}`}
+        </span>
+      ))}
+      {detailLines.map((line, index) => (
+        <span key={`detail-${index}-${line}`} className={styles.realtimeUsageDetailLine}>
+          {line}
+        </span>
+      ))}
+    </>
+  );
 };
 
 // 单请求缓存命中率染色阈值：与成功率三档样式复用同一套 goodText/warnText/badText，
@@ -1193,16 +1499,17 @@ export function RealtimeEventsPanel({
   const closeRequestLogViewer = useCallback(() => {
     setRequestLogId(null);
   }, []);
-  const sourceApiKeyLabel = shortLabel(
-    t,
-    'monitoring.column_source_api_key_short',
-    'monitoring.column_source_api_key'
-  );
-  const reasoningEffortLabel = shortLabel(
-    t,
-    'monitoring.reasoning_effort_short',
-    'monitoring.reasoning_effort'
-  );
+  // 精确复刻上游默认列头文案「来源 / API Key」：不再走 shortLabel 缩短成「来源」
+  // （缩短是本 fork 之前为窄列让宽做的改动，现来源列宽度已还回，改回上游默认全称）。
+  const sourceApiKeyLabel = t('monitoring.column_source_api_key');
+  // 精确复刻上游 seakee 默认：列头文案从"强度"改为"推理/服务"（i18n key 与上游一致，
+  // 不走 shortLabel 兜底——上游同样直接 t()，因为这个 key 我们已在 4 个 locale 全部补齐）；
+  // 但保留 fork 特有的 TableHeaderInfo 即时浮层（上游没有，用户要求保留）。
+  const reasoningServiceLabel = t('monitoring.reasoning_service_short');
+  // 单元格两行各自的标签（"思考" / "服务"），同样照抄上游 key 名与文案，用于拼出
+  // "{标签}: {值}" 格式的恒显文本（见下方 tbody 渲染）。
+  const realtimeReasoningLabel = t('monitoring.realtime_reasoning_label');
+  const realtimeServiceLabel = t('monitoring.realtime_service_label');
   const recentStatusLabel = shortLabel(
     t,
     'monitoring.recent_status_short',
@@ -1293,24 +1600,29 @@ export function RealtimeEventsPanel({
           </colgroup>
           <thead>
             <tr>
+              {/* 时间列前移到最左第 1 位（原第 10 位），列宽映射见
+                  MonitoringCenterPage.module.scss 的 .realtimeTable col:nth-child(n)。 */}
+              <th>{t('monitoring.column_time')}</th>
               <th>{sourceApiKeyLabel}</th>
               <th>{t('monitoring.column_model')}</th>
               <th>
                 <TableHeaderInfo
-                  label={reasoningEffortLabel}
+                  label={reasoningServiceLabel}
                   info={t('monitoring.reasoning_tier_hint')}
                 />
               </th>
               <th>{recentStatusLabel}</th>
               <th>{requestStatusLabel}</th>
-              <th>
+              {/* 数字列(成功率/调用/TPS/缓存命中率/花费)统一右对齐，配合 tabular-nums；
+                  "首字｜耗时"是成对布局，保持居中(唯一例外，见 .realtimeLatencyColumn)。 */}
+              <th className={styles.realtimeNumericColumn}>
                 <TableHeaderInfo
                   label={successRateLabel}
                   info={t('monitoring.realtime_success_rate_hint')}
                 />
               </th>
-              <th>{totalCallsLabel}</th>
-              <th className={styles.realtimeTpsColumn}>{t('monitoring.column_output_tps')}</th>
+              <th className={styles.realtimeNumericColumn}>{totalCallsLabel}</th>
+              <th className={styles.realtimeNumericColumn}>{t('monitoring.column_output_tps')}</th>
               <th className={styles.realtimeLatencyColumn}>
                 <span className={styles.realtimeLatencyHeader}>
                   <span className={styles.realtimeMetricLeft}>{t('monitoring.ttft_short')}</span>
@@ -1320,18 +1632,22 @@ export function RealtimeEventsPanel({
                   </span>
                 </span>
               </th>
-              <th>{t('monitoring.column_time')}</th>
               <th>
                 <TableHeaderInfo label={usageLabel} info={t('monitoring.realtime_usage_hint')} />
               </th>
               {/* 缓存命中率紧跟"本次用量"列：命中率由该列 token 派生，相邻语义最贴近。 */}
-              <th>
+              <th className={styles.realtimeNumericColumn}>
                 <TableHeaderInfo
                   label={cacheHitRateLabel}
                   info={t('monitoring.realtime_cache_hit_rate_hint')}
                 />
               </th>
-              <th>{costLabel}</th>
+              {/* 花费列（最后一列）走查修复：单独挂 realtimeCostCell 收窄 padding，
+                  与下方 <td> 保持右缘对齐（同列共享的 .realtimeNumericColumn 右对齐），
+                  见 RealtimeEventsPanel 走查记录 / .realtimeCostCell 样式注释。 */}
+              <th className={`${styles.realtimeNumericColumn} ${styles.realtimeCostCell}`}>
+                {costLabel}
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -1356,15 +1672,30 @@ export function RealtimeEventsPanel({
               const cacheHitRateToneClass = getRealtimeCacheHitRateToneClass(cacheHitRate);
               return (
                 <tr key={row.id} className={row.failed ? styles.logRowFailed : undefined}>
+                  {/* 时间列前移到最左第 1 位（原第 10 位，紧跟在"首字｜耗时"列之后）。列窄时
+                      date/time 各自省略号截断，hover/focus 用即时浮层看完整时间戳
+                      （见 RealtimeTimeCell，同 RealtimeModelCell 的 portal 手法）。 */}
+                  <td>
+                    <RealtimeTimeCell
+                      dateText={timeParts.date}
+                      timeText={timeParts.time}
+                      tooltipId={`${tooltipIdPrefix}-time-tooltip-${row.id}`}
+                    />
+                  </td>
                   <td>
                     <div className={styles.logTypeCell}>
                       <div className={styles.primaryCell} title={sourceDisplay.title}>
-                        <span>{sourceDisplay.primary}</span>
+                        <RealtimeSourceNameCell
+                          text={sourceDisplay.primary}
+                          tooltipId={`${tooltipIdPrefix}-source-tooltip-${row.id}`}
+                        />
                         {sourceDisplay.meta ? <small>{sourceDisplay.meta}</small> : null}
                         {apiKeyDisplay ? (
-                          <small className={styles.realtimeApiKeyLine} title={apiKeyDisplay.title}>
-                            {`${t('monitoring.realtime_api_key_label')}: ${apiKeyDisplay.display}`}
-                          </small>
+                          <RealtimeApiKeyValueCell
+                            text={`${t('monitoring.realtime_api_key_label')}: ${apiKeyDisplay.display}`}
+                            tooltipLines={apiKeyDisplay.titleParts}
+                            tooltipId={`${tooltipIdPrefix}-apikey-tooltip-${row.id}`}
+                          />
                         ) : null}
                         {row.requestId ? (
                           <button
@@ -1399,21 +1730,21 @@ export function RealtimeEventsPanel({
                       tooltipId={`${tooltipIdPrefix}-model-tooltip-${row.id}`}
                     />
                   </td>
-                  <td>
-                    {/* 强度/等级单列两行，仿"用量"列排版：第 1 行 reasoning_effort 主值(正常墨色)、
-                        第 2 行 service_tier 灰色弱化小字(无 tier= 前缀、无中文，语义靠列头信息图标)。
-                        左对齐与其它列一致。仅有值的行才渲染；两者皆缺时只显一个 —。 */}
+                  <td title={buildReasoningTierNativeTitle(row)}>
+                    {/* 精确复刻上游 seakee 默认的"推理/服务"合并列：两行都带标签、都恒显
+                        (仿上游 formatOptionalText，缺失显中性占位 —，不再像旧版那样只在
+                        service_tier 存在时才渲染第 2 行)。第 1 行 "{思考标签}: {effort}"，
+                        第 2 行 "{服务标签}: {tier}"；字号/字重与上游一致（12px/400），仅
+                        颜色区分——第 1 行走强调色，第 2 行走弱化灰色（见 SCSS 的
+                        .realtimeReasoningValue / .realtimeServiceValue），不再靠字号缩小
+                        把第 2 行做成 <small>。左对齐与其它列一致。 */}
                     <div className={styles.primaryCell}>
-                      {reasoningEffort === '-' && serviceTier === '-' ? (
-                        <span className={styles.realtimeReasoningValue}>{REASONING_TIER_PLACEHOLDER}</span>
-                      ) : (
-                        <>
-                          {reasoningEffort !== '-' && (
-                            <span className={styles.realtimeReasoningValue}>{reasoningEffort}</span>
-                          )}
-                          {serviceTier !== '-' && <small>{serviceTier}</small>}
-                        </>
-                      )}
+                      <span className={styles.realtimeReasoningValue}>
+                        {`${realtimeReasoningLabel}: ${reasoningEffort !== '-' ? reasoningEffort : REASONING_TIER_PLACEHOLDER}`}
+                      </span>
+                      <span className={styles.realtimeServiceValue}>
+                        {`${realtimeServiceLabel}: ${serviceTier !== '-' ? serviceTier : REASONING_TIER_PLACEHOLDER}`}
+                      </span>
                     </div>
                   </td>
                   <td>
@@ -1448,19 +1779,26 @@ export function RealtimeEventsPanel({
                       )}
                     </div>
                   </td>
+                  {/* 数字列(成功率/调用/TPS/缓存命中率/花费)统一右对齐，见表头同款
+                      .realtimeNumericColumn；"首字｜耗时"是成对布局，保持居中(唯一例外)。 */}
                   <td
-                    className={
+                    className={[
+                      styles.realtimeNumericColumn,
                       row.successRate >= 0.95
                         ? styles.goodText
                         : row.successRate >= 0.85
                           ? styles.warnText
-                          : styles.badText
-                    }
+                          : styles.badText,
+                    ]
+                      .filter(Boolean)
+                      .join(' ')}
                   >
                     {formatPercent(row.successRate)}
                   </td>
-                  <td>{formatCompactNumber(row.requestCount)}</td>
-                  <td className={styles.realtimeTpsColumn}>
+                  <td className={styles.realtimeNumericColumn}>
+                    {formatCompactNumber(row.requestCount)}
+                  </td>
+                  <td className={styles.realtimeNumericColumn}>
                     <span className={styles.realtimeTpsCell}>
                       {formatTokensPerSecond(row.tokensPerSecond, locale)}
                     </span>
@@ -1493,21 +1831,27 @@ export function RealtimeEventsPanel({
                     </div>
                   </td>
                   <td>
-                    <div className={styles.realtimeTimeCell}>
-                      <span className={styles.realtimeTimeLine}>{timeParts.date}</span>
-                      <span className={styles.realtimeTimeLine}>{timeParts.time}</span>
-                    </div>
-                  </td>
-                  <td>
                     <div className={styles.primaryCell}>
                       <span>{formatCompactNumber(row.totalTokens)}</span>
                       <small>{buildRealtimeTokenSummary(row, t)}</small>
                     </div>
                   </td>
-                  <td className={cacheHitRateToneClass}>
+                  <td className={[styles.realtimeNumericColumn, cacheHitRateToneClass].filter(Boolean).join(' ')}>
                     {cacheHitRate === null ? '--' : formatPercent(cacheHitRate)}
                   </td>
-                  <td>{hasPrices ? formatUsd(row.totalCost) : '--'}</td>
+                  {/* 花费列走查修复：该列 4%(48px)是所有数字列中最窄的一列，"$0.00" 级
+                      取值在共享 16px 继承字号下实测已超出内容区、又恰好是最后一列，会
+                      顶着 .table.realtimeTable tbody td 的 overflow:visible 画出行卡片
+                      右侧圆角边界外（窄屏横滚到底更会把该行可滚动范围额外撑宽几像素，
+                      滚到底后露出圆角外一小段面板底色）。realtimeCostCell 收窄字号/
+                      padding 腾出内容区（真机验证覆盖到两位数美元 $99.99 不截断），
+                      极端大额走省略号 + title 兜底可见完整值。 */}
+                  <td
+                    className={`${styles.realtimeNumericColumn} ${styles.realtimeCostCell}`}
+                    title={hasPrices ? formatUsd(row.totalCost) : undefined}
+                  >
+                    {hasPrices ? formatUsd(row.totalCost) : '--'}
+                  </td>
                 </tr>
               );
             })}
