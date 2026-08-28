@@ -4581,6 +4581,35 @@
         "deviceIdMismatchWarning": "device_id mismatch: the on-wire value differs from the pinned device_id — likely identity leak, investigate.",
         "deviceIdMismatchHint": "The pinned device_id and the on-wire device_id do not match after identical masking."
       },
+      "serving": {
+        "column": "Serving plane (write check)",
+        "columnHint": "The serving plane = the CPA override write-landing check value (masked prefix), NOT a captured real on-wire identity — the ground truth is the on-wire telemetry.",
+        "pending": "Not landed",
+        "pendingHint": "The CPA override has not landed / the bound account was not matched, so the serving plane has no write-landing check value yet; not used to judge a leak.",
+        "valueHint": "Serving-plane CPA override effective mask (write-landing check, not a captured value); the real identity is the on-wire telemetry.",
+        "notApplicable": "N/A",
+        "notApplicableHint": "The serving-plane write-landing check only covers device_id; this field has no serving-plane value."
+      },
+      "consistency": {
+        "label": "Three-way device_id consistency",
+        "label_healthy": "Consistent",
+        "label_inconsistent": "Inconsistent (leak)",
+        "label_pending_migration": "Pending migration",
+        "label_not_ready": "Not ready",
+        "label_unobserved": "Unobserved",
+        "hintFallback": "Three-way = serving plane (write check) × on-wire telemetry × pinned expected; the verdict is computed on the backend.",
+        "desc_healthy": "Serving plane, on-wire telemetry and the pinned expected value are three-way consistent; no device_id leak observed.",
+        "desc_inconsistent": "The serving plane / on-wire telemetry disagrees with the pinned expected value (telemetry leak or incomplete serving write-landing) — already fail-closed quarantined.",
+        "desc_pending_migration": "Flag-off legacy account: serving is still machineID and not yet converged — neutral \"pending migration\", not a leak.",
+        "desc_not_ready": "Flag-on but the on-wire device_id is not pinned yet, so there is no independent evidence — not ready.",
+        "desc_unobserved": "Expected value pinned, but there is no telemetry sample to independently confirm it — unobserved (not green).",
+        "descFallback": "The consistency verdict is computed by the orchestrator on the backend; the frontend only renders the conclusion.",
+        "quarantined": "Quarantined",
+        "quarantinedHint": "This container was fail-closed quarantined due to three-way inconsistency (override cleared + container stopped + evidence preserved); cleared only manually by an operator.",
+        "quarantineTitle": "device_id consistency quarantine",
+        "quarantinedAt": "Quarantined at: {{time}}",
+        "quarantineReason": "Reason: {{reason}}"
+      },
       "jsonPreview": {
         "truncated": "Preview truncated",
         "redactedPill": "Redacted",

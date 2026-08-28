@@ -14,7 +14,9 @@ import { formatCompactStampUtc8, formatDateTimeUtc8 } from '@/utils/datetime';
 import { formatFileSize } from '@/utils/format';
 import { useFarmContainerBeacons } from '../hooks/useFarmContainerBeacons';
 import {
+  normalizeFarmOnwireConsistencyState,
   normalizeFarmTelemetrySilenceState,
+  onwireConsistencyStateToBadgeVariant,
   telemetrySilenceStateToBadgeVariant,
 } from '../utils/health';
 import { maskTelemetryFingerprint } from '../utils/identity';
@@ -146,6 +148,18 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
     silenceState !== 'active' &&
     (!neverObserved || silenceProbe != null || silenceProcessTerminated);
 
+  // 三向 on-wire device_id 一致性 + fail-closed 隔离态（farm-onwire-deviceid-consistency
+  // 增量2 §5）。字段整体缺失（旧编排器）时 consistency 为空，不渲染一致性徽标与 serving 列。
+  // 五态经 normalizeFarmOnwireConsistencyState 归一，未知值落中性 unobserved（绝不臆断绿/红）。
+  const consistency = container.device_consistency;
+  const consistencyState = consistency
+    ? normalizeFarmOnwireConsistencyState(consistency.consistency_state)
+    : null;
+  const quarantined = consistency?.quarantined ?? false;
+  // serving 面掩码：仅 device_id 字段有值（deviceConsistencyView 只暴露 serving_device_id_masked）；
+  // 空串=CPA override 尚未落地/未命中，前端按「待写落地」占位，不编造。
+  const servingDeviceIdMasked = consistency?.serving_device_id_masked ?? '';
+
   return (
     <section
       className={styles.section}
@@ -190,6 +204,101 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
             pinFieldClash（脱敏 + 掩码分隔符归一 + 三态判等，单测锁定），不再内联复刻——
             集成阶段消除了原先「后端 pin『...』vs 前端 on-wire『…』精确比对恒撞红」的 §5 假撞红。 */}
         <div className={styles.estimateBox} data-testid="farm-telemetry-consistency">
+          {/* 三向一致性 verdict + fail-closed 隔离态汇总条（farm-onwire-deviceid-consistency
+              §5 + S4/S5）：把后端已判定好的一致性五态 + 隔离态提到卡顶作权威结论徽标。
+              五态语义色：healthy=success（绿）、inconsistent=error（红/泄漏，已隔离）、
+              pending_migration/not_ready/unobserved=muted（中性，绝不刷红健康的 flag-off 号）。
+              隔离态叠加独立 error 徽标 + 时间 + reason。字段整体缺失（旧编排器）时不渲染。 */}
+          {consistencyState && consistency ? (
+            <div
+              className={styles.consistencySummary}
+              data-testid="farm-telemetry-consistency-state"
+              data-consistency-state={consistencyState}
+              data-quarantined={quarantined ? 'true' : 'false'}
+            >
+              <div className={styles.consistencySummaryHead}>
+                <span className={styles.chartLabel}>
+                  {t('farm.telemetry.consistency.label', { defaultValue: '三向 device_id 一致性' })}
+                </span>
+                <span
+                  className={`status-badge ${onwireConsistencyStateToBadgeVariant(consistencyState)}`}
+                  data-testid="farm-telemetry-consistency-state-badge"
+                  data-consistency-state={consistencyState}
+                  title={t(`farm.telemetry.consistency.hint_${consistencyState}`, {
+                    defaultValue: t('farm.telemetry.consistency.hintFallback', {
+                      defaultValue:
+                        '三向 = serving 面（写落地校验）× on-wire 遥测实测 × 钉死预期(pin)。判定在后端完成。',
+                    }),
+                  })}
+                >
+                  {t(`farm.telemetry.consistency.label_${consistencyState}`, {
+                    defaultValue: consistencyState,
+                  })}
+                </span>
+                {quarantined ? (
+                  <span
+                    className="status-badge error"
+                    data-testid="farm-telemetry-quarantine-badge"
+                    title={t('farm.telemetry.consistency.quarantinedHint', {
+                      defaultValue:
+                        '该容器已因三向不一致被 fail-closed 隔离（清 override + 停容器 + 保取证），仅 operator 手工解除。',
+                    })}
+                  >
+                    <span aria-hidden="true">⛔</span>{' '}
+                    {t('farm.telemetry.consistency.quarantined', { defaultValue: '已隔离' })}
+                  </span>
+                ) : null}
+              </div>
+              <p className={styles.hintText} data-testid="farm-telemetry-consistency-hint">
+                {t(`farm.telemetry.consistency.desc_${consistencyState}`, {
+                  defaultValue: t('farm.telemetry.consistency.descFallback', {
+                    defaultValue: '一致性判定由编排器在后端完成，前端只呈现结论。',
+                  }),
+                })}
+              </p>
+              {/* 隔离详情盒（红/critical）：仅隔离时渲染，展示隔离时间 + reason。复用
+                  .silenceStateBox 的 error 变体视觉，不新增语义色体系。 */}
+              {quarantined ? (
+                <div
+                  className={styles.silenceStateBox}
+                  data-silence-variant="error"
+                  data-testid="farm-telemetry-quarantine-detail"
+                >
+                  <div className={styles.silenceStateHead}>
+                    <span aria-hidden="true">⛔</span>
+                    <span className="status-badge error">
+                      {t('farm.telemetry.consistency.quarantineTitle', {
+                        defaultValue: 'device_id 一致性隔离',
+                      })}
+                    </span>
+                  </div>
+                  {consistency.quarantined_at ? (
+                    <p
+                      className={styles.silenceStateConclusion}
+                      data-testid="farm-telemetry-quarantine-at"
+                    >
+                      {t('farm.telemetry.consistency.quarantinedAt', {
+                        defaultValue: '隔离时间：{{time}}',
+                        time: formatDateTimeUtc8(consistency.quarantined_at, i18n.language),
+                      })}
+                    </p>
+                  ) : null}
+                  {consistency.quarantine_reason ? (
+                    <p
+                      className={styles.silenceStateConclusion}
+                      data-testid="farm-telemetry-quarantine-reason"
+                    >
+                      {t('farm.telemetry.consistency.quarantineReason', {
+                        defaultValue: '原因：{{reason}}',
+                        reason: consistency.quarantine_reason,
+                      })}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
           <div className={`${styles.consistencyGrid} ${styles.consistencyHeaderRow}`}>
             <span className={styles.chartLabel}>
               {t('farm.telemetry.fieldColumn', { defaultValue: '指纹字段' })}
@@ -203,6 +312,16 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
               })}
             >
               {t('farm.telemetry.pin.column', { defaultValue: '预期 (pin)' })}
+            </span>
+            <span
+              className={styles.chartLabel}
+              data-testid="farm-telemetry-serving-column-header"
+              title={t('farm.telemetry.serving.columnHint', {
+                defaultValue:
+                  'serving 面 = CPA override 写落地校验值（脱敏前缀），不是抓包真出站身份——真值以 on-wire 遥测为准。',
+              })}
+            >
+              {t('farm.telemetry.serving.column', { defaultValue: 'serving 面 (写落地)' })}
             </span>
             <span className={styles.chartLabel}>
               {t('farm.telemetry.onWireColumn', { defaultValue: '出站实测 (on-wire)' })}
@@ -264,6 +383,14 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
               const onWireClassName = onWirePending
                 ? `${styles.mono} ${styles.onWirePlaceholder}`
                 : `${styles.mono} ${styles.consistencyValue}${clashClassName}`;
+              // serving 面（写落地校验，非真 on-wire）：deviceConsistencyView 只暴露
+              // serving_device_id_masked，故仅 device_id 字段适用；entrypoint /
+              // api_base_url_host 该平面无值 → 「不适用」占位。device_id 有值即展示脱敏掩码，
+              // 空串=override 尚未落地/未命中 → 「待写落地」占位（不编造，也不据此判泄漏——
+              // 泄漏结论以后端一致性态 + on-wire 撞红为准）。
+              const servingApplicable = field === 'device_id';
+              const servingValue = servingApplicable ? servingDeviceIdMasked : '';
+              const servingPending = servingApplicable && servingValue === '';
               return {
                 field,
                 pinRaw,
@@ -273,6 +400,9 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
                 clash,
                 clashClassName,
                 onWireClassName,
+                servingApplicable,
+                servingValue,
+                servingPending,
               };
             });
             const deviceIdClash = rows.find((r) => r.field === 'device_id')?.clash ?? false;
@@ -322,6 +452,47 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
                         })}
                       >
                         {t('farm.telemetry.pin.notPinned', { defaultValue: '未配置 (pin)' })}
+                      </span>
+                    )}
+                    {/* serving 面列（写落地校验，非真 on-wire）：仅 device_id 适用；
+                        其余字段标「不适用」，device_id 空值标「待写落地」——都不参与泄漏判定。 */}
+                    {row.servingApplicable ? (
+                      row.servingPending ? (
+                        <span
+                          data-testid={`farm-telemetry-serving-${row.field}`}
+                          data-serving-pending="true"
+                          className={styles.declaredNotCollected}
+                          title={t('farm.telemetry.serving.pendingHint', {
+                            defaultValue:
+                              'CPA override 尚未落地 / 绑定账号未命中，serving 面暂无写落地校验值；不据此判定泄漏。',
+                          })}
+                        >
+                          {t('farm.telemetry.serving.pending', { defaultValue: '待写落地' })}
+                        </span>
+                      ) : (
+                        <span
+                          data-testid={`farm-telemetry-serving-${row.field}`}
+                          data-serving-pending="false"
+                          className={`${styles.mono} ${styles.consistencyValue}`}
+                          title={t('farm.telemetry.serving.valueHint', {
+                            defaultValue:
+                              'serving 面 CPA override 有效掩码（写落地校验，非抓包真值）；真身份以 on-wire 遥测为准。',
+                          })}
+                        >
+                          {row.servingValue}
+                        </span>
+                      )
+                    ) : (
+                      <span
+                        data-testid={`farm-telemetry-serving-${row.field}`}
+                        data-serving-pending="false"
+                        className={styles.declaredNotCollected}
+                        title={t('farm.telemetry.serving.notApplicableHint', {
+                          defaultValue:
+                            'serving 面写落地校验只覆盖 device_id；该字段无 serving 平面值。',
+                        })}
+                      >
+                        {t('farm.telemetry.serving.notApplicable', { defaultValue: '不适用' })}
                       </span>
                     )}
                     <span

@@ -351,3 +351,165 @@ describe('FarmTelemetryPanel 指纹自洽卡 pin (farm-proxy-rotation §5)', () 
     }
   });
 });
+
+// farm-onwire-deviceid-consistency 增量2 §5：指纹卡加 serving 面第 3 列（写落地校验，
+// 非真 on-wire）+ 三向一致性五态徽标 + fail-closed 隔离态。断言只看 data-testid /
+// data-* 与 status-badge 全局变体类（success/error/muted 是字面串拼接，非 CSS module
+// 哈希，可稳定断言），不依赖 i18n 文案（t 在测试里返回 key）。
+describe('FarmTelemetryPanel 三向一致性 + serving 面 (farm-onwire-deviceid-consistency §5)', () => {
+  const PIN = {
+    device_id_masked: 'e6b4c2aa114a…ca48',
+    entrypoint: 'cli',
+    api_base_url_host: 'api.anthropic.com',
+  };
+
+  const consistencyContainer = (
+    device_consistency?: FarmContainerView['device_consistency'],
+    fingerprint_pin: FarmContainerView['fingerprint_pin'] = PIN
+  ): FarmContainerView => ({
+    id: 'c-cons-1',
+    device_id_masked: 'dev-***',
+    status: 'running',
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+    fingerprint_pin,
+    device_consistency,
+  });
+
+  const badgeVariant = (node: ReactTestInstance | undefined): string =>
+    typeof node?.props.className === 'string' ? (node.props.className as string) : '';
+
+  it('healthy：一致性徽标 success（绿）+ serving device_id 列显掩码值、其余字段标不适用', () => {
+    const renderer = renderPanel(
+      consistencyContainer({
+        serving_device_id_masked: 'e6b4c2aa114a…ca48',
+        consistency_state: 'healthy',
+        quarantined: false,
+      })
+    );
+    const badge = firstByTestId(renderer, 'farm-telemetry-consistency-state-badge');
+    expect(badge?.props['data-consistency-state']).toBe('healthy');
+    expect(badgeVariant(badge)).toContain('success');
+    // serving device_id 列显真实掩码值（直出，非 t() key），非占位。
+    const servingDevice = firstByTestId(renderer, 'farm-telemetry-serving-device_id');
+    expect(servingDevice?.props['data-serving-pending']).toBe('false');
+    expect(collectText(servingDevice!)).toBe('e6b4c2aa114a…ca48');
+    // serving 面只覆盖 device_id：entrypoint / api_base_url_host 列标「不适用」。
+    for (const field of ['entrypoint', 'api_base_url_host']) {
+      const cell = firstByTestId(renderer, `farm-telemetry-serving-${field}`);
+      expect(collectText(cell!)).toContain('farm.telemetry.serving.notApplicable');
+    }
+    // 未隔离：无隔离徽标 / 详情盒。
+    expect(nodesByTestId(renderer, 'farm-telemetry-quarantine-badge')).toHaveLength(0);
+    expect(nodesByTestId(renderer, 'farm-telemetry-quarantine-detail')).toHaveLength(0);
+  });
+
+  it('inconsistent：一致性徽标 error（红/泄漏）', () => {
+    const renderer = renderPanel(
+      consistencyContainer({
+        serving_device_id_masked: 'aaaabbbbcccc…9999',
+        consistency_state: 'inconsistent',
+        quarantined: false,
+      })
+    );
+    const badge = firstByTestId(renderer, 'farm-telemetry-consistency-state-badge');
+    expect(badge?.props['data-consistency-state']).toBe('inconsistent');
+    expect(badgeVariant(badge)).toContain('error');
+  });
+
+  it('pending_migration：中性 muted，绝不刷红健康的 flag-off 存量号（关键非泄漏态）', () => {
+    const renderer = renderPanel(
+      consistencyContainer({
+        consistency_state: 'pending_migration',
+        quarantined: false,
+      })
+    );
+    const badge = firstByTestId(renderer, 'farm-telemetry-consistency-state-badge');
+    expect(badge?.props['data-consistency-state']).toBe('pending_migration');
+    const cls = badgeVariant(badge);
+    expect(cls).toContain('muted');
+    // 决不误刷红/绿：flag-off 待迁移是中性态。
+    expect(cls).not.toContain('error');
+    expect(cls).not.toContain('success');
+  });
+
+  it('not_ready / unobserved 均映射中性 muted（未就绪 / 未观测，非绿非红）', () => {
+    for (const state of ['not_ready', 'unobserved']) {
+      const renderer = renderPanel(
+        consistencyContainer({ consistency_state: state, quarantined: false })
+      );
+      const cls = badgeVariant(firstByTestId(renderer, 'farm-telemetry-consistency-state-badge'));
+      expect(cls).toContain('muted');
+      expect(cls).not.toContain('error');
+      expect(cls).not.toContain('success');
+    }
+  });
+
+  it('未知/缺失 consistency_state 经 normalize 落中性 unobserved（muted），绝不臆断绿/红', () => {
+    const renderer = renderPanel(
+      // 后端可能返回未来新增字面值：喂非枚举值验证前端兜底到中性 unobserved。
+      consistencyContainer({ consistency_state: 'some_future_state', quarantined: false })
+    );
+    const badge = firstByTestId(renderer, 'farm-telemetry-consistency-state-badge');
+    expect(badge?.props['data-consistency-state']).toBe('unobserved');
+    const cls = badgeVariant(badge);
+    expect(cls).toContain('muted');
+    expect(cls).not.toContain('error');
+    expect(cls).not.toContain('success');
+  });
+
+  it('quarantined=true：红隔离徽标 + error 变体隔离详情盒 + 隔离时间 + reason', () => {
+    const renderer = renderPanel(
+      consistencyContainer({
+        serving_device_id_masked: 'aaaabbbbcccc…9999',
+        consistency_state: 'inconsistent',
+        quarantined: true,
+        quarantined_at: '2026-08-26T12:00:00Z',
+        quarantine_reason: 'serving_telemetry_device_id_mismatch',
+      })
+    );
+    const summary = firstByTestId(renderer, 'farm-telemetry-consistency-state');
+    expect(summary?.props['data-quarantined']).toBe('true');
+    // 隔离徽标（红）。
+    expect(nodesByTestId(renderer, 'farm-telemetry-quarantine-badge')).toHaveLength(1);
+    // 隔离详情盒是 error 变体（复用 silenceStateBox error 视觉）。
+    const detail = firstByTestId(renderer, 'farm-telemetry-quarantine-detail');
+    expect(detail).toBeDefined();
+    expect(detail?.props['data-silence-variant']).toBe('error');
+    // 隔离时间 + reason 都渲染（reason 直出，可断言其内容）。
+    expect(nodesByTestId(renderer, 'farm-telemetry-quarantine-at')).toHaveLength(1);
+    const reason = firstByTestId(renderer, 'farm-telemetry-quarantine-reason');
+    expect(collectText(reason!)).toContain('serving_telemetry_device_id_mismatch');
+  });
+
+  it('serving 列表头带 columnHint（写落地校验，非真 on-wire）title', () => {
+    const renderer = renderPanel(
+      consistencyContainer({ consistency_state: 'healthy', quarantined: false })
+    );
+    const header = firstByTestId(renderer, 'farm-telemetry-serving-column-header');
+    expect(header).toBeDefined();
+    expect(typeof header?.props.title).toBe('string');
+    expect((header?.props.title as string).length).toBeGreaterThan(0);
+  });
+
+  it('serving device_id 无 override 落地时标「待写落地」占位（不编造、不判泄漏）', () => {
+    const renderer = renderPanel(
+      // serving_device_id_masked 留空 = override 尚未落地 / 未命中。
+      consistencyContainer({ consistency_state: 'not_ready', quarantined: false })
+    );
+    const servingDevice = firstByTestId(renderer, 'farm-telemetry-serving-device_id');
+    expect(servingDevice?.props['data-serving-pending']).toBe('true');
+    expect(collectText(servingDevice!)).toContain('farm.telemetry.serving.pending');
+  });
+
+  it('device_consistency 整体缺失（旧编排器/字段裁剪）：不渲染一致性徽标汇总条', () => {
+    const renderer = renderPanel(consistencyContainer(undefined));
+    expect(nodesByTestId(renderer, 'farm-telemetry-consistency-state')).toHaveLength(0);
+    expect(nodesByTestId(renderer, 'farm-telemetry-consistency-state-badge')).toHaveLength(0);
+    // 但 serving 列头仍在（列是静态概念），device_id 无数据时走「待写落地」占位。
+    expect(nodesByTestId(renderer, 'farm-telemetry-serving-column-header')).toHaveLength(1);
+    expect(firstByTestId(renderer, 'farm-telemetry-serving-device_id')?.props['data-serving-pending']).toBe(
+      'true'
+    );
+  });
+});

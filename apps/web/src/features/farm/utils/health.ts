@@ -12,9 +12,11 @@
  */
 
 import {
+  FARM_ONWIRE_CONSISTENCY_STATES,
   FARM_TELEMETRY_ALIVE_STATES,
   FARM_TELEMETRY_SILENCE_STATES,
   type FarmAccountStateView,
+  type FarmOnwireConsistencyState,
   type FarmTelemetryAliveState,
   type FarmTelemetrySilenceState,
 } from '@/types/farm';
@@ -509,5 +511,54 @@ export function telemetrySilenceStateToBadgeVariant(
     case 'indeterminate':
     default:
       return 'warning';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// farm-onwire-deviceid-consistency 增量2 §5：三向 on-wire device_id 一致性五态
+// （serving==telemetry==expected）→ 归一化 + 语义色。判定在后端（三向比对 +
+// fail-closed 隔离），前端只做「已判定好的字面值 -> 展示态」映射，不重算一致性。
+// ---------------------------------------------------------------------------
+
+const ONWIRE_CONSISTENCY_STATE_SET: ReadonlySet<string> = new Set(FARM_ONWIRE_CONSISTENCY_STATES);
+
+/**
+ * 归一化三向一致性五态原始值到枚举内。诚实边界：非枚举之一的任何输入（含
+ * undefined——旧编排器未透传，或后端未来出现未知字面值）一律回退 **unobserved
+ * （未观测，中性）**——绝不回退成 healthy(绿) 也绝不回退成 inconsistent(红)，
+ * 宁可显中性「未观测」也不臆断绿/红。与 normalizeFarmTelemetrySilenceState 同款
+ * 「未知落到中性诚实态」口径。
+ */
+export function normalizeFarmOnwireConsistencyState(
+  value: string | undefined
+): FarmOnwireConsistencyState {
+  if (value && ONWIRE_CONSISTENCY_STATE_SET.has(value)) {
+    return value as FarmOnwireConsistencyState;
+  }
+  return 'unobserved';
+}
+
+/**
+ * 三向一致性五态 → status-badge 变体（语义色对齐既有 success/warning/error/muted，
+ * 不新造颜色 token）：
+ *  - healthy           → success（三向自洽，健康 flag-on 号）
+ *  - inconsistent      → error（真不一致=遥测泄漏或 serving 未落地，已 fail-closed 隔离）
+ *  - pending_migration → muted（flag-off 存量号待一致化，**中性非泄漏**，绝不刷红健康号）
+ *  - not_ready         → muted（flag-on 尚未钉死 on-wire，中性未就绪）
+ *  - unobserved        → muted（已钉死但无遥测样本，缺独立判据，中性非绿）
+ */
+export function onwireConsistencyStateToBadgeVariant(
+  state: FarmOnwireConsistencyState
+): StatusBadgeVariant {
+  switch (state) {
+    case 'healthy':
+      return 'success';
+    case 'inconsistent':
+      return 'error';
+    case 'pending_migration':
+    case 'not_ready':
+    case 'unobserved':
+    default:
+      return 'muted';
   }
 }

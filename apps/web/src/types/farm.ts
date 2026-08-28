@@ -145,7 +145,55 @@ export interface FarmContainerView {
     entrypoint: string;
     api_base_url_host: string;
   };
+  // farm-onwire-deviceid-consistency 增量2 §5 + S4/S5：三向 on-wire device_id 一致性
+  // + fail-closed 隔离态（dto.go containerView.DeviceConsistency / deviceConsistencyView，
+  // observability.go computeDeviceConsistencyView）。供遥测页指纹卡把「serving 面写落地
+  // 校验掩码 / 一致性判定 / 隔离状态」逐字段展示。后端**恒返回一个对象**（不 omitempty），
+  // 这里仍声明可选是防御旧编排器/字段裁剪——缺失时前端不渲染一致性徽标与 serving 列。
+  device_consistency?: FarmDeviceConsistencyView;
 }
+
+// 容器三向 on-wire device_id 一致性 + fail-closed 隔离态对外形状（dto.go
+// deviceConsistencyView，字段名严格对齐、不要改名）。**诚实边界**：serving_device_id_masked
+// 是「CPA override 写落地校验值」（synthetic_device_id 脱敏前缀），农场无真实 serving
+// on-wire 捕获（mitm 排除 /v1/messages），**非** serving 真出站身份证；真正独立坐实身份的
+// 是遥测 beacon。前端展示该列必须标注「写落地校验，非真 on-wire」，别让用户误当抓包真值。
+export interface FarmDeviceConsistencyView {
+  // serving 面 CPA override 有效掩码（脱敏前缀）。绑定账号未命中 / CPA 拉取失败 /
+  // override 尚未落地时留空（omitempty）——前端按「待写落地」占位，不编造。
+  serving_device_id_masked?: string;
+  // 一致性五态之一（FARM_ONWIRE_CONSISTENCY_STATES / farmrunner.OnwireConsistencyState）。
+  // 后端恒有值；前端经 normalizeFarmOnwireConsistencyState 兜底非枚举值到中性 unobserved，
+  // 绝不臆断成 healthy(绿)/inconsistent(红)。
+  consistency_state: string;
+  // fail-closed 隔离态（containers.deviceid_quarantined_at 读出）。true = 该容器已因三向
+  // 不一致被隔离（清 override + 停容器 + 保取证），仅 operator 手工清列解除。
+  quarantined: boolean;
+  // 隔离发生时间；未隔离时留空（omitempty）。
+  quarantined_at?: string;
+  // 隔离原因；未隔离时留空（omitempty）。
+  quarantine_reason?: string;
+}
+
+// 三向 on-wire device_id 一致性五态字面值（farm-onwire-deviceid-consistency 增量2 §5，
+// 与后端 farmrunner.OnwireConsistencyState* 常量逐字对齐、不要改名）：
+//  - healthy           serving==telemetry==expected（flag-on 健康号）→ 正常（success/绿）。
+//  - inconsistent      真不一致（遥测泄漏 或 serving 写落地 K 轮未完成）→ 告警（error/红），
+//                      已被后端 fail-closed 隔离。
+//  - pending_migration flag-off 存量号 serving 仍 machineID，尚未一致化 → **中性「待迁移」**
+//                      （muted，绝不刷红健康的 flag-off 号——这是关键的非泄漏中性态）。
+//  - not_ready         flag-on 但尚未钉死 on-wire → 中性「未就绪」（muted）。
+//  - unobserved        已钉死但无遥测样本，缺独立判据 → 中性「未观测」（muted，非绿）。
+// 归一化/兜底逻辑见 features/farm/utils/health.ts normalizeFarmOnwireConsistencyState
+// （非枚举值一律回退 unobserved 中性，绝不臆断成绿/红）。
+export const FARM_ONWIRE_CONSISTENCY_STATES = [
+  'healthy',
+  'inconsistent',
+  'pending_migration',
+  'not_ready',
+  'unobserved',
+] as const;
+export type FarmOnwireConsistencyState = (typeof FARM_ONWIRE_CONSISTENCY_STATES)[number];
 
 // telemetry_silence 对外形状（dto.go telemetrySilenceView，字段名严格对齐、不要改名）。
 export interface FarmTelemetrySilenceView {

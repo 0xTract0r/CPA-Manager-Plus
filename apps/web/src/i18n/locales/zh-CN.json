@@ -4581,6 +4581,35 @@
         "deviceIdMismatchWarning": "device_id 不一致：on-wire 值与钉死的 device_id 不同——大概率身份泄露，请排查。",
         "deviceIdMismatchHint": "钉死的 device_id 与 on-wire device_id 在同款脱敏后仍不匹配。"
       },
+      "serving": {
+        "column": "serving 面 (写落地)",
+        "columnHint": "serving 面 = CPA override 写落地校验值（脱敏前缀），不是抓包真出站身份——真值以 on-wire 遥测为准。",
+        "pending": "待写落地",
+        "pendingHint": "CPA override 尚未落地 / 绑定账号未命中，serving 面暂无写落地校验值；不据此判定泄漏。",
+        "valueHint": "serving 面 CPA override 有效掩码（写落地校验，非抓包真值）；真身份以 on-wire 遥测为准。",
+        "notApplicable": "不适用",
+        "notApplicableHint": "serving 面写落地校验只覆盖 device_id；该字段无 serving 平面值。"
+      },
+      "consistency": {
+        "label": "三向 device_id 一致性",
+        "label_healthy": "一致",
+        "label_inconsistent": "不一致（泄漏）",
+        "label_pending_migration": "待迁移",
+        "label_not_ready": "未就绪",
+        "label_unobserved": "未观测",
+        "hintFallback": "三向 = serving 面（写落地校验）× on-wire 遥测实测 × 钉死预期(pin)；判定在后端完成。",
+        "desc_healthy": "serving 面、on-wire 遥测与钉死预期三向自洽，未观测到 device_id 泄漏。",
+        "desc_inconsistent": "serving 面 / on-wire 遥测与钉死预期不一致（遥测泄漏或 serving 写落地未完成）——已 fail-closed 隔离。",
+        "desc_pending_migration": "flag-off 存量号 serving 仍为 machineID、尚未一致化——中性「待迁移」，不是泄漏。",
+        "desc_not_ready": "flag-on 但尚未钉死 on-wire device_id，暂无独立判据，未就绪。",
+        "desc_unobserved": "已钉死预期，但暂无遥测样本可独立坐实——未观测（非绿）。",
+        "descFallback": "一致性判定由编排器在后端完成，前端只呈现结论。",
+        "quarantined": "已隔离",
+        "quarantinedHint": "该容器已因三向不一致被 fail-closed 隔离（清 override + 停容器 + 保取证），仅 operator 手工解除。",
+        "quarantineTitle": "device_id 一致性隔离",
+        "quarantinedAt": "隔离时间：{{time}}",
+        "quarantineReason": "原因：{{reason}}"
+      },
       "jsonPreview": {
         "truncated": "预览被截断",
         "redactedPill": "已脱敏",

@@ -99,15 +99,24 @@
   color: var(--text-primary);
 }
 
-// 指纹自洽卡表头 / 数据行共享的三栏网格：字段名 | 自报 declared | 出站实测
-// on-wire。E3 前是每行各自内联 style={{ display:'grid', ... }}（表头行、数据
-// 行各写一遍），这里收敛成「网格几何」+「各行独有的 padding/分隔线」两个组合
-// 类，替代内联写法。
+// 指纹自洽卡表头 / 数据行共享的四栏网格：字段名 | 预期(pin) | serving 面(写落地) |
+// 出站实测 on-wire。增量2 §5 在原三栏（字段名 | 预期 | on-wire）间插入 serving 面
+// 第三列。三个数据列都用 1fr 等分弹性宽，min-content 由 .consistencyValue 的
+// word-break: break-all 收敛到 ~1 字符——保证窄视口（375/390）下值只在格内换行、
+// 绝不横向撑破卡片（label 列 minmax 下界收到 88px 给三值列腾空间；gap 收到 10px）。
 .consistencyGrid {
   display: grid;
-  grid-template-columns: minmax(110px, 140px) 1fr 1fr;
-  gap: 0 12px;
+  grid-template-columns: minmax(88px, 128px) 1fr 1fr 1fr;
+  gap: 0 10px;
   align-items: center;
+}
+
+// 窄视口（≤768px）：进一步收 gap 给三个值列腾空间，避免脱敏 device_id 掩码在 375/390
+// 下被挤成过多折行。列数不变（仍靠 break-all 保证不横向溢出），只调间距。
+@include mobile {
+  .consistencyGrid {
+    gap: 0 6px;
+  }
 }
 
 .consistencyHeaderRow {
@@ -128,6 +137,32 @@
 // onWireFieldValue 实现）。
 .consistencyValueClash {
   color: var(--color-danger);
+}
+
+// 三向一致性 verdict + 隔离态汇总条（增量2 §5）：卡顶权威结论区，与下方逐字段
+// 网格用一条细分隔线隔开。徽标语义色靠 status-badge 全局类（success/error/muted），
+// 这里只管布局：head 行 flex 换行、min-width:0 防长 reason 撑破。
+.consistencySummary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 6px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--border-color);
+  min-width: 0;
+}
+
+.consistencySummaryHead {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+
+  // 汇总条内徽标清零全局默认 margin-bottom，避免撑高首行。
+  :global(.status-badge) {
+    margin-bottom: 0;
+  }
 }
 
 // 「自报 (declared)」列没有真值时的诚实占位：不是裸横线，而是标「未采集 / 不适用」，
@@ -199,6 +234,7 @@
 .silenceStateConclusion {
   margin: 0;
   color: var(--text-primary);
+  overflow-wrap: anywhere;
 }
 
 .silenceStateAction {
