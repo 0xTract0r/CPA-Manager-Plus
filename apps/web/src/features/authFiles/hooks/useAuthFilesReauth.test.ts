@@ -1,4 +1,4 @@
-import { act, createElement } from 'react';
+import { act, createElement, useEffect } from 'react';
 import { create, type ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthFileItem } from '@/types';
@@ -58,13 +58,18 @@ type Harness = {
 };
 
 const mountHook = (): Harness => {
-  let hook: ReturnType<typeof useAuthFilesReauth> | null = null;
+  const hookRef: { current: ReturnType<typeof useAuthFilesReauth> | null } = {
+    current: null,
+  };
   let renderer: ReactTestRenderer | null = null;
 
   function HookHarness() {
-    hook = useAuthFilesReauth({
+    const value = useAuthFilesReauth({
       loadFiles: mocks.loadFiles,
       onReauthHistoryChanged: mocks.onReauthHistoryChanged,
+    });
+    useEffect(() => {
+      hookRef.current = value;
     });
     return null;
   }
@@ -75,8 +80,9 @@ const mountHook = (): Harness => {
 
   return {
     getCurrent: () => {
-      if (!hook) throw new Error('Failed to mount useAuthFilesReauth test harness');
-      return hook;
+      if (!hookRef.current)
+        throw new Error('Failed to mount useAuthFilesReauth test harness');
+      return hookRef.current;
     },
     unmount: () => {
       if (!renderer) return;

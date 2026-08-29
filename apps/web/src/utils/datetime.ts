@@ -259,6 +259,34 @@ export function formatSlashDateTimeUtc8(value: unknown, fallback = ''): string {
 }
 
 /**
+ * 紧凑时间戳：`MM/DD HH:mm:ss`（24 小时制），走全局时区配置（默认 UTC+8）。
+ *
+ * 与 `formatSlashDateTimeUtc8`（无秒）同族，但补足秒位；分隔符由本函数手工拼接、
+ * **与 locale 无关**——刻意不走 `Intl.DateTimeFormat(locale, …)`，因为 en-US 等 locale
+ * 会在日期与时间之间插入 `,`（如 `08/24, 17:15:35`），让等宽列宽随 locale 抖动、把
+ * 秒位挤出可视区（见 `standardDateTimeParts` 同款理由）。用于 beacon 时间线这类需要
+ * 固定列宽且必须看到秒的紧凑展示；完整含 `UTC±H` 标注的时间戳仍由
+ * `formatDateTimeUtc8` 放进 `title` 悬浮备查。
+ */
+export function formatCompactStampUtc8(value: unknown, fallback = ''): string {
+  const date = toDate(value);
+  if (!date) return fallback;
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: resolveTimeZone(),
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(date);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+  let hour = get('hour');
+  if (hour === '24') hour = '00'; // 部分 ICU 在 hour12:false 下用 24 表示午夜，归一为 00。
+  return `${get('month')}/${get('day')} ${hour}:${get('minute')}:${get('second')}`;
+}
+
+/**
  * 短时分：HH:mm（24 小时制），走全局时区配置（默认 UTC+8）。
  */
 export function formatShortClockUtc8(value: unknown, fallback = ''): string {

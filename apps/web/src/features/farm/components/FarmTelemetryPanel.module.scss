@@ -99,15 +99,24 @@
   color: var(--text-primary);
 }
 
-// 指纹自洽卡表头 / 数据行共享的三栏网格：字段名 | 自报 declared | 出站实测
-// on-wire。E3 前是每行各自内联 style={{ display:'grid', ... }}（表头行、数据
-// 行各写一遍），这里收敛成「网格几何」+「各行独有的 padding/分隔线」两个组合
-// 类，替代内联写法。
+// 指纹自洽卡表头 / 数据行共享的四栏网格：字段名 | 预期(pin) | serving 面(写落地) |
+// 出站实测 on-wire。增量2 §5 在原三栏（字段名 | 预期 | on-wire）间插入 serving 面
+// 第三列。三个数据列都用 1fr 等分弹性宽，min-content 由 .consistencyValue 的
+// word-break: break-all 收敛到 ~1 字符——保证窄视口（375/390）下值只在格内换行、
+// 绝不横向撑破卡片（label 列 minmax 下界收到 88px 给三值列腾空间；gap 收到 10px）。
 .consistencyGrid {
   display: grid;
-  grid-template-columns: minmax(110px, 140px) 1fr 1fr;
-  gap: 0 12px;
+  grid-template-columns: minmax(88px, 128px) 1fr 1fr 1fr;
+  gap: 0 10px;
   align-items: center;
+}
+
+// 窄视口（≤768px）：进一步收 gap 给三个值列腾空间，避免脱敏 device_id 掩码在 375/390
+// 下被挤成过多折行。列数不变（仍靠 break-all 保证不横向溢出），只调间距。
+@include mobile {
+  .consistencyGrid {
+    gap: 0 6px;
+  }
 }
 
 .consistencyHeaderRow {
@@ -128,6 +137,32 @@
 // onWireFieldValue 实现）。
 .consistencyValueClash {
   color: var(--color-danger);
+}
+
+// 三向一致性 verdict + 隔离态汇总条（增量2 §5）：卡顶权威结论区，与下方逐字段
+// 网格用一条细分隔线隔开。徽标语义色靠 status-badge 全局类（success/error/muted），
+// 这里只管布局：head 行 flex 换行、min-width:0 防长 reason 撑破。
+.consistencySummary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 6px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--border-color);
+  min-width: 0;
+}
+
+.consistencySummaryHead {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+
+  // 汇总条内徽标清零全局默认 margin-bottom，避免撑高首行。
+  :global(.status-badge) {
+    margin-bottom: 0;
+  }
 }
 
 // 「自报 (declared)」列没有真值时的诚实占位：不是裸横线，而是标「未采集 / 不适用」，
@@ -152,6 +187,101 @@
   color: var(--text-primary);
   font-size: 12px;
   line-height: 1.5;
+}
+
+// 遥测停摆四态诊断盒（farm-egress-resilience Change A）：结论 + 建议动作 + 探针证据。
+// 底色/边框按 data-silence-variant 派生的语义色（复用既有 --color-* token，不新造）：
+// error=danger（确证故障）、warning=待确认、muted=正常无请求（benign 中性）。与
+// .staleWarning 同款「低透明度 tint + 边框」观感，只是按 variant 换色，不引入新设计体系。
+.silenceStateBox {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: $radius-sm;
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.5;
+  // 默认（warning / indeterminate 待确认）：琥珀色 tint。
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 40%, transparent);
+
+  &[data-silence-variant='error'] {
+    background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+    border-color: color-mix(in srgb, var(--color-danger) 40%, transparent);
+  }
+
+  // 正常无请求（idle_no_request）：benign，中性底色不误导成异常。
+  &[data-silence-variant='muted'] {
+    background: color-mix(in srgb, var(--text-secondary) 8%, transparent);
+    border-color: var(--border-color);
+  }
+}
+
+.silenceStateHead {
+  display: flex;
+  align-items: center;
+  gap: $spacing-sm;
+  flex-wrap: wrap;
+
+  // 盒内徽标清零全局默认 margin-bottom，避免撑高首行。
+  :global(.status-badge) {
+    margin-bottom: 0;
+  }
+}
+
+.silenceStateConclusion {
+  margin: 0;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.silenceStateAction {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.silenceStateActionLabel {
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.silenceStateProbe {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 4px;
+  border-top: 1px dashed var(--border-color);
+}
+
+.silenceStateProbeHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-weight: 600;
+  color: var(--text-secondary);
+
+  :global(.status-badge) {
+    margin-bottom: 0;
+  }
+}
+
+// 探针证据两列 label|value 网格：左列固定窄列，右列吃剩余空间。复用既有 token。
+.silenceStateProbeGrid {
+  display: grid;
+  grid-template-columns: minmax(88px, auto) minmax(0, 1fr);
+  gap: 2px $spacing-sm;
+  align-items: baseline;
+}
+
+.silenceStateProbeLabel {
+  font-size: $fs-2xs;
+  color: var(--text-secondary);
 }
 
 // E3：on-wire 未接入时的单元格中性占位——面板级横幅（.onWireBanner）已经
@@ -181,7 +311,9 @@
   margin: 0;
   font-size: 12px;
   color: var(--text-secondary);
-  opacity: 0.85;
+  // 去掉此前的 opacity:0.85（U-review P2 a11y）：叠在 --text-secondary(#5f6c7b) 上会把
+  // 12px 小灰字的对比度从 ~5.36:1 拉到 ~3.91:1，跌破 WCAG AA 正文 4.5:1；去掉后回到
+  // token 原色即达标，不改共享 token。
 }
 
 // TP-2「字段速览」两栏 label|value 网格：左列字段名固定窄列，右列值吃剩余空间
@@ -214,6 +346,10 @@
 // 「来源」行的 status-badge：清零全局默认 margin-bottom，避免撑高网格首行。
 .fieldSpreadBadge {
   align-self: center;
+  // 网格项会被 blockify（CSS Grid 规范），inline-flex 徽标默认 justify-self:stretch
+  // 被拉成整格宽度（U-review P2：source 徽标全宽拉伸）；显式 start 让它回到「按内容
+  // 宽度、左对齐」，不再横铺一整行。
+  justify-self: start;
 
   &:global(.status-badge) {
     margin-bottom: 0;
@@ -275,11 +411,13 @@
 // 不再单独占一列，把列数收敛到验收要求的 4 列。
 .eventGrid {
   display: grid;
-  // 时间列宽按 "MM/DD HH:mm:ss"（14 字符，等宽字体）留够空间，避免自己被
-  // text-ellipsis 截断；「内容」列（通道 + 来源 + 事件名 + 关键上报字段，竖向堆叠）
-  // 给一个弹性中列（min 140px 保底）；大小列固定窄宽右对齐；host/路径吃掉窄抽屉
-  // （~640px 内容区）里剩下的全部空间，是唯一预期会触发截断的列。
-  grid-template-columns: 104px minmax(140px, 1.3fr) minmax(0, 1fr) 56px;
+  // 时间列宽按 "MM/DD HH:mm:ss"（14 字符，等宽 12px ≈ 101px）留够空间并留余量，避免
+  // 秒位被 text-ellipsis 截断（P1-3：此前 104px + locale 逗号 `08/24, 17:15:…` 把秒吞掉，
+  // 现改用 formatCompactStampUtc8 去逗号 + 列宽抬到 120px 双保险）；「内容」列（通道 +
+  // 来源 + 事件名 + 关键上报字段，竖向堆叠）给一个弹性中列（min 140px 保底）；大小列固定
+  // 窄宽右对齐；host/路径吃掉窄抽屉（~640px 内容区）里剩下的全部空间，是唯一预期会触发
+  // 截断的列。
+  grid-template-columns: 120px minmax(140px, 1.3fr) minmax(0, 1fr) 56px;
   gap: 0 $spacing-sm;
   align-items: center;
 

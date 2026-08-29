@@ -1,0 +1,113 @@
+@use '../../styles/variables' as *;
+
+// <JsonPreview>：body_preview 结构化展示。着色只吃 themes.scss 已有的语义 token
+// （--color-primary/success/warning/info 系列 + --text-*），不新增硬编码色值，
+// 保证浅色/暗色/纯白主题都能自动适配（同 HealthPill.module.scss 的约束）。
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.truncatedBadge {
+  align-self: flex-start;
+  margin-bottom: 0;
+}
+
+// 可滚动预览区：折叠态限矮高度、展开态放开到更大高度仍可滚动，二者都保留
+// overflow: auto（内容不超限时不会出现滚动条）。tabIndex 由组件在 JSX 里加，
+// 让键盘用户能 Tab 进来后用方向键/PageUp/PageDown 滚动。
+.scrollArea {
+  overflow: auto;
+  border-radius: $radius-sm;
+  border: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+
+  &[data-collapsed='true'] {
+    max-height: 180px;
+  }
+
+  &[data-collapsed='false'] {
+    max-height: 480px;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: -2px;
+  }
+}
+
+.pre {
+  margin: 0;
+  padding: 8px 10px;
+  color: var(--text-primary);
+  font-family: $font-mono;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-sm;
+}
+
+.toggleBtn {
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: $fs-2xs;
+  line-height: 1.4;
+  padding: 2px 8px;
+  border-radius: $radius-sm;
+  cursor: pointer;
+
+  &:hover {
+    background: var(--bg-hover);
+  }
+}
+
+.sizeLine {
+  font-size: $fs-2xs;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+// 语法着色：key 用 primary（结构线索最重要，优先扫读），string 用 success（内容
+// 值），number/boolean/null 统一归为「标量」用较弱的 info 色，标点用 text-tertiary
+// 弱化——刻意只做「轻着色」，不是全彩语法高亮，避免在脱敏预览里抢走 pill 的注意力。
+.tKey {
+  color: var(--color-primary-dark-2);
+}
+
+.tString {
+  color: var(--color-success-dark-2);
+}
+
+.tScalar {
+  color: var(--color-info-dark-2);
+}
+
+.tPunct {
+  color: var(--text-tertiary);
+}
+
+// 脱敏值 pill：复用 warning 语义色（与仓库里其余「已脱敏/需要注意」提示同一套
+// token），刻意与上面的 tString 绿色区分，一眼能看出「这里原文被拿掉了」。
+.redactedPill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  margin: 0 1px;
+  border-radius: $radius-full;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--color-warning-dark-2);
+  background: var(--color-warning-light-9);
+  border: 1px solid var(--color-warning-light-5);
+  white-space: nowrap;
+}

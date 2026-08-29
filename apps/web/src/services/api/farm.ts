@@ -44,6 +44,7 @@ import type {
   FarmCreateBindingRequest,
   FarmCreateContainerRequest,
   FarmEnv,
+  FarmIdentityLineageResponse,
   FarmKeepaliveSeriesResponse,
   FarmOnboardRequest,
   FarmOnboardResponse,
@@ -52,6 +53,9 @@ import type {
   FarmResourceResponse,
   FarmResourceSeriesResponse,
   FarmRetireContainerResponse,
+  FarmRotateProxyRequest,
+  FarmRotateProxyResponse,
+  FarmRotationSuggestionsResponse,
   FarmUnbindResponse,
   FarmUsageResponse,
 } from '@/types/farm';
@@ -234,4 +238,38 @@ export const farmApi = {
       `/api/farm/containers/${encodeURIComponent(containerId)}/beacons`,
       { params: query }
     ),
+
+  // ---------------------------------------------------------------------
+  // farm-proxy-rotation §1：代理轮换（写端点）+ SURV1：身份谱系历史（只读）
+  // ---------------------------------------------------------------------
+
+  // 代理轮换（POST /api/farm/rotate-proxy，rotation.go handleRotateProxy）：operator 显式
+  // 确认后编排「新建容器 + 新 device_id → 停旧容器（fail-closed 窗口）→ 供给新 → 退役旧
+  // 容器 superseded（保卷、宽限期物理删）」。payload.confirm **必须为 true**（后端硬编码
+  // 「绝不未确认自动换」O1，false/缺省一律 400）。§2 严格 gate：只作用于 provider==claude
+  // 且已纳入农场的账号，其它一律拒绝。失败态机器码在响应体 code 字段（farmClient 解析进
+  // FarmApiError.businessCode），调用方按 FarmRotationErrorCode / no_available_proxy 精确
+  // 匹配分支，不做中文文本子串匹配。
+  rotateProxy: (payload: FarmRotateProxyRequest) =>
+    farmClient.post<FarmRotateProxyResponse>('/api/farm/rotate-proxy', payload),
+
+  // 「建议更换代理」半自动提示（GET /api/farm/rotation-suggestions，rotation.go
+  // handleGetRotationSuggestions）：复用 Change A 每账号代理直连探针，列出判为 proxy_dead
+  // 的 Claude 农场号。**只产建议、绝不自动换**（响应体 auto_rotate 恒 false，O1）——轮换仅
+  // 由 operator 显式 rotateProxy(confirm=true) 触发。env 必填（test/prod）。
+  getRotationSuggestions: (env: FarmEnv) =>
+    farmClient.get<FarmRotationSuggestionsResponse>('/api/farm/rotation-suggestions', {
+      params: { env },
+    }),
+
+  // 身份谱系历史（GET /api/farm/identity-lineage，identity_lineage.go
+  // handleGetIdentityLineage）：某账号的 device_id / 代理 / 出口 IP 变更历史（脱敏，
+  // append-only 审计账本，按 start_at 降序），附「同 device_id 跨不同住宅 IP」审计结论
+  // （cross_ip_reuse_detected，正常恒 false）。account 走 query（账号名常含 @ / .json 等
+  // path 不友好字符）；env 可选，留空表示不限 test/prod。谱系存储未装配时后端优雅退化为
+  // 空历史（不 500）。
+  getIdentityLineage: (account: string, env?: FarmEnv) =>
+    farmClient.get<FarmIdentityLineageResponse>('/api/farm/identity-lineage', {
+      params: env ? { account, env } : { account },
+    }),
 };

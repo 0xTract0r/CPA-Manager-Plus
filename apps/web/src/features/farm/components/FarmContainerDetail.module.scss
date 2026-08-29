@@ -244,7 +244,24 @@
   margin: 0;
   font-size: $fs-2xs;
   color: var(--text-secondary);
-  opacity: 0.85;
+  // 去掉此前的 opacity:0.85（U-review P2 a11y）：叠在 --text-secondary 上会把小灰字对比度
+  // 拉到 ~3.9:1，跌破 WCAG AA 正文 4.5:1；去掉后回到 token 原色即达标，不改共享 token。
+}
+
+// 换代理后「新身份」过渡提示（farm-proxy-rotation §6）：当账号存在被 superseded 的上一个
+// epoch 且其 device_id 与当前不同（即刚换过代理→合成了全新 device_id）时，明确告知遥测从
+// 新 device_id 重新计数、历史见谱系、并非数据丢失，避免用户误以为遥测数据丢了。info 级
+// （主色低透明度 tint + 边框，同 FarmTelemetryPanel .onWireBanner 口径），刻意不借用
+// warning/danger 语义色误导成异常态。
+.newIdentityNotice {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: $radius-sm;
+  background-color: rgba($primary-color, 0.08);
+  border: 1px solid rgba($primary-color, 0.35);
+  color: var(--text-primary);
+  font-size: $fs-xs;
+  line-height: 1.5;
 }
 
 .deviceIdRow {

@@ -1,0 +1,17 @@
+@use '../../../styles/variables' as *;
+
+// FarmBeaconDetailBody §6 新增的展示细节：本文件只放「独属于这个组件、不影响
+// FarmTelemetryPanel 其余部分」的样式，刻意不并入共享的 FarmTelemetryPanel.
+// module.scss——那个文件同期还有 §5 指纹卡切片在改，两边都改同一份 scss 容易在
+// 集成时打架，这里单独开一个小文件把冲突面收窄到「只有这个文件」。
+// 结构类（.drawerSection / .eventNameChips / .fieldSpreadGrid 等）仍然从
+// FarmTelemetryPanel.module.scss 引用，不重复定义。
+
+// 事件名 chip 里的「×N」计数后缀：比 chip 主文字弱一档，视觉上明确是「计数」而不是
+// 事件名本身的一部分。
+.eventNameCount {
+  margin-left: 4px;
+  font-size: $fs-2xs;
+  font-weight: 700;
+  color: var(--text-tertiary);
+}

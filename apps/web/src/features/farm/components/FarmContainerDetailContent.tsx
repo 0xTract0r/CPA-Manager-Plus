@@ -11,6 +11,7 @@ import { formatFileSize } from '@/utils/format';
 import { formatDurationMs } from '@/utils/usage/latency';
 import { formatUsd } from '@/utils/usage';
 import { useFarmContainerDetail } from '../hooks/useFarmContainerDetail';
+import { FarmIdentityLineagePanel } from './FarmIdentityLineagePanel';
 import { FarmTelemetryPanel } from './FarmTelemetryPanel';
 import {
   deviceAlignmentToBadgeVariant,
@@ -33,9 +34,11 @@ import {
 import styles from './FarmContainerDetail.module.scss';
 
 // 账号·设备详情分区（IA 重设计，用户已审批 U11/决策②）：把此前 10 段纵向堆叠
-// （遥测埋在第 8 段、要滚很久）并成 5 个 SegmentedTabs 分区。deepLink initialTab
+// （遥测埋在第 8 段、要滚很久）并成 SegmentedTabs 分区。deepLink initialTab
 // 让账号页的遥测入口能一键直达「遥测」分区，无需滚动。
-export type FarmDetailTab = 'overview' | 'telemetry' | 'resources' | 'cadence' | 'events';
+// 'lineage'（farm-proxy-rotation SURV1）：第 6 个分区，身份/代理变更历史
+// （§3 切片新增，见 <FarmIdentityLineagePanel>）。
+export type FarmDetailTab = 'overview' | 'telemetry' | 'resources' | 'cadence' | 'events' | 'lineage';
 
 const FARM_DETAIL_TAB_IDBASE = 'farm-detail-tab';
 
@@ -72,13 +75,13 @@ interface FarmContainerDetailContentProps {
  * 账号·设备详情整页内容（原 FarmContainerDetail 抽屉正文抽出为可复用整页正文，
  * 抽屉宿主已删，改由独立路由页 /farm/containers/:id 承载，见 FarmContainerDetailPage）。
  *
- * 信息架构：内容按 <SegmentedTabs> 分 5 区——概览 / 遥测 / 资源 / 节奏与用量 /
- * 事件（解决此前 10 段纵向堆叠、遥测埋在第 8 段要滚很久的 U11 痛点）。支持
+ * 信息架构：内容按 <SegmentedTabs> 分 6 区——概览 / 遥测 / 资源 / 节奏与用量 /
+ * 事件 / 身份谱系（解决此前 10 段纵向堆叠、遥测埋在第 8 段要滚很久的 U11 痛点）。支持
  * initialTab 深链直达任一分区。
  *
  * 五条底层请求（主详情/心跳时序/资源时序/探针节奏/用量）各自独立发起、独立
  * settle、独立捕获错误与 loading（见 useFarmContainerDetail）：主 loading 只等
- * 主详情，一 resolve 就渲染 5 个 tab（含遥测 tab，它走独立 hook）；其余四条慢
+ * 主详情，一 resolve 就渲染 6 个 tab（含遥测 tab，它走独立 hook）；其余四条慢
  * 或失败只让对应区块落局部 loading/error，不连累已渲染的主详情或其它区块。
  */
 export function FarmContainerDetailContent({
@@ -159,6 +162,7 @@ export function FarmContainerDetailContent({
     { id: 'resources', label: t('farm.detail.tab_resources', { defaultValue: '资源' }) },
     { id: 'cadence', label: t('farm.detail.tab_cadence', { defaultValue: '节奏与用量' }) },
     { id: 'events', label: t('farm.detail.tab_events', { defaultValue: '事件' }) },
+    { id: 'lineage', label: t('farm.lineage.tab', { defaultValue: '身份谱系' }) },
   ];
 
   const panelProps = (tab: FarmDetailTab) => ({
@@ -187,7 +191,7 @@ export function FarmContainerDetailContent({
         >
           {!detail ? null : (
             <>
-              {/* 5 分区标签（IA 重设计）：概览 / 遥测 / 资源 / 节奏与用量 / 事件。 */}
+              {/* 6 分区标签（IA 重设计）：概览 / 遥测 / 资源 / 节奏与用量 / 事件 / 身份谱系。 */}
               <div className={styles.tabsRow} data-testid="farm-detail-tabs">
                 <SegmentedTabs
                   items={tabItems}
@@ -629,6 +633,15 @@ export function FarmContainerDetailContent({
                       })}
                     </p>
                   </section>
+                </div>
+              ) : null}
+
+              {activeTab === 'lineage' ? (
+                <div {...panelProps('lineage')}>
+                  {/* §3：身份/代理变更历史（farm-proxy-rotation SURV1，持久化谱系）。
+                      detail 继承 FarmContainerView，与 <FarmTelemetryPanel> 同款 container
+                      prop 传参口径。 */}
+                  <FarmIdentityLineagePanel container={detail} />
                 </div>
               ) : null}
             </>
