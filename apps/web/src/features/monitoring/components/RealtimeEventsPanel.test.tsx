@@ -5,6 +5,7 @@ import type { AccountDisplayMode } from '@/features/monitoring/accountOverviewSt
 import type { MonitoringEventRow } from '@/features/monitoring/hooks/useMonitoringData';
 import { formatInUtc8 } from '@/utils/datetime';
 import styles from '../MonitoringCenterPage.module.scss';
+import { hasOverflowingContent } from './contentTooltip';
 import { RealtimeEventsPanel, RealtimeEventsPanelActions } from './RealtimeEventsPanel';
 
 const t = ((key: string, options?: Record<string, unknown>) => {
@@ -225,6 +226,21 @@ describe('RealtimeEventsPanel', () => {
   const expectedDate = formatInUtc8(baseRow().timestampMs, { dateStyle: 'medium' }, 'en-US');
   const expectedTime = formatInUtc8(baseRow().timestampMs, { timeStyle: 'medium' }, 'en-US');
 
+  it('detects only real single-line or line-clamp overflow for content tooltips', () => {
+    const target = (
+      clientWidth: number,
+      scrollWidth: number,
+      clientHeight: number,
+      scrollHeight: number
+    ) => ({ clientWidth, scrollWidth, clientHeight, scrollHeight }) as HTMLElement;
+    const trigger = (targets: HTMLElement[]) =>
+      ({ querySelectorAll: () => targets }) as unknown as HTMLElement;
+
+    expect(hasOverflowingContent(trigger([target(96, 96, 34, 34)]))).toBe(false);
+    expect(hasOverflowingContent(trigger([target(96, 140, 18, 18)]))).toBe(true);
+    expect(hasOverflowingContent(trigger([target(120, 120, 36, 54)]))).toBe(true);
+  });
+
   it('renders CPA v7.1.18 usage details for failed rows', () => {
     const markup = renderPanel(
       baseRow({
@@ -300,7 +316,9 @@ describe('RealtimeEventsPanel', () => {
 
     expect(markup).toContain('View raw request');
     expect(markup).toContain(styles.realtimeRequestLogTrigger);
-    expect(markup).toContain('title="Fetch the raw request/response body for request_id req-trace-42."');
+    expect(markup).toContain(
+      'title="Fetch the raw request/response body for request_id req-trace-42."'
+    );
     // 有 request_id 时不应显示「不可溯源」占位。
     expect(markup).not.toContain('Not traceable');
     // 触发按钮嵌在 source 单元格里，不新增列(推理/服务合并为单列后共 13 列)。
@@ -350,7 +368,7 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).not.toContain('R 0');
     expect(markup).not.toContain('Read 0');
     expect(markup).not.toContain('Create 0');
-    // 成功行不渲染失败诊断浮层。失败浮层用 .realtimeFailureTooltip，与模型名即时浮层的
+    // 成功行不渲染失败诊断浮层。失败浮层用 .realtimeFailureTooltip，与模型名内容浮层的
     // .realtimeModelTooltip 是两套机制；模型浮层带 role="tooltip" / aria-describedby 属正常，
     // 因此这里只针对失败态诊断做负向断言，不再笼统否定 role="tooltip" / aria-describedby。
     expect(markup).not.toContain(styles.realtimeFailureTooltip);
@@ -371,8 +389,8 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).toContain('API Key: Team A');
     expect(markup).not.toContain('#12345678');
 
-    // API Key 值行改走即时浮层展示完整补充信息（掩码值/哈希/执行器类型），不再依赖浏览器
-    // 原生 title=（同 RealtimeModelCell 的即时浮层手法，见下方模型名测试）。
+    // API Key 值行改走意图延迟浮层展示完整补充信息（掩码值/哈希/执行器类型），不再依赖浏览器
+    // 原生 title=（同 RealtimeModelCell 的 portal 手法，见下方模型名测试）。
     expect(markup).not.toContain('title="API Key: Team A');
     const tooltipMatch = markup.match(
       /<span id="([^"]*-apikey-tooltip-[^"]*)" role="tooltip"[^>]*realtimeModelTooltip[^>]*>/
@@ -380,31 +398,34 @@ describe('RealtimeEventsPanel', () => {
     expect(tooltipMatch).not.toBeNull();
     const tooltipId = tooltipMatch?.[1] ?? '';
     expect(tooltipId).toContain('apikey-tooltip');
-    expect(markup).toContain(`aria-describedby="${tooltipId}"`);
+    expect(markup).toContain('data-overflow-tooltip="api-key"');
     expect(markup).toMatch(/realtimeModelTooltipPrimary[^>]*>API Key: Team A<\/span>/);
     expect(markup).toMatch(/realtimeModelTooltipSecondary[^>]*>Masked key: sk-\.\.\.cdef<\/span>/);
-    expect(markup).toMatch(/realtimeModelTooltipSecondary[^>]*>API Key hash: 1234567890abcdef<\/span>/);
+    expect(markup).toMatch(
+      /realtimeModelTooltipSecondary[^>]*>API Key hash: 1234567890abcdef<\/span>/
+    );
     expect(markup).toMatch(/realtimeModelTooltipSecondary[^>]*>Executor: codex<\/span>/);
   });
 
-  it('keeps a long realtime source name constrained and exposes the full name via an instant tooltip', () => {
+  it('keeps a long realtime source name constrained and exposes the full name via an overflow tooltip', () => {
     const longSource =
       'very-long-channel-identifier-for-realtime-monitoring-source-column-overflow-check';
     const markup = renderPanel(baseRow({ channel: longSource }));
 
     // 来源主名不再依赖浏览器原生 title（父级 .primaryCell 上仍保留原有的组合信息 title=
-    // 作为其它区域的兜底，但主名触发元素自身用 title="" 显式屏蔽继承，避免与即时浮层重复）。
+    // 作为其它区域的兜底，但主名触发元素自身用 title="" 显式屏蔽继承，避免与内容浮层重复）。
     const tooltipMatch = markup.match(
       /<span id="([^"]*-source-tooltip-[^"]*)" role="tooltip"[^>]*realtimeModelTooltip[^>]*>/
     );
     expect(tooltipMatch).not.toBeNull();
     const tooltipId = tooltipMatch?.[1] ?? '';
     expect(tooltipId).toContain('source-tooltip');
-    expect(markup).toContain(`aria-describedby="${tooltipId}"`);
+    expect(markup).toContain('data-overflow-tooltip="source"');
+    expect(markup).toContain('data-overflow-content="true"');
     expect(markup).toMatch(new RegExp(`realtimeModelTooltipPrimary[^>]*>${longSource}</span>`));
   });
 
-  it('keeps long realtime model names constrained and exposes the full name via an instant tooltip', () => {
+  it('keeps long realtime model names constrained and exposes the full name via an overflow tooltip', () => {
     const longModel =
       'claude-opus-4-6-thinking-with-a-very-long-provider-routing-suffix-for-realtime-monitoring';
     const markup = renderPanel(baseRow({ model: longModel, resolvedModel: longModel }));
@@ -413,8 +434,8 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).toMatch(/class="[^"]*realtimeModelCell[^"]*"/);
     expect(markup).toMatch(/class="[^"]*realtimeModelText[^"]*"/);
     expect(markup).toMatch(/class="[^"]*realtimeModelTextClamp[^"]*"/);
-    // 全名不再依赖浏览器原生 title（~1s 延迟），改为即时浮层：role="tooltip" 独立元素，
-    // trigger 通过 aria-describedby 指向同一 tooltip id。
+    // 全名不再依赖浏览器原生 title；浮层仍通过 portal 独立渲染，但浏览器端只有真实
+    // line-clamp/ellipsis 后才打开，并且 aria-describedby 只在打开期间挂载。
     expect(markup).not.toContain(`title="${longModel}"`);
 
     // .realtimeModelTooltip 视觉样式现在也被表头 TableHeaderInfo 浮层复用(见下方
@@ -426,7 +447,7 @@ describe('RealtimeEventsPanel', () => {
     expect(tooltipMatch).not.toBeNull();
     const tooltipId = tooltipMatch?.[1] ?? '';
     expect(tooltipId).toContain('model-tooltip');
-    expect(markup).toContain(`aria-describedby="${tooltipId}"`);
+    expect(markup).toContain('data-overflow-tooltip="model"');
     // 浮层主槽内含完整模型全名文案。
     expect(markup).toMatch(new RegExp(`realtimeModelTooltipPrimary[^>]*>${longModel}</span>`));
   });
@@ -435,7 +456,9 @@ describe('RealtimeEventsPanel', () => {
     const markup = renderPanel(baseRow({ reasoningEffort: 'high', serviceTier: 'auto' }));
 
     // 两行都恒显、都带标签；default 值 auto 照常显示，不再靠隐藏消歧，改靠 "服务:" 标签消歧。
-    expect(markup).toMatch(/<span class="[^"]*realtimeReasoningValue[^"]*">Reasoning: high<\/span>/);
+    expect(markup).toMatch(
+      /<span class="[^"]*realtimeReasoningValue[^"]*">Reasoning: high<\/span>/
+    );
     expect(markup).toMatch(/<span class="[^"]*realtimeServiceValue[^"]*">Service: auto<\/span>/);
     expect(markup).toContain('title="Effort: high · Tier: auto"');
   });
@@ -443,9 +466,7 @@ describe('RealtimeEventsPanel', () => {
   it('renders any service tier value verbatim with the label prefix (e.g. "DEFAULT")', () => {
     const markup = renderPanel(baseRow({ reasoningEffort: 'low', serviceTier: 'DEFAULT' }));
 
-    expect(markup).toMatch(
-      /<span class="[^"]*realtimeServiceValue[^"]*">Service: DEFAULT<\/span>/
-    );
+    expect(markup).toMatch(/<span class="[^"]*realtimeServiceValue[^"]*">Service: DEFAULT<\/span>/);
     expect(markup).toContain('title="Effort: low · Tier: DEFAULT"');
   });
 
@@ -666,7 +687,9 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).toContain(
       'aria-label="Line 1, &quot;Reasoning: xxx&quot;, is the reasoning effort; line 2, &quot;Service: xxx&quot;, is the requested service tier.'
     );
-    expect(markup).not.toContain('aria-label="Service tier requested by the client for this call."');
+    expect(markup).not.toContain(
+      'aria-label="Service tier requested by the client for this call."'
+    );
     // 信息图标的即时浮层 trigger 存在(可聚焦、承担 aria-describedby)：Reasoning/Tier(合并) /
     // Success / Usage / Cache Hit 共 4 个。
     expect(markup.match(new RegExp(styles.tableHeaderInfoTrigger, 'g'))?.length).toBe(4);

@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
@@ -28,6 +29,7 @@ import {
 } from '@/features/monitoring/components/MonitoringShared';
 import { MonitoringPanel } from '@/features/monitoring/components/MonitoringPanel';
 import { RequestLogViewer } from '@/features/monitoring/components/RequestLogViewer';
+import { hasOverflowingContent } from '@/features/monitoring/components/contentTooltip';
 import { formatPercent } from '@/features/monitoring/components/accountOverviewPresentation';
 import { computeCacheHitRate } from '@/features/monitoring/model/monitoringCenterPageModel';
 import { buildRealtimeSourceDisplay } from '@/features/monitoring/realtimeSourceDisplay';
@@ -119,6 +121,8 @@ const FAILURE_TOOLTIP_OFFSET = 8;
 const FAILURE_TOOLTIP_MAX_WIDTH = 420;
 const FAILURE_TOOLTIP_MAX_HEIGHT = 240;
 const FAILURE_TOOLTIP_CLOSE_DELAY_MS = 120;
+const CONTENT_TOOLTIP_OPEN_DELAY_MS = 140;
+const CONTENT_TOOLTIP_CLOSE_DELAY_MS = 220;
 // "强度/等级"列缺值时的中性占位：只用一个 em dash 字符，不落成裸的 "-"（在等宽字体/
 // 部分渲染环境下容易被读成叉号），也不是任何需要按语言翻译的文案。effort 与 tier
 // 皆缺失时，整格只显这一个占位（第 2 行不渲染）。
@@ -453,14 +457,49 @@ const isNodeInside = (element: HTMLElement | null, target: EventTarget | null) =
   return element.contains(target);
 };
 
-// 即时浮层共享状态机：与 RealtimeModelCell / RealtimeTimeCell 内联实现的
-// open/position/show/hide/resize-scroll 重定位逻辑完全一致，抽成 hook 供来源主名和
-// API Key 值两处新增单元格复用，避免第三、四次照抄整段状态机。RealtimeModelCell /
-// RealtimeTimeCell 本身保持原样不改动，缩小本次改动影响面。
-function useInstantTooltip<T extends HTMLElement>() {
+type ContentTooltipOptions = {
+  requireOverflow?: boolean;
+  contentKey?: string;
+};
+
+// 内容型浮层共享状态机：时间/模型/来源仅在真实 overflow 或 line-clamp 后开放；鼠标使用
+// 很短的 intent delay，避免扫表时闪烁，键盘聚焦仍立即打开。浮层与 trigger 之间保留关闭
+// 缓冲，并在鼠标进入 portal 浮层后取消关闭，使长邮箱/模型名可以滚动、选中和复制。
+// API Key 传 requireOverflow=false：它还承载掩码、哈希、executor 等单元格外补充信息。
+function useContentTooltip<T extends HTMLElement>({
+  requireOverflow = true,
+  contentKey = '',
+}: ContentTooltipOptions = {}) {
   const triggerRef = useRef<T | null>(null);
+  const openTimerRef = useRef<number | null>(null);
+  const closeTimerRef = useRef<number | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const tooltipHoveredRef = useRef(false);
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<FailureTooltipPosition | null>(null);
+
+  const clearOpenTimer = useCallback(() => {
+    if (openTimerRef.current === null || typeof window === 'undefined') return;
+    window.clearTimeout(openTimerRef.current);
+    openTimerRef.current = null;
+  }, []);
+
+  const clearCloseTimer = useCallback(() => {
+    if (closeTimerRef.current === null || typeof window === 'undefined') return;
+    window.clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = null;
+  }, []);
+
+  const canShow = useCallback(() => {
+    if (!triggerRef.current) return false;
+    return !requireOverflow || hasOverflowingContent(triggerRef.current);
+  }, [requireOverflow]);
+
+  const refreshAvailability = useCallback(() => {
+    const nextAvailable = canShow();
+    triggerRef.current?.setAttribute('tabindex', nextAvailable ? '0' : '-1');
+    return nextAvailable;
+  }, [canShow]);
 
   const updatePosition = useCallback(() => {
     if (!triggerRef.current) return;
@@ -468,33 +507,149 @@ function useInstantTooltip<T extends HTMLElement>() {
     if (nextPosition) setPosition(nextPosition);
   }, []);
 
-  const show = useCallback(() => {
-    updatePosition();
-    setOpen(true);
+  const schedulePositionUpdate = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    if (rafRef.current !== null) window.cancelAnimationFrame(rafRef.current);
+    rafRef.current = window.requestAnimationFrame(() => {
+      rafRef.current = null;
+      updatePosition();
+    });
   }, [updatePosition]);
 
-  const hide = useCallback(() => setOpen(false), []);
+  const hideNow = useCallback(() => {
+    clearOpenTimer();
+    clearCloseTimer();
+    setOpen(false);
+  }, [clearCloseTimer, clearOpenTimer]);
+
+  const showImmediately = useCallback(() => {
+    clearOpenTimer();
+    clearCloseTimer();
+    if (!refreshAvailability()) {
+      setOpen(false);
+      return;
+    }
+    updatePosition();
+    setOpen(true);
+  }, [clearCloseTimer, clearOpenTimer, refreshAvailability, updatePosition]);
+
+  const show = useCallback(() => {
+    clearOpenTimer();
+    clearCloseTimer();
+    if (!refreshAvailability()) {
+      setOpen(false);
+      return;
+    }
+    if (typeof window === 'undefined') {
+      showImmediately();
+      return;
+    }
+    openTimerRef.current = window.setTimeout(() => {
+      openTimerRef.current = null;
+      showImmediately();
+    }, CONTENT_TOOLTIP_OPEN_DELAY_MS);
+  }, [clearCloseTimer, clearOpenTimer, refreshAvailability, showImmediately]);
+
+  const requestHide = useCallback(() => {
+    clearOpenTimer();
+    clearCloseTimer();
+    if (typeof window === 'undefined') {
+      setOpen(false);
+      return;
+    }
+    closeTimerRef.current = window.setTimeout(() => {
+      closeTimerRef.current = null;
+      if (!tooltipHoveredRef.current) setOpen(false);
+    }, CONTENT_TOOLTIP_CLOSE_DELAY_MS);
+  }, [clearCloseTimer, clearOpenTimer]);
 
   const handleBlur = useCallback(
     (event: FocusEvent<HTMLElement>) => {
-      if (isNodeInside(triggerRef.current, event.relatedTarget)) return;
-      hide();
+      if (isNodeInside(triggerRef.current, event.relatedTarget) || tooltipHoveredRef.current)
+        return;
+      requestHide();
     },
-    [hide]
+    [requestHide]
+  );
+
+  const handleKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLElement>) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      hideNow();
+    },
+    [hideNow]
+  );
+
+  const handleTooltipMouseEnter = useCallback(() => {
+    tooltipHoveredRef.current = true;
+    clearCloseTimer();
+  }, [clearCloseTimer]);
+
+  const handleTooltipMouseLeave = useCallback(() => {
+    tooltipHoveredRef.current = false;
+    requestHide();
+  }, [requestHide]);
+
+  const handleTooltipMouseDown = useCallback(() => {
+    tooltipHoveredRef.current = true;
+    clearCloseTimer();
+  }, [clearCloseTimer]);
+
+  useLayoutEffect(() => {
+    refreshAvailability();
+  }, [contentKey, refreshAvailability]);
+
+  useEffect(
+    () => () => {
+      clearOpenTimer();
+      clearCloseTimer();
+      if (rafRef.current !== null && typeof window !== 'undefined') {
+        window.cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    },
+    [clearCloseTimer, clearOpenTimer]
   );
 
   useEffect(() => {
     if (!open || typeof window === 'undefined') return undefined;
-    updatePosition();
-    window.addEventListener('resize', updatePosition);
-    window.addEventListener('scroll', updatePosition, true);
-    return () => {
-      window.removeEventListener('resize', updatePosition);
-      window.removeEventListener('scroll', updatePosition, true);
+    const handleResize = () => {
+      if (!refreshAvailability()) {
+        hideNow();
+        return;
+      }
+      schedulePositionUpdate();
     };
-  }, [open, updatePosition]);
+    const handleDocumentKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') hideNow();
+    };
 
-  return { triggerRef, open, position, show, hide, handleBlur };
+    schedulePositionUpdate();
+    window.addEventListener('resize', handleResize);
+    window.addEventListener('scroll', schedulePositionUpdate, true);
+    document.addEventListener('keydown', handleDocumentKeyDown);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('scroll', schedulePositionUpdate, true);
+      document.removeEventListener('keydown', handleDocumentKeyDown);
+    };
+  }, [hideNow, open, refreshAvailability, schedulePositionUpdate]);
+
+  return {
+    triggerRef,
+    open,
+    initialTabIndex: requireOverflow ? -1 : 0,
+    position,
+    show,
+    showImmediately,
+    requestHide,
+    handleBlur,
+    handleKeyDown,
+    handleTooltipMouseEnter,
+    handleTooltipMouseLeave,
+    handleTooltipMouseDown,
+  };
 }
 
 // 表头悬浮说明：与 RealtimeModelCell 同一套 portal + fixed 定位即时浮层手法，取代原生
@@ -751,50 +906,26 @@ type RealtimeModelCellProps = {
   tooltipId: string;
 };
 
-// 模型名单元格：与 RealtimeFailureStatus 同一套 portal + fixed 定位 tooltip 手法
-// (而不是 authFiles 的 CSS-only :hover 浮层)——因为本单元格位于 .tableWrapper /
-// .dataPanel 的 overflow 裁切祖先内，纯 CSS 绝对定位浮层会被祖先裁掉；且必须放进
-// 独立组件才能在 displayedRows.map 循环里各自持有 hooks(每行一份 open/position 状态)。
-// 悬浮/聚焦即时展开，不走浏览器原生 title（原生 tooltip 有约 0.5-1s 不可控延迟）。
+// 模型名单元格：portal + fixed 定位用来逃出 overflow 裁切祖先；是否开放浮层由
+// useContentTooltip 对主行 line-clamp 和副行 ellipsis 做真实尺寸判断。
 function RealtimeModelCell({ model, resolvedModel, tooltipId }: RealtimeModelCellProps) {
-  const triggerRef = useRef<HTMLDivElement | null>(null);
-  const [open, setOpen] = useState(false);
-  const [tooltipPosition, setTooltipPosition] = useState<FailureTooltipPosition | null>(null);
+  const {
+    triggerRef,
+    open,
+    position,
+    show,
+    showImmediately,
+    requestHide,
+    handleBlur,
+    handleKeyDown,
+    handleTooltipMouseEnter,
+    handleTooltipMouseLeave,
+    handleTooltipMouseDown,
+    initialTabIndex,
+  } = useContentTooltip<HTMLDivElement>({ contentKey: `${model}\u0000${resolvedModel ?? ''}` });
   const isBrowser = typeof document !== 'undefined';
 
-  const updateTooltipPosition = useCallback(() => {
-    if (!triggerRef.current) return;
-    const nextPosition = resolveFailureTooltipPosition(triggerRef.current);
-    if (nextPosition) setTooltipPosition(nextPosition);
-  }, []);
-
-  const showTooltip = useCallback(() => {
-    updateTooltipPosition();
-    setOpen(true);
-  }, [updateTooltipPosition]);
-
-  const hideTooltip = useCallback(() => setOpen(false), []);
-
-  const handleBlur = useCallback(
-    (event: FocusEvent<HTMLElement>) => {
-      if (isNodeInside(triggerRef.current, event.relatedTarget)) return;
-      hideTooltip();
-    },
-    [hideTooltip]
-  );
-
-  useEffect(() => {
-    if (!open || typeof window === 'undefined') return undefined;
-    updateTooltipPosition();
-    window.addEventListener('resize', updateTooltipPosition);
-    window.addEventListener('scroll', updateTooltipPosition, true);
-    return () => {
-      window.removeEventListener('resize', updateTooltipPosition);
-      window.removeEventListener('scroll', updateTooltipPosition, true);
-    };
-  }, [open, updateTooltipPosition]);
-
-  const placement = tooltipPosition?.placement ?? 'below';
+  const placement = position?.placement ?? 'below';
   const tooltipClassName = [
     styles.realtimeModelTooltip,
     placement === 'above' ? styles.realtimeModelTooltipAbove : styles.realtimeModelTooltipBelow,
@@ -808,7 +939,10 @@ function RealtimeModelCell({ model, resolvedModel, tooltipId }: RealtimeModelCel
       id={tooltipId}
       role="tooltip"
       className={tooltipClassName}
-      style={isBrowser ? tooltipPosition?.style : undefined}
+      style={isBrowser ? position?.style : undefined}
+      onMouseEnter={handleTooltipMouseEnter}
+      onMouseLeave={handleTooltipMouseLeave}
+      onMouseDown={handleTooltipMouseDown}
     >
       <span className={`${styles.realtimeModelTooltipPrimary} ${styles.monoCell}`}>{model}</span>
       {resolvedModel ? (
@@ -823,22 +957,30 @@ function RealtimeModelCell({ model, resolvedModel, tooltipId }: RealtimeModelCel
     <div
       ref={triggerRef}
       className={`${styles.primaryCell} ${styles.realtimeModelCell}`}
-      tabIndex={0}
-      aria-describedby={tooltipId}
-      onMouseEnter={showTooltip}
-      onMouseLeave={hideTooltip}
-      onFocus={showTooltip}
+      data-overflow-tooltip="model"
+      tabIndex={initialTabIndex}
+      aria-describedby={open ? tooltipId : undefined}
+      onMouseEnter={show}
+      onMouseLeave={requestHide}
+      onFocus={showImmediately}
       onBlur={handleBlur}
+      onKeyDown={handleKeyDown}
     >
       {/* 主行 2 行限行换行(line-clamp)，取代旧的单行硬省略；副行(resolved model)继续沿用
-          单行 nowrap 省略号，不受影响。超过 2 行/仍截断时仍由下方即时浮层兜底看全名。 */}
+          单行 nowrap 省略号，不受影响。超过 2 行/仍截断时由溢出感知浮层兜底看全名。 */}
       <span
         className={`${styles.monoCell} ${styles.realtimeModelText} ${styles.realtimeModelTextClamp}`}
+        data-overflow-content="true"
       >
         {model}
       </span>
       {resolvedModel ? (
-        <small className={`${styles.monoCell} ${styles.realtimeModelText}`}>{resolvedModel}</small>
+        <small
+          className={`${styles.monoCell} ${styles.realtimeModelText}`}
+          data-overflow-content="true"
+        >
+          {resolvedModel}
+        </small>
       ) : null}
       {!isBrowser ? tooltip : null}
       {isBrowser && open ? createPortal(tooltip, document.body) : null}
@@ -852,50 +994,25 @@ type RealtimeTimeCellProps = {
   tooltipId: string;
 };
 
-// 时间列即时浮层：与 RealtimeModelCell 同一套 portal + fixed 定位 tooltip 手法。日期/时间
-// 两行各自用 .realtimeTimeLine 的单行省略号收窄到列宽内，缩略后不再有办法看到完整时间戳；
-// 这里 hover/focus 用浮层展示同一份未截断的 date/time 文本（拼接展示，不需要额外取数据——
-// CSS 省略号只是视觉裁切，DOM 里的文本本来就是完整的），不依赖浏览器原生 title=
-// （~0.5-1s 不可控延迟、触屏点击不触发）。
+// 时间列只有 date/time 任一行真实出现省略号时才开放浮层；完整时间不再制造重复提示。
 function RealtimeTimeCell({ dateText, timeText, tooltipId }: RealtimeTimeCellProps) {
-  const triggerRef = useRef<HTMLDivElement | null>(null);
-  const [open, setOpen] = useState(false);
-  const [tooltipPosition, setTooltipPosition] = useState<FailureTooltipPosition | null>(null);
+  const {
+    triggerRef,
+    open,
+    position,
+    show,
+    showImmediately,
+    requestHide,
+    handleBlur,
+    handleKeyDown,
+    handleTooltipMouseEnter,
+    handleTooltipMouseLeave,
+    handleTooltipMouseDown,
+    initialTabIndex,
+  } = useContentTooltip<HTMLDivElement>({ contentKey: `${dateText}\u0000${timeText}` });
   const isBrowser = typeof document !== 'undefined';
 
-  const updateTooltipPosition = useCallback(() => {
-    if (!triggerRef.current) return;
-    const nextPosition = resolveFailureTooltipPosition(triggerRef.current);
-    if (nextPosition) setTooltipPosition(nextPosition);
-  }, []);
-
-  const showTooltip = useCallback(() => {
-    updateTooltipPosition();
-    setOpen(true);
-  }, [updateTooltipPosition]);
-
-  const hideTooltip = useCallback(() => setOpen(false), []);
-
-  const handleBlur = useCallback(
-    (event: FocusEvent<HTMLElement>) => {
-      if (isNodeInside(triggerRef.current, event.relatedTarget)) return;
-      hideTooltip();
-    },
-    [hideTooltip]
-  );
-
-  useEffect(() => {
-    if (!open || typeof window === 'undefined') return undefined;
-    updateTooltipPosition();
-    window.addEventListener('resize', updateTooltipPosition);
-    window.addEventListener('scroll', updateTooltipPosition, true);
-    return () => {
-      window.removeEventListener('resize', updateTooltipPosition);
-      window.removeEventListener('scroll', updateTooltipPosition, true);
-    };
-  }, [open, updateTooltipPosition]);
-
-  const placement = tooltipPosition?.placement ?? 'below';
+  const placement = position?.placement ?? 'below';
   const tooltipClassName = [
     styles.realtimeModelTooltip,
     placement === 'above' ? styles.realtimeModelTooltipAbove : styles.realtimeModelTooltipBelow,
@@ -909,7 +1026,10 @@ function RealtimeTimeCell({ dateText, timeText, tooltipId }: RealtimeTimeCellPro
       id={tooltipId}
       role="tooltip"
       className={tooltipClassName}
-      style={isBrowser ? tooltipPosition?.style : undefined}
+      style={isBrowser ? position?.style : undefined}
+      onMouseEnter={handleTooltipMouseEnter}
+      onMouseLeave={handleTooltipMouseLeave}
+      onMouseDown={handleTooltipMouseDown}
     >
       <span className={`${styles.realtimeModelTooltipPrimary} ${styles.monoCell}`}>
         {`${dateText} ${timeText}`}
@@ -921,15 +1041,21 @@ function RealtimeTimeCell({ dateText, timeText, tooltipId }: RealtimeTimeCellPro
     <div
       ref={triggerRef}
       className={styles.realtimeTimeCell}
-      tabIndex={0}
-      aria-describedby={tooltipId}
-      onMouseEnter={showTooltip}
-      onMouseLeave={hideTooltip}
-      onFocus={showTooltip}
+      data-overflow-tooltip="time"
+      tabIndex={initialTabIndex}
+      aria-describedby={open ? tooltipId : undefined}
+      onMouseEnter={show}
+      onMouseLeave={requestHide}
+      onFocus={showImmediately}
       onBlur={handleBlur}
+      onKeyDown={handleKeyDown}
     >
-      <span className={styles.realtimeTimeLine}>{dateText}</span>
-      <span className={styles.realtimeTimeLine}>{timeText}</span>
+      <span className={styles.realtimeTimeLine} data-overflow-content="true">
+        {dateText}
+      </span>
+      <span className={styles.realtimeTimeLine} data-overflow-content="true">
+        {timeText}
+      </span>
       {!isBrowser ? tooltip : null}
       {isBrowser && open ? createPortal(tooltip, document.body) : null}
     </div>
@@ -942,6 +1068,9 @@ type RealtimeTooltipBubbleProps = {
   open: boolean;
   style?: CSSProperties;
   lines: string[];
+  onMouseEnter: () => void;
+  onMouseLeave: () => void;
+  onMouseDown: () => void;
 };
 
 // 浮层气泡本体：来源主名 / API Key 值两处新增单元格共用，样式沿用 RealtimeModelCell 的
@@ -955,6 +1084,9 @@ function RealtimeTooltipBubble({
   open,
   style,
   lines,
+  onMouseEnter,
+  onMouseLeave,
+  onMouseDown,
 }: RealtimeTooltipBubbleProps) {
   const tooltipClassName = [
     styles.realtimeModelTooltip,
@@ -965,7 +1097,15 @@ function RealtimeTooltipBubble({
     .join(' ');
 
   return (
-    <span id={tooltipId} role="tooltip" className={tooltipClassName} style={style}>
+    <span
+      id={tooltipId}
+      role="tooltip"
+      className={tooltipClassName}
+      style={style}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+      onMouseDown={onMouseDown}
+    >
       {lines.map((line, index) => (
         <span
           key={`${tooltipId}-line-${index}`}
@@ -985,15 +1125,27 @@ type RealtimeSourceNameCellProps = {
   tooltipId: string;
 };
 
-// 来源第 1 行主名即时浮层：与 RealtimeModelCell/RealtimeTimeCell 同一套 portal + fixed
-// 定位手法（见 useInstantTooltip）。可见文案仍由 `.realtimeTable .logTypeCell
+// 来源第 1 行溢出感知浮层：与 RealtimeModelCell/RealtimeTimeCell 同一套 portal + fixed
+// 定位手法（见 useContentTooltip）。可见文案仍由 `.realtimeTable .logTypeCell
 // .primaryCell > span` 的省略号裁切（未改动该 CSS），这里 hover/focus 用未裁切的完整
-// 来源名即时展开；显式 title="" 覆盖祖先 .primaryCell 上的原生 title=(该 title 承载来源
+// 来源名按意图延迟展开；显式 title="" 覆盖祖先 .primaryCell 上的原生 title=(该 title 承载来源
 // 单元格整体的补充信息，用于兜底 hover 到本组件未覆盖的空白/元数据区域)，避免 hover 到
 // 本触发元素时浏览器原生 tooltip 与本组件的 portal tooltip 同时出现。
 function RealtimeSourceNameCell({ text, tooltipId }: RealtimeSourceNameCellProps) {
-  const { triggerRef, open, position, show, hide, handleBlur } =
-    useInstantTooltip<HTMLSpanElement>();
+  const {
+    triggerRef,
+    open,
+    position,
+    show,
+    showImmediately,
+    requestHide,
+    handleBlur,
+    handleKeyDown,
+    handleTooltipMouseEnter,
+    handleTooltipMouseLeave,
+    handleTooltipMouseDown,
+    initialTabIndex,
+  } = useContentTooltip<HTMLSpanElement>({ contentKey: text });
   const isBrowser = typeof document !== 'undefined';
 
   const bubble = (
@@ -1003,6 +1155,9 @@ function RealtimeSourceNameCell({ text, tooltipId }: RealtimeSourceNameCellProps
       open={open}
       style={isBrowser ? position?.style : undefined}
       lines={[text]}
+      onMouseEnter={handleTooltipMouseEnter}
+      onMouseLeave={handleTooltipMouseLeave}
+      onMouseDown={handleTooltipMouseDown}
     />
   );
 
@@ -1010,12 +1165,15 @@ function RealtimeSourceNameCell({ text, tooltipId }: RealtimeSourceNameCellProps
     <span
       ref={triggerRef}
       title=""
-      tabIndex={0}
-      aria-describedby={tooltipId}
+      data-overflow-tooltip="source"
+      data-overflow-content="true"
+      tabIndex={initialTabIndex}
+      aria-describedby={open ? tooltipId : undefined}
       onMouseEnter={show}
-      onMouseLeave={hide}
-      onFocus={show}
+      onMouseLeave={requestHide}
+      onFocus={showImmediately}
       onBlur={handleBlur}
+      onKeyDown={handleKeyDown}
     >
       <span>{text}</span>
       {!isBrowser ? bubble : null}
@@ -1030,12 +1188,28 @@ type RealtimeApiKeyValueCellProps = {
   tooltipId: string;
 };
 
-// API Key 值即时浮层：原先把掩码值/哈希/执行器类型塞进这一行自带的原生 title=，这里改用
-// 同款 portal 浮层展示同等信息，不再依赖浏览器原生 tooltip 的 ~0.5-1s 不可控延迟；首行是
+// API Key 值补充信息浮层：原先把掩码值/哈希/执行器类型塞进这一行自带的原生 title=，这里改用
+// 同款意图延迟 portal 浮层展示同等信息，不再依赖浏览器原生 tooltip 的不可控延迟；首行是
 // 可见文案本身（未截断），其余行是原来 title= 里的补充信息。显式 title="" 覆盖祖先
 // .primaryCell 上的原生 title，理由同 RealtimeSourceNameCell。
 function RealtimeApiKeyValueCell({ text, tooltipLines, tooltipId }: RealtimeApiKeyValueCellProps) {
-  const { triggerRef, open, position, show, hide, handleBlur } = useInstantTooltip<HTMLElement>();
+  const {
+    triggerRef,
+    open,
+    position,
+    show,
+    showImmediately,
+    requestHide,
+    handleBlur,
+    handleKeyDown,
+    handleTooltipMouseEnter,
+    handleTooltipMouseLeave,
+    handleTooltipMouseDown,
+    initialTabIndex,
+  } = useContentTooltip<HTMLElement>({
+    requireOverflow: false,
+    contentKey: `${text}\u0000${tooltipLines.join('\u0000')}`,
+  });
   const isBrowser = typeof document !== 'undefined';
 
   const bubble = (
@@ -1045,6 +1219,9 @@ function RealtimeApiKeyValueCell({ text, tooltipLines, tooltipId }: RealtimeApiK
       open={open}
       style={isBrowser ? position?.style : undefined}
       lines={tooltipLines}
+      onMouseEnter={handleTooltipMouseEnter}
+      onMouseLeave={handleTooltipMouseLeave}
+      onMouseDown={handleTooltipMouseDown}
     />
   );
 
@@ -1053,12 +1230,15 @@ function RealtimeApiKeyValueCell({ text, tooltipLines, tooltipId }: RealtimeApiK
       ref={triggerRef}
       className={styles.realtimeApiKeyLine}
       title=""
-      tabIndex={0}
-      aria-describedby={tooltipId}
+      data-overflow-tooltip="api-key"
+      data-overflow-content="true"
+      tabIndex={initialTabIndex}
+      aria-describedby={open ? tooltipId : undefined}
       onMouseEnter={show}
-      onMouseLeave={hide}
-      onFocus={show}
+      onMouseLeave={requestHide}
+      onFocus={showImmediately}
       onBlur={handleBlur}
+      onKeyDown={handleKeyDown}
     >
       {text}
       {!isBrowser ? bubble : null}
@@ -1673,7 +1853,7 @@ export function RealtimeEventsPanel({
               return (
                 <tr key={row.id} className={row.failed ? styles.logRowFailed : undefined}>
                   {/* 时间列前移到最左第 1 位（原第 10 位，紧跟在"首字｜耗时"列之后）。列窄时
-                      date/time 各自省略号截断，hover/focus 用即时浮层看完整时间戳
+                      date/time 各自省略号截断，hover/focus 用溢出感知浮层看完整时间戳
                       （见 RealtimeTimeCell，同 RealtimeModelCell 的 portal 手法）。 */}
                   <td>
                     <RealtimeTimeCell
@@ -1722,7 +1902,7 @@ export function RealtimeEventsPanel({
                   </td>
                   <td>
                     {/* 模型名较长时被 .realtimeModelText 的 12% 列宽 nowrap 省略号截断；
-                        全名展示改走即时浮层(见 RealtimeModelCell)，不再用原生 title=
+                        全名展示改走溢出感知浮层(见 RealtimeModelCell)，不再用原生 title=
                         (浏览器原生 tooltip 有 ~0.5-1s 不可控延迟)。 */}
                     <RealtimeModelCell
                       model={row.model}
@@ -1836,7 +2016,11 @@ export function RealtimeEventsPanel({
                       <small>{buildRealtimeTokenSummary(row, t)}</small>
                     </div>
                   </td>
-                  <td className={[styles.realtimeNumericColumn, cacheHitRateToneClass].filter(Boolean).join(' ')}>
+                  <td
+                    className={[styles.realtimeNumericColumn, cacheHitRateToneClass]
+                      .filter(Boolean)
+                      .join(' ')}
+                  >
                     {cacheHitRate === null ? '--' : formatPercent(cacheHitRate)}
                   </td>
                   {/* 花费列走查修复：该列 4%(48px)是所有数字列中最窄的一列，"$0.00" 级
@@ -1889,11 +2073,11 @@ export function RealtimeEventsPanel({
                   total: eventsTotalCount,
                 })
               : eventsHasMore
-              ? t('monitoring.events_loaded_summary', {
-                  loaded: eventsLoadedCount,
-                  total: eventsTotalCount,
-                })
-              : t('monitoring.events_all_loaded', { total: eventsTotalCount })}
+                ? t('monitoring.events_loaded_summary', {
+                    loaded: eventsLoadedCount,
+                    total: eventsTotalCount,
+                  })
+                : t('monitoring.events_all_loaded', { total: eventsTotalCount })}
           </span>
           {eventsHasMore ? (
             <Button

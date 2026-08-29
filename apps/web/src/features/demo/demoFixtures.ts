@@ -1956,16 +1956,17 @@ const buildMonitoringAnalytics = (
       endpoint: '/v1/chat/completions',
       executor: 'ops',
     },
-    // 超长模型名，用于验证实时表模型名列的 2 行 line-clamp + 即时浮层看全名兜底。
+    // 正式数据形态的长账号 + 超长模型名，用于验证来源单行省略、模型 2 行 line-clamp，
+    // 以及溢出感知浮层可进入/选择。域名刻意保持脱敏的 example.internal，不接真实账号。
     {
       model: 'claude-opus-4-8-20260115-extended-thinking-preview',
       apiKeyHash: 'hash_claude_longname',
       authIndex: 'claude-longname-01',
-      authFile: 'claude-longname-01.json',
-      account: 'Research Team',
-      label: 'Claude Long Name',
+      authFile: 'observability-owner-production.json',
+      account: 'observability.owner+production@platform-monitoring.example.internal',
+      label: 'Observability Production Owner',
       provider: 'claude',
-      source: 'research',
+      source: 'observability.owner+production@platform-monitoring.example.internal',
       sourceHash: 'src_claude_longname',
       endpoint: '/v1/messages',
       executor: 'batch',
