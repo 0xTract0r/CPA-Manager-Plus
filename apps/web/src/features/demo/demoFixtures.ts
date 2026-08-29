@@ -957,7 +957,11 @@ const buildMonitoringAnalytics = (
   request?: MonitoringAnalyticsRequest
 ): MonitoringAnalyticsResponse => {
   const dashboard = dashboardBase(baseNow);
-  const analyticsNow = dashboard.generated_at_ms;
+  // 事件/时间线/last_seen 等"最近发生"时间戳必须相对真实当前时间（baseNow），
+  // 不能用 dashboard.generated_at_ms——后者在 dashboardBase 里被下钳到"今天18:20"，
+  // 若在本地18:20之前打开 demo 会被推到未来，导致前端按真实 Date.now() 过滤时
+  // 把全部事件（含"全部"时间档）判为未来而滤空。仪表盘热力图的钳制设计保持不动。
+  const analyticsNow = baseNow;
   const timeline = Array.from({ length: 14 }, (_, index) => {
     const bucket = analyticsNow - (13 - index) * day;
     const calls = 1180 + ((index * 137) % 620);
@@ -1952,14 +1956,34 @@ const buildMonitoringAnalytics = (
       endpoint: '/v1/chat/completions',
       executor: 'ops',
     },
+    // 超长模型名，用于验证实时表模型名列的 2 行 line-clamp + 即时浮层看全名兜底。
+    {
+      model: 'claude-opus-4-8-20260115-extended-thinking-preview',
+      apiKeyHash: 'hash_claude_longname',
+      authIndex: 'claude-longname-01',
+      authFile: 'claude-longname-01.json',
+      account: 'Research Team',
+      label: 'Claude Long Name',
+      provider: 'claude',
+      source: 'research',
+      sourceHash: 'src_claude_longname',
+      endpoint: '/v1/messages',
+      executor: 'batch',
+    },
   ];
 
-  // 强度/等级单列两行的代表性分布(按 index % 5 循环)：两个循环在不同位置缺失，使 demo
-  // 监控表能同时呈现全部四态——两者都有(xhigh + auto 灰字)、只有 effort(medium)、
-  // 只有 tier(priority 灰字)、两者都缺(单个 —)，外加另一档非默认 tier(low + flex 灰字)。
-  // service_tier 第二行统一灰色弱化(无 tier= 前缀、无高亮)。只影响该列展示，不改其它 demo 用途。
-  const reasoningEffortDemoCycle = ['xhigh', 'medium', undefined, undefined, 'low'] as const;
-  const serviceTierDemoCycle = ['auto', undefined, 'priority', undefined, 'flex'] as const;
+  // 推理/服务两行(复刻上游默认)的代表性分布(按 index % 5 循环)：真实 reasoning_effort 取值
+  // 只有 minimal/low/medium/high(永不为 auto)；service_tier 约 95% 是 auto(默认值)。两行都
+  // 恒显、各带内联标签「思考:」「服务:」，缺失显 —，auto 照常显示(不抑制)。两个循环在不同
+  // 位置组合，使 demo 监控表同时呈现全部状态：
+  //   0: effort=high   + tier=auto     -> 「思考: high」   / 「服务: auto」
+  //   1: effort 缺失   + tier=auto     -> 「思考: —」      / 「服务: auto」
+  //   2: effort=medium + tier=priority -> 「思考: medium」 / 「服务: priority」
+  //   3: effort 缺失   + tier=flex     -> 「思考: —」      / 「服务: flex」
+  //   4: effort=low    + tier 缺失     -> 「思考: low」    / 「服务: —」
+  // 只影响该列展示，不改其它 demo 用途。
+  const reasoningEffortDemoCycle = ['high', undefined, 'medium', undefined, 'low'] as const;
+  const serviceTierDemoCycle = ['auto', 'auto', 'priority', 'flex', undefined] as const;
 
   const events: DemoMonitoringEventRow[] = Array.from({ length: 72 }, (_, index) => {
     const profile = eventProfiles[index % eventProfiles.length];

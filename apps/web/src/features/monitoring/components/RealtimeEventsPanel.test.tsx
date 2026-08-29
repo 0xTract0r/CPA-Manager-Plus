@@ -50,10 +50,11 @@ const t = ((key: string, options?: Record<string, unknown>) => {
     'monitoring.events_loaded_summary': 'Loaded {{loaded}} of {{total}} events',
     'monitoring.events_all_loaded': 'All {{total}} events loaded',
     'monitoring.events_retention_limited': 'Kept the newest {{loaded}} of {{total}} events',
-    'monitoring.reasoning_effort': 'Effort',
-    'monitoring.reasoning_effort_short': 'Effort',
+    'monitoring.reasoning_service_short': 'Reasoning / Tier',
+    'monitoring.realtime_reasoning_label': 'Reasoning',
+    'monitoring.realtime_service_label': 'Service',
     'monitoring.reasoning_tier_hint':
-      'Line 1 is the reasoning effort; line 2, in dimmed small text, is the requested service tier.',
+      'Line 1, "Reasoning: xxx", is the reasoning effort; line 2, "Service: xxx", is the requested service tier. Missing values show as "—".',
     'monitoring.recent_failures': 'Failures',
     'monitoring.recent_status': 'Recent',
     'monitoring.realtime_api_key_hash': 'API Key hash',
@@ -239,24 +240,27 @@ describe('RealtimeEventsPanel', () => {
       })
     );
 
-    // 强度/等级合并为单列两行：只有一个合并表头(复用 Effort 短名 + tableHeaderWithInfo
-    // 信息图标)，不再有独立的 Tier 表头列。
-    expect(markup).toMatch(/<th><span class="[^"]*tableHeaderWithInfo[^"]*"><span>Effort<\/span>/);
-    expect(markup).not.toMatch(/<th><span class="[^"]*tableHeaderWithInfo[^"]*"><span>Tier<\/span>/);
+    // 精确复刻上游默认：合并列表头文案是"推理/服务"(reasoning_service_short)，仍只有
+    // 一个合并表头(挂 fork 特有的 tableHeaderWithInfo 即时浮层，上游没有)。
+    expect(markup).toMatch(
+      /<th><span class="[^"]*tableHeaderWithInfo[^"]*"><span>Reasoning \/ Tier<\/span>/
+    );
     expect(markup).toContain('>TPS</th>');
     expect(markup).toContain('Source / API Key');
     expect(markup).not.toContain('>Executor: codex<');
     expect(markup).not.toContain('Executor: codex');
-    // 单列两行(仿"用量"列)：第 1 行 effort 主值(无前缀)，第 2 行 service_tier 灰色小字
-    // (无 tier= 前缀、无 tone class，靠列头信息图标说明语义)。
-    expect(markup).toContain('medium');
-    expect(markup).not.toContain('Effort: medium');
+    // 两行都带标签、都恒显："思考: medium" / "服务: priority"（仿上游 formatOptionalText）。
+    // 单元格原生 title 兜底仍显示 "Effort: x · Tier: y"(固定英文标签，与显示标签无关)。
+    expect(markup).toContain('Reasoning: medium');
+    expect(markup).toContain('Service: priority');
     expect(markup).not.toContain('tier=priority');
-    expect(markup).not.toContain('Tier: priority');
-    // 第 2 行是纯 service_tier 值的灰色弱化小字(primaryCell 默认 <small>)，不带 tone/前缀。
-    expect(markup).toMatch(/<small>priority<\/small>/);
-    // effort 主值走 realtimeReasoningValue span，与 tier 小字同在 primaryCell 里。
-    expect(markup).toMatch(/<span class="[^"]*realtimeReasoningValue[^"]*">medium<\/span>/);
+    expect(markup).toContain('title="Effort: medium · Tier: priority"');
+    expect(markup).toMatch(
+      /<span class="[^"]*realtimeReasoningValue[^"]*">Reasoning: medium<\/span>/
+    );
+    expect(markup).toMatch(
+      /<span class="[^"]*realtimeServiceValue[^"]*">Service: priority<\/span>/
+    );
     expect(markup).toContain('client-gpt');
     expect(markup).toContain('gpt-5.4');
     expect(markup).not.toContain('Resolved');
@@ -267,13 +271,16 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).toContain('Elapsed');
     expect(markup).toContain('1.5 s');
     expect(markup).toContain('20');
-    // 用量各段各自渲染为独立 span（防止窄列数字断行），" · " 分隔符落在段内，
-    // 因此不再断言整段连续字符串，改为逐段校验并核对 DOM 顺序。
-    expect(markup).toContain('I 10 · ');
-    expect(markup).toContain('O 20 · ');
-    expect(markup).toContain('R 3 · ');
-    expect(markup).toContain('Create 1 · ');
-    expect(markup).toContain('Read 4');
+    // 用量渲染定稿（走查）：核心 token I/O 同排一行——I 首段无分隔、O 是 inline 段带前缀分隔
+    // （前导不换行空格 U+00A0 + 中点，防被当作 inline-block 行首空白折叠裁掉）；推理 R 与缓存
+    // 明细改为各自独立成行（realtimeUsageDetailLine）、行首不带分隔点，从根上消除换行露点。
+    // 逐段校验并核对 DOM 顺序。
+    expect(markup).toContain('>I 10<');
+    expect(markup).toContain(`>\u00A0\u00B7 O 20<`);
+    // R/Create/Read 各自 realtimeUsageDetailLine 独立成行、无前导点（走查定稿）
+    expect(markup).toMatch(/realtimeUsageDetailLine[^"]*">R 3</);
+    expect(markup).toMatch(/realtimeUsageDetailLine[^"]*">Create 1</);
+    expect(markup).toMatch(/realtimeUsageDetailLine[^"]*">Read 4</);
     const usageOrder = ['I 10', 'O 20', 'R 3', 'Create 1', 'Read 4'].map((needle) =>
       markup.indexOf(needle)
     );
@@ -296,7 +303,7 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).toContain('title="Fetch the raw request/response body for request_id req-trace-42."');
     // 有 request_id 时不应显示「不可溯源」占位。
     expect(markup).not.toContain('Not traceable');
-    // 触发按钮嵌在 source 单元格里，不新增列(强度/等级合并为单列后共 13 列)。
+    // 触发按钮嵌在 source 单元格里，不新增列(推理/服务合并为单列后共 13 列)。
     expect(markup.match(/<col\b/g)).toHaveLength(13);
   });
 
@@ -314,19 +321,30 @@ describe('RealtimeEventsPanel', () => {
 
     expect(markup).toContain('<colgroup>');
     expect(markup.match(/<col\b/g)).toHaveLength(13);
-    expect(markup).not.toContain('Effort -');
-    expect(markup).toMatch(/<th><span class="[^"]*tableHeaderWithInfo[^"]*"><span>Effort<\/span>/);
+    expect(markup).toMatch(
+      /<th><span class="[^"]*tableHeaderWithInfo[^"]*"><span>Reasoning \/ Tier<\/span>/
+    );
     expect(markup).toContain('>TPS</th>');
     expect(markup).toContain('Success');
+    // effort/tier 都缺失时，两行仍然都恒显（仿上游 formatOptionalText），只是各自显示
+    // 中性占位 —；不再像旧版那样省略第 2 行。单元格原生 title 兜底显示两个占位值。
+    expect(markup).toMatch(/<span class="[^"]*realtimeReasoningValue[^"]*">Reasoning: —<\/span>/);
+    expect(markup).toMatch(/<span class="[^"]*realtimeServiceValue[^"]*">Service: —<\/span>/);
+    expect(markup).toContain('title="Effort: — · Tier: —"');
+    // 服务占位 span 紧跟 </div>，证明两行都渲染在同一个 primaryCell 容器内。
+    expect(markup).toMatch(
+      /<span class="[^"]*realtimeServiceValue[^"]*">Service: —<\/span><\/div>/
+    );
     expect(markup).toMatch(/TTFT<\/span><span class="[^"]+">｜<\/span><span class="[^"]+">Elapsed/);
     expect(markup).toContain(expectedDate);
     expect(markup).toContain(expectedTime);
     // 细分缓存字段(cacheReadTokens/cacheCreationTokens)全为 0 但 legacy cachedTokens=5 时，
     // 用 "Cached 5" 兜底展示，不再输出语义空洞的裸 "C 5"。用量各段渲染为独立 span，
-    // 因此逐段校验而非断言整段连续字符串。
-    expect(markup).toContain('I 10 · ');
-    expect(markup).toContain('O 20');
-    expect(markup).toContain('Cached 5');
+    // 因此逐段校验而非断言整段连续字符串。分隔符是"段前缀"（第一段除外，见走查修复
+    // 说明），避免换行行尾残留悬挂 "·"，因此第一段无分隔符、后续段各自带前缀 " · "。
+    expect(markup).toContain('>I 10<');
+    expect(markup).toContain(`>\u00A0\u00B7 O 20<`);
+    expect(markup).toMatch(/realtimeUsageDetailLine[^"]*">Cached 5</);
     const usageOrder = ['I 10', 'O 20', 'Cached 5'].map((needle) => markup.indexOf(needle));
     expect(usageOrder).toEqual([...usageOrder].sort((a, b) => a - b));
     expect(markup).not.toContain('R 0');
@@ -352,10 +370,38 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).toContain('<th>Source / API Key</th>');
     expect(markup).toContain('API Key: Team A');
     expect(markup).not.toContain('#12345678');
-    expect(markup).toContain('API Key hash: 1234567890abcdef');
-    expect(markup).toContain('Masked key: sk-...cdef');
-    expect(markup).toContain('Executor: codex');
-    expect(markup).not.toContain('>Executor: codex<');
+
+    // API Key 值行改走即时浮层展示完整补充信息（掩码值/哈希/执行器类型），不再依赖浏览器
+    // 原生 title=（同 RealtimeModelCell 的即时浮层手法，见下方模型名测试）。
+    expect(markup).not.toContain('title="API Key: Team A');
+    const tooltipMatch = markup.match(
+      /<span id="([^"]*-apikey-tooltip-[^"]*)" role="tooltip"[^>]*realtimeModelTooltip[^>]*>/
+    );
+    expect(tooltipMatch).not.toBeNull();
+    const tooltipId = tooltipMatch?.[1] ?? '';
+    expect(tooltipId).toContain('apikey-tooltip');
+    expect(markup).toContain(`aria-describedby="${tooltipId}"`);
+    expect(markup).toMatch(/realtimeModelTooltipPrimary[^>]*>API Key: Team A<\/span>/);
+    expect(markup).toMatch(/realtimeModelTooltipSecondary[^>]*>Masked key: sk-\.\.\.cdef<\/span>/);
+    expect(markup).toMatch(/realtimeModelTooltipSecondary[^>]*>API Key hash: 1234567890abcdef<\/span>/);
+    expect(markup).toMatch(/realtimeModelTooltipSecondary[^>]*>Executor: codex<\/span>/);
+  });
+
+  it('keeps a long realtime source name constrained and exposes the full name via an instant tooltip', () => {
+    const longSource =
+      'very-long-channel-identifier-for-realtime-monitoring-source-column-overflow-check';
+    const markup = renderPanel(baseRow({ channel: longSource }));
+
+    // 来源主名不再依赖浏览器原生 title（父级 .primaryCell 上仍保留原有的组合信息 title=
+    // 作为其它区域的兜底，但主名触发元素自身用 title="" 显式屏蔽继承，避免与即时浮层重复）。
+    const tooltipMatch = markup.match(
+      /<span id="([^"]*-source-tooltip-[^"]*)" role="tooltip"[^>]*realtimeModelTooltip[^>]*>/
+    );
+    expect(tooltipMatch).not.toBeNull();
+    const tooltipId = tooltipMatch?.[1] ?? '';
+    expect(tooltipId).toContain('source-tooltip');
+    expect(markup).toContain(`aria-describedby="${tooltipId}"`);
+    expect(markup).toMatch(new RegExp(`realtimeModelTooltipPrimary[^>]*>${longSource}</span>`));
   });
 
   it('keeps long realtime model names constrained and exposes the full name via an instant tooltip', () => {
@@ -363,9 +409,10 @@ describe('RealtimeEventsPanel', () => {
       'claude-opus-4-6-thinking-with-a-very-long-provider-routing-suffix-for-realtime-monitoring';
     const markup = renderPanel(baseRow({ model: longModel, resolvedModel: longModel }));
 
-    // 长模型名仍被 .realtimeModelCell / .realtimeModelText 的窄列 nowrap 省略号约束展示。
+    // 长模型名主行改为 2 行 line-clamp(取代旧的单行硬省略)，仍被 .realtimeModelCell 约束展示。
     expect(markup).toMatch(/class="[^"]*realtimeModelCell[^"]*"/);
     expect(markup).toMatch(/class="[^"]*realtimeModelText[^"]*"/);
+    expect(markup).toMatch(/class="[^"]*realtimeModelTextClamp[^"]*"/);
     // 全名不再依赖浏览器原生 title（~1s 延迟），改为即时浮层：role="tooltip" 独立元素，
     // trigger 通过 aria-describedby 指向同一 tooltip id。
     expect(markup).not.toContain(`title="${longModel}"`);
@@ -382,6 +429,72 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).toContain(`aria-describedby="${tooltipId}"`);
     // 浮层主槽内含完整模型全名文案。
     expect(markup).toMatch(new RegExp(`realtimeModelTooltipPrimary[^>]*>${longModel}</span>`));
+  });
+
+  it('shows the default "auto" service tier as an always-visible labeled row instead of suppressing it', () => {
+    const markup = renderPanel(baseRow({ reasoningEffort: 'high', serviceTier: 'auto' }));
+
+    // 两行都恒显、都带标签；default 值 auto 照常显示，不再靠隐藏消歧，改靠 "服务:" 标签消歧。
+    expect(markup).toMatch(/<span class="[^"]*realtimeReasoningValue[^"]*">Reasoning: high<\/span>/);
+    expect(markup).toMatch(/<span class="[^"]*realtimeServiceValue[^"]*">Service: auto<\/span>/);
+    expect(markup).toContain('title="Effort: high · Tier: auto"');
+  });
+
+  it('renders any service tier value verbatim with the label prefix (e.g. "DEFAULT")', () => {
+    const markup = renderPanel(baseRow({ reasoningEffort: 'low', serviceTier: 'DEFAULT' }));
+
+    expect(markup).toMatch(
+      /<span class="[^"]*realtimeServiceValue[^"]*">Service: DEFAULT<\/span>/
+    );
+    expect(markup).toContain('title="Effort: low · Tier: DEFAULT"');
+  });
+
+  it('shows the reasoning placeholder alongside a labeled tier value when effort is missing but tier is "auto"', () => {
+    const markup = renderPanel(baseRow({ reasoningEffort: undefined, serviceTier: 'auto' }));
+
+    expect(markup).toMatch(/<span class="[^"]*realtimeReasoningValue[^"]*">Reasoning: —<\/span>/);
+    expect(markup).toMatch(/<span class="[^"]*realtimeServiceValue[^"]*">Service: auto<\/span>/);
+    expect(markup).toContain('title="Effort: — · Tier: auto"');
+  });
+
+  it('still renders a non-default service tier like "flex" alongside the reasoning placeholder when effort is missing', () => {
+    const markup = renderPanel(baseRow({ reasoningEffort: undefined, serviceTier: 'flex' }));
+
+    expect(markup).toMatch(/<span class="[^"]*realtimeReasoningValue[^"]*">Reasoning: —<\/span>/);
+    expect(markup).toMatch(/<span class="[^"]*realtimeServiceValue[^"]*">Service: flex<\/span>/);
+    expect(markup).toContain('title="Effort: — · Tier: flex"');
+  });
+
+  it('still shows the labeled service row with a placeholder when the service tier is missing (both rows always render)', () => {
+    const markup = renderPanel(baseRow({ reasoningEffort: 'medium', serviceTier: undefined }));
+
+    expect(markup).toMatch(
+      /<span class="[^"]*realtimeReasoningValue[^"]*">Reasoning: medium<\/span>/
+    );
+    expect(markup).toMatch(
+      /<span class="[^"]*realtimeServiceValue[^"]*">Service: —<\/span><\/div>/
+    );
+    expect(markup).toContain('title="Effort: medium · Tier: —"');
+  });
+
+  it('moves the time column to the first (leftmost) position and right-aligns the numeric columns', () => {
+    const markup = renderPanel(baseRow());
+
+    // 时间列前移到最左第 1 位：表头 "Time" 出现在 "Source / API Key" 之前。
+    const timeHeaderIdx = markup.indexOf('<th>Time</th>');
+    const sourceHeaderIdx = markup.indexOf('<th>Source / API Key</th>');
+    expect(timeHeaderIdx).toBeGreaterThanOrEqual(0);
+    expect(sourceHeaderIdx).toBeGreaterThan(timeHeaderIdx);
+    // 数据行同步前移：realtimeTimeCell 容器出现在 logTypeCell(来源列)容器之前。
+    const timeCellIdx = markup.indexOf(styles.realtimeTimeCell);
+    const sourceCellIdx = markup.indexOf(styles.logTypeCell);
+    expect(timeCellIdx).toBeGreaterThanOrEqual(0);
+    expect(sourceCellIdx).toBeGreaterThan(timeCellIdx);
+    // 列总数不变(仍是 13 列)。
+    expect(markup.match(/<col\b/g)).toHaveLength(13);
+    // 成功率/调用/TPS/缓存命中率/花费 5 个数字列统一右对齐：单行渲染下表头 + 数据格
+    // 各贡献一次，共 10 次命中。
+    expect(markup.match(new RegExp(styles.realtimeNumericColumn, 'g'))?.length).toBe(10);
   });
 
   it('switches realtime source labels between masked and full display', () => {
@@ -548,12 +661,14 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).toContain(
       'aria-label="(cachedTokens + cacheReadTokens) / (max(inputTokens, cachedTokens) + cacheReadTokens + cacheCreationTokens) for this single request. Shows “--” when there is no input-side token data."'
     );
-    // 强度/等级合并为单列后只有一个合并表头挂信息图标，浮层说明两行(reasoning effort +
-    // service tier 灰色小字)；不再有独立的 Service tier 表头浮层。
-    expect(markup).toContain('aria-label="Line 1 is the reasoning effort; line 2, in dimmed small text, is the requested service tier.');
+    // 推理/服务合并为单列后只有一个合并表头挂信息图标，浮层说明两行都恒显、都带标签
+    // (Reasoning: xxx / Service: xxx)；不再有独立的 Service tier 表头浮层。
+    expect(markup).toContain(
+      'aria-label="Line 1, &quot;Reasoning: xxx&quot;, is the reasoning effort; line 2, &quot;Service: xxx&quot;, is the requested service tier.'
+    );
     expect(markup).not.toContain('aria-label="Service tier requested by the client for this call."');
-    // 信息图标的即时浮层 trigger 存在(可聚焦、承担 aria-describedby)：Effort(合并) / Success /
-    // Usage / Cache Hit 共 4 个。
+    // 信息图标的即时浮层 trigger 存在(可聚焦、承担 aria-describedby)：Reasoning/Tier(合并) /
+    // Success / Usage / Cache Hit 共 4 个。
     expect(markup.match(new RegExp(styles.tableHeaderInfoTrigger, 'g'))?.length).toBe(4);
     // 列顺序：本次用量(Usage) -> 缓存命中率(Cache Hit) -> 花费(Cost)。
     const usageIdx = markup.indexOf('Usage');

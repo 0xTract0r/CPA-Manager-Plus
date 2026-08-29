@@ -734,73 +734,16 @@
     color: var(--monitor-muted);
   }
 
+  // 注：这里曾有一份旧 12 列 `--realtime-col-*` 变量声明 + `.realtimeTable col:nth-child`
+  // 宽度映射（无缓存命中率列），已被 MonitoringCenterPage.module.scss 里更晚声明的 13 列
+  // 映射（同选择器、同优先级，后声明生效）整体覆盖成死代码，已删除；下面只保留仍生效、
+  // 未被覆盖的基础属性（border-spacing 等，通用 `.table` 规则用的是不同的间距值）。
   .realtimeTable {
-    --realtime-col-source: 21%;
-    --realtime-col-model: 12%;
-    --realtime-col-reasoning: 7%; // 强度/等级合并列（两行）
-    --realtime-col-recent: 6%;
-    --realtime-col-status: 7%;
-    --realtime-col-success-rate: 7%;
-    --realtime-col-total-calls: 5%;
-    --realtime-col-tps: 5%;
-    --realtime-col-latency: 10%;
-    --realtime-col-time: 8%;
-    --realtime-col-usage: 7%;
-    --realtime-col-cost: 5%;
-
     min-width: 1260px;
     border-collapse: separate;
     border-spacing: 0 8px;
     background: transparent;
     table-layout: fixed;
-  }
-
-  .realtimeTable col:nth-child(1) {
-    width: var(--realtime-col-source);
-  }
-
-  .realtimeTable col:nth-child(2) {
-    width: var(--realtime-col-model);
-  }
-
-  .realtimeTable col:nth-child(3) {
-    width: var(--realtime-col-reasoning);
-  }
-
-  .realtimeTable col:nth-child(4) {
-    width: var(--realtime-col-recent);
-  }
-
-  .realtimeTable col:nth-child(5) {
-    width: var(--realtime-col-status);
-  }
-
-  .realtimeTable col:nth-child(6) {
-    width: var(--realtime-col-success-rate);
-  }
-
-  .realtimeTable col:nth-child(7) {
-    width: var(--realtime-col-total-calls);
-  }
-
-  .realtimeTable col:nth-child(8) {
-    width: var(--realtime-col-tps);
-  }
-
-  .realtimeTable col:nth-child(9) {
-    width: var(--realtime-col-latency);
-  }
-
-  .realtimeTable col:nth-child(10) {
-    width: var(--realtime-col-time);
-  }
-
-  .realtimeTable col:nth-child(11) {
-    width: var(--realtime-col-usage);
-  }
-
-  .realtimeTable col:nth-child(12) {
-    width: var(--realtime-col-cost);
   }
 
   .table thead th {
@@ -1089,6 +1032,14 @@
     overflow: visible;
   }
 
+  // 实时表单元格保持竖直居中（middle）。曾试过顶对齐让各列首行对齐，但「来源」列常达
+  // 4 行、把整行撑高，顶对齐会让模型/强度/首字耗时等短单元格被钉到行顶、下方留大片空白，
+  // 视觉突兀（用户走查反馈）。故保持与通用 `.table tbody td` 一致的 middle，短单元格浮在
+  // 行竖直中间更平衡。此处显式写出以记录该决策，避免日后再被改成 top。
+  .table.realtimeTable tbody td {
+    vertical-align: middle;
+  }
+
   .innerTable {
     min-width: 940px;
   }
@@ -1105,21 +1056,31 @@
     font-size: 11px;
   }
 
-  // 强度/等级单列两行(见 RealtimeEventsPanel)，仿"用量"列排版：
-  // 第 1 行 reasoning_effort 主值走 .realtimeReasoningValue(正常墨色、中等字重，克制、
-  // 不再是粗体强调色徽章)；第 2 行 service_tier 走 primaryCell 默认 <small>(灰色弱化，
-  // 见上 .primaryCell small)。整格左对齐(用默认 primaryCell)与其它列一致。
-  // inline-block + ellipsis 收窄单值，避免撑破行高或横向溢出。
-  .realtimeReasoningValue {
+  // "推理/服务"合并列两行(见 RealtimeEventsPanel)，精确复刻上游 seakee 默认渲染：
+  // 两行都带标签、都恒显（"思考: xxx" / "服务: xxx"），字号/字重与上游一致(12px/400)，
+  // 不再像旧版第 1 行加粗成 600、第 2 行缩成 11px 的 <small>。仅用颜色区分两行——
+  // 第 1 行(reasoning effort)走强调色，第 2 行(service tier)走弱化灰色，对齐上游
+  // .realtimeReasoningValue / .realtimeServiceValue 的配色。整格左对齐(用默认
+  // primaryCell)与其它列一致；inline-block + ellipsis 收窄单值，避免撑破行高或
+  // 横向溢出。
+  .realtimeReasoningValue,
+  .realtimeServiceValue {
     display: inline-block;
     max-width: 100%;
     overflow: hidden;
-    color: var(--monitor-ink);
     font-size: 12px;
-    font-weight: 600;
-    line-height: 1.2;
+    font-weight: 400;
+    line-height: 1.25;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .realtimeReasoningValue {
+    color: var(--monitor-accent-strong);
+  }
+
+  .realtimeServiceValue {
+    color: var(--monitor-muted);
   }
 
   .mutedCell {

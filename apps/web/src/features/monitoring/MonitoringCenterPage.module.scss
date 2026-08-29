@@ -543,7 +543,21 @@
   border-radius: 12px;
   background: color-mix(in srgb, var(--monitor-surface-elevated) 82%, var(--monitor-surface));
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
-  overflow: hidden;
+  // 走查发现：容器 ~1200-1280px 下 3 个 tab（账号/API Key/实时）挤不进一行时，原
+  // overflow:hidden 既不横滚也不换行（每个 .tabButtonCard 因内容 white-space:nowrap
+  // 且未声明 min-width:0，flex-shrink 被 min-width:auto 的自动最小尺寸地板挡住，
+  // 不会真正收缩），于是活动的"实时"标签被硬裁到只剩部分字符可见、无法触达。改成
+  // 与同一文件里的 .segmentedControl（同款连体分段/胶囊控件）一致的横滚兜底
+  // （overflow-x:auto + 隐藏滚动条），配合 MonitoringTabsBar 的 scrollIntoView，
+  // 保证切到/挂载时活动标签整名可见，同时保留胶囊圆角视觉（不引入换行导致的
+  // 首尾圆角错位）。
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.tabsBarCards::-webkit-scrollbar {
+  display: none;
 }
 
 .tabButtonCard {
@@ -1595,59 +1609,83 @@
 @include summaryTable.styles;
 @include accountOverview.styles;
 .realtimeTable {
-  // 13 列(强度/等级合并为单列两行 + "缓存命中率")实时表：table-layout:fixed + 百分比
-  // 列宽，使表格 width:100% 铺满容器并把 13 列全部放平在同一平面，主内容区(~1152px 可用宽)
-  // 下零横滚、花费列完整可见。各列百分比之和=100%；窄屏(<1200px)由下方 @container 兜底
-  // min-width + tableWrapper 横滚。强度/等级合并列两行(第 1 行 reasoning_effort 主值、
-  // 第 2 行 service_tier 灰色弱化小字)，给足宽度放下 "priority" 等值不撑破。
-  --realtime-col-source: 13%; // 来源 / API KEY（省略号截断，title 悬浮看全）
-  --realtime-col-model: 11%; // 模型（省略号截断）
-  --realtime-col-reasoning: 8%; // 强度/等级合并列（两行：reasoning_effort 主值 / service_tier 灰字）
+  // 13 列(推理/服务合并为单列两行 + "缓存命中率")实时表：table-layout:fixed + 百分比
+  // 列宽，使表格 width:100% 铺满容器并把 13 列全部放平在同一平面，主内容区下零横滚、
+  // 花费列完整可见。各列百分比之和=100%。
+  //
+  // 走查回归修复：上一轮为了让模型列中短名(如 "gpt-4.1-mini")单行显示，把"来源"列从
+  // 13%→8%（连带"来源"表头文案缩短成"来源"），结果来源列过窄后单元格内容（尤其
+  // "查看原始请求"按钮）在极端情况下会溢出压到模型列（已在 .realtimeRequestLogTrigger /
+  // .primaryCell 补上 grid-blowout 防御 + 省略号裁切兜底，但列宽本身也回调更宽松）。
+  // 现在把来源列还回一些(8%→11%)、恢复上游默认表头全称"来源 / API Key"；模型列相应从
+  // 14%→12%（真机量测 1440 下 "gpt-4.1-mini" 这类中短名仍单行，不再需要额外 2-3%）；
+  // 推理/服务列保持 10% 不变（两行恒显标签文案，见上一轮量测记录）。
+  //
+  // 中桌面死区修复：cache/success 表头(标签+info 图标)在 6% 下会被裁（1440/1366 真机
+  // 坐实），从有冗余的 calls/tps/cost 三列各匀 1% 给它们（calls 4%→3%、tps 4%→3%、
+  // cost 6%→5%；cache 6%→8%、success 6%→7%），总和仍=100%。
+  --realtime-col-source: 11%; // 来源 / API Key（省略号截断，title/hover 浮层看全）
+  --realtime-col-model: 12%; // 模型（省略号截断 + 2 行 clamp；须保 12%=144px 让 gpt-4.1-mini 单行，11% 会换行）
+  --realtime-col-reasoning: 10%; // 推理/服务合并列（两行恒显标签："思考: xxx" / "服务: xxx"）
   --realtime-col-recent: 6%; // 近况（状态点阵）
   --realtime-col-status: 7%; // 请求状态
-  --realtime-col-success: 6%; // 成功率
-  --realtime-col-calls: 6%; // 调用
-  --realtime-col-tps: 5%; // TPS
-  --realtime-col-latency: 10%; // 首字 ｜ 耗时
+  --realtime-col-success: 7%; // 成功率（含 info 图标，6%→7% 修表头裁切）
+  --realtime-col-calls: 4%; // 调用（3% 时表头「调用」被裁成「调…」，还回 4%=48px 容表头 42px）
+  --realtime-col-tps: 4%; // TPS（3% 时表头被裁成「T…」，还回 4%=48px）
+  // "首字｜耗时"两个数值用 tabular-nums 等宽数字，取值上限固定："XXX ms"(<1000ms
+  // 才用 ms，故最多 3 位数字) 或 "XX.X s"(>=1000ms 换算成秒)，真机量测两者自然宽度
+  // 都约 55-56px。
+  --realtime-col-latency: 10%; // 首字 ｜ 耗时（→10% 匀 1% 给花费列容 16px；120px 仍容「820 ms 2.4 s」）
   --realtime-col-time: 8%; // 时间（两行）
   --realtime-col-usage: 8%; // 本次用量
-  --realtime-col-cache: 6%; // 缓存命中率
-  --realtime-col-cost: 6%; // 花费
+  --realtime-col-cache: 7%; // 缓存命中率（含 info 图标；8%→7% 匀 1% 给花费列，值「17.8%」自然宽 ~55px、7%×1200=84px 仍宽松）
+  --realtime-col-cost: 6%; // 花费（5%→6% 从 cache 匀 1%，容 16px「$0.00」自然宽 44px + 左右各 10px padding 与邻列一致，不再收窄 padding）
 
   width: 100%;
-  min-width: 0;
+  // 中桌面死区修复：min-width:1200px 曾经只在 @container(max-width:1024px) 下生效，
+  // 容器 ~1025-1230px（对应常见 1366×768 / 1440×900 视口）既不触发该地板、又不到
+  // 表格能零横滚放平 13 列的宽度，于是各列在原地被压缩到低于调优宽度（时间日期裁成
+  // "2026-08-2…"、成功率表头裁切等，真机坐实）。现在把 1200px 地板提到无条件基础
+  // 规则：容器 >=1200px 时 width:100% 优先生效（正常铺满，不留怪缝）；容器 <1200px
+  // 时改由 min-width 撑出横向溢出，交给 .tableWrapper 的 overflow-x:auto 兜底横滚，
+  // 不再存在"既不横滚、列宽又被压塌"的中间死区。
+  min-width: 1200px;
   table-layout: fixed;
 }
 
+// 时间列前移到最左第 1 位（原第 10 位），下方 nth-child 映射与 RealtimeEventsPanel 的
+// <colgroup>/<thead>/<tbody> 列序保持同步：1 时间 -> 2 来源 -> 3 模型 -> 4 强度/等级 ->
+// 5 近况 -> 6 请求状态 -> 7 成功率 -> 8 调用 -> 9 TPS -> 10 首字｜耗时 -> 11 本次用量 ->
+// 12 缓存命中率 -> 13 花费。
 .realtimeTable col:nth-child(1) {
-  width: var(--realtime-col-source);
+  width: var(--realtime-col-time);
 }
 .realtimeTable col:nth-child(2) {
-  width: var(--realtime-col-model);
+  width: var(--realtime-col-source);
 }
 .realtimeTable col:nth-child(3) {
-  width: var(--realtime-col-reasoning);
+  width: var(--realtime-col-model);
 }
 .realtimeTable col:nth-child(4) {
-  width: var(--realtime-col-recent);
+  width: var(--realtime-col-reasoning);
 }
 .realtimeTable col:nth-child(5) {
-  width: var(--realtime-col-status);
+  width: var(--realtime-col-recent);
 }
 .realtimeTable col:nth-child(6) {
-  width: var(--realtime-col-success);
+  width: var(--realtime-col-status);
 }
 .realtimeTable col:nth-child(7) {
-  width: var(--realtime-col-calls);
+  width: var(--realtime-col-success);
 }
 .realtimeTable col:nth-child(8) {
-  width: var(--realtime-col-tps);
+  width: var(--realtime-col-calls);
 }
 .realtimeTable col:nth-child(9) {
-  width: var(--realtime-col-latency);
+  width: var(--realtime-col-tps);
 }
 .realtimeTable col:nth-child(10) {
-  width: var(--realtime-col-time);
+  width: var(--realtime-col-latency);
 }
 .realtimeTable col:nth-child(11) {
   width: var(--realtime-col-usage);
@@ -1664,6 +1702,18 @@
 .realtimeTable th {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+// 实时表 td 显式 overflow:visible（见下方 .table.realtimeTable tbody td，供 portal
+// 浮层跳出裁切祖先），但这也意味着单元格内部不再有裁切兜底——.primaryCell 默认是隐式单列
+// display:grid，没有 grid-template-columns 时，轨道的 max 尺寸函数是 auto（会按内容撑到
+// max-content，不受容器实际宽度限制），一旦某个子项（如「查看原始请求」按钮）的内容比列
+// 窄，就会把整个 grid 撑宽、溢出 td 边界、连带 overflow:visible 一起可见地压到右侧相邻列
+// （经典 grid blowout）。显式约束成 minmax(0, 1fr) 让轨道宽度封顶在容器宽度内，子项各自的
+// 省略号/裁切规则接管，不再向外溢出。
+.realtimeTable .logTypeCell .primaryCell,
+.realtimeTable .primaryCell {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .realtimeTable .logTypeCell .primaryCell > span {
@@ -1698,6 +1748,15 @@
   word-break: normal;
 }
 
+// 明细段（推理 R / 缓存创建 / 缓存读取）各自独立成行、行首无分隔点（见 buildRealtimeTokenSummary）：
+// display:block 让其在核心 token（I/O）inline 段之后强制断行、各自独占一行；nowrap +
+// word-break:normal 与 .realtimeUsageSegment 同款，防紧凑数字/短标签被父级 break-word 从中间断行。
+.realtimeTable .primaryCell small .realtimeUsageDetailLine {
+  display: block;
+  white-space: nowrap;
+  word-break: normal;
+}
+
 .realtimeModelCell {
   max-width: 100%;
   outline: none;
@@ -1715,6 +1774,18 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap !important;
+}
+
+// 模型名主行 2 行限行换行(clamp)，取代原单行硬省略；副行(resolved model)不加这个类，
+// 继续沿用上面 .realtimeModelText 的单行 nowrap 省略号。line-clamp 需要 white-space:normal
+// 才生效，这里用 !important 覆盖同优先级的 .realtimeModelText 规则（同规格选择器下，
+// 本规则声明在其后，级联生效）；超过 2 行仍由 RealtimeModelCell 的即时浮层兜底看全名。
+.realtimeModelTextClamp {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  white-space: normal !important;
 }
 
 // 模型全名即时浮层（见 RealtimeModelCell）：与 .realtimeFailureTooltip 同一手法
@@ -1806,14 +1877,20 @@
 
 // 「查看原始请求」行内触发按钮：贴合 source 单元格内的堆叠 <small> 元数据样式，
 // 不新增列，避免改动 colgroup / colSpan。
+// min-width:0 是关键：作为 .primaryCell 网格的子项，flex 容器默认的自动最小尺寸按内容
+// 撑开(min-width:auto)，窄列下会连同图标+文案一起把按钮撑宽、溢出到相邻的模型列；
+// 加上 overflow:hidden 兜底裁切，图标 flex-shrink:0 保持不被挤压，文案 span 用省略号
+// 收窄(而不是让整段文案消失或换行破坏单行高度)。
 .realtimeRequestLogTrigger {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   align-self: flex-start;
+  min-width: 0;
   max-width: 100%;
   padding: 0;
   border: 0;
+  overflow: hidden;
   background: none;
   color: var(--monitor-accent);
   font-size: 12px;
@@ -1832,7 +1909,14 @@
     border-radius: 4px;
   }
 
+  svg {
+    flex-shrink: 0;
+  }
+
   span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
   }
 }
@@ -2064,13 +2148,27 @@
   white-space: nowrap;
 }
 
+// "首字｜耗时"是成对布局的唯一例外，保持居中；其余数字列(成功率/调用/TPS/缓存命中率/
+// 花费)统一右对齐，见下方 .realtimeNumericColumn。!important 用于覆盖同优先级的
+// .table thead th { text-align:left } 基础规则（同为单类选择器时 important 优先）。
 .realtimeLatencyColumn {
   text-align: center !important;
 }
 
+// 左右两个数值轨道给固定 54px 下限(而非 minmax(0,1fr))：
+// 1) 防止"塌陷" —— 纯 minmax(0,1fr) 的轨道在窄列/auto 表格布局下会向表格汇报出
+//    近似 0 的内在宽度（fr 轨道的最小尺寸解析为 0），导致该列被判定"几乎不需要空间"、
+//    分不到应有宽度，两个值因此被挤到只剩几像素、彼此贴死甚至覆盖分隔符（真机量测坐实，
+//    见 RealtimeEventsPanel 走查记录）。真机量测两个格式的自然宽度上限都约 55-56px：
+//    ms 格式固定 <1000(最多 3 位数字)，如 "999 ms"；秒格式如 "9.99 s"/"99.9 s"。
+//    54px 下限 + 剩余空间由 1fr 均分，覆盖绝大多数真实取值，不再被省略号裁掉数字；
+//    也让浏览器（含 table-layout:auto 的窄屏兜底）正确预留空间，必要时表格整体变宽
+//    走横向滚动，而不是在原地互相挤压。
+// 2) 极端超长数值(理论上限如三位数秒 "120.0 s")仍由下方 .realtimeMetricText 的省略号
+//    兜底裁切，不会溢出到相邻列。
 .realtimeLatencyHeader {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 8px minmax(0, 1fr);
+  grid-template-columns: minmax(54px, 1fr) 6px minmax(54px, 1fr);
   align-items: center;
   justify-content: center;
   width: 100%;
@@ -2082,7 +2180,7 @@
 
 .realtimeMetricCell {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 8px minmax(0, 1fr);
+  grid-template-columns: minmax(54px, 1fr) 6px minmax(54px, 1fr);
   align-items: center;
   justify-content: center;
   width: 100%;
@@ -2092,8 +2190,10 @@
   white-space: nowrap;
 }
 
-.realtimeTpsColumn {
-  text-align: center !important;
+// 成功率 / 调用 / TPS / 缓存命中率 / 花费：纯数字列统一右对齐（配合各自的
+// tabular-nums），表头随列一起右对齐。同一个类同时挂在 <th> 和 <td> 上。
+.realtimeNumericColumn {
+  text-align: right !important;
 }
 
 .realtimeTpsCell {
@@ -2102,8 +2202,54 @@
   font-variant-numeric: tabular-nums;
 }
 
+// 花费列（最后一列）窄屏横滚到底走查修复：其余数字列共享 .realtimeNumericColumn
+// 未单独设字号，直接继承页面默认 16px（body 未设 font-size，见 styles/reset.scss）；
+// 该列又是所有数字列里最窄的一列(4%，1200px 表宽下=48px)。真机量测坐实：
+// "$0.00"/"$0.01" 这类取值在 16px 下渲染宽度约 42-44px，早已超出 10px/10px 左右
+// padding 后剩下的内容区(28px)。因为这一列同时是最后一列，紧贴着
+// `.table.realtimeTable tbody td { overflow: visible; }`（该规则本身是为其余列的
+// portal 浮层/焦点框保留，不能整列改成 hidden）——溢出的文字不会像中间列那样被
+// 右侧相邻列"接住"，而是直接画到行卡片右侧圆角边界之外；窄屏横滚到底时浏览器把
+// 这段视觉溢出一并计入横向可滚动范围（真机 probe 坐实 wrapper.scrollWidth 比表格
+// 实际宽度多出约 4px），滚到底后这 4px 幽灵滚动范围露出面板底色——肉眼即"花费"
+// 列右侧露白/溢出圆角。
+//
+// 只收紧这一列：缩小字号 + 收窄左右 padding 腾出内容区，并只在这一列上把
+// overflow 收回 hidden（配 text-overflow:ellipsis 兜底极端大额值，不影响其余共享
+// .realtimeNumericColumn 的列的字号/留白/焦点框可见性）。真机验证覆盖到两位数
+// 美元额度（$99.99）不截断；更大额度走省略号 + <td title> 原生 tooltip 兜底可见
+// 完整值。选择器特异性刻意高于 `.table.realtimeTable tbody td`（多一个类），
+// 确保能稳定覆盖其 overflow:visible，不依赖源码书写顺序。
+.table.realtimeTable thead th.realtimeCostCell,
+.table.realtimeTable tbody td.realtimeCostCell {
+  // 与时间列/其余数字列一致的 10px 左右 padding。此前为防溢出误收窄到 4px，导致
+  // 「$0.00」比邻列更贴右边界、左右留白与最左时间列不一致（用户走查发现）。改为靠
+  // 加宽列宽（cost 5%→6%，从 cache 富余匀 1%）容纳，不再靠收窄 padding；下方
+  // overflow:hidden + ellipsis 仍兜底极端大额值。
+  padding-right: 10px;
+  padding-left: 10px;
+}
+
+.table.realtimeTable tbody td.realtimeCostCell {
+  // 与其余数字列（成功率/调用/TPS/缓存命中）一致的 16px；曾误设 11px 致花费比邻列小一号。
+  // overflow:hidden+ellipsis 兜底防止最后一列内容溢出行卡片圆角边界；极端大额走 title。
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+// 时间列 hover/focus 即时浮层触发元素（见 RealtimeTimeCell），与 .realtimeModelCell
+// 同款可聚焦焦点样式。
 .realtimeTimeCell {
   min-width: 0;
+  outline: none;
+}
+
+.realtimeTimeCell:focus-visible {
+  outline: 2px solid var(--monitor-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 .realtimeTimeLine {
@@ -2117,8 +2263,12 @@
   line-height: 1.3;
 }
 
+// 兜底：即使 .realtimeMetricCell 的 minmax(38px,...) 轨道下限在极端超长取值
+// （理论上限如 "199.9 s"）下仍不够，也用省略号原地裁切，绝不溢出到相邻列/分隔符上。
 .realtimeMetricText {
+  overflow: hidden;
   color: inherit;
+  text-overflow: ellipsis;
   font-variant-numeric: tabular-nums;
   line-height: 1.25;
 }
@@ -2145,9 +2295,13 @@
   color: var(--monitor-red);
 }
 
+// 分隔符原用 --monitor-line（表格描边同款极浅色），"首字(TTFT)｜耗时"配对几乎不可辨；
+// 提一档到 --monitor-muted（次级文字色），保持视觉弱化但可辨认。
 .realtimeMetricSeparator {
+  // 撤销 F5：曾把颜色从 --monitor-line 提到 --monitor-muted 想让首字/耗时更好区分，
+  // 但配上 600 字重显得又粗又重（用户走查），改回原来的浅色 --monitor-line 保持克制。
   color: var(--monitor-line);
-  font-weight: 600;
+  font-weight: 400;
   line-height: 1.25;
   text-align: center;
 }
@@ -2451,13 +2605,16 @@
 }
 
 @container monitoring-page (max-width: 1024px) {
-  // 窄屏(容器 <=1024px)兜底：实时表恢复固定基线宽度，由 .tableWrapper 的 overflow-x:auto
-  // 横向滚动兜底，避免 13 列在过窄容器里被压到无法阅读。>=1360px 视口(容器 ~1152px)
-  // 不触发此断点，仍保持零横滚全列同屏。
-  .realtimeTable {
-    min-width: 1120px;
-    table-layout: auto;
-  }
+  // 窄屏(容器 <=1024px)兜底：曾经切到 table-layout:auto 让浏览器按内容分配列宽，
+  // 但时间/模型这类列本身是 overflow:hidden + 省略号截断显示（真实内容早已存在，
+  // 只是视觉裁切），auto 布局据此判定它们的最小内容宽度可以趋近 0、把可用宽度让给
+  // 来源/推理这类无省略号裁切的列——真机量测坐实：375px 视口下时间列仅剩 45px，
+  // 完整时间戳 "2026-08-28 19:52:09" 塌成 "2..."/"1..." 完全不可读。
+  // min-width:1200px 已提到上方 .realtimeTable 基础规则无条件生效（见该处中桌面
+  // 死区修复说明），此处不再需要重复声明；仍保持 table-layout:fixed + 上面声明的
+  // --realtime-col-* 百分比不变，每列按原比例分到可读宽度（时间列 8%×1200=96px，
+  // 可完整容纳两行 "2026-08-28" / "19:52:09"；模型列 12%×1200=144px），窄屏由
+  // .tableWrapper 的 overflow-x:auto 承担横向滚动。
 
   .panelHeader {
     flex-direction: column;
@@ -2753,6 +2910,14 @@
 
   .table {
     min-width: 920px;
+  }
+
+  // 与 .accountOverviewTable / .apiKeySummaryTable 同理：realtimeTable 元素同时
+  // 挂了 .table 类，若不在这里重新声明，上面 .table{min-width:920px} 会按源码
+  // 顺序（同规格选择器，后者胜出）把基础 .realtimeTable 规则设的 1200px 覆盖掉，
+  // 导致 <=768px（含本任务验证的 375/600 视口）时间/模型列又被压窄。
+  .realtimeTable {
+    min-width: 1200px;
   }
 
   .accountOverviewTable {
