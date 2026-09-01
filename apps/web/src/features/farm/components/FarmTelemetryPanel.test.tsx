@@ -54,6 +54,14 @@ const { useFarmContainerBeaconsMock } = vi.hoisted(() => ({
 vi.mock('../hooks/useFarmContainerBeacons', () => ({
   FARM_CONTAINER_BEACONS_DEFAULT_LIMIT: 50,
   useFarmContainerBeacons: useFarmContainerBeaconsMock,
+  // 「看完整 body」按需 hook：这些用例不打开信标详情抽屉，桩成惰性空态即可（保证被
+  // vi.mock 整体替换的模块形状完整，抽屉真渲染时也不会因 undefined 崩）。
+  useFarmBeaconRedactedBody: () => ({
+    data: null,
+    loading: false,
+    error: '',
+    reload: async () => {},
+  }),
 }));
 
 const STALE_SILENCE = { is_stale: true, minutes_since_last: 40, threshold_minutes: 30 };
@@ -304,6 +312,7 @@ describe('FarmTelemetryPanel 指纹自洽卡 pin (farm-proxy-rotation §5)', () 
     useFarmContainerBeaconsMock.mockReturnValueOnce({
       beacons: [
         {
+          beacon_id: 1,
           captured_at: '2026-08-26T00:00:00Z',
           channel: 'otel_metrics',
           host: 'api.anthropic.com',

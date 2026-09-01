@@ -33,6 +33,7 @@ import type {
   FarmAccountEntry,
   FarmAccountStateListResponse,
   FarmAlertsResponse,
+  FarmBeaconRedactedBodyResponse,
   FarmBindingResponse,
   FarmCapacityResponse,
   FarmConfigResponse,
@@ -237,6 +238,20 @@ export const farmApi = {
     farmClient.get<FarmContainerBeaconsResponse>(
       `/api/farm/containers/${encodeURIComponent(containerId)}/beacons`,
       { params: query }
+    ),
+
+  // 单条 beacon 的「完整脱敏 body」（用户③「看完整 body」，telemetry_beacon.go
+  // handleGetContainerRedactedBody）：按 (containerId, beaconId) 取同一套脱敏正则跑出
+  // 的**完整**脱敏 body（不截断，仅 64K 安全上限兜底），是列表 body_preview 被有界预览
+  // 上限截断、operator 想看全文的出口。**按需调用**（详情抽屉里显式点「看完整 body」
+  // 才发，不随列表默认拉取）。容器不存在/beacon 不存在或属于别的容器 → 404；beaconId
+  // 非正整数 → 400；beacon 只读存储未装配 → 503——均走 farmClient 既有错误处理，由调用方
+  // 就地优雅降级（提示「完整 body 暂不可用」/回退截断预览，不整页报错）。
+  getBeaconRedactedBody: (containerId: string, beaconId: number) =>
+    farmClient.get<FarmBeaconRedactedBodyResponse>(
+      `/api/farm/containers/${encodeURIComponent(containerId)}/beacons/${encodeURIComponent(
+        String(beaconId)
+      )}/redacted-body`
     ),
 
   // ---------------------------------------------------------------------

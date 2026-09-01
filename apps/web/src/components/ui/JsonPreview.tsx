@@ -4,8 +4,10 @@ import styles from './JsonPreview.module.scss';
 
 /**
  * <JsonPreview>：安全展示一段「可能是 JSON、也可能因上游截断而不再是合法 JSON」的
- * 文本预览（当前唯一调用方：farm 遥测 beacon 详情的 body_preview，服务端已脱敏 +
- * ≤2048 字符截断，见 services/farm-orchestrator/internal/httpapi/beacon_redact.go）。
+ * 文本预览。调用方：farm 遥测 beacon 详情的 body_preview（服务端已脱敏 + 有界预览
+ * 截断，末尾带 `…(truncated)` 标记）与「看完整 body」端点的 redacted_body（完整脱敏、
+ * 不带该标记），见 services/farm-orchestrator/internal/httpapi/beacon_redact.go 与
+ * telemetry_beacon.go handleGetContainerRedactedBody。
  *
  * **安全边界**：只做 JSON.parse → JSON.stringify(_, 2) 美化 + 基于正则 token 化的
  * 轻着色，全程渲染为 React 元素（永不 dangerouslySetInnerHTML / 永不拼接 HTML 字符
@@ -16,10 +18,12 @@ import styles from './JsonPreview.module.scss';
  * `***REDACTED***`（beacon_redact.go redactedPlaceholder）并渲成 pill。不认识任何
  * 业务字段名，不对字段做特殊语义解读。
  *
- * **截断诚实边界**：服务端超过 2048 字符时会在原文末尾追加字面量截断标记
+ * **截断诚实边界**：body_preview 超过服务端预览上限时会在原文末尾追加字面量截断标记
  * `…(truncated)`（beacon_redact.go bodyPreviewTruncationMarker）。前端据此判断
  * truncated，而不是自己猜测；截断导致 JSON 语法被从中截断时 JSON.parse 必然失败，
- * 这时兜底展示原始文本（不崩溃、不空白），并显式提示「预览被截断」。
+ * 这时兜底展示原始文本（不崩溃、不空白），并显式提示「预览被截断」。「看完整 body」
+ * 端点返回的 redacted_body 不带该标记（其 64K 安全上限截断由调用方另行提示），故这里
+ * 不会误判其为「预览被截断」。
  */
 
 // 与后端 beacon_redact.go 常量字面量保持一致（前端无法读取 Go 常量，此处显式复制并
@@ -137,7 +141,7 @@ function renderTokens(tokens: Token[]): ReactNode {
 }
 
 export interface JsonPreviewProps {
-  /** 原始预览文本（服务端已脱敏，可能因 ≤2048 字符截断而不再是合法 JSON）。 */
+  /** 原始预览文本（服务端已脱敏，可能因上游截断而不再是合法 JSON）。 */
   value: string;
   /** 完整原始请求体大小（beacon.body_bytes），仅用于截断时「共 {{total}}」口径的
    * 展示；未提供时退化为用预览自身长度顶上（诚实地不编造未知总量）。 */

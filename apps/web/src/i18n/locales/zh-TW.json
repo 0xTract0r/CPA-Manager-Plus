@@ -4450,6 +4450,8 @@
       "resourcesSection": "資源佔用（近24h，1h 分桶）",
       "noResourceSamples": "視窗內無資源樣本（空視窗是正常回應，不代表出錯）。",
       "deviceIdSection": "device_id 對齊",
+      "deviceIdMachineLabel": "本地 machineID · 不上線",
+      "deviceIdNamespaceNote": "此值是注入容器的本地 machineID（CLAUDE_DEVICE_ID），僅用於容器本地、永不上線 Anthropic。真正 on-wire 的 device_id 是另一個 by-design 的值——userID（遙測設備ID），見「遙測」分區的三向 device_id 一致性；兩者本就分屬不同命名空間，不是不一致。",
       "deviceIdDriftGap": "漂移歷史時間線屬於 P1（container_deviceid_checks 遷移，暫未落地），這裡只展示當前一次對齊判定，不是完整歷史。",
       "probeTokenSection": "探針 token 趨勢",
       "probeTokenNotBilling": "探針 token ≠ 帳單：這裡只反映保活探針自身消耗，不是帳號真實計費用量。",
@@ -4632,6 +4634,14 @@
         "sizeTruncated": "預覽 {{chars}} 字元 / 共 {{total}} · 已截斷",
         "sizeFull": "預覽 {{chars}} 字元",
         "eventNameCount": "×{{count}}"
+      },
+      "fullBody": {
+        "show": "看完整 body",
+        "hide": "收起完整 body",
+        "loading": "正在載入完整 body…",
+        "unavailable": "完整 body 暫不可用（編排器未提供該端點或查詢失敗），請參考上方截斷預覽。",
+        "ariaLabel": "完整請求體（脫敏）",
+        "safetyTruncated": "完整 body 已達 64K 安全上限被裁（脫敏在完整原文完成，不影響脫敏完整性）。"
       },
       "section": "遙測信標（自報 + on-wire，逐條標註來源）",
       "disclaimer": "下方是該容器的遙測信標列表，混合兩類來源並逐條標註：「自報 (declared)」是容器聲明/自報的內容，「on-wire」行才是 mitmproxy/ebpf 在容器出站鏈路真實擷取的資料。即便 on-wire 行也只證明該容器確實發出過這些請求，不構成跨帳號反關聯證明。另外，上方指紋自洽卡的「出站實測 (on-wire)」欄是把信標逐欄位派生、與自報值比對的獨立步驟——這一步尚未接入才顯示佔位，與「原始 on-wire 信標是否已擷取」是兩回事。",

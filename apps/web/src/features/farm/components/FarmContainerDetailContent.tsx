@@ -340,8 +340,28 @@ export function FarmContainerDetailContent({
                           { defaultValue: detail.device_id_alignment ?? t('farm.accountHealth.unbound') }
                         )}
                       </span>
+                      {/* 平面标签：明确此值属于「本地 machineID（注入容器 CLAUDE_DEVICE_ID）」这一面。
+                          它与「遥测」分区里 on-wire 的 userID（遥测设备ID）是 by-design 的两个不同值，
+                          无标签时容易被误读成 device_id 不一致。 */}
+                      <span
+                        className={styles.deviceIdKindLabel}
+                        data-testid="farm-detail-device-id-kind"
+                      >
+                        {t('farm.detail.deviceIdMachineLabel', {
+                          defaultValue: '本地 machineID · 不上线',
+                        })}
+                      </span>
                       <span className={styles.mono}>{detail.device_id_masked}</span>
                     </div>
+                    <p
+                      className={styles.hintText}
+                      data-testid="farm-detail-device-id-namespace-note"
+                    >
+                      {t('farm.detail.deviceIdNamespaceNote', {
+                        defaultValue:
+                          '此值是注入容器的本地 machineID（CLAUDE_DEVICE_ID），仅用于容器本地、永不上线 Anthropic。真正 on-wire 的 device_id 是另一个 by-design 的值——userID（遥测设备ID），见「遥测」分区的三向 device_id 一致性；两者本就分属不同命名空间，不是不一致。',
+                      })}
+                    </p>
                     <p className={styles.hintText}>
                       {t('farm.detail.deviceIdDriftGap', {
                         defaultValue:
