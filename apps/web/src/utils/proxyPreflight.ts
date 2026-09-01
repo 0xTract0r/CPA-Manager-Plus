@@ -167,6 +167,79 @@ export async function ensureProxyReachableForSave(params: {
  * 当某个待保存代理值已存在于该集合，视为「未变更 / 此前已校验」，跳过其探针；只对新增或改动
  * 出来的新代理值做完整校验，避免用户改无关字段时逐个空等旧代理探针。
  */
+// ===== 代理查重（二级校验 / L2）=====
+//
+// 反关联要求：两个账号共用同一出口代理 → 出口 IP 聚类 → 可被上游关联。故凡是填代理的入口
+// （新增账号 OAuth / 编辑已有账号代理），在慢的连通性探针（L1）之前先做本地秒级查重（L2）：
+// 命中现有账号占用即阻断，不必再触网探针。查重是纯前端比较，不新增后端。
+
+/** 参与查重的账号最小视图（各入口从自己的账号列表映射得到）。 */
+export interface ProxyOwnerAccount {
+  /** 账号唯一标识（auth 文件名）；用于 excludeName 排除自身。 */
+  name: string;
+  /** 账号展示名（备注优先，回退文件名）；用于冲突提示文案。缺省时回退 name。 */
+  label?: string;
+  /** 该账号当前的 proxy_url（可空）。 */
+  proxyUrl: string;
+}
+
+/**
+ * 归一化 proxy_url 用于查重比较：
+ * - 去首尾空白；
+ * - scheme 与 host 转小写；
+ * - 端口保留；
+ * - 账号密码（userinfo）原样保留、大小写敏感——同 host:port 但不同凭据视为不同出口会话，
+ *   不算重复；
+ * - path/query 保留（代理 URL 通常无 path，防御性保留以免误判）。
+ * 非法 URL（历史脏值）退化为「去空白 + 整串小写」比较，避免抛错。
+ */
+export const normalizeProxyForCompare = (proxyUrl: string): string => {
+  const trimmed = (proxyUrl || '').trim();
+  if (!trimmed) return '';
+  try {
+    const parsed = new URL(trimmed);
+    const scheme = parsed.protocol.replace(/:$/, '').toLowerCase();
+    const host = parsed.hostname.toLowerCase();
+    const port = parsed.port ? `:${parsed.port}` : '';
+    const cred =
+      parsed.username || parsed.password
+        ? `${parsed.username}${parsed.password ? `:${parsed.password}` : ''}@`
+        : '';
+    const path = parsed.pathname && parsed.pathname !== '/' ? parsed.pathname : '';
+    return `${scheme}://${cred}${host}${port}${path}${parsed.search}`;
+  } catch {
+    return trimmed.toLowerCase();
+  }
+};
+
+/**
+ * 找出「已经在使用同一 proxy_url」的现有账号，返回它们的展示名（label ?? name）。
+ * 空结果表示无冲突（可继续放行到连通性探针）。
+ * - proxyUrl 为空 → 返回 []（是否必填由各入口的格式校验负责，这里不越权拦空）。
+ * - options.excludeName：排除该 name 的账号（编辑自身账号代理时排除自己）。
+ * - 展示名去重，保持首次出现顺序。
+ */
+export function findAccountsUsingProxy(
+  proxyUrl: string,
+  accounts: ProxyOwnerAccount[],
+  options: { excludeName?: string } = {}
+): string[] {
+  const target = normalizeProxyForCompare(proxyUrl);
+  if (!target) return [];
+  const { excludeName } = options;
+  const conflicts: string[] = [];
+  const seen = new Set<string>();
+  for (const account of accounts) {
+    if (excludeName !== undefined && account.name === excludeName) continue;
+    if (normalizeProxyForCompare(account.proxyUrl) !== target) continue;
+    const label = (account.label || '').trim() || account.name;
+    if (seen.has(label)) continue;
+    seen.add(label);
+    conflicts.push(label);
+  }
+  return conflicts;
+}
+
 export async function ensureProxiesReachableForSave(params: {
   proxyUrls: string[];
   translate?: (reason: ProxyProbeReason) => string | undefined;

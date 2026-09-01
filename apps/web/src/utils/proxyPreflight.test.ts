@@ -2,8 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   ensureProxiesReachableForSave,
   ensureProxyReachableForSave,
+  findAccountsUsingProxy,
+  normalizeProxyForCompare,
   runProxyPreflight,
   validateProxyUrlFormat,
+  type ProxyOwnerAccount,
 } from './proxyPreflight';
 
 describe('validateProxyUrlFormat', () => {
@@ -24,6 +27,71 @@ describe('validateProxyUrlFormat', () => {
     expect(validateProxyUrlFormat('https://host:8443')).toEqual({ valid: true });
     expect(validateProxyUrlFormat('socks5://host:1080')).toEqual({ valid: true });
     expect(validateProxyUrlFormat('socks5h://user:pass@host:1080')).toEqual({ valid: true });
+  });
+});
+
+describe('normalizeProxyForCompare', () => {
+  it('lowercases scheme and host, trims surrounding whitespace', () => {
+    expect(normalizeProxyForCompare('  SOCKS5://HOST.EXAMPLE:1080  ')).toBe(
+      'socks5://host.example:1080'
+    );
+  });
+
+  it('preserves port and userinfo (credentials are case-sensitive)', () => {
+    expect(normalizeProxyForCompare('http://User:Pass@host:8080')).toBe(
+      'http://User:Pass@host:8080'
+    );
+  });
+
+  it('returns empty string for empty / whitespace input', () => {
+    expect(normalizeProxyForCompare('   ')).toBe('');
+  });
+
+  it('falls back to a lowercased trimmed string for unparseable values', () => {
+    expect(normalizeProxyForCompare('  NOT A URL  ')).toBe('not a url');
+  });
+});
+
+describe('findAccountsUsingProxy', () => {
+  const accounts: ProxyOwnerAccount[] = [
+    { name: 'a.json', label: 'AC-14', proxyUrl: 'socks5://user:pass@host:1080' },
+    { name: 'b.json', label: 'AC-15', proxyUrl: 'http://other:8080' },
+  ];
+
+  it('returns the conflicting account label when the same proxy is reused', () => {
+    expect(findAccountsUsingProxy('socks5://user:pass@host:1080', accounts)).toEqual(['AC-14']);
+  });
+
+  it('matches after normalization (surrounding whitespace + host/scheme case)', () => {
+    expect(findAccountsUsingProxy('  SOCKS5://user:pass@HOST:1080 ', accounts)).toEqual(['AC-14']);
+  });
+
+  it('does not treat same host:port with different credentials as a duplicate', () => {
+    expect(findAccountsUsingProxy('socks5://other:creds@host:1080', accounts)).toEqual([]);
+  });
+
+  it('excludes the account itself via excludeName (editing own proxy is not a conflict)', () => {
+    expect(
+      findAccountsUsingProxy('socks5://user:pass@host:1080', accounts, { excludeName: 'a.json' })
+    ).toEqual([]);
+  });
+
+  it('returns [] for empty proxy (emptiness is handled by format validation upstream)', () => {
+    expect(findAccountsUsingProxy('   ', accounts)).toEqual([]);
+  });
+
+  it('collects multiple conflicting labels and de-dupes them, preserving first order', () => {
+    const many: ProxyOwnerAccount[] = [
+      { name: 'a.json', label: 'AC-14', proxyUrl: 'http://p:1' },
+      { name: 'b.json', label: 'AC-15', proxyUrl: 'http://p:1' },
+      { name: 'c.json', label: 'AC-14', proxyUrl: 'http://p:1' },
+    ];
+    expect(findAccountsUsingProxy('http://p:1', many)).toEqual(['AC-14', 'AC-15']);
+  });
+
+  it('falls back to name when an account has no label', () => {
+    const noLabel: ProxyOwnerAccount[] = [{ name: 'acct-claude.json', proxyUrl: 'http://p:1' }];
+    expect(findAccountsUsingProxy('http://p:1', noLabel)).toEqual(['acct-claude.json']);
   });
 });
 

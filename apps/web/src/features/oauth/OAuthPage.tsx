@@ -17,7 +17,8 @@ import { authFilesApi } from '@/services/api/authFiles';
 import type { AuthFileItem } from '@/types/authFile';
 import { vertexApi, type VertexImportResponse } from '@/services/api/vertex';
 import { copyToClipboard } from '@/utils/clipboard';
-import { runProxyPreflight } from '@/utils/proxyPreflight';
+import { findAccountsUsingProxy, runProxyPreflight } from '@/utils/proxyPreflight';
+import { toProxyOwnerAccount } from '@/features/authFiles/constants';
 import type { PluginListEntry } from '@/types';
 import { getPluginTitle, resolvePluginAssetURL } from '@/features/plugins/pluginResources';
 import {
@@ -684,6 +685,27 @@ export function OAuthPage() {
       updateProviderState(provider, { proxyUrlError });
       showNotification(proxyUrlError, 'warning');
       return;
+    }
+    // L2 查重（本地秒级，放在慢的连通性探针之前 fail-fast）：新增账号填的代理若已被现有账号
+    // 占用，直接阻断——两个账号共用同一出口会导致 IP 聚类被上游关联。查重不过就不进探针、不进
+    // OAuth。查重纯客户端比对现有账号列表（列表已内联下发 account_settings.proxy_url），不新增
+    // 后端；列表拉取失败不阻断新增（后端仍兜底），降级放行到连通性探针。
+    try {
+      const filesResponse = await authFilesApi.list();
+      const conflicts = findAccountsUsingProxy(
+        proxyUrl,
+        (filesResponse.files || []).map(toProxyOwnerAccount)
+      );
+      if (conflicts.length > 0) {
+        const message = t('proxy_preflight.duplicate_account', {
+          accounts: conflicts.join('、'),
+        });
+        updateProviderState(provider, { proxyUrlError: message, proxyExitIp: undefined });
+        showNotification(message, 'error');
+        return;
+      }
+    } catch {
+      // 忽略：查重列表不可用时降级放行，交由后续连通性探针 + 后端兜底。
     }
     // 格式过后、真正起 OAuth 前，先做后端连通性探针：不通就不进入 OAuth（fail-closed），
     // 通了则展示出口 IP 再继续。探测期间置 proxyProbing，禁用登录按钮防重复点。

@@ -43,7 +43,10 @@ const { runProxyPreflightMock } = vi.hoisted(() => ({
   runProxyPreflightMock: vi.fn(),
 }));
 
-vi.mock('@/utils/proxyPreflight', () => ({
+// 只 mock runProxyPreflight（连通性探针），保留真实的 findAccountsUsingProxy 查重逻辑；
+// 本用例不传 accounts（默认空列表）→ 查重恒无冲突，不影响探针分支断言。
+vi.mock('@/utils/proxyPreflight', async (importActual) => ({
+  ...(await importActual<typeof import('@/utils/proxyPreflight')>()),
   runProxyPreflight: runProxyPreflightMock,
 }));
 

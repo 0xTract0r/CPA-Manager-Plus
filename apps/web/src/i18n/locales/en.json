@@ -8,7 +8,8 @@
     "reason_probe_failed": "Probe failed, please retry",
     "probing": "Probing proxy connectivity…",
     "connected_with_ip": "Connected · exit IP: {{ip}}",
-    "exit_ip_label": "Exit IP"
+    "exit_ip_label": "Exit IP",
+    "duplicate_account": "This proxy is already used by account {{accounts}}. Give each account its own residential proxy to avoid exit-IP clustering."
   },
   "common": {
     "login": "Login",

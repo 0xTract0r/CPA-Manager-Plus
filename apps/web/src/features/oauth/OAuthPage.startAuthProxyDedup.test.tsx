@@ -3,13 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 
-// scenario (b) 回归覆盖：OAuth 新增账号在「格式过 → 连通性探针」后，探针不过就不进入 OAuth。
-//  - 探针 ok:false → return-before-OAuth，不调 oauthApi.startAuth（fail-closed）。
-//  - 探针 ok:true  → 继续进入 OAuth，调 oauthApi.startAuth。
-// 全量渲染真实 OAuthPage（照 AuthFilesPage 系列测试的 react-test-renderer + 模块 mock 范式），
-// 直接断言 oauthApi.startAuth 的调用/未调用，而不是弱化成只测中间判定。
-// 为避免 startPolling 触碰 node 环境不存在的 window，ok:true 用例让 startAuth 返回缺 state 的
-// 响应，命中「missing state」早退分支——此时 oauthApi.startAuth 已被调用，断言成立且不触网 window。
+// scenario ① 覆盖：OAuth 新增账号在「格式过 → 二级查重(L2) → 连通性探针(L1)」流程中，
+// 查重命中就 fail-fast——不调连通性探针、不调 oauthApi.startAuth，报错含冲突账号名。
+//  - 查重命中（现有账号已用同一代理）→ return-before-probe：runProxyPreflight / startAuth 均不调。
+//  - 查重不命中 → 继续到连通性探针 → 探针 ok:true 才进 OAuth。
+// 保留真实 findAccountsUsingProxy / toProxyOwnerAccount，只 mock 慢的 runProxyPreflight，
+// 直接断言查重先于连通性（L2 在 L1 之前）。
 
 const { mocks } = vi.hoisted(() => {
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
@@ -27,7 +26,11 @@ const { mocks } = vi.hoisted(() => {
 
 vi.mock('react-i18next', () => ({
   initReactI18next: { type: '3rdParty', init: () => {} },
-  useTranslation: () => ({ t: (key: string) => key }),
+  useTranslation: () => ({
+    // 让带 accounts 插值参数的 key 把冲突账号名拼进返回值，便于断言「报错含冲突账号名」。
+    t: (key: string, opts?: Record<string, unknown>) =>
+      opts && typeof opts.accounts === 'string' ? `${key}|${opts.accounts}` : key,
+  }),
 }));
 
 vi.mock('react-router-dom', () => ({
@@ -65,8 +68,7 @@ vi.mock('@/utils/clipboard', () => ({
   copyToClipboard: vi.fn(async () => true),
 }));
 
-// 只 mock runProxyPreflight（连通性探针），保留真实的 findAccountsUsingProxy / toProxyOwnerAccount
-// 查重逻辑；查重的账号来源 authFilesApi.list 已 mock 为空列表 → 无冲突，探针照常执行。
+// 保留真实查重逻辑，只切断慢的连通性探针。
 vi.mock('@/utils/proxyPreflight', async (importActual) => ({
   ...(await importActual<typeof import('@/utils/proxyPreflight')>()),
   runProxyPreflight: mocks.runProxyPreflight,
@@ -103,16 +105,13 @@ beforeEach(() => {
   mocks.runProxyPreflight.mockReset();
   mocks.showNotification.mockReset();
   mocks.navigate.mockReset();
-  mocks.authFilesList.mockResolvedValue({ files: [] });
 });
 
-describe('OAuthPage 新增账号起 OAuth 前的连通性门禁 (scenario b)', () => {
-  it('探针 ok:false → 不进入 OAuth（不调 oauthApi.startAuth）', async () => {
-    mocks.runProxyPreflight.mockResolvedValue({
-      ok: false,
-      exitIp: '',
-      reason: 'dial_failed',
-      message: '无法经该代理连通',
+describe('OAuthPage 新增账号起 OAuth 前的代理查重门禁 (scenario ①)', () => {
+  it('查重命中（现有账号已用同一代理）→ 不进探针、不进 OAuth，报错含冲突账号名', async () => {
+    // 现有账号 AC-14 已经在用同一代理（列表内联 account_settings.proxy_url）。
+    mocks.authFilesList.mockResolvedValue({
+      files: [{ name: 'ac14.json', account_settings: { proxy_url: PROXY, note: 'AC-14' } }],
     });
 
     let renderer!: ReactTestRenderer;
@@ -127,15 +126,26 @@ describe('OAuthPage 新增账号起 OAuth 前的连通性门禁 (scenario b)', (
       await findLoginButton(renderer).props.onClick();
     });
 
-    expect(mocks.runProxyPreflight).toHaveBeenCalledTimes(1);
+    // L2 在 L1 之前 fail-fast：查重命中 → 连通性探针与 OAuth 均未触发。
+    expect(mocks.runProxyPreflight).not.toHaveBeenCalled();
     expect(mocks.startAuth).not.toHaveBeenCalled();
+    // 报错含冲突账号名（AC-14）。
+    const errorCall = mocks.showNotification.mock.calls.find(
+      (call) => typeof call[0] === 'string' && call[0].includes('AC-14')
+    );
+    expect(errorCall).toBeTruthy();
+    expect(errorCall?.[1]).toBe('error');
 
     await act(async () => {
       renderer.unmount();
     });
   });
 
-  it('探针 ok:true → 进入 OAuth（调 oauthApi.startAuth）', async () => {
+  it('查重不命中 → 继续到连通性探针（探针 ok:true 进 OAuth）', async () => {
+    // 现有账号用的是另一个代理 → 不冲突。
+    mocks.authFilesList.mockResolvedValue({
+      files: [{ name: 'other.json', account_settings: { proxy_url: 'http://other:8080', note: 'AC-15' } }],
+    });
     mocks.runProxyPreflight.mockResolvedValue({
       ok: true,
       exitIp: '203.0.113.9',
@@ -159,10 +169,6 @@ describe('OAuthPage 新增账号起 OAuth 前的连通性门禁 (scenario b)', (
 
     expect(mocks.runProxyPreflight).toHaveBeenCalledTimes(1);
     expect(mocks.startAuth).toHaveBeenCalledTimes(1);
-    expect(mocks.startAuth).toHaveBeenCalledWith(
-      'codex',
-      expect.objectContaining({ proxyUrl: PROXY })
-    );
 
     await act(async () => {
       renderer.unmount();

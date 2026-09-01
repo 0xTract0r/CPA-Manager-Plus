@@ -443,6 +443,9 @@ export function AuthFilesPage() {
     // `loadFiles()` 已经足以刷新该 auth 文件（含 account_settings 投影），
     // 这里传空实现只是满足 hook 的双回调契约，不引入未在本次范围内的新状态源。
     loadKeyStats: async () => {},
+    // 保存前的代理查重（L2）复用已加载的账号列表（内联 account_settings.proxy_url），
+    // 客户端比对，不新增后端。
+    accounts: files,
   });
 
   // 认证文件卡片内两个审计面板（reauth / 状态检查历史）的按文件重载键。

@@ -15,12 +15,13 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { authFilesApi, type AuthFileFieldsPatch } from '@/services/api';
 import { normalizeAuthIndex } from '@/utils/usage';
-import { runProxyPreflight } from '@/utils/proxyPreflight';
+import { findAccountsUsingProxy, runProxyPreflight } from '@/utils/proxyPreflight';
 import {
   normalizeProviderKey,
   parsePriorityValue,
   readAuthFileWebsockets,
   supportsAuthFileWebsockets,
+  toProxyOwnerAccount,
 } from '@/features/authFiles/constants';
 import type {
   AuthFileAccountSettings,
@@ -134,6 +135,11 @@ export type AccountSettingsEditorState = {
   proxyUrlBaseline: string;
   /** proxy_url 必填/格式校验错误（'empty' 未填，'invalid' 非法）；为 null 表示通过。 */
   proxyUrlError: ProxyUrlValidationReason | null;
+  /**
+   * 代理查重（L2）冲突提示：保存时发现该代理已被其它现有账号占用时，写入含冲突账号名的
+   * 本地化文案（供弹窗就地标红展示）；为 null 表示无冲突。改动 proxy_url 时清空。
+   */
+  proxyUrlDuplicateError?: string | null;
   note: string;
   disabled: boolean;
   refreshEnabled: boolean;
@@ -176,6 +182,11 @@ export type UseAuthFilesAccountSettingsOptions = {
   disableControls: boolean;
   loadFiles: () => Promise<void>;
   loadKeyStats: () => Promise<void>;
+  /**
+   * 现有账号列表（用于保存前的代理查重 L2）。父组件已加载的 auth-files 列表内联下发
+   * account_settings.proxy_url，故直接客户端比对、不新增后端。缺省为空数组（不查重）。
+   */
+  accounts?: AuthFileItem[];
 };
 
 export type UseAuthFilesAccountSettingsResult = {
@@ -438,7 +449,7 @@ const isRawJsonDirty = (editor: AccountSettingsEditorState): boolean =>
 export function useAuthFilesAccountSettings(
   options: UseAuthFilesAccountSettingsOptions
 ): UseAuthFilesAccountSettingsResult {
-  const { disableControls, loadFiles, loadKeyStats } = options;
+  const { disableControls, loadFiles, loadKeyStats, accounts = [] } = options;
   const { t } = useTranslation();
   const showNotification = useNotificationStore((state) => state.showNotification);
   const showConfirmation = useNotificationStore((state) => state.showConfirmation);
@@ -508,6 +519,7 @@ export function useAuthFilesAccountSettings(
       proxyUrl: settings?.proxy_url || '',
       proxyUrlBaseline: settings?.proxy_url || '',
       proxyUrlError: computeProxyUrlError(settings?.proxy_url || ''),
+      proxyUrlDuplicateError: null,
       note: settings?.note || '',
       disabled: settings?.disabled === true,
       refreshEnabled: settings?.refresh_enabled !== false,
@@ -571,6 +583,7 @@ export function useAuthFilesAccountSettings(
       proxyUrl: inlineSettings?.proxy_url || '',
       proxyUrlBaseline: inlineSettings?.proxy_url || '',
       proxyUrlError: computeProxyUrlError(inlineSettings?.proxy_url || ''),
+      proxyUrlDuplicateError: null,
       note: inlineSettings?.note || '',
       disabled: inlineSettings?.disabled === true,
       refreshEnabled: inlineSettings?.refresh_enabled !== false,
@@ -642,7 +655,13 @@ export function useAuthFilesAccountSettings(
       if (!prev) return prev;
       if (field === 'proxyUrl') {
         const proxyUrl = String(value);
-        return { ...prev, proxyUrl, proxyUrlError: computeProxyUrlError(proxyUrl) };
+        return {
+          ...prev,
+          proxyUrl,
+          proxyUrlError: computeProxyUrlError(proxyUrl),
+          // 改动代理即清除上一次的查重冲突提示，重新编辑后需再次查重才知是否仍冲突。
+          proxyUrlDuplicateError: null,
+        };
       }
       if (field === 'note') return { ...prev, note: String(value) };
       if (field === 'disabled') return { ...prev, disabled: Boolean(value) };
@@ -781,6 +800,31 @@ export function useAuthFilesAccountSettings(
       );
       showNotification(t(proxyUrlErrorKey(proxyError)), 'error');
       return;
+    }
+
+    // L2 查重（本地秒级，先于慢的连通性探针 fail-fast）：仅当代理相对基线发生变更（或新填）时
+    // 才查重——未变更=账号自身既有值，不算重复，直接放行。命中其它现有账号占用即阻断，不进探针、
+    // 不落库（两个账号共用同一出口会 IP 聚类被关联）。excludeName 排除自身作纵深防御。
+    const trimmedProxy = editor.proxyUrl.trim();
+    const baselineProxy = (editor.proxyUrlBaseline || '').trim();
+    if (trimmedProxy && trimmedProxy !== baselineProxy) {
+      const conflicts = findAccountsUsingProxy(
+        editor.proxyUrl,
+        accounts.map(toProxyOwnerAccount),
+        { excludeName: editor.fileName }
+      );
+      if (conflicts.length > 0) {
+        const message = t('proxy_preflight.duplicate_account', {
+          accounts: conflicts.join('、'),
+        });
+        setAccountSettingsEditor((prev) =>
+          prev && prev.fileName === editor.fileName
+            ? { ...prev, proxyUrlDuplicateError: message }
+            : prev
+        );
+        showNotification(message, 'error');
+        return;
+      }
     }
 
     // 格式过后再做后端连通性探针：不通就不落库（fail-closed），把 proxy_url 标红并提示；
