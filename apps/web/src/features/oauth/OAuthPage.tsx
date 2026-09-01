@@ -17,6 +17,8 @@ import { authFilesApi } from '@/services/api/authFiles';
 import type { AuthFileItem } from '@/types/authFile';
 import { vertexApi, type VertexImportResponse } from '@/services/api/vertex';
 import { copyToClipboard } from '@/utils/clipboard';
+import { findAccountsUsingProxy, runProxyPreflight } from '@/utils/proxyPreflight';
+import { toProxyOwnerAccount } from '@/features/authFiles/constants';
 import type { PluginListEntry } from '@/types';
 import { getPluginTitle, resolvePluginAssetURL } from '@/features/plugins/pluginResources';
 import {
@@ -52,6 +54,10 @@ interface ProviderState {
   accountNote?: string;
   proxyUrl?: string;
   proxyUrlError?: string;
+  /** 起 OAuth 前的连通性探针进行中标志（禁用按钮，防重复点）。 */
+  proxyProbing?: boolean;
+  /** 连通性探针通过后返回的出口 IP，用于就地展示。 */
+  proxyExitIp?: string;
   savedProxyUrl?: string;
   expiresAtMs?: number;
   expiresInSeconds?: number;
@@ -680,6 +686,51 @@ export function OAuthPage() {
       showNotification(proxyUrlError, 'warning');
       return;
     }
+    // L2 查重（本地秒级，放在慢的连通性探针之前 fail-fast）：新增账号填的代理若已被现有账号
+    // 占用，直接阻断——两个账号共用同一出口会导致 IP 聚类被上游关联。查重不过就不进探针、不进
+    // OAuth。查重纯客户端比对现有账号列表（列表已内联下发 account_settings.proxy_url），不新增
+    // 后端；列表拉取失败不阻断新增（后端仍兜底），降级放行到连通性探针。
+    try {
+      const filesResponse = await authFilesApi.list();
+      const conflicts = findAccountsUsingProxy(
+        proxyUrl,
+        (filesResponse.files || []).map(toProxyOwnerAccount)
+      );
+      if (conflicts.length > 0) {
+        const message = t('proxy_preflight.duplicate_account', {
+          accounts: conflicts.join('、'),
+        });
+        updateProviderState(provider, { proxyUrlError: message, proxyExitIp: undefined });
+        showNotification(message, 'error');
+        return;
+      }
+    } catch {
+      // 忽略：查重列表不可用时降级放行，交由后续连通性探针 + 后端兜底。
+    }
+    // 格式过后、真正起 OAuth 前，先做后端连通性探针：不通就不进入 OAuth（fail-closed），
+    // 通了则展示出口 IP 再继续。探测期间置 proxyProbing，禁用登录按钮防重复点。
+    updateProviderState(provider, {
+      proxyProbing: true,
+      proxyUrlError: undefined,
+      proxyExitIp: undefined,
+    });
+    const preflight = await runProxyPreflight(proxyUrl, {
+      formatValidator: () => ({ valid: true }),
+      translate: (reason) => t(`proxy_preflight.reason_${reason}`),
+    });
+    if (!preflight.ok) {
+      updateProviderState(provider, {
+        proxyProbing: false,
+        proxyUrlError: preflight.message,
+      });
+      showNotification(preflight.message, 'error');
+      return;
+    }
+    updateProviderState(provider, { proxyProbing: false, proxyExitIp: preflight.exitIp });
+    showNotification(
+      t('proxy_preflight.connected_with_ip', { ip: preflight.exitIp }),
+      'success'
+    );
     clearPollingTimer(provider);
     updateProviderState(provider, {
       url: undefined,
@@ -946,7 +997,11 @@ export function OAuthPage() {
                   </span>
                 }
                 extra={
-                  <Button onClick={() => startAuth(provider.id)} loading={state.polling}>
+                  <Button
+                    onClick={() => startAuth(provider.id)}
+                    loading={Boolean(state.polling) || Boolean(state.proxyProbing)}
+                    disabled={Boolean(state.proxyProbing)}
+                  >
                     {loginButtonLabel}
                   </Button>
                 }
@@ -968,16 +1023,25 @@ export function OAuthPage() {
                       hint={t('auth_login.account_proxy_hint')}
                       value={state.proxyUrl || ''}
                       error={state.proxyUrlError}
-                      disabled={Boolean(state.polling)}
+                      disabled={Boolean(state.polling) || Boolean(state.proxyProbing)}
                       onChange={(e) =>
                         updateProviderState(provider.id, {
                           proxyUrl: e.target.value,
                           proxyUrlError: undefined,
+                          proxyExitIp: undefined,
                         })
                       }
                       placeholder={t('auth_login.account_proxy_placeholder')}
                     />
                   </div>
+                  {state.proxyProbing && (
+                    <div className={styles.connectionLabel}>{t('proxy_preflight.probing')}</div>
+                  )}
+                  {!state.proxyProbing && state.proxyExitIp && (
+                    <div className={styles.connectionLabel}>
+                      {t('proxy_preflight.connected_with_ip', { ip: state.proxyExitIp })}
+                    </div>
+                  )}
                   {(() => {
                     const fingerprint = getFingerprintPreset(provider.id);
                     return (

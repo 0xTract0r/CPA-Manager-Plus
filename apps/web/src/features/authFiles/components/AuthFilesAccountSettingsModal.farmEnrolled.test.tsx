@@ -73,6 +73,7 @@ const makeEditor = (provider: string): AccountSettingsEditorState => ({
   saving: false,
   error: null,
   proxyUrl: 'socks5://user:pass@host:1080',
+  proxyUrlBaseline: 'socks5://user:pass@host:1080',
   proxyUrlError: null,
   note: '',
   disabled: false,

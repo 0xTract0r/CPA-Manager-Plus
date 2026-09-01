@@ -4,6 +4,7 @@ import { Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { providersApi } from '@/services/api';
+import { ensureProxiesReachableForSave } from '@/utils/proxyPreflight';
 import {
   useAuthStore,
   useConfigStore,
@@ -493,6 +494,21 @@ export function AiProvidersOpenAIEditLayout() {
       return;
     }
 
+    // 代理输入连通性预检：每个 key entry 的非空 proxyUrl 保存前逐个做格式+连通性探针，
+    // 遇到第一个不通即阻断保存并报错。
+    const proxyPassed = await ensureProxiesReachableForSave({
+      proxyUrls: form.apiKeyEntries.map((entry) => entry.proxyUrl ?? ''),
+      // 变更前已落库的各 entry 代理值集合；按值匹配，只探新增/改动出来的新代理值。
+      previousProxyUrls: baseline?.apiKeyEntries.map((entry) => entry.proxyUrl) ?? [],
+      translate: (reason) => t(`proxy_preflight.reason_${reason}`),
+      onProbeStart: () => setSaving(true),
+      onFail: (message) => {
+        setSaving(false);
+        showNotification(message, 'error');
+      },
+    });
+    if (!proxyPassed) return;
+
     setSaving(true);
     try {
       const payload: OpenAIProviderConfig = {
@@ -553,6 +569,7 @@ export function AiProvidersOpenAIEditLayout() {
     }
   }, [
     allowNextNavigation,
+    baseline?.apiKeyEntries,
     draftKey,
     editIndex,
     form,

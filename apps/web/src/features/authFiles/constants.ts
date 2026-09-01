@@ -11,6 +11,7 @@ import iconKimiLight from '@/assets/icons/kimi-light.svg';
 import iconQwen from '@/assets/icons/qwen.svg';
 import iconVertex from '@/assets/icons/vertex.svg';
 import type { AuthFileItem } from '@/types';
+import type { ProxyOwnerAccount } from '@/utils/proxyPreflight';
 import { parseTimestamp } from '@/utils/timestamp';
 import { formatInUtc8 } from '@/utils/format';
 
@@ -330,6 +331,35 @@ export const isAuthFileMissingProxyUrl = (file: AuthFileItem): boolean => {
   if (!settings) return false;
   return typeof settings.proxy_url === 'string' && settings.proxy_url.trim() === '';
 };
+
+/**
+ * 读取账号当前的 proxy_url（住宅出口）。列表响应把 account_settings 内联下发（缺失代理徽标即
+ * 据此渲染），故优先 account_settings/accountSettings.proxy_url，回退顶层 proxy_url；去首尾空白。
+ * 供代理查重（L2）在客户端直接比对现有账号列表，不需新增后端。
+ */
+export const getAuthFileProxyUrl = (file: AuthFileItem): string => {
+  const settings = file.account_settings || file.accountSettings || null;
+  const fromSettings = typeof settings?.proxy_url === 'string' ? settings.proxy_url.trim() : '';
+  if (fromSettings) return fromSettings;
+  return typeof file.proxy_url === 'string' ? file.proxy_url.trim() : '';
+};
+
+/** 账号展示名：备注优先（account_settings.note → 顶层 note），回退文件名。用于查重冲突提示。 */
+export const getAuthFileAccountLabel = (file: AuthFileItem): string => {
+  const settings = file.account_settings || file.accountSettings || null;
+  const note = (
+    (typeof settings?.note === 'string' ? settings.note : '') ||
+    (typeof file.note === 'string' ? file.note : '')
+  ).trim();
+  return note || file.name;
+};
+
+/** AuthFileItem → 代理查重最小视图（name 作排除自身依据，label 作冲突提示名）。 */
+export const toProxyOwnerAccount = (file: AuthFileItem): ProxyOwnerAccount => ({
+  name: file.name,
+  label: getAuthFileAccountLabel(file),
+  proxyUrl: getAuthFileProxyUrl(file),
+});
 
 // 身份变更审计入口（reauth / status 历史）门槛：仅 OAuth 账号显示。对照旧版
 // useAuthFilesReauth.AUTH_FILE_OAUTH_PROVIDER_MAP 的 provider key 集合，避免对所有

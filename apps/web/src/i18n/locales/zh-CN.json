@@ -1,4 +1,16 @@
 {
+  "proxy_preflight": {
+    "reason_ok": "连通正常",
+    "reason_empty_proxy_url": "请填写代理",
+    "reason_invalid_proxy_url": "代理格式非法",
+    "reason_dial_failed": "无法经该代理连通",
+    "reason_timeout": "连通超时",
+    "reason_probe_failed": "探测失败，请重试",
+    "probing": "正在探测代理连通性…",
+    "connected_with_ip": "连通正常 · 出口 IP：{{ip}}",
+    "exit_ip_label": "出口 IP",
+    "duplicate_account": "该代理已被账号 {{accounts}} 使用，请为每个账号使用独立代理（避免出口 IP 聚类被关联）。"
+  },
   "common": {
     "login": "登录",
     "logout": "登出",

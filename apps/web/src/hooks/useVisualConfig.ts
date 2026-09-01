@@ -792,7 +792,7 @@ export function useVisualConfig() {
     undefined,
     createInitialVisualConfigState
   );
-  const { visualValues, visualParseError, dirtyFields } = state;
+  const { visualValues, baselineValues, visualParseError, dirtyFields } = state;
   const visualDirty = dirtyFields.size > 0;
   const visualValidationErrors = useMemo(
     () => getVisualConfigValidationErrors(visualValues),
@@ -1522,6 +1522,9 @@ export function useVisualConfig() {
 
   return {
     visualValues,
+    // 加载成功时的基线值（load_success 时深拷贝）；ConfigPage 用它判断全局代理是否变更，
+    // 未变更则保存前跳过连通性探针。
+    baselineValues,
     visualDirty,
     visualParseError,
     visualValidationErrors,

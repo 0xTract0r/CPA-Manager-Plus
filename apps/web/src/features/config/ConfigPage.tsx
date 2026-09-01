@@ -36,6 +36,7 @@ import {
   type ManagerConfigResponse,
 } from '@/services/api/usageService';
 import { detectApiBaseFromLocation } from '@/utils/connection';
+import { ensureProxyReachableForSave } from '@/utils/proxyPreflight';
 import { ManagerConfigPanel } from './components/ManagerConfigPanel';
 import styles from './ConfigPage.module.scss';
 
@@ -251,6 +252,7 @@ export function ConfigPage() {
 
   const {
     visualValues,
+    baselineValues,
     visualDirty,
     visualParseError,
     visualValidationErrors,
@@ -767,6 +769,30 @@ export function ConfigPage() {
     if (activeTab === 'visual' && visualParseError) {
       showNotification(t('config_management.visual_mode_save_blocked'), 'error');
       return;
+    }
+
+    // 全局代理（可视化编辑器 network.proxy_url）保存前做格式+连通性预检：非空且不通就
+    // 阻断保存并报错。仅在可视化模式对结构化 proxyUrl 值生效（源码模式代理在 YAML 文本内）。
+    // 仅当全局代理相对加载基线发生变更（或新填）时才探针：未变更则跳过，避免改无关配置时被
+    // 临时不通的旧代理阻断保存（该值此前已校验/已落库，后端仍兜底）。
+    if (activeTab === 'visual' && (visualValues.proxyUrl || '').trim()) {
+      setSaving(true);
+      const proxyCheck = await ensureProxyReachableForSave({
+        proxyUrl: visualValues.proxyUrl,
+        translate: (reason) => t(`proxy_preflight.reason_${reason}`),
+        previousProxyUrl: baselineValues.proxyUrl,
+        onFail: (message) => {
+          setSaving(false);
+          showNotification(message, 'error');
+        },
+      });
+      if (!proxyCheck.passed) return;
+      if (proxyCheck.result?.exitIp) {
+        showNotification(
+          t('proxy_preflight.connected_with_ip', { ip: proxyCheck.result.exitIp }),
+          'success'
+        );
+      }
     }
 
     setSaving(true);

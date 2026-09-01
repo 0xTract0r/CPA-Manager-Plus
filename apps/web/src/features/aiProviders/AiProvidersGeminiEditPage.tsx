@@ -13,6 +13,7 @@ import { useEdgeSwipeBack } from '@/hooks/useEdgeSwipeBack';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { SecondaryScreenShell } from '@/components/common/SecondaryScreenShell';
 import { modelsApi, providersApi } from '@/services/api';
+import { ensureProxyReachableForSave } from '@/utils/proxyPreflight';
 import { useAuthStore, useConfigStore, useNotificationStore } from '@/stores';
 import type { GeminiKeyConfig } from '@/types';
 import { buildHeaderObject, headersToEntries, normalizeHeaderEntries } from '@/utils/headers';
@@ -470,6 +471,20 @@ export function AiProvidersGeminiEditPage() {
   const handleSave = useCallback(async () => {
     if (!canSave) return;
 
+    // 代理输入连通性预检：非空 proxyUrl 保存前先做格式+连通性探针，不过阻断保存。
+    const proxyCheck = await ensureProxyReachableForSave({
+      proxyUrl: form.proxyUrl ?? '',
+      // 仅当代理相对加载基线变更（或新建 provider 新填）时才探针；未变更直接放行。
+      previousProxyUrl: baseline.proxyUrl,
+      translate: (reason) => t(`proxy_preflight.reason_${reason}`),
+      onProbeStart: () => setSaving(true),
+      onFail: (message) => {
+        setSaving(false);
+        showNotification(message, 'error');
+      },
+    });
+    if (!proxyCheck.passed) return;
+
     setSaving(true);
     setError('');
     try {
@@ -517,6 +532,7 @@ export function AiProvidersGeminiEditPage() {
     }
   }, [
     allowNextNavigation,
+    baseline.proxyUrl,
     canSave,
     clearCache,
     configs,

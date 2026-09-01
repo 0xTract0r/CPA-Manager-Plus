@@ -103,6 +103,7 @@ const makeEditor = (
   saving: false,
   error: null,
   proxyUrl: ORIGINAL_PROXY_URL,
+  proxyUrlBaseline: ORIGINAL_PROXY_URL,
   proxyUrlError: null,
   note: '',
   disabled: false,

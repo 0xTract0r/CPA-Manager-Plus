@@ -10,6 +10,7 @@ import { Modal } from '@/components/ui/Modal';
 import { SelectionCheckbox } from '@/components/ui/SelectionCheckbox';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { apiCallApi, getApiCallErrorMessage, modelsApi, providersApi } from '@/services/api';
+import { ensureProxyReachableForSave } from '@/utils/proxyPreflight';
 import { useConfigStore, useNotificationStore } from '@/stores';
 import type { ProviderKeyConfig } from '@/types';
 import {
@@ -456,6 +457,19 @@ export function CodexEditDrawer({
       showNotification(t('notification.codex_base_url_required'), 'error');
       return;
     }
+    // 代理输入连通性预检：非空 proxyUrl 保存前先做格式+连通性探针，不过阻断保存。
+    const proxyCheck = await ensureProxyReachableForSave({
+      proxyUrl: form.proxyUrl ?? '',
+      // 仅当代理相对加载基线变更（或新建 provider 新填）时才探针；未变更直接放行。
+      previousProxyUrl: baseline.proxyUrl,
+      translate: (reason) => t(`proxy_preflight.reason_${reason}`),
+      onProbeStart: () => setSaving(true),
+      onFail: (message) => {
+        setSaving(false);
+        showNotification(message, 'error');
+      },
+    });
+    if (!proxyCheck.passed) return;
     setSaving(true);
     setError('');
     try {
@@ -495,6 +509,7 @@ export function CodexEditDrawer({
       setSaving(false);
     }
   }, [
+    baseline.proxyUrl,
     canSave,
     clearCache,
     configs,
