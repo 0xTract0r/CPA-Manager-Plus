@@ -127,6 +127,11 @@ export type AccountSettingsEditorState = {
   saving: boolean;
   error: string | null;
   proxyUrl: string;
+  /**
+   * 打开编辑器时加载到的 proxy_url 原值（变更前基线）。保存前若当前值与其逐字符相同，视为
+   * 未变更 → 跳过连通性探针（该值此前已校验/已落库），避免改无关字段时被临时不通的旧代理阻断。
+   */
+  proxyUrlBaseline: string;
   /** proxy_url 必填/格式校验错误（'empty' 未填，'invalid' 非法）；为 null 表示通过。 */
   proxyUrlError: ProxyUrlValidationReason | null;
   note: string;
@@ -501,6 +506,7 @@ export function useAuthFilesAccountSettings(
       saving: false,
       error: null,
       proxyUrl: settings?.proxy_url || '',
+      proxyUrlBaseline: settings?.proxy_url || '',
       proxyUrlError: computeProxyUrlError(settings?.proxy_url || ''),
       note: settings?.note || '',
       disabled: settings?.disabled === true,
@@ -563,6 +569,7 @@ export function useAuthFilesAccountSettings(
       saving: false,
       error: null,
       proxyUrl: inlineSettings?.proxy_url || '',
+      proxyUrlBaseline: inlineSettings?.proxy_url || '',
       proxyUrlError: computeProxyUrlError(inlineSettings?.proxy_url || ''),
       note: inlineSettings?.note || '',
       disabled: inlineSettings?.disabled === true,
@@ -778,12 +785,15 @@ export function useAuthFilesAccountSettings(
 
     // 格式过后再做后端连通性探针：不通就不落库（fail-closed），把 proxy_url 标红并提示；
     // 通了展示出口 IP 再继续保存。探测期间置 saving，禁用保存/关闭按钮防重复提交。
+    // 仅当 proxy_url 相对打开时的原值发生变更（或新填）时才探针：未变更（逐字符相同）直接放行，
+    // 避免用户只改其它字段时被临时不通的旧代理阻断（该值此前已校验/已落库，后端仍兜底）。
     setAccountSettingsEditor((prev) =>
       prev && prev.fileName === editor.fileName ? { ...prev, saving: true } : prev
     );
     const preflight = await runProxyPreflight(editor.proxyUrl, {
       formatValidator: () => ({ valid: true }),
       translate: (reason) => t(`proxy_preflight.reason_${reason}`),
+      previousProxyUrl: editor.proxyUrlBaseline,
     });
     if (!preflight.ok) {
       setAccountSettingsEditor((prev) =>
@@ -794,10 +804,13 @@ export function useAuthFilesAccountSettings(
       showNotification(preflight.message, 'error');
       return;
     }
-    showNotification(
-      t('proxy_preflight.connected_with_ip', { ip: preflight.exitIp }),
-      'success'
-    );
+    // 未变更放行时不做探针、无出口 IP，跳过「已连通(出口 IP)」提示；只有真正探针成功才展示。
+    if (preflight.exitIp) {
+      showNotification(
+        t('proxy_preflight.connected_with_ip', { ip: preflight.exitIp }),
+        'success'
+      );
+    }
 
     const { request, error } = buildPatchRequest(editor);
     if (!request) {

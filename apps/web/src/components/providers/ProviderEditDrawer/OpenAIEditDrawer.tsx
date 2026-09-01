@@ -630,6 +630,8 @@ export function OpenAIEditDrawer({
     // 遇到第一个不通即阻断保存并报错。
     const proxyPassed = await ensureProxiesReachableForSave({
       proxyUrls: form.apiKeyEntries.map((entry) => entry.proxyUrl ?? ''),
+      // 变更前已落库的各 entry 代理值集合；按值匹配，只探新增/改动出来的新代理值。
+      previousProxyUrls: baseline.apiKeyEntries.map((entry) => entry.proxyUrl),
       translate: (reason) => t(`proxy_preflight.reason_${reason}`),
       onProbeStart: () => setSaving(true),
       onFail: (message) => {
@@ -687,6 +689,7 @@ export function OpenAIEditDrawer({
       setSaving(false);
     }
   }, [
+    baseline.apiKeyEntries,
     canSave,
     editIndex,
     form,

@@ -71,6 +71,52 @@ describe('runProxyPreflight', () => {
     expect(result.exitIp).toBe('1.2.3.4');
     expect(result.message).toBe('T:ok');
   });
+
+  it('skips the probe and passes when the proxy is unchanged from previousProxyUrl', async () => {
+    const probe = vi.fn();
+
+    const result = await runProxyPreflight('socks5://host:1080', {
+      probe,
+      previousProxyUrl: 'socks5://host:1080',
+    });
+
+    expect(probe).not.toHaveBeenCalled();
+    expect(result.ok).toBe(true);
+    expect(result.exitIp).toBe('');
+    expect(result.reason).toBe('ok');
+  });
+
+  it('treats surrounding whitespace as unchanged when comparing to previousProxyUrl', async () => {
+    const probe = vi.fn();
+
+    const result = await runProxyPreflight('  socks5://host:1080  ', {
+      probe,
+      previousProxyUrl: 'socks5://host:1080',
+    });
+
+    expect(probe).not.toHaveBeenCalled();
+    expect(result.ok).toBe(true);
+  });
+
+  it('probes when the proxy changed from previousProxyUrl', async () => {
+    const probe = vi.fn().mockResolvedValue({ ok: true, exitIp: '1.2.3.4', reason: 'ok' });
+
+    const result = await runProxyPreflight('socks5://new:1080', {
+      probe,
+      previousProxyUrl: 'socks5://old:1080',
+    });
+
+    expect(probe).toHaveBeenCalledWith('socks5://new:1080');
+    expect(result.ok).toBe(true);
+  });
+
+  it('probes a newly filled proxy when previousProxyUrl is empty', async () => {
+    const probe = vi.fn().mockResolvedValue({ ok: true, exitIp: '1.2.3.4', reason: 'ok' });
+
+    await runProxyPreflight('socks5://host:1080', { probe, previousProxyUrl: '' });
+
+    expect(probe).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('ensureProxyReachableForSave', () => {
@@ -113,6 +159,22 @@ describe('ensureProxyReachableForSave', () => {
 
     expect(res.passed).toBe(true);
     expect(res.result?.exitIp).toBe('9.9.9.9');
+  });
+
+  it('passes without probing when the proxy is unchanged from previousProxyUrl', async () => {
+    const probe = vi.fn();
+    const onFail = vi.fn();
+
+    const res = await ensureProxyReachableForSave({
+      proxyUrl: 'http://host:1',
+      previousProxyUrl: 'http://host:1',
+      onFail,
+      probe,
+    });
+
+    expect(res.passed).toBe(true);
+    expect(probe).not.toHaveBeenCalled();
+    expect(onFail).not.toHaveBeenCalled();
   });
 });
 
@@ -162,5 +224,34 @@ describe('ensureProxiesReachableForSave', () => {
     });
 
     expect(passed).toBe(true);
+  });
+
+  it('only probes new/changed entries, skipping values already present in previousProxyUrls', async () => {
+    const probe = vi.fn().mockResolvedValue({ ok: true, exitIp: '1.1.1.1', reason: 'ok' });
+
+    const passed = await ensureProxiesReachableForSave({
+      proxyUrls: ['http://old:1', 'http://new:2'],
+      previousProxyUrls: ['http://old:1'],
+      onFail: vi.fn(),
+      probe,
+    });
+
+    expect(passed).toBe(true);
+    expect(probe).toHaveBeenCalledTimes(1);
+    expect(probe).toHaveBeenCalledWith('http://new:2');
+  });
+
+  it('skips probing entirely when every entry value is already persisted', async () => {
+    const probe = vi.fn();
+
+    const passed = await ensureProxiesReachableForSave({
+      proxyUrls: ['http://a:1', 'http://b:2'],
+      previousProxyUrls: ['http://a:1', 'http://b:2'],
+      onFail: vi.fn(),
+      probe,
+    });
+
+    expect(passed).toBe(true);
+    expect(probe).not.toHaveBeenCalled();
   });
 });

@@ -70,6 +70,13 @@ export interface RunProxyPreflightOptions {
   translate?: (reason: ProxyProbeReason) => string | undefined;
   /** 探针实现（默认真实 probeProxyConnectivity）；便于测试注入。 */
   probe?: (proxyUrl: string) => Promise<ProxyProbeResult>;
+  /**
+   * 代理输入的「变更前原值」。当传入、且当前非空 proxyUrl 与其（去除首尾空白后）逐字符相同，
+   * 视为「未变更」：该值此前已校验 / 已落库，直接放行——跳过格式与连通性探针，避免用户仅改无关
+   * 字段（模型列表 / 日志级别 / 农场设置）时被临时不通的旧代理阻断保存并空等探针。
+   * 仅当代理为新填（无原值）或已变更时才走完整校验；后端写入侧 400 + 运行时 fail-closed 仍兜底。
+   */
+  previousProxyUrl?: string;
 }
 
 const resolveMessage = (
@@ -90,6 +97,19 @@ export async function runProxyPreflight(
   proxyUrl: string,
   options: RunProxyPreflightOptions = {}
 ): Promise<ProxyPreflightResult> {
+  const trimmedProxyUrl = (proxyUrl || '').trim();
+  // 未变更放行：当前非空且与「变更前原值」逐字符相同 → 跳过格式与连通性校验，直接放行。
+  // exitIp 留空表示「未新做探针」，让调用方不展示「已连通(出口 IP)」提示。
+  const previousProxyUrl = (options.previousProxyUrl ?? '').trim();
+  if (trimmedProxyUrl !== '' && trimmedProxyUrl === previousProxyUrl) {
+    return {
+      ok: true,
+      exitIp: '',
+      reason: 'ok',
+      message: resolveMessage('ok', options.translate),
+    };
+  }
+
   const formatValidator = options.formatValidator ?? validateProxyUrlFormat;
   const format = formatValidator(proxyUrl);
   if (!format.valid) {
@@ -120,6 +140,8 @@ export async function ensureProxyReachableForSave(params: {
   onProbeStart?: () => void;
   onFail: (message: string, result: ProxyPreflightResult) => void;
   probe?: (proxyUrl: string) => Promise<ProxyProbeResult>;
+  /** 该入口代理输入的变更前原值；与当前值相同则跳过探针（见 RunProxyPreflightOptions.previousProxyUrl）。 */
+  previousProxyUrl?: string;
 }): Promise<{ passed: boolean; result?: ProxyPreflightResult }> {
   const trimmed = (params.proxyUrl || '').trim();
   if (!trimmed) return { passed: true };
@@ -128,6 +150,7 @@ export async function ensureProxyReachableForSave(params: {
   const result = await runProxyPreflight(trimmed, {
     translate: params.translate,
     probe: params.probe,
+    previousProxyUrl: params.previousProxyUrl,
   });
   if (!result.ok) {
     params.onFail(result.message, result);
@@ -139,6 +162,10 @@ export async function ensureProxyReachableForSave(params: {
 /**
  * 批量代理预检（OpenAI 多 key entry 每个可带独立代理）。
  * 只探非空项，遇到第一个不过即回调 onFail(message, index) 并短路返回 false。
+ *
+ * `previousProxyUrls` 传入这批 entry 的「变更前已落库代理值集合」（顺序无关，按值匹配）：
+ * 当某个待保存代理值已存在于该集合，视为「未变更 / 此前已校验」，跳过其探针；只对新增或改动
+ * 出来的新代理值做完整校验，避免用户改无关字段时逐个空等旧代理探针。
  */
 export async function ensureProxiesReachableForSave(params: {
   proxyUrls: string[];
@@ -146,17 +173,27 @@ export async function ensureProxiesReachableForSave(params: {
   onProbeStart?: () => void;
   onFail: (message: string, index: number, result: ProxyPreflightResult) => void;
   probe?: (proxyUrl: string) => Promise<ProxyProbeResult>;
+  previousProxyUrls?: string[];
 }): Promise<boolean> {
   const targets = params.proxyUrls
     .map((url, index) => ({ url: (url || '').trim(), index }))
     .filter((target) => target.url);
   if (targets.length === 0) return true;
 
+  // 变更前已落库的代理值集合（去空白、去空值）；命中即视为未变更 → 跳过该项探针。
+  const previousProxyUrls = new Set(
+    (params.previousProxyUrls ?? [])
+      .map((url) => (url || '').trim())
+      .filter((url) => url !== '')
+  );
+
   params.onProbeStart?.();
   for (const target of targets) {
     const result = await runProxyPreflight(target.url, {
       translate: params.translate,
       probe: params.probe,
+      // 命中已落库集合 → 把当前值当作「原值」传入，触发 runProxyPreflight 的未变更放行。
+      previousProxyUrl: previousProxyUrls.has(target.url) ? target.url : undefined,
     });
     if (!result.ok) {
       params.onFail(result.message, target.index, result);
