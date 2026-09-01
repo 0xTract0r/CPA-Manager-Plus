@@ -277,6 +277,15 @@
   color: var(--text-secondary);
 }
 
+// device_id 面标签（本地 machineID / on-wire userID 两个 by-design 命名空间的平面区分）：
+// 轻量次要文字，不抢 status-badge 的语义色，只用于让 operator 一眼看清这是哪一面。
+.deviceIdKindLabel {
+  font-size: $fs-2xs;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
 // 探针 token「≠账单」标注：意图上是需要显眼的免责声明，用 warning 语义色的
 // 轻量背景而非仅靠一句灰字，防止被忽略而误当账单。
 .probeTokenBadge {

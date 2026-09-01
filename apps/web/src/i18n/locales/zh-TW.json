@@ -4438,6 +4438,8 @@
       "resourcesSection": "資源佔用（近24h，1h 分桶）",
       "noResourceSamples": "視窗內無資源樣本（空視窗是正常回應，不代表出錯）。",
       "deviceIdSection": "device_id 對齊",
+      "deviceIdMachineLabel": "本地 machineID · 不上線",
+      "deviceIdNamespaceNote": "此值是注入容器的本地 machineID（CLAUDE_DEVICE_ID），僅用於容器本地、永不上線 Anthropic。真正 on-wire 的 device_id 是另一個 by-design 的值——userID（遙測設備ID），見「遙測」分區的三向 device_id 一致性；兩者本就分屬不同命名空間，不是不一致。",
       "deviceIdDriftGap": "漂移歷史時間線屬於 P1（container_deviceid_checks 遷移，暫未落地），這裡只展示當前一次對齊判定，不是完整歷史。",
       "probeTokenSection": "探針 token 趨勢",
       "probeTokenNotBilling": "探針 token ≠ 帳單：這裡只反映保活探針自身消耗，不是帳號真實計費用量。",

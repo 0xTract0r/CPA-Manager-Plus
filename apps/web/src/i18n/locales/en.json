@@ -4438,6 +4438,8 @@
       "resourcesSection": "Resource Usage (last 24h, 1h buckets)",
       "noResourceSamples": "No resource samples in this window (an empty window is a normal response, not an error).",
       "deviceIdSection": "device_id Alignment",
+      "deviceIdMachineLabel": "Local machineID · never on-wire",
+      "deviceIdNamespaceNote": "This value is the container-local machineID (CLAUDE_DEVICE_ID), used only inside the container and never sent on-wire to Anthropic. The real on-wire device_id is a separate by-design value — the userID (telemetry device ID), shown under the \"Telemetry\" tab as three-way device_id consistency. They belong to different namespaces by design; this is not a mismatch.",
       "deviceIdDriftGap": "Drift history timeline is P1 (container_deviceid_checks migration, not yet shipped); this only shows the current alignment check, not full history.",
       "probeTokenSection": "Probe Token Trend",
       "probeTokenNotBilling": "Probe tokens ≠ billing: this reflects only the keepalive probe's own consumption, not real account billing usage.",
