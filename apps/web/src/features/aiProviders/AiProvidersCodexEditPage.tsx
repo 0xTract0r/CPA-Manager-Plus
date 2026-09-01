@@ -13,6 +13,7 @@ import { useEdgeSwipeBack } from '@/hooks/useEdgeSwipeBack';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { SecondaryScreenShell } from '@/components/common/SecondaryScreenShell';
 import { modelsApi, providersApi, apiCallApi, getApiCallErrorMessage } from '@/services/api';
+import { ensureProxyReachableForSave } from '@/utils/proxyPreflight';
 import { useAuthStore, useConfigStore, useNotificationStore } from '@/stores';
 import type { ProviderKeyConfig } from '@/types';
 import {
@@ -616,6 +617,18 @@ export function AiProvidersCodexEditPage() {
       showNotification(t('notification.codex_base_url_required'), 'error');
       return;
     }
+
+    // 代理输入连通性预检：非空 proxyUrl 保存前先做格式+连通性探针，不过阻断保存。
+    const proxyCheck = await ensureProxyReachableForSave({
+      proxyUrl: form.proxyUrl ?? '',
+      translate: (reason) => t(`proxy_preflight.reason_${reason}`),
+      onProbeStart: () => setSaving(true),
+      onFail: (message) => {
+        setSaving(false);
+        showNotification(message, 'error');
+      },
+    });
+    if (!proxyCheck.passed) return;
 
     setSaving(true);
     setError('');

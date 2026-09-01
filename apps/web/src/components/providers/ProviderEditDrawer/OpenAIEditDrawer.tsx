@@ -11,6 +11,7 @@ import { SelectionCheckbox } from '@/components/ui/SelectionCheckbox';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { OpenAIKeyTestStatusIndicator } from '@/components/providers';
 import { apiCallApi, getApiCallErrorMessage, modelsApi, providersApi } from '@/services/api';
+import { ensureProxiesReachableForSave } from '@/utils/proxyPreflight';
 import { useConfigStore, useNotificationStore } from '@/stores';
 import type { ApiKeyEntry, OpenAIProviderConfig } from '@/types';
 import { buildHeaderObject, headersToEntries, normalizeHeaderEntries } from '@/utils/headers';
@@ -625,6 +626,18 @@ export function OpenAIEditDrawer({
       return;
     }
     if (!canSave) return;
+    // 代理输入连通性预检：每个 key entry 的非空 proxyUrl 保存前逐个做格式+连通性探针，
+    // 遇到第一个不通即阻断保存并报错。
+    const proxyPassed = await ensureProxiesReachableForSave({
+      proxyUrls: form.apiKeyEntries.map((entry) => entry.proxyUrl ?? ''),
+      translate: (reason) => t(`proxy_preflight.reason_${reason}`),
+      onProbeStart: () => setSaving(true),
+      onFail: (message) => {
+        setSaving(false);
+        showNotification(message, 'error');
+      },
+    });
+    if (!proxyPassed) return;
     setSaving(true);
     try {
       const payload: OpenAIProviderConfig = {
