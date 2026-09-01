@@ -1,4 +1,15 @@
 {
+  "proxy_preflight": {
+    "reason_ok": "連通正常",
+    "reason_empty_proxy_url": "請填寫代理",
+    "reason_invalid_proxy_url": "代理格式非法",
+    "reason_dial_failed": "無法經該代理連通",
+    "reason_timeout": "連通逾時",
+    "reason_probe_failed": "探測失敗，請重試",
+    "probing": "正在探測代理連通性…",
+    "connected_with_ip": "連通正常 · 出口 IP：{{ip}}",
+    "exit_ip_label": "出口 IP"
+  },
   "common": {
     "login": "登入",
     "logout": "登出",

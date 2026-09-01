@@ -1,4 +1,15 @@
 {
+  "proxy_preflight": {
+    "reason_ok": "Connected",
+    "reason_empty_proxy_url": "Please enter a proxy",
+    "reason_invalid_proxy_url": "Invalid proxy format",
+    "reason_dial_failed": "Cannot connect through this proxy",
+    "reason_timeout": "Connection timed out",
+    "reason_probe_failed": "Probe failed, please retry",
+    "probing": "Probing proxy connectivity…",
+    "connected_with_ip": "Connected · exit IP: {{ip}}",
+    "exit_ip_label": "Exit IP"
+  },
   "common": {
     "login": "Login",
     "logout": "Logout",
