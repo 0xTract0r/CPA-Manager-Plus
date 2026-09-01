@@ -15,3 +15,30 @@
   font-weight: 700;
   color: var(--text-tertiary);
 }
+
+// 「看完整 body」按需入口容器：与上方截断预览留一档间距，纵向堆叠（按钮 + 展开的
+// 完整预览 / 提示）。
+.fullBodyBlock {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+  margin-top: $spacing-sm;
+}
+
+// 「看完整 body」切换按钮：沿用 JsonPreview toggleBtn 的轻量描边风格，自身左对齐、
+// 不撑满整行。
+.fullBodyToggle {
+  align-self: flex-start;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: $fs-2xs;
+  line-height: 1.4;
+  padding: 2px 8px;
+  border-radius: $radius-sm;
+  cursor: pointer;
+
+  &:hover {
+    background: var(--bg-hover);
+  }
+}

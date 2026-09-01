@@ -1202,7 +1202,9 @@ export function FarmTelemetryPanel({ container }: FarmTelemetryPanelProps) {
         width={520}
         title={t('farm.telemetry.beaconDrawerTitle', { defaultValue: '信标上报详情（脱敏）' })}
       >
-        {selectedBeacon ? <BeaconDetailBody beacon={selectedBeacon} /> : null}
+        {selectedBeacon ? (
+          <BeaconDetailBody beacon={selectedBeacon} containerId={containerId} />
+        ) : null}
       </Drawer>
     </section>
   );

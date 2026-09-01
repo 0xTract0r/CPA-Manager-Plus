@@ -4623,6 +4623,14 @@
         "sizeFull": "Preview {{chars}} chars",
         "eventNameCount": "×{{count}}"
       },
+      "fullBody": {
+        "show": "View full body",
+        "hide": "Hide full body",
+        "loading": "Loading full body…",
+        "unavailable": "Full body unavailable (orchestrator does not expose this endpoint, or the query failed); see the truncated preview above.",
+        "ariaLabel": "Full request body (redacted)",
+        "safetyTruncated": "Full body reached the 64K safety cap and was trimmed (redaction was applied to the complete original, so redaction integrity is unaffected)."
+      },
       "section": "Telemetry beacons (self-reported + on-wire, labeled per row)",
       "disclaimer": "Below is this container's telemetry beacon list, mixing two source kinds and labeled per row: \"Declared\" rows are what the container self-reports/declares, while \"on-wire\" rows are captured for real by mitmproxy/ebpf on the container's outbound path. Even on-wire rows only prove this container actually sent these requests — they are NOT cross-account anti-correlation proof. Separately, the \"On-wire\" column in the fingerprint consistency card above is a distinct step that derives each field from beacons and compares it against the declared value — that step is not wired yet, so the column shows a placeholder; that is a different thing from whether raw on-wire beacons were captured.",
       "scopeBadge": "Scope: beacons include both declared and on-wire, labeled per row; per-field on-wire derivation pending",

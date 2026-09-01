@@ -4623,6 +4623,14 @@
         "sizeFull": "预览 {{chars}} 字符",
         "eventNameCount": "×{{count}}"
       },
+      "fullBody": {
+        "show": "看完整 body",
+        "hide": "收起完整 body",
+        "loading": "正在加载完整 body…",
+        "unavailable": "完整 body 暂不可用（编排器未提供该端点或查询失败），请参考上方截断预览。",
+        "ariaLabel": "完整请求体（脱敏）",
+        "safetyTruncated": "完整 body 已达 64K 安全上限被裁（脱敏在完整原文完成，不影响脱敏完整性）。"
+      },
       "section": "遥测信标（自报 + on-wire，逐条标注来源）",
       "disclaimer": "下方是该容器的遥测信标列表，混合两类来源并逐条标注：「自报 (declared)」是容器声明/自报的内容，「on-wire」行才是 mitmproxy/ebpf 在容器出站链路真实抓取的数据。即便 on-wire 行也只证明该容器确实发出过这些请求，不构成跨账号反关联证明。另外，上方指纹自洽卡的「出站实测 (on-wire)」列是把信标逐字段派生、与自报值比对的独立步骤——这一步尚未接入才显示占位，与「原始 on-wire 信标是否已抓取」是两回事。",
       "scopeBadge": "口径：信标含自报与 on-wire 两类·逐条标注来源，指纹逐字段派生待接入",

@@ -5,6 +5,7 @@ import { pickLatestBeaconFieldValue, type FarmContainerBeaconView } from './farm
 // captured_at 降序（最新在前），与后端 GET .../beacons 契约一致。
 function beacon(partial: Partial<FarmContainerBeaconView>): FarmContainerBeaconView {
   return {
+    beacon_id: 1,
     captured_at: '2026-08-01T00:00:00Z',
     channel: 'statsig_eval',
     host: 'api.anthropic.com',

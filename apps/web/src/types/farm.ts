@@ -874,6 +874,12 @@ export interface FarmProbeCadenceView {
 // device_id_masked 的只暴露前 16 位不同——beacon 读取是运维核对自洽性用的
 // 内部视图）。
 export interface FarmContainerBeaconView {
+  // 这条 beacon 的稳定标识（store 主键 container_telemetry_beacons.id，
+  // telemetry_beacon.go beaconView.BeaconID，json:"beacon_id"，恒正整数）。用于按
+  // (containerId, beacon_id) 调 GET .../beacons/{beaconID}/redacted-body 取「完整脱敏
+  // body」——列表这里只带 body_preview（有界预览），想看全文走那个按需端点。旧编排器
+  // 缺该字段时运行时为 undefined，「看完整 body」入口据此优雅降级（不渲染按钮）。
+  beacon_id: number;
   // 服务端记录的采集时间（RFC3339）。
   captured_at: string;
   // 服务端自算的通道分类（ClassifyChannel，不信任客户端上报的 source 分类）。
@@ -917,8 +923,11 @@ export interface FarmContainerBeaconView {
    * session_id 已由服务端脱敏（前 12 + 后 4），其余为低敏元数据原样透传；字段缺失
    * 为空串。旧编排器缺该对象时为 undefined，访问前用 `?.` 兜底。 */
   reported_fields?: FarmBeaconReportedFields;
-  /** 原始上报体的脱敏预览（≤2048 字符，密钥类模式已 ***REDACTED***，见后端
-   * beacon_redact.go）。旧编排器缺失时为 undefined。 */
+  /** 原始上报体的**有界脱敏预览**（密钥类模式已 ***REDACTED***，见后端
+   * beacon_redact.go；预览上限由后端可配，真实预览/总字符数由 JsonPreview 动态行
+   * 显示，前端不写死具体上限值）。想看完整脱敏 body 走
+   * GET .../beacons/{beaconID}/redacted-body（见 FarmBeaconRedactedBodyResponse）。
+   * 旧编排器缺失时为 undefined。 */
   body_preview?: string;
   /** 从上报体解析到的进程退出信号（telemetry_beacon.go processSignalView）。
    * **是遥测最后一次观测到的信号，不是实时进程探测**——不代表进程当前还活着/已
@@ -955,6 +964,21 @@ export interface FarmBeaconProcessSignal {
 
 // GET /api/farm/containers/{id}/beacons 响应体：裸数组（captured_at 降序）。
 export type FarmContainerBeaconsResponse = FarmContainerBeaconView[];
+
+// GET /api/farm/containers/{id}/beacons/{beaconID}/redacted-body 响应体
+// （telemetry_beacon.go redactedBodyResponse）：按 beacon_id 取「完整脱敏 body」——
+// 跑与列表预览**同一套脱敏正则但不截断**（redactBodyFull），只在触达 64K 安全上限时
+// 按 rune 边界兜底裁剪。字段严格对齐后端 json tag：
+// - redacted_body：完整脱敏 body（脱敏一步不少；仅安全上限可能裁剪）。
+// - total_bytes：完整脱敏 body 的真实字节长度（不因安全截断缩水，供前端知真实体量）。
+// - truncated：redacted_body 是否因 64K 安全上限被裁（注意：这是安全上限，不同于列表
+//   预览末尾的 `…(truncated)` 标记，后者由 JsonPreview 自行识别）。
+export interface FarmBeaconRedactedBodyResponse {
+  beacon_id: number;
+  redacted_body: string;
+  total_bytes: number;
+  truncated: boolean;
+}
 
 // beacon 读路径分区维度（store.TelemetrySourceKind / telemetry_beacon.go
 // beaconView.SourceKind）：declared=容器自报/声明；on_wire=mitmproxy/ebpf 真实

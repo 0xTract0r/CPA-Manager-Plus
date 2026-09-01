@@ -1,9 +1,11 @@
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { JsonPreview } from '@/components/ui/JsonPreview';
 import { useTimezone } from '@/hooks/useTimezone';
 import { resolveBeaconSourceKind, type FarmContainerBeaconView } from '@/types/farm';
 import { formatDateTimeUtc8 } from '@/utils/datetime';
 import { formatFileSize } from '@/utils/format';
+import { useFarmBeaconRedactedBody } from '../hooks/useFarmContainerBeacons';
 import detailStyles from './FarmBeaconDetailBody.module.scss';
 import styles from './FarmTelemetryPanel.module.scss';
 
@@ -22,7 +24,15 @@ import styles from './FarmTelemetryPanel.module.scss';
  * 见该组件文件头注释）；event_names 从逐条 chip 改「去重 + 按出现频次排序 + ×N
  * 计数」，避免同一事件名重复上报时把详情抽屉刷成一长串重复 chip。
  */
-export function BeaconDetailBody({ beacon }: { beacon: FarmContainerBeaconView }) {
+export function BeaconDetailBody({
+  beacon,
+  containerId,
+}: {
+  beacon: FarmContainerBeaconView;
+  // 承载该 beacon 的容器 id（FarmTelemetryPanel 下传）：调「看完整 body」端点必需。
+  // null（理论上抽屉打开时不会发生）时「看完整 body」入口优雅降级为不可用。
+  containerId: string | null;
+}) {
   const { t, i18n } = useTranslation();
   useTimezone();
 
@@ -33,6 +43,22 @@ export function BeaconDetailBody({ beacon }: { beacon: FarmContainerBeaconView }
   const eventNames = beacon.event_names?.filter(Boolean) ?? [];
   const ps = beacon.process_signal;
   const bodyPreview = beacon.body_preview ?? '';
+
+  // 「看完整 body」按需展开态：默认收起，只展示有界截断预览；点开才调
+  // GET .../beacons/{beaconID}/redacted-body 取完整脱敏 body（用户③）。beacon_id 缺失
+  // （旧编排器）或无容器 id 时，入口不可用（不渲染按钮），仅保留截断预览——优雅降级。
+  const [showFullBody, setShowFullBody] = useState(false);
+  const hasBeaconId = typeof beacon.beacon_id === 'number' && beacon.beacon_id > 0;
+  const canLoadFullBody = hasBeaconId && !!containerId;
+  const {
+    data: fullBody,
+    loading: fullBodyLoading,
+    error: fullBodyError,
+  } = useFarmBeaconRedactedBody(
+    containerId,
+    hasBeaconId ? beacon.beacon_id : null,
+    showFullBody && canLoadFullBody
+  );
 
   // 事件名去重 + 按出现频次降序排序（同频次保留首次出现顺序——Map 按插入顺序
   // 迭代 + Array.sort 是稳定排序，二者叠加天然满足）。只做计数展示，不改变
@@ -137,21 +163,87 @@ export function BeaconDetailBody({ beacon }: { beacon: FarmContainerBeaconView }
       </div>
 
       {/* body_preview（脱敏预览）：结构化展示，见 <JsonPreview> 文件头注释——安全
-          美化 + 轻着色 + 可折叠 + 复用同一套脱敏占位符识别渲成 pill + 2048 截断
-          兜底回原文，不解析请求体业务语义。 */}
+          美化 + 轻着色 + 可折叠 + 复用同一套脱敏占位符识别渲成 pill + 截断兜底回原文，
+          不解析请求体业务语义。真实预览/总字符数由 JsonPreview 动态行显示，标题不写死
+          具体字符上限（后端预览上限已可配）。想看完整脱敏 body 走下方「看完整 body」
+          按需入口（GET .../beacons/{beaconID}/redacted-body）。 */}
       <div className={styles.drawerSection}>
         <span className={styles.drawerSectionTitle}>
-          {t('farm.telemetry.drawerBodyPreview', { defaultValue: '请求体预览（脱敏，≤2048 字符）' })}
+          {t('farm.telemetry.drawerBodyPreview', { defaultValue: '请求体预览（脱敏）' })}
         </span>
         {bodyPreview ? (
-          <JsonPreview
-            value={bodyPreview}
-            totalBytes={beacon.body_bytes}
-            ariaLabel={t('farm.telemetry.drawerBodyPreview', {
-              defaultValue: '请求体预览（脱敏，≤2048 字符）',
-            })}
-            testId="farm-telemetry-drawer-body-preview"
-          />
+          <>
+            <JsonPreview
+              value={bodyPreview}
+              totalBytes={beacon.body_bytes}
+              ariaLabel={t('farm.telemetry.drawerBodyPreview', {
+                defaultValue: '请求体预览（脱敏）',
+              })}
+              testId="farm-telemetry-drawer-body-preview"
+            />
+
+            {/* 「看完整 body」按需入口：仅当拿得到 beacon_id + containerId 时才提供
+                （旧编排器缺 beacon_id 时不渲染按钮，仅保留上面的截断预览——优雅降级）。 */}
+            {canLoadFullBody ? (
+              <div
+                className={detailStyles.fullBodyBlock}
+                data-testid="farm-telemetry-drawer-full-body"
+              >
+                <button
+                  type="button"
+                  className={detailStyles.fullBodyToggle}
+                  aria-expanded={showFullBody}
+                  onClick={() => setShowFullBody((prev) => !prev)}
+                  data-testid="farm-telemetry-drawer-full-body-toggle"
+                >
+                  {showFullBody
+                    ? t('farm.telemetry.fullBody.hide', { defaultValue: '收起完整 body' })
+                    : t('farm.telemetry.fullBody.show', { defaultValue: '看完整 body' })}
+                </button>
+
+                {showFullBody ? (
+                  fullBodyLoading ? (
+                    <span className={styles.hintText} data-testid="farm-telemetry-drawer-full-body-loading">
+                      {t('farm.telemetry.fullBody.loading', { defaultValue: '正在加载完整 body…' })}
+                    </span>
+                  ) : fullBodyError || !fullBody ? (
+                    // 优雅降级：完整 body 端点不可用（旧编排器无此端点 / 存储未装配 /
+                    // 网络异常）时如实提示，不整页报错，上方截断预览仍在。
+                    <span
+                      className={styles.hintText}
+                      data-testid="farm-telemetry-drawer-full-body-unavailable"
+                    >
+                      {t('farm.telemetry.fullBody.unavailable', {
+                        defaultValue:
+                          '完整 body 暂不可用（编排器未提供该端点或查询失败），请参考上方截断预览。',
+                      })}
+                    </span>
+                  ) : (
+                    <>
+                      <JsonPreview
+                        value={fullBody.redacted_body}
+                        totalBytes={fullBody.total_bytes}
+                        ariaLabel={t('farm.telemetry.fullBody.ariaLabel', {
+                          defaultValue: '完整请求体（脱敏）',
+                        })}
+                        testId="farm-telemetry-drawer-full-body-preview"
+                      />
+                      {fullBody.truncated ? (
+                        <span
+                          className={styles.hintText}
+                          data-testid="farm-telemetry-drawer-full-body-safety-truncated"
+                        >
+                          {t('farm.telemetry.fullBody.safetyTruncated', {
+                            defaultValue: '完整 body 已达 64K 安全上限被裁（脱敏在完整原文完成，不影响脱敏完整性）。',
+                          })}
+                        </span>
+                      ) : null}
+                    </>
+                  )
+                ) : null}
+              </div>
+            ) : null}
+          </>
         ) : (
           <span className={styles.hintText}>
             {t('farm.telemetry.drawerNoBodyPreview', {
