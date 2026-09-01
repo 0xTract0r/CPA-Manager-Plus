@@ -54,4 +54,28 @@ describe('probeProxyConnectivity', () => {
 
     expect(result).toEqual({ ok: false, exitIp: '', reason: 'probe_failed' });
   });
+
+  it('rejects a non-IP exit_ip (fail-closed to probe_failed) to block echoed arbitrary text', async () => {
+    mocks.post.mockResolvedValue({ ok: true, exit_ip: 'not an ip <script>', reason: 'ok' });
+
+    const result = await probeProxyConnectivity('socks5://host:1080');
+
+    expect(result).toEqual({ ok: false, exitIp: '', reason: 'probe_failed' });
+  });
+
+  it('rejects an oversized exit_ip string', async () => {
+    mocks.post.mockResolvedValue({ ok: true, exit_ip: '1.2.3.4'.repeat(20), reason: 'ok' });
+
+    const result = await probeProxyConnectivity('socks5://host:1080');
+
+    expect(result).toEqual({ ok: false, exitIp: '', reason: 'probe_failed' });
+  });
+
+  it('preserves a valid IPv6 exit_ip', async () => {
+    mocks.post.mockResolvedValue({ ok: true, exit_ip: '2001:db8::1', reason: 'ok' });
+
+    const result = await probeProxyConnectivity('socks5://host:1080');
+
+    expect(result).toEqual({ ok: true, exitIp: '2001:db8::1', reason: 'ok' });
+  });
 });

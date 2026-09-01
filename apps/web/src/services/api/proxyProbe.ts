@@ -53,6 +53,31 @@ const normalizeReason = (reason: unknown): ProxyProbeReason => {
   return 'probe_failed';
 };
 
+/** IPv6 文本表示的最大长度（含 IPv4 映射地址）；超过即视为非法形状。 */
+const MAX_EXIT_IP_LENGTH = 45;
+
+/** 严格 IPv4：四段 0-255 点分十进制。 */
+const IPV4_PATTERN = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
+
+/**
+ * 粗粒度 IPv6 形状校验：仅十六进制段 / 冒号 / 点（IPv4 尾段），可带 zone id（%eth0）。
+ * 目的不是完整 RFC 校验，而是把 exit_ip 约束在合法 IP 字符集内，拒绝任意文本注入。
+ */
+const isLikelyIpv6 = (value: string): boolean => {
+  if (!value.includes(':')) return false;
+  const addr = value.split('%')[0] ?? value;
+  return /^[0-9A-Fa-f:.]+$/.test(addr) && (addr.match(/:/g)?.length ?? 0) >= 2;
+};
+
+/**
+ * exit_ip 形状校验：合法 IPv4 / IPv6 且长度合理才算有效。
+ * 防止恶意代理在探针响应里回显任意文本冒充出口 IP（如注入脚本 / 命令 / 超长串）。
+ */
+const isValidExitIpShape = (value: string): boolean => {
+  if (value.length > MAX_EXIT_IP_LENGTH) return false;
+  return IPV4_PATTERN.test(value) || isLikelyIpv6(value);
+};
+
 /**
  * 调用后端代理连通性探针。
  * - 正常响应：归一化 `exit_ip`→`exitIp`、reason 收敛到枚举。
@@ -65,9 +90,16 @@ export async function probeProxyConnectivity(proxyUrl: string): Promise<ProxyPro
       '/diagnostics/proxy-connectivity-probe',
       { proxy_url: proxyUrl }
     );
+    const exitIp = typeof resp?.exit_ip === 'string' ? resp.exit_ip : '';
+    // exit_ip 形状防御：后端契约里 exit_ip 仅在 ok:true 时非空。若回显了非 IPv4/IPv6 形状
+    // （或超长）的 exit_ip，视为无效探测，fail-closed 收敛到 probe_failed 并清空 exitIp，
+    // 避免恶意代理把任意文本冒充出口 IP 展示给用户。
+    if (exitIp !== '' && !isValidExitIpShape(exitIp)) {
+      return { ok: false, exitIp: '', reason: 'probe_failed' };
+    }
     return {
       ok: Boolean(resp?.ok),
-      exitIp: typeof resp?.exit_ip === 'string' ? resp.exit_ip : '',
+      exitIp,
       reason: normalizeReason(resp?.reason),
     };
   } catch {
