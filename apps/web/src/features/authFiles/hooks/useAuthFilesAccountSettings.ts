@@ -15,6 +15,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { authFilesApi, type AuthFileFieldsPatch } from '@/services/api';
 import { normalizeAuthIndex } from '@/utils/usage';
+import { runProxyPreflight } from '@/utils/proxyPreflight';
 import {
   normalizeProviderKey,
   parsePriorityValue,
@@ -775,9 +776,36 @@ export function useAuthFilesAccountSettings(
       return;
     }
 
+    // 格式过后再做后端连通性探针：不通就不落库（fail-closed），把 proxy_url 标红并提示；
+    // 通了展示出口 IP 再继续保存。探测期间置 saving，禁用保存/关闭按钮防重复提交。
+    setAccountSettingsEditor((prev) =>
+      prev && prev.fileName === editor.fileName ? { ...prev, saving: true } : prev
+    );
+    const preflight = await runProxyPreflight(editor.proxyUrl, {
+      formatValidator: () => ({ valid: true }),
+      translate: (reason) => t(`proxy_preflight.reason_${reason}`),
+    });
+    if (!preflight.ok) {
+      setAccountSettingsEditor((prev) =>
+        prev && prev.fileName === editor.fileName
+          ? { ...prev, saving: false, proxyUrlError: 'invalid' }
+          : prev
+      );
+      showNotification(preflight.message, 'error');
+      return;
+    }
+    showNotification(
+      t('proxy_preflight.connected_with_ip', { ip: preflight.exitIp }),
+      'success'
+    );
+
     const { request, error } = buildPatchRequest(editor);
     if (!request) {
       const errorMessage = error?.startsWith('auth_files.') ? t(error) : error || 'Invalid format';
+      // 探针阶段已置 saving=true，这里失败要复位，避免保存按钮永久 loading。
+      setAccountSettingsEditor((prev) =>
+        prev && prev.fileName === editor.fileName ? { ...prev, saving: false } : prev
+      );
       showNotification(errorMessage, 'error');
       return;
     }
