@@ -7,6 +7,9 @@
     "reason_timeout": "連通逾時",
     "reason_probe_failed": "探測失敗，請重試",
     "probing": "正在探測代理連通性…",
+    "checking_dedup": "正在查重代理…",
+    "connected": "連通正常",
+    "validating_wait": "代理驗證中，請稍候",
     "connected_with_ip": "連通正常 · 出口 IP：{{ip}}",
     "exit_ip_label": "出口 IP",
     "duplicate_account": "該代理已被帳號 {{accounts}} 使用，請為每個帳號使用獨立代理（避免出口 IP 聚類被關聯）。"
