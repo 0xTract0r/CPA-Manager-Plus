@@ -116,6 +116,8 @@ export type AuthFilesAccountSettingsModalProps = {
   onCopyText: (text: string) => void | Promise<void>;
   onSave: () => void;
   onChange: (field: AccountSettingsEditorField, value: AccountSettingsEditorFieldValue) => void;
+  /** 代理输入框失焦（blur）时触发的内联实时校验（格式→查重→连通性探针 + 就地展示）。 */
+  onProxyBlur?: () => void;
 };
 
 type ManagedHeaderHistoryDiffRow = {
@@ -1253,6 +1255,7 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
     onCopyText,
     onSave,
     onChange,
+    onProxyBlur,
   } = props;
 
   // 原始 auth JSON 含明文 access_token，属敏感暴露面。native <details> 折叠时仍会把
@@ -1534,6 +1537,11 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
    * 此确认，直接走原有 onSave()，不触发任何容器动作。
    */
   const handleSaveClick = () => {
+    // 内联校验未结算前不放行（保存按钮通常已因此 disabled，这里对竞态再兜底一层）：
+    // 正在校验 / 校验失败 → 不进入保存与换代理确认，交由已就地展示的状态区提示用户。
+    if (editor?.proxyInline?.phase === 'checking' || editor?.proxyInline?.phase === 'invalid') {
+      return;
+    }
     if (!editor || !isFarmRotateGated || !proxyUrlChanged) {
       onSave();
       return;
@@ -1612,6 +1620,9 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
               !dirty ||
               Boolean(editor?.proxyUrlError) ||
               Boolean(editor?.proxyUrlDuplicateError) ||
+              // 内联校验中 / 校验失败 → 拦住保存（坏/重复代理在换代理 rotate 之前就被拦下）。
+              editor?.proxyInline?.phase === 'checking' ||
+              editor?.proxyInline?.phase === 'invalid' ||
               Boolean(editor?.extraHeadersError) ||
               Boolean(editor?.transportProfileError) ||
               Boolean(editor?.tlsProfileError) ||
@@ -1822,12 +1833,50 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
                               defaultValue:
                                 'Invalid proxy URL. Use a full URL such as socks5://user:pass@host:port.',
                             })
-                        : undefined
+                        : // 连通性探针失败（无法连通 / 超时）承载在内联校验状态里，就地标红。
+                          editor.proxyInline?.phase === 'invalid'
+                          ? editor.proxyInline.message
+                          : undefined
                   }
-                  disabled={disableControls || editor.saving}
+                  disabled={
+                    disableControls ||
+                    editor.saving ||
+                    editor.proxyInline?.phase === 'checking'
+                  }
                   data-testid="account-settings-proxy-url-input"
                   onChange={(e) => onChange('proxyUrl', e.target.value)}
+                  onBlur={() => onProxyBlur?.()}
                 />
+
+                {/* 代理内联校验状态区：紧邻输入框就地展示「验证中 / 已连通(出口 IP)」；
+                    失败文案走上方 Input 自身的 error 红框（不重复展示）。 */}
+                {editor.proxyInline?.phase === 'checking' && (
+                  <div
+                    className="status-badge muted"
+                    data-testid="account-settings-proxy-inline-status"
+                    data-proxy-phase="checking"
+                  >
+                    <LoadingSpinner size={12} />
+                    {editor.proxyInline.stage === 'dedup'
+                      ? t('proxy_preflight.checking_dedup', { defaultValue: '正在查重代理…' })
+                      : t('proxy_preflight.probing', {
+                          defaultValue: '正在探测代理连通性…',
+                        })}
+                  </div>
+                )}
+                {editor.proxyInline?.phase === 'ok' && (
+                  <div
+                    className="status-badge success"
+                    data-testid="account-settings-proxy-inline-status"
+                    data-proxy-phase="ok"
+                  >
+                    {editor.proxyInline.exitIp
+                      ? `✓ ${t('proxy_preflight.connected_with_ip', {
+                          ip: editor.proxyInline.exitIp,
+                        })}`
+                      : `✓ ${t('proxy_preflight.connected', { defaultValue: '连通正常' })}`}
+                  </div>
+                )}
 
                 {/* 代理状态行：紧贴 Proxy URL 之后，留在可编辑区内。 */}
                 <div

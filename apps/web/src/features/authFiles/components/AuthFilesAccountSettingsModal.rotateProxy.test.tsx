@@ -154,13 +154,18 @@ const mountModal = (
   return renderer;
 };
 
-const clickSave = (renderer: ReactTestRenderer) => {
+const findSaveButton = (renderer: ReactTestRenderer) => {
   const saveButton = renderer.root
     .findAllByType(Button)
     .find((instance) => instance.props.children === 'common.save');
   if (!saveButton || typeof saveButton.props.onClick !== 'function') {
     throw new Error('Save button not found');
   }
+  return saveButton;
+};
+
+const clickSave = (renderer: ReactTestRenderer) => {
+  const saveButton = findSaveButton(renderer);
   act(() => {
     saveButton.props.onClick();
   });
@@ -261,6 +266,62 @@ describe('AuthFilesAccountSettingsModal §2 换代理二次确认门禁', () => 
       confirm: true,
     });
     expect(onSave).toHaveBeenCalledTimes(1);
+    renderer.unmount();
+  });
+
+  it('农场 Claude 账号：代理内联校验失败时保存按钮禁用，且点击也不弹换代理确认（校验先于 rotate）', () => {
+    const onSave = vi.fn();
+    const editor = makeEditor({
+      provider: 'claude',
+      farmBound: true,
+      proxyUrl: NEXT_PROXY_URL,
+      // 失焦内联校验判定为不合格（如连通失败）。
+      proxyInline: { phase: 'invalid', message: 'proxy unreachable', checkedValue: NEXT_PROXY_URL },
+    });
+    const renderer = mountModal(editor, onSave);
+
+    // 保存按钮禁用 → 坏代理无法进入换代理 rotate 确认。
+    expect(findSaveButton(renderer).props.disabled).toBe(true);
+    // 即使绕过 disabled 直接触发点击，handleSaveClick 守卫也拦住：不弹确认、不 onSave、不 rotate。
+    clickSave(renderer);
+    expect(mockShowConfirmation).not.toHaveBeenCalled();
+    expect(onSave).not.toHaveBeenCalled();
+    expect(rotateProxyMock).not.toHaveBeenCalled();
+    renderer.unmount();
+  });
+
+  it('农场 Claude 账号：代理内联校验中保存按钮禁用（不放行到 rotate）', () => {
+    const onSave = vi.fn();
+    const editor = makeEditor({
+      provider: 'claude',
+      farmBound: true,
+      proxyUrl: NEXT_PROXY_URL,
+      proxyInline: { phase: 'checking', stage: 'probe', checkedValue: NEXT_PROXY_URL },
+    });
+    const renderer = mountModal(editor, onSave);
+
+    expect(findSaveButton(renderer).props.disabled).toBe(true);
+    clickSave(renderer);
+    expect(mockShowConfirmation).not.toHaveBeenCalled();
+    expect(onSave).not.toHaveBeenCalled();
+    renderer.unmount();
+  });
+
+  it('农场 Claude 账号：代理内联校验通过后改了 proxy_url → 保存按钮可用，点击弹换代理确认', () => {
+    const onSave = vi.fn();
+    const editor = makeEditor({
+      provider: 'claude',
+      farmBound: true,
+      proxyUrl: NEXT_PROXY_URL,
+      // 失焦内联校验已通过（同值）→ 不再阻断，保存进入换代理确认（rotate 在校验之后）。
+      proxyInline: { phase: 'ok', exitIp: '203.0.113.9', checkedValue: NEXT_PROXY_URL },
+    });
+    const renderer = mountModal(editor, onSave);
+
+    expect(findSaveButton(renderer).props.disabled).toBe(false);
+    clickSave(renderer);
+    expect(mockShowConfirmation).toHaveBeenCalledTimes(1);
+    expect(onSave).not.toHaveBeenCalled();
     renderer.unmount();
   });
 
