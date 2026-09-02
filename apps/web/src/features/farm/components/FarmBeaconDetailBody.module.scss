@@ -25,8 +25,7 @@
   margin-top: $spacing-sm;
 }
 
-// 「看完整 body」切换按钮：沿用 JsonPreview toggleBtn 的轻量描边风格，自身左对齐、
-// 不撑满整行。
+// 「查看完整请求体」切换按钮：沿用轻量描边风格，自身左对齐、不撑满整行。
 .fullBodyToggle {
   align-self: flex-start;
   border: 1px solid var(--border-color);
@@ -41,4 +40,131 @@
   &:hover {
     background: var(--bg-hover);
   }
+}
+
+// -----------------------------------------------------------------------------
+// Option A 重设计：单段脱敏 body 的按需视图（<BeaconBodyView>）——工具条（大小提示 +
+// 复制）+ 折叠 JSON 树 / 截断提示 / 完整 body 罕见非 JSON 的只读原文兜底。
+// -----------------------------------------------------------------------------
+.bodyView {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+// 工具条：左侧弱化的大小提示，右侧「复制」按钮。
+.bodyToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-sm;
+}
+
+.bodySizeHint {
+  font-size: $fs-2xs;
+  color: var(--text-tertiary);
+  font-family: $font-mono;
+}
+
+// 「复制」按钮：与 AuthFilesAccountSettingsModal 只读 JSON 树的 Copy 按钮同款药丸描边。
+.copyButton {
+  border: 1px solid color-mix(in srgb, var(--primary-color) 28%, var(--border-color));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--primary-color) 8%, transparent);
+  color: var(--primary-color);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  cursor: pointer;
+
+  &:hover {
+    background: color-mix(in srgb, var(--primary-color) 14%, transparent);
+  }
+}
+
+// 完整 body 罕见非 JSON 时的只读原文兜底（on-demand，用户已显式点开完整请求体）：
+// 等宽、可滚动、保留换行，长行不撑破抽屉。内容已由后端脱敏。
+.rawBody {
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: $radius-sm;
+  border: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-family: $font-mono;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+// -----------------------------------------------------------------------------
+// react-json-view-lite 折叠树皮肤（与 AuthFilesAccountSettingsModal 的只读 JSON 树
+// 同款设计 token，就地复制到本组件专属 scss，避免跨文件耦合）。
+// -----------------------------------------------------------------------------
+.jsonTree {
+  min-width: 0;
+  max-height: 360px;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: $radius-sm;
+  border: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+
+  ul {
+    list-style: none;
+  }
+}
+
+.jsonTreeContainer {
+  font-family: $font-mono;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.jsonTreeChildFields {
+  margin: 0;
+  padding: 2px 0 2px 18px;
+  border-left: 1px solid color-mix(in srgb, var(--border-color) 58%, transparent);
+}
+
+.jsonTreeChild {
+  min-width: 0;
+}
+
+.jsonTreeLabel,
+.jsonTreeClickableLabel {
+  color: color-mix(in srgb, var(--primary-color) 70%, var(--text-primary));
+  font-weight: 700;
+}
+
+.jsonTreeString {
+  color: color-mix(in srgb, #0f8a4b 70%, var(--text-primary));
+}
+
+.jsonTreeNumber,
+.jsonTreeBoolean {
+  color: color-mix(in srgb, #8a4de8 72%, var(--text-primary));
+}
+
+.jsonTreeNull,
+.jsonTreeOther {
+  color: var(--text-tertiary);
+}
+
+.jsonTreePunctuation {
+  color: var(--text-secondary);
+}
+
+.jsonTreeExpandIcon,
+.jsonTreeCollapseIcon {
+  color: var(--primary-color);
+  margin-right: 5px;
+}
+
+.jsonTreeCollapsedContent {
+  color: var(--text-tertiary);
 }

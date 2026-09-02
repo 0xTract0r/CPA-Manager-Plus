@@ -4646,6 +4646,22 @@
         "ariaLabel": "完整請求體（脫敏）",
         "safetyTruncated": "完整 body 已達 64K 安全上限被裁（脫敏在完整原文完成，不影響脫敏完整性）。"
       },
+      "beaconBody": {
+        "summaryTitle": "指紋摘要（on-wire 自報）",
+        "deviceIdFullHint": "自報全量值（非脫敏），僅供維運核對自洽性。",
+        "title": "請求體（脫敏）",
+        "copy": "複製",
+        "copied": "已複製",
+        "previewSize": "預覽 · {{chars}} 字元",
+        "fullSize": "完整 · {{chars}} 字元",
+        "previewTruncatedHint": "預覽已在約 {{chars}} 字元處截斷（JSON 不完整無法結構化），點「檢視完整請求體」看全文。",
+        "previewNotJsonHint": "預覽不是結構化 JSON（約 {{chars}} 字元），點「檢視完整請求體」或複製原文檢視。",
+        "viewFull": "檢視完整請求體",
+        "hideFull": "收合完整請求體",
+        "fullLoading": "正在載入完整請求體…",
+        "fullUnavailable": "編排器暫不支援完整請求體（未提供該端點或查詢失敗），請參考上方預覽。",
+        "safetyTruncated": "完整請求體已在 64K 安全上限被裁（脫敏在完整原文完成，不影響脫敏完整性）。"
+      },
       "section": "遙測信標（自報 + on-wire，逐條標註來源）",
       "disclaimer": "下方是該容器的遙測信標列表，混合兩類來源並逐條標註：「自報 (declared)」是容器聲明/自報的內容，「on-wire」行才是 mitmproxy/ebpf 在容器出站鏈路真實擷取的資料。即便 on-wire 行也只證明該容器確實發出過這些請求，不構成跨帳號反關聯證明。另外，上方指紋自洽卡的「出站實測 (on-wire)」欄是把信標逐欄位派生、與自報值比對的獨立步驟——這一步尚未接入才顯示佔位，與「原始 on-wire 信標是否已擷取」是兩回事。",
       "scopeBadge": "口徑：信標含自報與 on-wire 兩類·逐條標註來源，指紋逐欄位派生待接入",

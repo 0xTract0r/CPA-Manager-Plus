@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { JsonPreview } from '@/components/ui/JsonPreview';
+import { JsonView } from 'react-json-view-lite';
+import 'react-json-view-lite/dist/index.css';
 import { useTimezone } from '@/hooks/useTimezone';
 import { resolveBeaconSourceKind, type FarmContainerBeaconView } from '@/types/farm';
+import { copyToClipboard } from '@/utils/clipboard';
 import { formatDateTimeUtc8 } from '@/utils/datetime';
 import { formatFileSize } from '@/utils/format';
 import { useFarmBeaconRedactedBody } from '../hooks/useFarmContainerBeacons';
@@ -10,27 +12,66 @@ import detailStyles from './FarmBeaconDetailBody.module.scss';
 import styles from './FarmTelemetryPanel.module.scss';
 
 /**
- * 信标详情抽屉正文：展示单条 beacon 的完整上报内容——概要 + reported_fields（脱敏）+
- * 事件名 + body_preview（脱敏预览）+ process_signal（进程退出信号，null 时诚实标注
- * 无信号且不代表进程还活着）。只展示脱敏值，不解析原始 body，不编造缺失字段。
+ * 信标详情抽屉正文：单条 beacon 的完整上报内容。**这条 beacon 是 Claude Code 的内部
+ * 遥测**（statsig_eval / event_logging / datadog_logs），不是 LLM /v1/messages 业务请求；
+ * 反关联要核的指纹字段后端已抽成结构化字段，前端不解析原始 body 语义。
  *
- * 从 FarmTelemetryPanel 抽出（farm-proxy-rotation Change B Foundation §6 独占本文件），
- * 与 §5 指纹卡所在的 FarmTelemetryPanel 拆开以便后续组件切片文件不相交并行；抽取过程
- * **零行为改动**，仅移动 + 接好依赖，渲染逻辑逐字保持不变。
+ * 本次（Option A 重设计，farm-beacon-body-structured-view）把视图重排成「结构化指纹
+ * 摘要为主 + 原始 body 降为按需」，根治此前默认糊一坨**被截断的原始 JSON**（截断→非法
+ * JSON→退回 raw 单行密文铺满整屏）读不了、零价值的问题：
  *
- * §6 正式切片在抽取基础上补了两处结构化 UX（不影响其余 section 的渲染逻辑）：
- * body_preview 从纯 `<pre>` 换成 <JsonPreview>（安全美化 + 轻着色 + 可折叠 +
- * 复用 reportedRows 同款脱敏口径识别 `***REDACTED***` 渲成 pill + 截断兜底回原文，
- * 见该组件文件头注释）；event_names 从逐条 chip 改「去重 + 按出现频次排序 + ×N
- * 计数」，避免同一事件名重复上报时把详情抽屉刷成一长串重复 chip。
+ *   1. **首屏 = 指纹摘要**（永远有效、永不截断、零后端依赖）：把 beacon 已由后端抽好的
+ *      指纹字段（device_id 全量 / api_base_url_host / entrypoint / channel / 来源 / 采集
+ *      时间 / host / path / 请求体大小）用既有 KV 网格铺开，作为详情抽屉的主内容。
+ *   2. **原始 body 降为按需、永不成墙**：body_preview 能 JSON.parse（小而完整，如
+ *      statsig_eval）→ react-json-view-lite 可折叠树内联渲染；parse 不了（预览被截断成
+ *      非法 JSON）→ **不铺 raw**，只给一行中性提示引导看完整请求体；点「查看完整请求体」
+ *      才惰性调 GET .../beacons/{beaconID}/redacted-body 取完整脱敏 body（同样折叠树），
+ *      64K 安全上限被裁时标注；该端点不可用/失败 **fail-soft**（不破坏摘要视图、不整页崩）。
+ *   3. reported_fields（脱敏）/ event_names / process_signal 作为补充分节，后两者「有才显」。
+ *
+ * 只展示后端脱敏值，不编造缺失字段；缺失字段一律 '—'（诚实）。
  */
+
+// 与后端 beacon_redact.go bodyPreviewTruncationMarker 字面量保持一致（前端无法读取 Go
+// 常量，此处显式复制）：仅用于区分「预览被截断成非法 JSON」与「本就非 JSON」，不改变
+// 渲染分支本身，只影响提示文案的准确性。
+const TRUNCATION_MARKER = '…(truncated)';
+
+// react-json-view-lite 默认展开深度：顶层 + 第一层展开，更深层折叠。statsig_eval /
+// event_logging 这类遥测体通常两层内即见关键字段；与 AuthFilesAccountSettingsModal
+// 的只读 JSON 树同款 `level < 2` 口径。
+const expandTelemetryBody = (level: number) => level < 2;
+
+// react-json-view-lite 主题类名映射（复用 FarmBeaconDetailBody.module.scss 内自带的
+// jsonTree* 皮肤，与 AuthFilesAccountSettingsModal 的只读 JSON 树同款设计 token）。
+const JSON_TREE_STYLE = {
+  container: detailStyles.jsonTreeContainer,
+  childFieldsContainer: detailStyles.jsonTreeChildFields,
+  basicChildStyle: detailStyles.jsonTreeChild,
+  label: detailStyles.jsonTreeLabel,
+  clickableLabel: detailStyles.jsonTreeClickableLabel,
+  nullValue: detailStyles.jsonTreeNull,
+  undefinedValue: detailStyles.jsonTreeNull,
+  numberValue: detailStyles.jsonTreeNumber,
+  stringValue: detailStyles.jsonTreeString,
+  booleanValue: detailStyles.jsonTreeBoolean,
+  otherValue: detailStyles.jsonTreeOther,
+  punctuation: detailStyles.jsonTreePunctuation,
+  expandIcon: detailStyles.jsonTreeExpandIcon,
+  collapseIcon: detailStyles.jsonTreeCollapseIcon,
+  collapsedContent: detailStyles.jsonTreeCollapsedContent,
+  quotesForFieldNames: true,
+  stringifyStringValues: true,
+} as const;
+
 export function BeaconDetailBody({
   beacon,
   containerId,
 }: {
   beacon: FarmContainerBeaconView;
-  // 承载该 beacon 的容器 id（FarmTelemetryPanel 下传）：调「看完整 body」端点必需。
-  // null（理论上抽屉打开时不会发生）时「看完整 body」入口优雅降级为不可用。
+  // 承载该 beacon 的容器 id（FarmTelemetryPanel 下传）：调「查看完整请求体」端点必需。
+  // null（理论上抽屉打开时不会发生）时「查看完整请求体」入口优雅降级为不可用。
   containerId: string | null;
 }) {
   const { t, i18n } = useTranslation();
@@ -44,9 +85,9 @@ export function BeaconDetailBody({
   const ps = beacon.process_signal;
   const bodyPreview = beacon.body_preview ?? '';
 
-  // 「看完整 body」按需展开态：默认收起，只展示有界截断预览；点开才调
-  // GET .../beacons/{beaconID}/redacted-body 取完整脱敏 body（用户③）。beacon_id 缺失
-  // （旧编排器）或无容器 id 时，入口不可用（不渲染按钮），仅保留截断预览——优雅降级。
+  // 「查看完整请求体」按需展开态：默认收起，只展示首屏摘要 + 预览。点开才调
+  // GET .../beacons/{beaconID}/redacted-body 取完整脱敏 body。beacon_id 缺失（旧编排器）
+  // 或无容器 id 时，入口不可用（不渲染按钮），仅保留预览——优雅降级。
   const [showFullBody, setShowFullBody] = useState(false);
   const hasBeaconId = typeof beacon.beacon_id === 'number' && beacon.beacon_id > 0;
   const canLoadFullBody = hasBeaconId && !!containerId;
@@ -60,10 +101,9 @@ export function BeaconDetailBody({
     showFullBody && canLoadFullBody
   );
 
-  // 事件名去重 + 按出现频次降序排序（同频次保留首次出现顺序——Map 按插入顺序
-  // 迭代 + Array.sort 是稳定排序，二者叠加天然满足）。只做计数展示，不改变
-  // eventNames 本身承载的语义（仍是服务端逐条上报的原始事件名）。
-  const eventNameCounts: Array<{ name: string; count: number }> = (() => {
+  // 事件名去重 + 按出现频次降序（同频次保留首次出现顺序——Map 按插入顺序迭代 +
+  // Array.sort 稳定排序天然满足）。只做计数展示，不改变 eventNames 的原始语义。
+  const eventNameCounts: Array<{ name: string; count: number }> = useMemo(() => {
     const counts = new Map<string, number>();
     for (const name of eventNames) {
       counts.set(name, (counts.get(name) ?? 0) + 1);
@@ -71,9 +111,38 @@ export function BeaconDetailBody({
     return Array.from(counts.entries())
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count);
-  })();
+  }, [eventNames]);
 
-  // reported_fields 逐字段渲染：缺失显 '—'（诚实，代表这条 beacon 没带该字段）。
+  // 首屏「指纹摘要」逐字段：后端 ParseBeacon 已抽好的顶层指纹字段（device_id 全量、
+  // api_base_url_host、entrypoint、channel）。缺失显 '—'（诚实，代表这条 beacon 没带）。
+  const summaryRows: Array<{ key: string; label: string; value: string; hint?: string }> = [
+    {
+      key: 'device_id',
+      label: t('farm.telemetry.field_device_id', { defaultValue: 'device_id' }),
+      value: beacon.device_id,
+      hint: t('farm.telemetry.beaconBody.deviceIdFullHint', {
+        defaultValue: '自报全量值（非脱敏），仅供运维核对自洽性。',
+      }),
+    },
+    {
+      key: 'api_base_url_host',
+      label: t('farm.telemetry.field_api_base_url_host', { defaultValue: 'api_base_url_host' }),
+      value: beacon.api_base_url_host,
+    },
+    {
+      key: 'entrypoint',
+      label: t('farm.telemetry.field_entrypoint', { defaultValue: 'entrypoint' }),
+      value: beacon.entrypoint,
+    },
+    {
+      key: 'channel',
+      label: t('farm.telemetry.spreadChannel', { defaultValue: '通道' }),
+      value: beacon.channel,
+    },
+  ];
+
+  // reported_fields 逐字段（脱敏）：缺失显 '—'（诚实）。device_id/session_id 由服务端
+  // 脱敏（前 12 + 后 4），其余为低敏元数据原样透传。
   const reportedRows: Array<{ key: string; label: string; value: string; masked?: boolean }> = [
     { key: 'device_id', label: t('farm.telemetry.field_device_id', { defaultValue: 'device_id' }), value: rf?.device_id ?? '', masked: true },
     { key: 'session_id', label: t('farm.telemetry.field_session_id', { defaultValue: 'session_id' }), value: rf?.session_id ?? '', masked: true },
@@ -86,9 +155,13 @@ export function BeaconDetailBody({
 
   return (
     <div className={styles.drawerBody} data-testid="farm-telemetry-beacon-drawer">
-      {/* 概要 */}
+      {/* 首屏主内容：指纹摘要（后端已抽好的结构化字段，永不截断、零后端依赖） */}
       <div className={styles.drawerSection}>
-        <div className={styles.fieldSpreadGrid}>
+        <span className={styles.drawerSectionTitle}>
+          {t('farm.telemetry.beaconBody.summaryTitle', { defaultValue: '指纹摘要（on-wire 自报）' })}
+        </span>
+        <div className={styles.fieldSpreadGrid} data-testid="farm-telemetry-drawer-summary">
+          {/* 来源 */}
           <span className={styles.fieldSpreadLabel}>
             {t('farm.telemetry.spreadSource', { defaultValue: '来源' })}
           </span>
@@ -101,6 +174,12 @@ export function BeaconDetailBody({
               : t('farm.telemetry.rowSourceDeclared', { defaultValue: '自报 · {{source}}', source: rawSource })}
           </span>
 
+          {/* 顶层指纹字段（device_id 全量 / api_base_url_host / entrypoint / channel） */}
+          {summaryRows.map((row) => (
+            <FragmentRow key={row.key} label={row.label} value={row.value} hint={row.hint} />
+          ))}
+
+          {/* 采集时间 / host·path / 请求体大小 */}
           <span className={styles.fieldSpreadLabel}>
             {t('farm.telemetry.spreadCapturedAt', { defaultValue: '采集时间' })}
           </span>
@@ -132,12 +211,12 @@ export function BeaconDetailBody({
         </div>
       </div>
 
-      {/* 事件名 */}
-      <div className={styles.drawerSection}>
-        <span className={styles.drawerSectionTitle}>
-          {t('farm.telemetry.drawerEventNames', { defaultValue: '事件名（event_names）' })}
-        </span>
-        {eventNameCounts.length > 0 ? (
+      {/* 事件名（有才显） */}
+      {eventNameCounts.length > 0 ? (
+        <div className={styles.drawerSection}>
+          <span className={styles.drawerSectionTitle}>
+            {t('farm.telemetry.drawerEventNames', { defaultValue: '事件名（event_names）' })}
+          </span>
           <div className={styles.eventNameChips} data-testid="farm-telemetry-drawer-events">
             {eventNameCounts.map(({ name, count }) => (
               <span key={name} className="status-badge muted">
@@ -153,37 +232,25 @@ export function BeaconDetailBody({
               </span>
             ))}
           </div>
-        ) : (
-          <span className={styles.hintText}>
-            {t('farm.telemetry.drawerNoEventNames', {
-              defaultValue: '该信标无事件名（仅 event_logging / datadog_logs 通道会带）。',
-            })}
-          </span>
-        )}
-      </div>
+        </div>
+      ) : null}
 
-      {/* body_preview（脱敏预览）：结构化展示，见 <JsonPreview> 文件头注释——安全
-          美化 + 轻着色 + 可折叠 + 复用同一套脱敏占位符识别渲成 pill + 截断兜底回原文，
-          不解析请求体业务语义。真实预览/总字符数由 JsonPreview 动态行显示，标题不写死
-          具体字符上限（后端预览上限已可配）。想看完整脱敏 body 走下方「看完整 body」
-          按需入口（GET .../beacons/{beaconID}/redacted-body）。 */}
+      {/* 请求体（脱敏）：默认不糊 raw。能 parse 的预览直接折叠树；截断的只给一行提示，
+          原始 body 走「查看完整请求体」按需入口。见 <BeaconBodyView>。 */}
       <div className={styles.drawerSection}>
         <span className={styles.drawerSectionTitle}>
-          {t('farm.telemetry.drawerBodyPreview', { defaultValue: '请求体预览（脱敏）' })}
+          {t('farm.telemetry.beaconBody.title', { defaultValue: '请求体（脱敏）' })}
         </span>
         {bodyPreview ? (
           <>
-            <JsonPreview
-              value={bodyPreview}
-              totalBytes={beacon.body_bytes}
-              ariaLabel={t('farm.telemetry.drawerBodyPreview', {
-                defaultValue: '请求体预览（脱敏）',
-              })}
+            <BeaconBodyView
+              raw={bodyPreview}
+              variant="preview"
               testId="farm-telemetry-drawer-body-preview"
             />
 
-            {/* 「看完整 body」按需入口：仅当拿得到 beacon_id + containerId 时才提供
-                （旧编排器缺 beacon_id 时不渲染按钮，仅保留上面的截断预览——优雅降级）。 */}
+            {/* 「查看完整请求体」按需入口：仅当拿得到 beacon_id + containerId 时才提供
+                （旧编排器缺 beacon_id 时不渲染按钮，仅保留上面的预览——优雅降级）。 */}
             {canLoadFullBody ? (
               <div
                 className={detailStyles.fullBodyBlock}
@@ -197,48 +264,33 @@ export function BeaconDetailBody({
                   data-testid="farm-telemetry-drawer-full-body-toggle"
                 >
                   {showFullBody
-                    ? t('farm.telemetry.fullBody.hide', { defaultValue: '收起完整 body' })
-                    : t('farm.telemetry.fullBody.show', { defaultValue: '看完整 body' })}
+                    ? t('farm.telemetry.beaconBody.hideFull', { defaultValue: '收起完整请求体' })
+                    : t('farm.telemetry.beaconBody.viewFull', { defaultValue: '查看完整请求体' })}
                 </button>
 
                 {showFullBody ? (
                   fullBodyLoading ? (
                     <span className={styles.hintText} data-testid="farm-telemetry-drawer-full-body-loading">
-                      {t('farm.telemetry.fullBody.loading', { defaultValue: '正在加载完整 body…' })}
+                      {t('farm.telemetry.beaconBody.fullLoading', { defaultValue: '正在加载完整请求体…' })}
                     </span>
                   ) : fullBodyError || !fullBody ? (
-                    // 优雅降级：完整 body 端点不可用（旧编排器无此端点 / 存储未装配 /
-                    // 网络异常）时如实提示，不整页报错，上方截断预览仍在。
+                    // fail-soft：完整 body 端点不可用（旧编排器无此端点 / 存储未装配 /
+                    // 网络异常）时如实提示，不整页报错，摘要 + 预览仍在。
                     <span
                       className={styles.hintText}
                       data-testid="farm-telemetry-drawer-full-body-unavailable"
                     >
-                      {t('farm.telemetry.fullBody.unavailable', {
-                        defaultValue:
-                          '完整 body 暂不可用（编排器未提供该端点或查询失败），请参考上方截断预览。',
+                      {t('farm.telemetry.beaconBody.fullUnavailable', {
+                        defaultValue: '编排器暂不支持完整请求体（未提供该端点或查询失败），请参考上方预览。',
                       })}
                     </span>
                   ) : (
-                    <>
-                      <JsonPreview
-                        value={fullBody.redacted_body}
-                        totalBytes={fullBody.total_bytes}
-                        ariaLabel={t('farm.telemetry.fullBody.ariaLabel', {
-                          defaultValue: '完整请求体（脱敏）',
-                        })}
-                        testId="farm-telemetry-drawer-full-body-preview"
-                      />
-                      {fullBody.truncated ? (
-                        <span
-                          className={styles.hintText}
-                          data-testid="farm-telemetry-drawer-full-body-safety-truncated"
-                        >
-                          {t('farm.telemetry.fullBody.safetyTruncated', {
-                            defaultValue: '完整 body 已达 64K 安全上限被裁（脱敏在完整原文完成，不影响脱敏完整性）。',
-                          })}
-                        </span>
-                      ) : null}
-                    </>
+                    <BeaconBodyView
+                      raw={fullBody.redacted_body}
+                      variant="full"
+                      safetyTruncated={fullBody.truncated}
+                      testId="farm-telemetry-drawer-full-body-preview"
+                    />
                   )
                 ) : null}
               </div>
@@ -253,12 +305,12 @@ export function BeaconDetailBody({
         )}
       </div>
 
-      {/* process_signal（进程退出信号） */}
-      <div className={styles.drawerSection}>
-        <span className={styles.drawerSectionTitle}>
-          {t('farm.telemetry.drawerProcessSignal', { defaultValue: '进程退出信号（process_signal）' })}
-        </span>
-        {ps ? (
+      {/* process_signal（进程退出信号，有才显） */}
+      {ps ? (
+        <div className={styles.drawerSection}>
+          <span className={styles.drawerSectionTitle}>
+            {t('farm.telemetry.drawerProcessSignal', { defaultValue: '进程退出信号（process_signal）' })}
+          </span>
           <div className={styles.fieldSpreadGrid} data-testid="farm-telemetry-drawer-process-signal">
             <span className={styles.fieldSpreadLabel}>
               {t('farm.telemetry.psTerminated', { defaultValue: '已终止' })}
@@ -306,43 +358,153 @@ export function BeaconDetailBody({
               })}
             </span>
           </div>
-        ) : (
-          <div data-testid="farm-telemetry-drawer-process-signal-none">
-            <span className="status-badge muted">
-              {t('farm.telemetry.psNoSignal', { defaultValue: '无信号' })}
-            </span>
-            <p className={styles.drawerCaveat}>
-              {t('farm.telemetry.psNoSignalCaveat', {
-                defaultValue:
-                  '该信标未携带进程退出信号（当前仅 datadog_logs 的 terminated 事件会带）。无信号既不代表进程还活着、也不代表异常——只代表这条上报没有携带退出信号。',
-              })}
-            </p>
-          </div>
-        )}
-      </div>
+        </div>
+      ) : null}
     </div>
   );
 }
 
-// reported_fields 一行：label | value；空值显 '—'（诚实缺失）；masked=true 的字段
-// 由服务端已脱敏，仅加 tooltip 说明，不再前端二次处理。
-function FragmentRow({ label, value, masked }: { label: string; value: string; masked?: boolean }) {
+// reported_fields / 指纹摘要一行：label | value；空值显 '—'（诚实缺失）。masked=true 的
+// 字段由服务端已脱敏，仅加 tooltip 说明；hint 用于非脱敏但需要口径说明的字段（如
+// device_id 全量值）。
+function FragmentRow({
+  label,
+  value,
+  masked,
+  hint,
+}: {
+  label: string;
+  value: string;
+  masked?: boolean;
+  hint?: string;
+}) {
   const { t } = useTranslation();
+  const title = masked && value
+    ? t('farm.telemetry.maskedHint', {
+        defaultValue: '展示脱敏（前 12 + 后 4），完整值仅服务端保留',
+      })
+    : hint && value
+      ? hint
+      : undefined;
   return (
     <>
       <span className={styles.fieldSpreadLabel}>{label}</span>
-      <span
-        className={styles.fieldSpreadValue}
-        title={
-          masked && value
-            ? t('farm.telemetry.maskedHint', {
-                defaultValue: '展示脱敏（前 12 + 后 4），完整值仅服务端保留',
-              })
-            : undefined
-        }
-      >
+      <span className={styles.fieldSpreadValue} title={title}>
         {value || '—'}
       </span>
     </>
+  );
+}
+
+/**
+ * 单段脱敏 body 的按需渲染（预览或完整）。核心目标：**永不成墙**。
+ *   - 能 JSON.parse（对象/数组）→ react-json-view-lite 可折叠树；
+ *   - parse 不了：
+ *       · variant='preview'（预览被上游截断成非法 JSON）→ **不铺 raw**，只给一行中性
+ *         提示引导「查看完整请求体」；
+ *       · variant='full'（用户已显式点开完整 body，罕见非 JSON）→ on-demand 诚实展示
+ *         只读原文（此时用户主动要看全文，不算默认糊墙）。
+ * 工具条恒有「复制」按钮，复制**原始脱敏串**（不是美化后的），与后端脱敏一字不差。
+ */
+function BeaconBodyView({
+  raw,
+  variant,
+  safetyTruncated,
+  testId,
+}: {
+  raw: string;
+  variant: 'preview' | 'full';
+  safetyTruncated?: boolean;
+  testId: string;
+}) {
+  const { t } = useTranslation();
+
+  const parsed = useMemo<{ ok: true; data: object } | { ok: false }>(() => {
+    try {
+      const data: unknown = JSON.parse(raw);
+      return data !== null && typeof data === 'object' ? { ok: true, data } : { ok: false };
+    } catch {
+      return { ok: false };
+    }
+  }, [raw]);
+
+  const chars = raw.length;
+
+  return (
+    <div className={detailStyles.bodyView} data-testid={testId}>
+      <div className={detailStyles.bodyToolbar}>
+        <span className={detailStyles.bodySizeHint}>
+          {variant === 'preview'
+            ? t('farm.telemetry.beaconBody.previewSize', { defaultValue: '预览 · {{chars}} 字符', chars })
+            : t('farm.telemetry.beaconBody.fullSize', { defaultValue: '完整 · {{chars}} 字符', chars })}
+        </span>
+        <CopyBodyButton text={raw} testId={`${testId}-copy`} />
+      </div>
+
+      {parsed.ok ? (
+        <div className={detailStyles.jsonTree} data-testid={`${testId}-tree`}>
+          <JsonView
+            data={parsed.data}
+            shouldExpandNode={expandTelemetryBody}
+            clickToExpandNode
+            style={JSON_TREE_STYLE}
+          />
+        </div>
+      ) : variant === 'preview' ? (
+        // 截断预览：不铺 raw 密文墙，一行中性提示引导看完整请求体。
+        <span className={styles.hintText} data-testid={`${testId}-truncated-hint`}>
+          {raw.endsWith(TRUNCATION_MARKER)
+            ? t('farm.telemetry.beaconBody.previewTruncatedHint', {
+                defaultValue: '预览已在约 {{chars}} 字符处截断（JSON 不完整无法结构化），点「查看完整请求体」看全文。',
+                chars,
+              })
+            : t('farm.telemetry.beaconBody.previewNotJsonHint', {
+                defaultValue: '预览不是结构化 JSON（约 {{chars}} 字符），点「查看完整请求体」或复制原文查看。',
+                chars,
+              })}
+        </span>
+      ) : (
+        // 完整 body 罕见非 JSON：用户已显式点开、on-demand，诚实展示只读原文 + 复制。
+        <pre className={detailStyles.rawBody} data-testid={`${testId}-raw`}>
+          <code>{raw}</code>
+        </pre>
+      )}
+
+      {safetyTruncated ? (
+        <span className={styles.hintText} data-testid={`${testId}-safety-truncated`}>
+          {t('farm.telemetry.beaconBody.safetyTruncated', {
+            defaultValue: '完整请求体已在 64K 安全上限被裁（脱敏在完整原文完成，不影响脱敏完整性）。',
+          })}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+// 复制按钮：复制传入的原始脱敏串。成功后短暂显示「已复制」再自动回落（纯视觉反馈，
+// 短生命周期抽屉内不做卸载清理——React 18 卸载后 setState 不再告警）。
+function CopyBodyButton({ text, testId }: { text: string; testId?: string }) {
+  const { t } = useTranslation();
+  const [copied, setCopied] = useState(false);
+
+  const onCopy = async () => {
+    const ok = await copyToClipboard(text);
+    if (ok) {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      className={detailStyles.copyButton}
+      onClick={() => void onCopy()}
+      data-testid={testId}
+    >
+      {copied
+        ? t('farm.telemetry.beaconBody.copied', { defaultValue: '已复制' })
+        : t('farm.telemetry.beaconBody.copy', { defaultValue: '复制' })}
+    </button>
   );
 }
