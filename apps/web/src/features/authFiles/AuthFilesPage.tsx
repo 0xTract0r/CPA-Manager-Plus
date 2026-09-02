@@ -435,6 +435,7 @@ export function AuthFilesPage() {
     openAccountSettingsEditor,
     closeAccountSettingsEditor,
     handleAccountSettingsChange,
+    handleAccountSettingsProxyBlur,
     handleAccountSettingsSave,
   } = useAuthFilesAccountSettings({
     disableControls: connectionStatus !== 'connected',
@@ -2123,6 +2124,7 @@ export function AuthFilesPage() {
         onCopyText={copyTextWithNotification}
         onSave={() => void handleAccountSettingsSaveWithAuditReload()}
         onChange={handleAccountSettingsChange}
+        onProxyBlur={() => void handleAccountSettingsProxyBlur()}
       />
 
       <TestMessageModal

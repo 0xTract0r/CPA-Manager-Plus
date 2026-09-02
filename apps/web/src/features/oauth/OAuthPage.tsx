@@ -17,8 +17,18 @@ import { authFilesApi } from '@/services/api/authFiles';
 import type { AuthFileItem } from '@/types/authFile';
 import { vertexApi, type VertexImportResponse } from '@/services/api/vertex';
 import { copyToClipboard } from '@/utils/clipboard';
-import { findAccountsUsingProxy, runProxyPreflight } from '@/utils/proxyPreflight';
+import { findAccountsUsingProxy } from '@/utils/proxyPreflight';
+import {
+  precheckProxyInlineFormat,
+  runProxyInlineChecks,
+  isProxyInlineValidatedOk,
+  isProxyInlineChecking,
+  isProxyInlineInvalid,
+  type ProxyInlineValidationState,
+  type ProxyInlineStage,
+} from '@/utils/proxyInlineValidation';
 import { toProxyOwnerAccount } from '@/features/authFiles/constants';
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import type { PluginListEntry } from '@/types';
 import { getPluginTitle, resolvePluginAssetURL } from '@/features/plugins/pluginResources';
 import {
@@ -53,11 +63,11 @@ interface ProviderState {
   cancelling?: boolean;
   accountNote?: string;
   proxyUrl?: string;
-  proxyUrlError?: string;
-  /** 起 OAuth 前的连通性探针进行中标志（禁用按钮，防重复点）。 */
-  proxyProbing?: boolean;
-  /** 连通性探针通过后返回的出口 IP，用于就地展示。 */
-  proxyExitIp?: string;
+  /**
+   * 代理输入框的内联实时校验状态（失焦即验 + 就地展示过程/结果）。
+   * 主校验路径走这里；startAuth 只读该状态做提交门控，不再是唯一触发点。
+   */
+  proxyInline?: ProxyInlineValidationState;
   savedProxyUrl?: string;
   expiresAtMs?: number;
   expiresInSeconds?: number;
@@ -229,22 +239,6 @@ const resolveExpiresAtMs = (
     return Date.now() + expiresInSeconds * 1000;
   }
   return undefined;
-};
-
-const validateProxyUrl = (value: string, requiredMessage: string, invalidMessage: string): string | undefined => {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return requiredMessage;
-  }
-  try {
-    const parsed = new URL(trimmed);
-    if (!['http:', 'https:', 'socks5:', 'socks5h:'].includes(parsed.protocol) || !parsed.host) {
-      return invalidMessage;
-    }
-    return undefined;
-  } catch {
-    return invalidMessage;
-  }
 };
 
 const OAUTH_FLOW_STEPS: OAuthFlowStep[] = [
@@ -553,6 +547,88 @@ export function OAuthPage() {
     }));
   };
 
+  // 内联校验结果落地（并发防抖）：仅当输入框当前值仍与被校验值逐字符相同才写回，
+  // 避免旧探针结果覆盖用户已改动的新输入。
+  const applyProxyInlineResult = (
+    provider: OAuthProvider,
+    expectedValue: string,
+    next: ProxyInlineValidationState
+  ) => {
+    setStates((prev) => {
+      const prevState = prev[provider] ?? {};
+      if ((prevState.proxyUrl || '').trim() !== expectedValue) return prev;
+      return { ...prev, [provider]: { ...prevState, proxyInline: next } };
+    });
+  };
+
+  // 「校验中」阶段推进（查重 → 探针）：同样只在仍处于校验中且值未变时更新细分文案。
+  const setProxyInlineStage = (
+    provider: OAuthProvider,
+    expectedValue: string,
+    stage: ProxyInlineStage
+  ) => {
+    setStates((prev) => {
+      const prevState = prev[provider] ?? {};
+      if ((prevState.proxyUrl || '').trim() !== expectedValue) return prev;
+      const inline = prevState.proxyInline;
+      if (!inline || inline.phase !== 'checking') return prev;
+      return {
+        ...prev,
+        [provider]: {
+          ...prevState,
+          proxyInline: { ...inline, stage, checkedValue: expectedValue },
+        },
+      };
+    });
+  };
+
+  // 代理输入框失焦（blur）时的内联实时校验：格式（同步、不触网）→ 查重（L2）→ 连通性探针（L1）。
+  // 空值不就地报错（必填在提交时拦）；同值已校验 / 校验中时不重复触发（缓存上次结果、防网络刷屏）。
+  const handleProxyBlur = async (provider: OAuthProvider) => {
+    const current = statesRef.current[provider] ?? {};
+    const rawValue = current.proxyUrl || '';
+    const trimmed = rawValue.trim();
+    const precheck = precheckProxyInlineFormat(rawValue);
+    if (precheck === 'empty') {
+      updateProviderState(provider, { proxyInline: { phase: 'idle' } });
+      return;
+    }
+    if (precheck === 'invalid') {
+      updateProviderState(provider, {
+        proxyInline: {
+          phase: 'invalid',
+          message: t('auth_login.account_proxy_invalid'),
+          checkedValue: trimmed,
+        },
+      });
+      return;
+    }
+    // 同值已校验（成功/失败）或正在校验 → 不重复触发（对同一值缓存上次结果）。
+    const existing = current.proxyInline;
+    if (
+      existing &&
+      existing.checkedValue === trimmed &&
+      (existing.phase === 'ok' || existing.phase === 'invalid' || existing.phase === 'checking')
+    ) {
+      return;
+    }
+    updateProviderState(provider, {
+      proxyInline: { phase: 'checking', stage: 'dedup', checkedValue: trimmed },
+    });
+    const result = await runProxyInlineChecks({
+      proxyUrl: trimmed,
+      translate: (reason) => t(`proxy_preflight.reason_${reason}`),
+      checkDuplicate: async (value) => {
+        const filesResponse = await authFilesApi.list();
+        return findAccountsUsingProxy(value, (filesResponse.files || []).map(toProxyOwnerAccount));
+      },
+      duplicateMessage: (accounts) =>
+        t('proxy_preflight.duplicate_account', { accounts: accounts.join('、') }),
+      onStage: (stage) => setProxyInlineStage(provider, trimmed, stage),
+    });
+    applyProxyInlineResult(provider, trimmed, result);
+  };
+
   const clearPollingTimer = (provider: OAuthProvider) => {
     const timer = pollingTimers.current[provider];
     if (timer !== undefined) {
@@ -676,61 +752,66 @@ export function OAuthPage() {
   const startAuth = async (provider: OAuthProvider) => {
     const current = states[provider] || {};
     const proxyUrl = (current.proxyUrl || '').trim();
-    const proxyUrlError = validateProxyUrl(
-      proxyUrl,
-      t('auth_login.account_proxy_required'),
-      t('auth_login.account_proxy_invalid')
-    );
-    if (proxyUrlError) {
-      updateProviderState(provider, { proxyUrlError });
-      showNotification(proxyUrlError, 'warning');
+    // 提交门控：读取输入框内联实时校验状态。主校验路径在失焦时已跑，这里只做最后确认门，
+    // 不再是唯一触发点，也不再对已校验通过的值隐藏地重跑探针。
+    // 空 / 格式非法 → 就地标红输入框并拦住（不触网）。
+    const precheck = precheckProxyInlineFormat(current.proxyUrl || '');
+    if (precheck === 'empty' || precheck === 'invalid') {
+      const message =
+        precheck === 'empty'
+          ? t('auth_login.account_proxy_required')
+          : t('auth_login.account_proxy_invalid');
+      updateProviderState(provider, {
+        proxyInline: { phase: 'invalid', message, checkedValue: proxyUrl },
+      });
+      showNotification(message, 'warning');
       return;
     }
-    // L2 查重（本地秒级，放在慢的连通性探针之前 fail-fast）：新增账号填的代理若已被现有账号
-    // 占用，直接阻断——两个账号共用同一出口会导致 IP 聚类被上游关联。查重不过就不进探针、不进
-    // OAuth。查重纯客户端比对现有账号列表（列表已内联下发 account_settings.proxy_url），不新增
-    // 后端；列表拉取失败不阻断新增（后端仍兜底），降级放行到连通性探针。
-    try {
-      const filesResponse = await authFilesApi.list();
-      const conflicts = findAccountsUsingProxy(
-        proxyUrl,
-        (filesResponse.files || []).map(toProxyOwnerAccount)
+    // 正在校验 → 拦住并提示「代理验证中，请稍候」，不放行。
+    if (isProxyInlineChecking(current.proxyInline, proxyUrl)) {
+      showNotification(t('proxy_preflight.validating_wait'), 'warning');
+      return;
+    }
+    // 已校验失败（同值）→ 拦住并提示（错误已就地展示），不放行、也不重跑探针。
+    if (isProxyInlineInvalid(current.proxyInline, proxyUrl)) {
+      showNotification(
+        current.proxyInline?.message || t('auth_login.account_proxy_invalid'),
+        'error'
       );
-      if (conflicts.length > 0) {
-        const message = t('proxy_preflight.duplicate_account', {
-          accounts: conflicts.join('、'),
-        });
-        updateProviderState(provider, { proxyUrlError: message, proxyExitIp: undefined });
-        showNotification(message, 'error');
+      return;
+    }
+    // 已校验通过（同值）→ 直接放行；否则（未校验 / 值已变更后未重验）→ 就地补跑一次完整
+    // 校验作为最后确认门（fail-closed）：查重（L2）先于连通性探针（L1），不过则不进 OAuth。
+    if (!isProxyInlineValidatedOk(current.proxyInline, proxyUrl)) {
+      updateProviderState(provider, {
+        proxyInline: { phase: 'checking', stage: 'dedup', checkedValue: proxyUrl },
+      });
+      const result = await runProxyInlineChecks({
+        proxyUrl,
+        translate: (reason) => t(`proxy_preflight.reason_${reason}`),
+        checkDuplicate: async (value) => {
+          const filesResponse = await authFilesApi.list();
+          return findAccountsUsingProxy(
+            value,
+            (filesResponse.files || []).map(toProxyOwnerAccount)
+          );
+        },
+        duplicateMessage: (accounts) =>
+          t('proxy_preflight.duplicate_account', { accounts: accounts.join('、') }),
+        onStage: (stage) => setProxyInlineStage(provider, proxyUrl, stage),
+      });
+      applyProxyInlineResult(provider, proxyUrl, result);
+      if (result.phase !== 'ok') {
+        showNotification(result.message || t('auth_login.account_proxy_invalid'), 'error');
         return;
       }
-    } catch {
-      // 忽略：查重列表不可用时降级放行，交由后续连通性探针 + 后端兜底。
+      if (result.exitIp) {
+        showNotification(
+          t('proxy_preflight.connected_with_ip', { ip: result.exitIp }),
+          'success'
+        );
+      }
     }
-    // 格式过后、真正起 OAuth 前，先做后端连通性探针：不通就不进入 OAuth（fail-closed），
-    // 通了则展示出口 IP 再继续。探测期间置 proxyProbing，禁用登录按钮防重复点。
-    updateProviderState(provider, {
-      proxyProbing: true,
-      proxyUrlError: undefined,
-      proxyExitIp: undefined,
-    });
-    const preflight = await runProxyPreflight(proxyUrl, {
-      formatValidator: () => ({ valid: true }),
-      translate: (reason) => t(`proxy_preflight.reason_${reason}`),
-    });
-    if (!preflight.ok) {
-      updateProviderState(provider, {
-        proxyProbing: false,
-        proxyUrlError: preflight.message,
-      });
-      showNotification(preflight.message, 'error');
-      return;
-    }
-    updateProviderState(provider, { proxyProbing: false, proxyExitIp: preflight.exitIp });
-    showNotification(
-      t('proxy_preflight.connected_with_ip', { ip: preflight.exitIp }),
-      'success'
-    );
     clearPollingTimer(provider);
     updateProviderState(provider, {
       url: undefined,
@@ -739,7 +820,6 @@ export function OAuthPage() {
       polling: true,
       cancelling: false,
       error: undefined,
-      proxyUrlError: undefined,
       savedProxyUrl: undefined,
       expiresAtMs: undefined,
       expiresInSeconds: undefined,
@@ -999,8 +1079,8 @@ export function OAuthPage() {
                 extra={
                   <Button
                     onClick={() => startAuth(provider.id)}
-                    loading={Boolean(state.polling) || Boolean(state.proxyProbing)}
-                    disabled={Boolean(state.proxyProbing)}
+                    loading={Boolean(state.polling) || state.proxyInline?.phase === 'checking'}
+                    disabled={state.proxyInline?.phase === 'checking'}
                   >
                     {loginButtonLabel}
                   </Button>
@@ -1022,24 +1102,47 @@ export function OAuthPage() {
                       label={t('auth_login.account_proxy_label')}
                       hint={t('auth_login.account_proxy_hint')}
                       value={state.proxyUrl || ''}
-                      error={state.proxyUrlError}
-                      disabled={Boolean(state.polling) || Boolean(state.proxyProbing)}
+                      error={
+                        state.proxyInline?.phase === 'invalid'
+                          ? state.proxyInline.message
+                          : undefined
+                      }
+                      disabled={Boolean(state.polling) || state.proxyInline?.phase === 'checking'}
                       onChange={(e) =>
                         updateProviderState(provider.id, {
                           proxyUrl: e.target.value,
-                          proxyUrlError: undefined,
-                          proxyExitIp: undefined,
+                          // 编辑即清空上次内联校验结果（回 idle），失焦后重新校验。
+                          proxyInline: { phase: 'idle' },
                         })
                       }
+                      onBlur={() => void handleProxyBlur(provider.id)}
                       placeholder={t('auth_login.account_proxy_placeholder')}
+                      data-testid={`oauth-proxy-url-input-${provider.id}`}
                     />
                   </div>
-                  {state.proxyProbing && (
-                    <div className={styles.connectionLabel}>{t('proxy_preflight.probing')}</div>
+                  {/* 代理内联校验状态区：紧邻输入框就地展示「验证中 / 已连通(出口 IP)」；
+                      失败文案走 Input 自身的 error 红框（不重复展示）。 */}
+                  {state.proxyInline?.phase === 'checking' && (
+                    <div
+                      className={`status-badge muted ${styles.proxyInlineStatus}`}
+                      data-testid={`oauth-proxy-status-${provider.id}`}
+                      data-proxy-phase="checking"
+                    >
+                      <LoadingSpinner size={12} />
+                      {state.proxyInline.stage === 'dedup'
+                        ? t('proxy_preflight.checking_dedup', { defaultValue: '正在查重代理…' })
+                        : t('proxy_preflight.probing')}
+                    </div>
                   )}
-                  {!state.proxyProbing && state.proxyExitIp && (
-                    <div className={styles.connectionLabel}>
-                      {t('proxy_preflight.connected_with_ip', { ip: state.proxyExitIp })}
+                  {state.proxyInline?.phase === 'ok' && (
+                    <div
+                      className="status-badge success"
+                      data-testid={`oauth-proxy-status-${provider.id}`}
+                      data-proxy-phase="ok"
+                    >
+                      {state.proxyInline.exitIp
+                        ? `✓ ${t('proxy_preflight.connected_with_ip', { ip: state.proxyInline.exitIp })}`
+                        : `✓ ${t('proxy_preflight.connected', { defaultValue: '连通正常' })}`}
                     </div>
                   )}
                   {(() => {

@@ -17,6 +17,14 @@ import { authFilesApi, type AuthFileFieldsPatch } from '@/services/api';
 import { normalizeAuthIndex } from '@/utils/usage';
 import { findAccountsUsingProxy, runProxyPreflight } from '@/utils/proxyPreflight';
 import {
+  precheckProxyInlineFormat,
+  runProxyInlineChecks,
+  isProxyInlineValidatedOk,
+  isProxyInlineChecking,
+  isProxyInlineInvalid,
+  type ProxyInlineValidationState,
+} from '@/utils/proxyInlineValidation';
+import {
   normalizeProviderKey,
   parsePriorityValue,
   readAuthFileWebsockets,
@@ -140,6 +148,13 @@ export type AccountSettingsEditorState = {
    * 本地化文案（供弹窗就地标红展示）；为 null 表示无冲突。改动 proxy_url 时清空。
    */
   proxyUrlDuplicateError?: string | null;
+  /**
+   * 代理输入框的内联实时校验状态（失焦即验 + 就地展示过程/结果）。
+   * 主校验路径走这里：失焦跑「查重(L2) + 连通性探针(L1)」；保存只读该状态做提交门控，
+   * 不再把探针藏在保存里作为唯一触发点。连通失败文案承载在此（invalid.message），
+   * 查重命中仍写入 proxyUrlDuplicateError、格式非法仍写入 proxyUrlError（复用既有就地标红）。
+   */
+  proxyInline?: ProxyInlineValidationState;
   note: string;
   disabled: boolean;
   refreshEnabled: boolean;
@@ -199,6 +214,8 @@ export type UseAuthFilesAccountSettingsResult = {
     field: AccountSettingsEditorField,
     value: AccountSettingsEditorFieldValue
   ) => void;
+  /** 代理输入框失焦（blur）时触发的内联实时校验（格式→查重→连通性探针 + 就地展示）。 */
+  handleAccountSettingsProxyBlur: () => Promise<void>;
   handleAccountSettingsSave: () => Promise<void>;
 };
 
@@ -661,6 +678,8 @@ export function useAuthFilesAccountSettings(
           proxyUrlError: computeProxyUrlError(proxyUrl),
           // 改动代理即清除上一次的查重冲突提示，重新编辑后需再次查重才知是否仍冲突。
           proxyUrlDuplicateError: null,
+          // 编辑即清空上次内联校验结果（回 idle），失焦后重新校验（防止旧「已连通/连通失败」残留）。
+          proxyInline: { phase: 'idle' },
         };
       }
       if (field === 'note') return { ...prev, note: String(value) };
@@ -724,6 +743,90 @@ export function useAuthFilesAccountSettings(
         return { ...prev, rawJsonText, rawJsonTouched: true, rawJsonError };
       }
       return prev;
+    });
+  };
+
+  // 代理输入框失焦（blur）时的内联实时校验：格式（同步、不触网）→ 查重（L2）→ 连通性探针（L1）。
+  // 空 → 必填错误由 computeProxyUrlError 在 change 时置位，这里只清内联态；格式非法 → 立即就地
+  // 标红（proxyUrlError='invalid'）不触网；未变更（与打开基线逐字符相同）→ 视为已校验通过、跳过
+  // 查重与探针（该值此前已落库）；否则跑查重 + 探针并就地展示过程/结果。并发防抖：结果只在输入
+  // 值仍一致时写回，避免旧探针覆盖用户已改动的新输入。
+  const handleAccountSettingsProxyBlur = async () => {
+    const editor = accountSettingsEditor;
+    if (!editor) return;
+    const fileName = editor.fileName;
+    const trimmed = editor.proxyUrl.trim();
+    const baseline = (editor.proxyUrlBaseline || '').trim();
+
+    const precheck = precheckProxyInlineFormat(editor.proxyUrl);
+    if (precheck === 'empty') {
+      setAccountSettingsEditor((prev) =>
+        prev && prev.fileName === fileName ? { ...prev, proxyInline: { phase: 'idle' } } : prev
+      );
+      return;
+    }
+    if (precheck === 'invalid') {
+      setAccountSettingsEditor((prev) =>
+        prev && prev.fileName === fileName
+          ? { ...prev, proxyUrlError: 'invalid', proxyInline: { phase: 'idle' } }
+          : prev
+      );
+      return;
+    }
+    // 未变更放行：与打开时基线逐字符相同 → 直接标为已连通（无出口 IP，不重复探针）。
+    if (trimmed === baseline) {
+      setAccountSettingsEditor((prev) =>
+        prev && prev.fileName === fileName
+          ? {
+              ...prev,
+              proxyUrlError: null,
+              proxyUrlDuplicateError: null,
+              proxyInline: { phase: 'ok', exitIp: '', checkedValue: trimmed },
+            }
+          : prev
+      );
+      return;
+    }
+    // 同值已校验（成功）/ 校验中 → 不重复触发（对同一值缓存上次结果、防网络刷屏）。
+    const existing = editor.proxyInline;
+    if (
+      existing &&
+      existing.checkedValue === trimmed &&
+      (existing.phase === 'ok' || existing.phase === 'checking')
+    ) {
+      return;
+    }
+    // 进入校验中：清历史错误，置查重阶段。
+    setAccountSettingsEditor((prev) =>
+      prev && prev.fileName === fileName
+        ? {
+            ...prev,
+            proxyUrlError: null,
+            proxyUrlDuplicateError: null,
+            proxyInline: { phase: 'checking', stage: 'dedup', checkedValue: trimmed },
+          }
+        : prev
+    );
+    const result = await runProxyInlineChecks({
+      proxyUrl: trimmed,
+      translate: (reason) => t(`proxy_preflight.reason_${reason}`),
+      // 查重排除自身（编辑自身账号代理不算与自己重复）。
+      checkDuplicate: (value) =>
+        findAccountsUsingProxy(value, accounts.map(toProxyOwnerAccount), {
+          excludeName: fileName,
+        }),
+      duplicateMessage: (list) =>
+        t('proxy_preflight.duplicate_account', { accounts: list.join('、') }),
+      onStage: (stage) =>
+        setAccountSettingsEditor((prev) => {
+          if (!prev || prev.fileName !== fileName || prev.proxyUrl.trim() !== trimmed) return prev;
+          if (prev.proxyInline?.phase !== 'checking') return prev;
+          return { ...prev, proxyInline: { ...prev.proxyInline, stage, checkedValue: trimmed } };
+        }),
+    });
+    setAccountSettingsEditor((prev) => {
+      if (!prev || prev.fileName !== fileName || prev.proxyUrl.trim() !== trimmed) return prev;
+      return { ...prev, proxyInline: result };
     });
   };
 
@@ -802,58 +905,77 @@ export function useAuthFilesAccountSettings(
       return;
     }
 
-    // L2 查重（本地秒级，先于慢的连通性探针 fail-fast）：仅当代理相对基线发生变更（或新填）时
-    // 才查重——未变更=账号自身既有值，不算重复，直接放行。命中其它现有账号占用即阻断，不进探针、
-    // 不落库（两个账号共用同一出口会 IP 聚类被关联）。excludeName 排除自身作纵深防御。
-    const trimmedProxy = editor.proxyUrl.trim();
-    const baselineProxy = (editor.proxyUrlBaseline || '').trim();
-    if (trimmedProxy && trimmedProxy !== baselineProxy) {
-      const conflicts = findAccountsUsingProxy(
-        editor.proxyUrl,
-        accounts.map(toProxyOwnerAccount),
-        { excludeName: editor.fileName }
-      );
-      if (conflicts.length > 0) {
-        const message = t('proxy_preflight.duplicate_account', {
-          accounts: conflicts.join('、'),
-        });
-        setAccountSettingsEditor((prev) =>
-          prev && prev.fileName === editor.fileName
-            ? { ...prev, proxyUrlDuplicateError: message }
-            : prev
-        );
-        showNotification(message, 'error');
-        return;
-      }
-    }
-
-    // 格式过后再做后端连通性探针：不通就不落库（fail-closed），把 proxy_url 标红并提示；
-    // 通了展示出口 IP 再继续保存。探测期间置 saving，禁用保存/关闭按钮防重复提交。
-    // 仅当 proxy_url 相对打开时的原值发生变更（或新填）时才探针：未变更（逐字符相同）直接放行，
-    // 避免用户只改其它字段时被临时不通的旧代理阻断（该值此前已校验/已落库，后端仍兜底）。
-    setAccountSettingsEditor((prev) =>
-      prev && prev.fileName === editor.fileName ? { ...prev, saving: true } : prev
-    );
-    const preflight = await runProxyPreflight(editor.proxyUrl, {
-      formatValidator: () => ({ valid: true }),
-      translate: (reason) => t(`proxy_preflight.reason_${reason}`),
-      previousProxyUrl: editor.proxyUrlBaseline,
-    });
-    if (!preflight.ok) {
-      setAccountSettingsEditor((prev) =>
-        prev && prev.fileName === editor.fileName
-          ? { ...prev, saving: false, proxyUrlError: 'invalid' }
-          : prev
-      );
-      showNotification(preflight.message, 'error');
+    // 提交门控：主校验路径已在失焦（blur）时跑过，这里只读内联校验状态做最后确认门。
+    const trimmedProxyValue = editor.proxyUrl.trim();
+    // 正在校验 → 拦住并提示「代理验证中，请稍候」，不落库。
+    if (isProxyInlineChecking(editor.proxyInline, trimmedProxyValue)) {
+      showNotification(t('proxy_preflight.validating_wait'), 'error');
       return;
     }
-    // 未变更放行时不做探针、无出口 IP，跳过「已连通(出口 IP)」提示；只有真正探针成功才展示。
-    if (preflight.exitIp) {
+    // 已校验失败（同值）→ 拦住（错误已就地展示），不落库、也不重跑探针。
+    if (isProxyInlineInvalid(editor.proxyInline, trimmedProxyValue)) {
       showNotification(
-        t('proxy_preflight.connected_with_ip', { ip: preflight.exitIp }),
-        'success'
+        editor.proxyInline?.message || t('auth_files.proxy_url_invalid_error'),
+        'error'
       );
+      return;
+    }
+    // 已校验通过（同值）→ 直接放行，不再隐藏地重跑查重 / 探针。否则（未校验 / 值变更后未重验，
+    // 例如未经 blur 直接调用保存）→ 就地补跑完整校验作为最后确认门（fail-closed）。
+    if (!isProxyInlineValidatedOk(editor.proxyInline, trimmedProxyValue)) {
+      // L2 查重（本地秒级，先于慢的连通性探针 fail-fast）：仅当代理相对基线发生变更（或新填）时
+      // 才查重——未变更=账号自身既有值，不算重复，直接放行。命中其它现有账号占用即阻断，不进探针、
+      // 不落库（两个账号共用同一出口会 IP 聚类被关联）。excludeName 排除自身作纵深防御。
+      const trimmedProxy = editor.proxyUrl.trim();
+      const baselineProxy = (editor.proxyUrlBaseline || '').trim();
+      if (trimmedProxy && trimmedProxy !== baselineProxy) {
+        const conflicts = findAccountsUsingProxy(
+          editor.proxyUrl,
+          accounts.map(toProxyOwnerAccount),
+          { excludeName: editor.fileName }
+        );
+        if (conflicts.length > 0) {
+          const message = t('proxy_preflight.duplicate_account', {
+            accounts: conflicts.join('、'),
+          });
+          setAccountSettingsEditor((prev) =>
+            prev && prev.fileName === editor.fileName
+              ? { ...prev, proxyUrlDuplicateError: message }
+              : prev
+          );
+          showNotification(message, 'error');
+          return;
+        }
+      }
+
+      // 格式过后再做后端连通性探针：不通就不落库（fail-closed），把 proxy_url 标红并提示；
+      // 通了展示出口 IP 再继续保存。探测期间置 saving，禁用保存/关闭按钮防重复提交。
+      // 仅当 proxy_url 相对打开时的原值发生变更（或新填）时才探针：未变更（逐字符相同）直接放行，
+      // 避免用户只改其它字段时被临时不通的旧代理阻断（该值此前已校验/已落库，后端仍兜底）。
+      setAccountSettingsEditor((prev) =>
+        prev && prev.fileName === editor.fileName ? { ...prev, saving: true } : prev
+      );
+      const preflight = await runProxyPreflight(editor.proxyUrl, {
+        formatValidator: () => ({ valid: true }),
+        translate: (reason) => t(`proxy_preflight.reason_${reason}`),
+        previousProxyUrl: editor.proxyUrlBaseline,
+      });
+      if (!preflight.ok) {
+        setAccountSettingsEditor((prev) =>
+          prev && prev.fileName === editor.fileName
+            ? { ...prev, saving: false, proxyUrlError: 'invalid' }
+            : prev
+        );
+        showNotification(preflight.message, 'error');
+        return;
+      }
+      // 未变更放行时不做探针、无出口 IP，跳过「已连通(出口 IP)」提示；只有真正探针成功才展示。
+      if (preflight.exitIp) {
+        showNotification(
+          t('proxy_preflight.connected_with_ip', { ip: preflight.exitIp }),
+          'success'
+        );
+      }
     }
 
     const { request, error } = buildPatchRequest(editor);
@@ -925,6 +1047,7 @@ export function useAuthFilesAccountSettings(
     openAccountSettingsEditor,
     closeAccountSettingsEditor,
     handleAccountSettingsChange,
+    handleAccountSettingsProxyBlur,
     handleAccountSettingsSave,
   };
 }

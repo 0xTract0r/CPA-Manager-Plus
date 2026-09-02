@@ -357,6 +357,11 @@
   color: var(--text-primary);
 }
 
+// 代理输入框内联校验的「验证中」状态区：紧邻输入框，转圈 + 文案就地展示。
+.proxyInlineStatus {
+  margin-top: calc(-1 * #{$spacing-sm});
+}
+
 .keyValueList {
   display: flex;
   flex-direction: column;
