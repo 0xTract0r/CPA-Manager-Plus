@@ -1237,6 +1237,36 @@
   border: 1px solid color-mix(in srgb, var(--danger-color) 35%, transparent);
 }
 
+// P7（account-session-count-display）细粒度订阅等级徽标（max_20x/max_5x/pro/
+// plus/unknown）。复用 codexStatusBadge 的尺寸/间距基线，配一套独立配色——
+// known（已识别档位）用中性 info 配色，unknown（core 已确认无法识别）单独
+// 用弱化的 muted 配色，与"数据源缺失不渲染"（返回 null 不展示徽标）区分开。
+.tierBadge {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  letter-spacing: 0;
+}
+
+.tierBadgeKnown {
+  color: var(--primary-color);
+  background: var(--color-primary-light-9);
+  border: 1px solid var(--color-primary-light-7);
+}
+
+.tierBadgeUnknown {
+  color: var(--text-tertiary);
+  background: color-mix(in srgb, var(--surface-subtle) 86%, transparent);
+  border: 1px solid var(--border-subtle);
+}
+
 .subscriptionError {
   display: flex;
   align-items: flex-start;
@@ -1608,6 +1638,77 @@
 }
 
 .speedReadingsEmpty {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+}
+
+// P7（account-session-count-display）账号级会话计数（总计 · 活跃 · 已关闭）。
+// 视觉语言直接复用 speedReadings 家族（同款 label/value/grid 排版），不新造
+// 样式框架——两个区块本就并排出现在同一张卡片，保持一致的密度和字号。
+.sessionSummary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sessionSummaryCompact {
+  gap: 2px;
+}
+
+.sessionSummaryHeader {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.sessionSummaryLabel {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.sessionSummaryGrid {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 12px;
+  min-width: 0;
+}
+
+.sessionSummaryCompact .sessionSummaryGrid {
+  gap: 4px 8px;
+}
+
+.sessionSummaryItem {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+}
+
+.sessionSummaryItemLabel {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.sessionSummaryItemValue {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.sessionSummaryEmpty {
   font-size: 11px;
   font-weight: 500;
   color: var(--text-tertiary);

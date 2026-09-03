@@ -52,11 +52,24 @@ import {
   type AuthFileReauthState,
 } from '@/features/authFiles/hooks/useAuthFilesReauth';
 import { AccountSpeedReadings } from '@/features/authFiles/components/AccountSpeedReadings';
+import { AccountSessionSummary } from '@/features/authFiles/components/AccountSessionSummary';
+import { deriveSubscriptionTierBadge } from '@/features/authFiles/model/accountSessionSummary';
 import { AuthFileQuotaSection } from '@/features/authFiles/components/AuthFileQuotaSection';
 import styles from '@/features/authFiles/AuthFilesPage.module.scss';
 import reauthStyles from '@/features/authFiles/components/AuthFileReauthInline.module.scss';
 
 const HEALTHY_STATUS_MESSAGES = new Set(['ok', 'healthy', 'ready', 'success', 'available']);
+
+// P7（account-session-count-display）：细粒度订阅等级徽标的英文 defaultValue
+// 兜底文案（i18n 资源未加载/未翻译时的最后一道回退），键与
+// deriveSubscriptionTierBadge 返回的 tier 值一一对应，人类可读而非裸枚举值。
+const SUBSCRIPTION_TIER_BADGE_DEFAULT_LABELS: Record<string, string> = {
+  max_20x: 'Max 20x',
+  max_5x: 'Max 5x',
+  pro: 'Pro',
+  plus: 'Plus',
+  unknown: 'Unknown',
+};
 
 export type AuthFileCardProps = {
   file: AuthFileItem;
@@ -419,6 +432,26 @@ export function AuthFileCard(props: AuthFileCardProps) {
   const hasRecentActivity = fileStats.success > 0 || statusData.totalSuccess > 0;
   const showSpeedReadings = !isRuntimeOnly && (isCodexAccount || hasRecentActivity);
 
+  // P7（account-session-count-display）：细粒度订阅等级徽标——只对 core 实际
+  // 投影该字段的 provider（claude/codex）展示，null 时（其它 provider，或
+  // adaptive_scheduling 整体缺失）不渲染，避免刷屏一堆无信息量的占位。
+  const subscriptionTierBadge = deriveSubscriptionTierBadge(
+    resolvedProvider,
+    file.adaptive_scheduling
+  );
+  const subscriptionTierBadgeLabel = subscriptionTierBadge
+    ? t(`auth_files.subscription_tier_badge_${subscriptionTierBadge.tier}`, {
+        defaultValue: SUBSCRIPTION_TIER_BADGE_DEFAULT_LABELS[subscriptionTierBadge.tier],
+      })
+    : '';
+  // 会话计数区块展示给所有非虚拟账号（不像速度读数那样限定"有活跃流量"——
+  // 会话数本身就是"有没有活跃/近期会话"的答案，空态由组件内部呈现，不需要
+  // 卡片层面预先过滤）。loading 复用逐账号「刷新状态」的既有 loading 信号：
+  // 该请求正在刷新这条账号记录，展示上把会话数据块降级为"统计中…"占位，
+  // 避免继续渲染即将被替换的旧计数。
+  const showSessionSummary = !isRuntimeOnly;
+  const isSessionSummaryLoading = statusRefreshing[file.name] === true;
+
   return (
     <div
       className={`${styles.fileCard} ${compact ? styles.fileCardCompact : ''} ${providerCardClass} ${selected ? styles.fileCardSelected : ''} ${file.disabled ? styles.fileCardDisabled : ''}`}
@@ -501,6 +534,19 @@ export function AuthFileCard(props: AuthFileCardProps) {
                   >
                     {t('antigravity_subscription.refresh_short')}
                   </button>
+                )}
+                {subscriptionTierBadge && (
+                  <span
+                    className={`${styles.tierBadge} ${subscriptionTierBadge.known ? styles.tierBadgeKnown : styles.tierBadgeUnknown}`}
+                    title={t('auth_files.subscription_tier_badge_title', {
+                      tier: subscriptionTierBadgeLabel,
+                      defaultValue: 'Subscription tier: {{tier}}',
+                    })}
+                    data-testid={`auth-file-tier-badge-${file.name}`}
+                    data-tier={subscriptionTierBadge.tier}
+                  >
+                    {subscriptionTierBadgeLabel}
+                  </span>
                 )}
                 {codexStatusBadges.map((badge) => {
                   const label = t(badge.labelKey, {
@@ -824,6 +870,14 @@ export function AuthFileCard(props: AuthFileCardProps) {
               <AccountSpeedReadings
                 accountName={file.name}
                 authIndex={authIndexKey}
+                compact={compact}
+              />
+            )}
+
+            {showSessionSummary && (
+              <AccountSessionSummary
+                adaptiveScheduling={file.adaptive_scheduling}
+                loading={isSessionSummaryLoading}
                 compact={compact}
               />
             )}

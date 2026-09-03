@@ -285,10 +285,56 @@ export interface AuthFileItem {
   geminiVirtualProject?: string;
   recent_requests?: RecentRequestBucket[];
   recentRequests?: RecentRequestBucket[];
+  /**
+   * P7：账号会话计数 + 细粒度订阅等级只读投影，见 AuthFileAdaptiveScheduling
+   * 类型注释。core 恒下发该顶层 key（即便个别嵌套值为 null），但跨版本/过渡
+   * 期部署仍可能整体缺失该 key（部署的 core 落后于本次改动，仓库里已有先例——
+   * 见 farm_enrolled/telemetry_alive 同款"编排器透传未落地前恒缺省"约定）。
+   * 前端消费方必须把 undefined/null 当作"暂不可用"处理，不得当 0 或"未知"
+   * 展示——那是两种不同的降级语义（数据源缺失 vs 数据源确认无法识别）。
+   */
+  adaptive_scheduling?: AuthFileAdaptiveScheduling | null;
   [key: string]: unknown;
 }
 
 export interface AuthFilesResponse {
   files: AuthFileItem[];
   total?: number;
+}
+
+/**
+ * P7（account-session-count-display）：账号维度会话计数 + 细粒度订阅等级只读
+ * 投影（core `entry["adaptive_scheduling"]`，见 core
+ * internal/api/handlers/management/auth_files_adaptive_scheduling.go
+ * buildAdaptiveSchedulingView）。additive、namespaced，core 恒下发该顶层 key。
+ *
+ * 本期前端只消费 subscription_tier + sessions_{total,active,closed} 四个字段；
+ * 该投影下还有 quota_utilization / first_production_at / warmup 等更多字段，
+ * 本期不消费，用 `[key: string]: unknown` 兜底透传，避免类型收窄丢数据。
+ */
+export interface AuthFileAdaptiveScheduling {
+  /**
+   * 细粒度订阅档位：
+   *  - Claude: "max_20x" | "max_5x" | "pro" | "unknown"
+   *  - Codex: "pro" | "plus" | "unknown"
+   *  - 其它 provider：core 恒回退 "unknown"（未覆盖 provider）。
+   * core 对无法识别的原始档位值一律落 "unknown"，绝不臆造成任一已知档位；
+   * 前端消费同样遵守这一契约——非 max_20x/max_5x/pro/plus 的任何值都当
+   * 「未知」展示，不做模糊匹配。
+   */
+  subscription_tier?: string;
+  /**
+   * 该账号索引下观测到的去重 SessionID 总数（P6，core
+   * internal/usage.SessionAggregateForAuthIndex，按空闲窗口分桶）。
+   * 恒为非负整数；0 是「确有其事的 0」（真的没有会话），不是「未知」——
+   * core 侧「无采集/无会话」两种情况都报 0，不像 quota_utilization 那样
+   * 用 null 区分「缺快照」。前端展示 0 时必须用「暂无会话数据」文案，不能
+   * 直接渲染数字 0（容易被误读成「刚发生过 0 次」而非「压根没数据」）。
+   */
+  sessions_total?: number;
+  /** 按空闲窗口判定仍活跃的会话数（<= sessions_total）。 */
+  sessions_active?: number;
+  /** 按空闲窗口判定已关闭（超时）的会话数（<= sessions_total）。 */
+  sessions_closed?: number;
+  [key: string]: unknown;
 }
