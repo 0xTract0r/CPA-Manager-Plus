@@ -38,10 +38,20 @@ import styles from './FarmTelemetryPanel.module.scss';
 // 渲染分支本身，只影响提示文案的准确性。
 const TRUNCATION_MARKER = '…(truncated)';
 
-// react-json-view-lite 默认展开深度：顶层 + 第一层展开，更深层折叠。statsig_eval /
-// event_logging 这类遥测体通常两层内即见关键字段；与 AuthFilesAccountSettingsModal
-// 的只读 JSON 树同款 `level < 2` 口径。
-const expandTelemetryBody = (level: number) => level < 2;
+// react-json-view-lite 的展开深度控制，**按 variant 分档**（此前 preview / full 共用
+// `level < 2`，导致点开「查看完整请求体」后每个 event 仍被折叠成一排空 `{}`——见下）：
+//
+//   - preview：顶层 + 第一层展开、更深层折叠。body_preview 常是被上游截断的小体，浅
+//     展开避免列表在抽屉里过度铺开；与 AuthFilesAccountSettingsModal 只读树同款
+//     `level < 2` 口径。
+//   - full：用户已显式点「查看完整请求体」——**全展开**。遥测完整体形如
+//     `{"events":[{"event_type":…,"event_data":{"event_name":…,"model":…,"device_id":…}}]}`：
+//     root=level0、events 数组=level1、**每个 event 对象=level2**、event_data=level3。
+//     `level < 2` 会把 level2 的每个 event 折叠掉，而 react-json-view-lite 把折叠对象
+//     渲染成**字面空 `{}`**（空 span、无省略号），于是一段合法 JSON 看着像一排空对象、
+//     指纹字段全不可见。full 视图恒展开，确保 event_name/model/device_id/env 等真实可读。
+const expandTelemetryBodyPreview = (level: number) => level < 2;
+const expandTelemetryBodyFull = () => true;
 
 // react-json-view-lite 主题类名映射（复用 FarmBeaconDetailBody.module.scss 内自带的
 // jsonTree* 皮肤，与 AuthFilesAccountSettingsModal 的只读 JSON 树同款设计 token）。
@@ -445,7 +455,7 @@ function BeaconBodyView({
         <div className={detailStyles.jsonTree} data-testid={`${testId}-tree`}>
           <JsonView
             data={parsed.data}
-            shouldExpandNode={expandTelemetryBody}
+            shouldExpandNode={variant === 'full' ? expandTelemetryBodyFull : expandTelemetryBodyPreview}
             clickToExpandNode
             style={JSON_TREE_STYLE}
           />
