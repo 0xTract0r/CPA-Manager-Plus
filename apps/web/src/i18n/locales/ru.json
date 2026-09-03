@@ -4288,6 +4288,7 @@
       "detailFreshnessTitle": "Актуальность состояния",
       "accountHealthColumn": "Статус аутентификации аккаунта",
       "authState_healthy": "Аутентифицирован",
+      "authState_initializing": "Инициализация",
       "authState_needs_reauth": "Требуется повторная аутентификация",
       "authState_auto_quarantined": "Автоматически изолирован",
       "authState_operator_disabled": "Отключён",

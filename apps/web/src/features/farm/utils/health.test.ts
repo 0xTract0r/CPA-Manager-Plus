@@ -319,6 +319,7 @@ describe('telemetryAliveStateToBadgeVariant', () => {
 describe('accountAuthStateToFarmHealthVariant', () => {
   const expectedByState: Record<FarmAccountAuthState, FarmHealthVariant> = {
     healthy: 'ok',
+    initializing: 'idle',
     needs_reauth: 'warn',
     auto_quarantined: 'err',
     operator_disabled: 'idle',

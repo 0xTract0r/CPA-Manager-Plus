@@ -68,7 +68,7 @@ import {
 import type { FarmDetailTab } from './FarmContainerDetailContent';
 import { formatDateTimeUtc8 } from '@/utils/datetime';
 import { formatDurationMs } from '@/utils/usage/latency';
-import { deriveFarmAccountTimeLabels } from '../utils/accountTime';
+import { deriveFarmAccountTimeLabels, resolveFarmOnboardAtMs } from '../utils/accountTime';
 import styles from './FarmAccountsPanel.module.scss';
 
 // 容器注册表快照「陈旧」的前端展示阈值：本列只用它给「容器运行态」徽标的
@@ -243,6 +243,11 @@ export function FarmAccountsPanel({
         hasReauthUrl: Boolean(account.reauth_url),
         // 契约字段：farm_bound=false 的 Claude 账号 → unprovisioned 异常态。
         farmBound: account.farm_bound,
+        // 冷启动 reauth 宽限门（与下方每行徽标同源）：新号刚 onboard <~2min 内把
+        // reauth 家族瞬态压成中性 initializing，筛选/排序据此与徽标一致，不把自愈
+        // 型冷启动瞬态当异常排到最前。
+        onboardAtMs: resolveFarmOnboardAtMs(joined?.binding?.bound_at, joined?.created_at),
+        nowMs,
       });
       const sortName = account.note?.trim() || account.account?.trim() || account.name;
       // 用量近似：农场 accounts 端点无 token 用量，取请求活跃度（近期请求量与
@@ -261,7 +266,9 @@ export function FarmAccountsPanel({
       });
     }
     return map;
-  }, [accounts, containersById]);
+    // nowMs 入 deps：宽限门用它判「距 onboard 多久」，跨过 2min 边界时随 30s 时钟
+    // 重算派生态，让筛选/排序与徽标同步从 initializing 翻回真态。
+  }, [accounts, containersById, nowMs]);
 
   // C8 客户端筛选：认证态复用 sortRowByName 的派生态；关键词在 note/account/name
   // 三处做大小写不敏感子串匹配。'normal' 复合筛选（绑定 + 健康）由 matchesFarmAccountFilter 承载。
@@ -522,6 +529,15 @@ export function FarmAccountsPanel({
               // ---------------------------------------------------------
               const authStatusRaw = joinedContainer?.account_auth_status;
               const authReasonRaw = joinedContainer?.account_auth_reason;
+              // 冷启动 reauth 宽限门锚点：本账号绑定到该容器的时刻（bound_at 首选，
+              // 缺失降级容器 created_at）。新号刚 onboard <~2min 内出口住宅代理/上游未热，
+              // 头几个探测可能撞瞬时 401/403 让 core 短暂点亮 reauth/auto_quarantine；
+              // deriveAccountAuthState 在宽限窗内把这类家族态折叠成中性 initializing，
+              // 避免误显红「凭证已失效」。超窗如实透红（真失效跨多探测持续存在）。
+              const onboardAtMs = resolveFarmOnboardAtMs(
+                joinedContainer?.binding?.bound_at,
+                joinedContainer?.created_at
+              );
               const authState = deriveAccountAuthState({
                 authStatus: authStatusRaw,
                 authReason: authReasonRaw,
@@ -530,6 +546,8 @@ export function FarmAccountsPanel({
                 hasReauthUrl: reauthNeeded,
                 // 契约字段：未绑定 Claude 账号 → unprovisioned（不可出站异常态）。
                 farmBound: account.farm_bound,
+                onboardAtMs,
+                nowMs,
               });
               const authVariant = accountAuthStateToFarmHealthVariant(authState);
               const authLabel = t(`farm.accountHealth.authState_${authState}`, {

@@ -228,9 +228,18 @@ export function isAccountStateStale(
 // ---------------------------------------------------------------------------
 
 /**
- * 账号认证态 6 态（design.md P2 用户点2 + 点4「未绑定容器=异常态」）：
+ * 账号认证态 7 态（design.md P2 用户点2 + 点4「未绑定容器=异常态」，另加冷启动
+ * 过渡态 initializing）：
  * - healthy：已认证健康（后端 account_auth_status='alive'）**且已绑定容器**——
  *   用户拍板：只有「绑定 + 健康」才算正常。
+ * - initializing：**农场新号冷启动过渡态**（映射 idle 中性）。新号刚 onboard 时
+ *   出口住宅代理/上游未热，头几个探测可能撞瞬时 401/403，让 core 短暂点亮 reauth
+ *   信号（reauth_url / account_token_dead / 短暂 auto_quarantine）；~1-2min 首个
+ *   真实请求成功即自愈。deriveAccountAuthState 在 FARM_ONBOARD_REAUTH_GRACE_MS
+ *   宽限窗内把 reauth 家族态（needs_reauth / auto_quarantined）折叠成本态，避免把
+ *   自愈型瞬态误显成红「凭证已失效」。**只压刚 onboard <~2min 的号**，超窗如实透红
+ *   （真失效跨多次探测持续存在，短宽限窗放过它不误伤——新号刚 auth 完头 2min 真
+ *   失效概率≈0）。这是纯显示层过渡态，不改任何后端 auth 判定。
  * - needs_reauth：需重新认证（凭证失效可恢复，dead+account_token_dead 或有
  *   reauth_url）。**可恢复态，映射 warn 而非 err**——它需要人处理但不是终态。
  * - auto_quarantined：已自动隔离（core 终态认证失败触发，auto_quarantined 布尔
@@ -246,6 +255,7 @@ export function isAccountStateStale(
  */
 export const FARM_ACCOUNT_AUTH_STATES = [
   'healthy',
+  'initializing',
   'needs_reauth',
   'auto_quarantined',
   'operator_disabled',
@@ -276,6 +286,19 @@ export interface AccountAuthStateInput {
    * 缺省时按 Claude 处理——农场当前只服务 Claude 账号，缺省不漏标未绑定异常。
    */
   provider?: string;
+  /**
+   * 农场容器 onboard/绑定时刻（毫秒）——冷启动 reauth 宽限门锚点。由面板从该账号
+   * 已绑定容器的 `binding.bound_at ?? created_at`（经 accountTime.resolveFarmOnboardAtMs
+   * 解析）派生，仅农场绑定账号有。与 `nowMs` 同时提供、且在 FARM_ONBOARD_REAUTH_GRACE_MS
+   * 窗口内时，reauth 家族态（needs_reauth / auto_quarantined）折叠成中性 initializing。
+   * 缺省（undefined/null）或 `nowMs` 缺省时不启用宽限门，保持旧行为（100% 向后兼容）。
+   */
+  onboardAtMs?: number | null;
+  /**
+   * 宽限判定的「当前时刻」（毫秒，来自稳定的 render 时钟，不在 render 期读 Date.now()）。
+   * 缺省时不启用宽限门——宽限只在调用方显式传入时钟时才生效。
+   */
+  nowMs?: number;
 }
 
 /**
@@ -289,8 +312,41 @@ function isClaudeProviderValue(provider: string | undefined): boolean {
 }
 
 /**
- * 派生账号认证态 6 态。优先级（从最终态到最不确定）：隔离 > 停用 > alive(绑定) >
- * 需重认证 > 未绑定(Claude) > 未知。
+ * 农场新号冷启动 reauth 宽限窗（毫秒）。见 FARM_ACCOUNT_AUTH_STATES 里 initializing
+ * 态注释与文件底部「冷启动 reauth 宽限门」section。默认 2 分钟——覆盖住宅代理/上游
+ * 冷启动 + 首个真实请求成功自愈的典型时长；改这里就改宽限口径，不要在别处散魔法数。
+ */
+export const FARM_ONBOARD_REAUTH_GRACE_MS = 2 * 60 * 1000;
+
+/**
+ * 「reauth 家族态」——宽限窗内需要被压成中性 initializing 的态集合。只含冷启动瞬态
+ * 可能误亮的两个态：needs_reauth（reauth_url / account_token_dead 驱动）与
+ * auto_quarantined（短暂终态认证失败驱动）。其余态（healthy/unprovisioned/
+ * operator_disabled/unknown）与冷启动瞬态无关，宽限门一律不碰。
+ */
+const REAUTH_FAMILY_STATES: ReadonlySet<FarmAccountAuthState> = new Set([
+  'needs_reauth',
+  'auto_quarantined',
+]);
+
+/**
+ * 该账号是否处于「刚 onboard <~宽限窗」的冷启动窗口内。onboardAtMs 缺失/非法（未绑定
+ * 容器、时间戳解析失败等）一律返回 false（不启用宽限门，如实透出真态）。起点晚于 now
+ * （时钟漂移/时序倒挂，elapsed<0）也返回 false——宁可如实透红也不因异常时序把真失效
+ * 永久压成中性。窗口是左闭右开 [0, FARM_ONBOARD_REAUTH_GRACE_MS)。
+ */
+export function isWithinFarmOnboardGrace(
+  onboardAtMs: number | null | undefined,
+  nowMs: number
+): boolean {
+  if (typeof onboardAtMs !== 'number' || !Number.isFinite(onboardAtMs)) return false;
+  const elapsed = nowMs - onboardAtMs;
+  return elapsed >= 0 && elapsed < FARM_ONBOARD_REAUTH_GRACE_MS;
+}
+
+/**
+ * 派生账号认证态（不含宽限门）——真态优先级（从最终态到最不确定）：隔离 > 停用 >
+ * alive(绑定) > 需重认证 > 未绑定(Claude) > 未知。
  * - auto_quarantined/disabled 用账号自带权威布尔（不依赖是否已绑定容器，故未绑定
  *   的隔离/停用账号也能被正确标注，而非一律 unprovisioned/unknown）。
  * - unprovisioned 只在 farm_bound 显式为 false 且是 Claude 时命中，且排在隔离/停用/
@@ -298,7 +354,7 @@ function isClaudeProviderValue(provider: string | undefined): boolean {
  *   容器的 account_auth_status，故 alive 分支天然不会与未绑定并存（保留旧
  *   「alive 优先于需重认证」不变量，兼容既有用例）。
  */
-export function deriveAccountAuthState(input: AccountAuthStateInput): FarmAccountAuthState {
+function deriveBaseAccountAuthState(input: AccountAuthStateInput): FarmAccountAuthState {
   if (input.autoQuarantined) return 'auto_quarantined';
   if (input.disabled) return 'operator_disabled';
   if (input.authStatus === 'alive') return 'healthy';
@@ -312,11 +368,38 @@ export function deriveAccountAuthState(input: AccountAuthStateInput): FarmAccoun
   return 'unknown';
 }
 
-/** 6 态 → HealthPill 四态色（healthy=ok / needs_reauth=warn / auto_quarantined=err /
- * operator_disabled=idle / unprovisioned=err / unknown=idle）。unprovisioned 映射 err
- * 与「未绑定·不可出站」红警口径一致（见 FARM_ACCOUNT_AUTH_STATES 各态注释）。 */
+/**
+ * 派生账号认证态 + 冷启动 reauth 宽限门（belt-and-suspenders，纯显示层）。
+ *
+ * 先按 deriveBaseAccountAuthState 算真态；再判宽限门——**仅当**调用方显式传了
+ * `nowMs`、基础真态属于 REAUTH_FAMILY_STATES（needs_reauth / auto_quarantined）、
+ * 且 `onboardAtMs` 落在 [now-宽限窗, now] 内时，把真态折叠成中性 `initializing`
+ * （展示「初始化中」而非红「凭证已失效」）。
+ *
+ * 关键边界（对齐硬约束「不放宽超过宽限窗的真失效」）：
+ * - 宽限只对「刚 onboard <~2min」的号生效；`onboardAtMs` 缺失/超窗 → 原样返回真态。
+ * - 未传 `nowMs`（如既有单信号单测、非农场调用点）→ 完全不启用宽限门，100% 向后兼容。
+ * - 只折叠 reauth 家族两态；healthy/unprovisioned/operator_disabled/unknown 不受影响。
+ */
+export function deriveAccountAuthState(input: AccountAuthStateInput): FarmAccountAuthState {
+  const base = deriveBaseAccountAuthState(input);
+  if (
+    input.nowMs != null &&
+    REAUTH_FAMILY_STATES.has(base) &&
+    isWithinFarmOnboardGrace(input.onboardAtMs, input.nowMs)
+  ) {
+    return 'initializing';
+  }
+  return base;
+}
+
+/** 7 态 → HealthPill 四态色（healthy=ok / initializing=idle / needs_reauth=warn /
+ * auto_quarantined=err / operator_disabled=idle / unprovisioned=err / unknown=idle）。
+ * initializing=idle 是冷启动过渡态的中性色（既非健康绿也非故障红，见 initializing 态
+ * 注释）；unprovisioned 映射 err 与「未绑定·不可出站」红警口径一致。 */
 const ACCOUNT_AUTH_STATE_VARIANT: Record<FarmAccountAuthState, FarmHealthVariant> = {
   healthy: 'ok',
+  initializing: 'idle',
   needs_reauth: 'warn',
   auto_quarantined: 'err',
   operator_disabled: 'idle',

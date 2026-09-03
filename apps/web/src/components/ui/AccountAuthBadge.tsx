@@ -7,6 +7,7 @@ import {
   IconEyeOff,
   IconInfo,
   IconAlertTriangle,
+  IconTimer,
   type IconProps,
 } from './icons';
 import type { FarmAccountAuthState } from '@/features/farm/utils/health';
@@ -28,9 +29,12 @@ import styles from './AccountAuthBadge.module.scss';
  * 列头单独朗读时仍带维度信息。
  */
 
-/** 账号认证态 5 态 → 领头认证图标（图标即身份语义标识，取代文字前缀）。 */
+/** 账号认证态 7 态 → 领头认证图标（图标即身份语义标识，取代文字前缀）。 */
 const AUTH_STATE_ICON: Record<FarmAccountAuthState, (props: IconProps) => ReactElement> = {
   healthy: IconShield,
+  // initializing：冷启动过渡态——用计时器图标传达「刚 onboard·正在初始化，稍候」，
+  // 与 unknown（信息缺失）的 info 图标区分开。
+  initializing: IconTimer,
   needs_reauth: IconKey,
   auto_quarantined: IconX,
   operator_disabled: IconEyeOff,
@@ -46,6 +50,7 @@ const AUTH_STATE_TRAILING_ICON: Record<
   ((props: IconProps) => ReactElement) | null
 > = {
   healthy: IconCheckCircle2,
+  initializing: null,
   needs_reauth: null,
   auto_quarantined: null,
   operator_disabled: null,

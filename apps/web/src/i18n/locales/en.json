@@ -4297,6 +4297,7 @@
       "detailFreshnessTitle": "State freshness",
       "accountHealthColumn": "Account Auth Status",
       "authState_healthy": "Authenticated",
+      "authState_initializing": "Initializing",
       "authState_needs_reauth": "Re-auth required",
       "authState_auto_quarantined": "Auto-quarantined",
       "authState_operator_disabled": "Disabled",

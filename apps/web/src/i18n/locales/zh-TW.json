@@ -4297,6 +4297,7 @@
       "detailFreshnessTitle": "狀態新鮮度",
       "accountHealthColumn": "帳號認證態",
       "authState_healthy": "已認證",
+      "authState_initializing": "初始化中",
       "authState_needs_reauth": "需重新認證",
       "authState_auto_quarantined": "已自動隔離",
       "authState_operator_disabled": "已停用",
