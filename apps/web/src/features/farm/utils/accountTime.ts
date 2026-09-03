@@ -116,3 +116,28 @@ export function deriveFarmAccountTimeLabels(input: FarmAccountTimeInput): FarmAc
     aliveEstimated,
   };
 }
+
+/**
+ * 解析农场账号的「onboard/绑定时刻」（毫秒），作为冷启动 reauth 宽限门
+ * （health.ts isWithinFarmOnboardGrace / deriveAccountAuthState）的锚点。
+ *
+ * 锚点优先级：
+ *  - boundAt（该账号绑定到当前容器的时刻 `binding.bound_at`）——**首选**，语义精确
+ *    对应「本账号 onboard 到农场那一刻」；重绑复用旧容器时也会刷新，故比容器创建
+ *    时刻更贴合「距 onboard 多久」。
+ *  - createdAt（容器创建时刻 `container.created_at`）——降级兜底。新号 onboard 建
+ *    新容器时二者≈相等；仅当 bound_at 缺失（编排器未透传 binding）时使用。
+ *
+ * 两者都缺失/为 Go 零时间（0001-01-01）/无法解析时返回 null——调用方据此不启用
+ * 宽限门（如实透出真态，不臆造一个 onboard 时刻把真失效误压成中性）。复用
+ * parseCoreQuotaTimestamp 拦零时间，口径与账号时间四件套一致。
+ */
+export function resolveFarmOnboardAtMs(
+  boundAt: string | null | undefined,
+  createdAt: string | null | undefined
+): number | null {
+  const boundDate = parseCoreQuotaTimestamp(boundAt);
+  const createdDate = parseCoreQuotaTimestamp(createdAt);
+  const anchor = boundDate ?? createdDate;
+  return anchor ? anchor.getTime() : null;
+}

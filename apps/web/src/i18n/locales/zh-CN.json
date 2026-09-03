@@ -4282,6 +4282,7 @@
       "detailFreshnessTitle": "状态新鲜度",
       "accountHealthColumn": "账号认证态",
       "authState_healthy": "已认证",
+      "authState_initializing": "初始化中",
       "authState_needs_reauth": "需重新认证",
       "authState_auto_quarantined": "已自动隔离",
       "authState_operator_disabled": "已停用",
