@@ -700,6 +700,51 @@ describe('UsageAnalyticsPage', () => {
     expect(text).not.toContain('usage_analytics.trend_pending_data');
   });
 
+  it('shows unattributed API key totals without exposing filter or drilldown actions', () => {
+    const fallbackRow = createRankRow({
+      id: 'unknown-client-api-key',
+      label: 'usage_analytics.unattributed_api_key',
+      apiKeyHash: '',
+      model: undefined,
+    });
+    mocks.usageState = createUsageState({
+      activeTab: 'apiKeys',
+      apiKeyRows: [fallbackRow],
+      selectedApiKey: fallbackRow,
+      selectedApiKeyTrendSeries: [],
+      keyAnomalies: [],
+      filterOptions: {
+        models: [],
+        api_key_hashes: ['unknown-client-api-key:legacy'],
+        api_key_stats: [
+          {
+            id: 'unattributed-bucket',
+            api_key_hash: '',
+          },
+        ],
+        providers: [],
+        auth_files: [],
+      },
+    });
+
+    const renderer = renderPage();
+    const apiKeyFilter = renderer.root
+      .findAllByType(Select)
+      .find((node) => node.props.ariaLabel === 'usage_analytics.filter_api_key');
+    const disabledRows = renderer.root
+      .findAllByType('tr')
+      .filter((row) => row.props['aria-disabled'] === true);
+    const text = getText(renderer.root);
+
+    expect(apiKeyFilter?.props.options.map((option: { value: string }) => option.value)).toEqual([
+      'all',
+    ]);
+    expect(disabledRows).toHaveLength(1);
+    expect(disabledRows[0].props.onClick).toBeUndefined();
+    expect(text).not.toContain('usage_analytics.view_request_details');
+    expect(text).not.toContain('usage_analytics.view_exception_combinations');
+  });
+
   it('renders the API Key tab with key-dimension cards, unit-economics columns, and anomaly drilldown', () => {
     const usageState = createUsageState({ activeTab: 'apiKeys' });
     mocks.usageState = usageState;

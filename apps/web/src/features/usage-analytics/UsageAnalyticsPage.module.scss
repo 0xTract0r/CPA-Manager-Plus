@@ -1113,6 +1113,14 @@
     &.selectedRow {
       background: var(--usage-primary-soft);
     }
+
+    &[aria-disabled='true'] {
+      cursor: default;
+
+      &:hover {
+        background: transparent;
+      }
+    }
   }
 }
 
