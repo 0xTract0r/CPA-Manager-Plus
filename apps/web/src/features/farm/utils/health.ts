@@ -250,7 +250,18 @@ export function isAccountStateStale(
  *   claude）。用户拍板「未绑定 = 异常态，不算正常」——账号没有容器就无法从住宅
  *   代理出站，语义是「未绑定·不可出站」，映射 err（不可用），不再回退成
  *   healthy/unknown 假绿/中性。
- * - unknown：未知/陈旧（后端 unknown 且账号无隔离/停用/reauth/未绑定信号，映射
+ * - liveness_unconfirmed：**无法确认存活**（farm-account-liveness-detection 缺口 B /
+ *   Phase 5 F1/F2）。账号底层快照可能仍派生「alive」（token 未过期、未被 disabled/
+ *   quarantine），但独立存活信号提示 core **无法真实确认它还活着**——两种来源：
+ *   ① health-blind：曾绑定过容器、当前被反关联防泄漏门挡住健康探测（account 顶层
+ *   `farm_health_blind=true`）；② token/健康陈旧：绑定容器的 health_reason 被编排器
+ *   浮现为 `account_token_stale` / `account_health_blind`。映射 **idle（灰）**——不显
+ *   绿，配 <AccountAuthBadge> 的告警三角图标 + 副行「最后确认存活」时刻，构成
+ *   「灰 + 告警」。这正是事故 idle-banned-shows-green 要修的假绿：空闲被吊销/探测受阻
+ *   的号绝不能凭一份陈旧缓存快照继续显绿。它比 unknown（从未采集、根本不知道）更
+ *   可行动——曾经确认过、现在确认不了，故排在 unknown 之上（见 accountSort
+ *   AUTH_STATE_SEVERITY）。
+ * - unknown：未知/陈旧（后端 unknown 且账号无隔离/停用/reauth/未绑定/盲区信号，映射
  *   idle 中性——「根本不知道」既非健康也非故障，不默认绿也不默认红）。
  */
 export const FARM_ACCOUNT_AUTH_STATES = [
@@ -260,9 +271,39 @@ export const FARM_ACCOUNT_AUTH_STATES = [
   'auto_quarantined',
   'operator_disabled',
   'unprovisioned',
+  'liveness_unconfirmed',
   'unknown',
 ] as const;
 export type FarmAccountAuthState = (typeof FARM_ACCOUNT_AUTH_STATES)[number];
+
+/**
+ * 「无法确认存活」浮现 reason（farm-account-liveness-detection 缺口 B B2，逐字对应
+ * services/farm-orchestrator/internal/farmrunner/health.go
+ * AccountLivenessReason{TokenStale,HealthBlind}）。编排器把绑定容器的健康降级为
+ * degraded 时用这些字面值当 health_reason 透传（见 dto.go containerView.HealthReason）。
+ * 前端据此把账号认证态从 alive→liveness_unconfirmed（灰 + 告警），不再显绿。
+ * account 顶层 `farm_health_blind=true` 是等价的第二条来源（health-blind 直接投影到
+ * 账号，不必经容器 health_reason），由 FarmAccountsPanel 归一到同一态。
+ */
+export const FARM_LIVENESS_UNCONFIRMED_REASONS = [
+  'account_token_stale',
+  'account_health_blind',
+] as const;
+export type FarmLivenessUnconfirmedReason = (typeof FARM_LIVENESS_UNCONFIRMED_REASONS)[number];
+
+const FARM_LIVENESS_UNCONFIRMED_REASON_SET: ReadonlySet<string> = new Set(
+  FARM_LIVENESS_UNCONFIRMED_REASONS
+);
+
+/**
+ * 某个容器 health_reason 字面值是否属于「无法确认存活」浮现类。缺失/非该集合的任何
+ * 输入一律 false（不臆造盲区）——诚实边界与其它归一化函数一致。
+ */
+export function isFarmLivenessUnconfirmedReason(
+  reason: string | undefined
+): reason is FarmLivenessUnconfirmedReason {
+  return typeof reason === 'string' && FARM_LIVENESS_UNCONFIRMED_REASON_SET.has(reason);
+}
 
 export interface AccountAuthStateInput {
   /** 后端两平面判定结果（仅已绑定账号有），alive/dead/unknown。 */
@@ -299,6 +340,15 @@ export interface AccountAuthStateInput {
    * 缺省时不启用宽限门——宽限只在调用方显式传入时钟时才生效。
    */
   nowMs?: number;
+  /**
+   * 「无法确认存活」浮现 reason（farm-account-liveness-detection Phase 5 F1/F2）。非空
+   * 表示存在独立存活信号提示 core 无法确认该账号还活着（health-blind / token 陈旧，取值
+   * 见 FARM_LIVENESS_UNCONFIRMED_REASONS）。由 FarmAccountsPanel 从 account 顶层
+   * `farm_health_blind` 或绑定容器 `health_reason` 归一后传入。**它会覆盖 alive→healthy 的
+   * 假绿**（F2：不凭陈旧缓存快照显绿），但被更具确定性的 disabled/quarantine/needs_reauth
+   * 压过（那些是确证态，更可行动）。缺省（undefined/空串）时零行为变化，100% 向后兼容。
+   */
+  livenessUnconfirmedReason?: string;
 }
 
 /**
@@ -355,14 +405,25 @@ export function isWithinFarmOnboardGrace(
  *   「alive 优先于需重认证」不变量，兼容既有用例）。
  */
 function deriveBaseAccountAuthState(input: AccountAuthStateInput): FarmAccountAuthState {
+  const livenessUnconfirmed = Boolean(input.livenessUnconfirmedReason);
   if (input.autoQuarantined) return 'auto_quarantined';
   if (input.disabled) return 'operator_disabled';
-  if (input.authStatus === 'alive') return 'healthy';
+  if (input.authStatus === 'alive') {
+    // F2「颜色反映最近一次真实确认，而非最后一次缓存快照」：即便快照仍派生 alive，
+    // 只要独立存活信号提示无法确认存活（health-blind / token 陈旧），就把假绿覆盖成
+    // liveness_unconfirmed（灰 + 告警），绝不凭陈旧缓存显绿。
+    if (livenessUnconfirmed) return 'liveness_unconfirmed';
+    return 'healthy';
+  }
   // 后端明确 dead 且原因是 token 失效，或后端给了 reauth 入口 → 需重新认证。
+  // 确证 dead/需重认证比「无法确认存活」更具确定性、更可行动，故排在 liveness 之前。
   if (input.authReason === 'account_token_dead' || input.hasReauthUrl) return 'needs_reauth';
   // dead 但原因不明（理论上已被上面的隔离/停用/token 三分支覆盖）也按需重认证兜底，
   // 避免把一个后端确证 dead 的账号误显示成 unknown。
   if (input.authStatus === 'dead') return 'needs_reauth';
+  // 非 alive（unknown/缺失快照）但存在无法确认存活信号 → liveness_unconfirmed（灰 + 告警），
+  // 比一律 unknown 更精确：曾确认过、现在确认不了，值得 operator 关注。
+  if (livenessUnconfirmed) return 'liveness_unconfirmed';
   // 未绑定容器的 Claude 账号：不可出站，异常态（用户拍板「绑定 + 健康才算正常」）。
   if (input.farmBound === false && isClaudeProviderValue(input.provider)) return 'unprovisioned';
   return 'unknown';
@@ -404,6 +465,10 @@ const ACCOUNT_AUTH_STATE_VARIANT: Record<FarmAccountAuthState, FarmHealthVariant
   auto_quarantined: 'err',
   operator_disabled: 'idle',
   unprovisioned: 'err',
+  // liveness_unconfirmed 映射 idle（灰）：spec F1 明确「显灰不显绿」——中性色是本设计
+  // 系统里唯一「非健康非故障」的语义色。「告警」由 <AccountAuthBadge> 的告警三角图标 +
+  // 面板副行「最后确认存活」承载，构成「灰 + 告警」，不借用 warn（那意味着已确证需关注）。
+  liveness_unconfirmed: 'idle',
   unknown: 'idle',
 };
 
