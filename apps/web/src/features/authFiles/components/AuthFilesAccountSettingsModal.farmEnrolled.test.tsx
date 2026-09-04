@@ -18,8 +18,10 @@ vi.mock('react-i18next', () => ({
 
 vi.mock('@/stores', () => ({
   useThemeStore: (selector: (state: unknown) => unknown) => selector({ resolvedTheme: 'light' }),
-  useNotificationStore: (selector: (state: unknown) => unknown) =>
-    selector({ showConfirmation: vi.fn() }),
+  useNotificationStore: (selector?: (state: unknown) => unknown) => {
+    const state = { showConfirmation: vi.fn(), showNotification: vi.fn() };
+    return selector ? selector(state) : state;
+  },
 }));
 
 // Modal 用 portal，测试环境无 DOM——透传 children/footer 即可。

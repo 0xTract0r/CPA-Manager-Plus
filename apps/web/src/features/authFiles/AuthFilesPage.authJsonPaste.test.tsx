@@ -134,8 +134,11 @@ vi.mock('@/features/authFiles/uiState', () => ({
 
 vi.mock('@/stores', () => ({
   useNotificationStore: (
-    selector: (state: { showNotification: typeof mocks.showNotification }) => unknown
-  ) => selector({ showNotification: mocks.showNotification }),
+    selector?: (state: { showNotification: typeof mocks.showNotification }) => unknown
+  ) => {
+    const state = { showNotification: mocks.showNotification };
+    return selector ? selector(state) : state;
+  },
   useAuthStore: (selector: (state: { connectionStatus: 'connected' }) => unknown) =>
     selector({ connectionStatus: 'connected' }),
   useThemeStore: (selector: (state: { resolvedTheme: 'dark' }) => unknown) =>

@@ -193,6 +193,111 @@ describe('useUsageAnalytics request orchestration', () => {
     expect(selectorRefresh).toHaveBeenCalledTimes(1);
   });
 
+  it('does not issue selected-key detail requests for unattributed fallback groups', async () => {
+    const unattributedResponse = {
+      ...emptyAnalyticsResponse,
+      api_key_stats: [
+        {
+          id: 'unknown-client-api-key',
+          api_key_hash: '',
+          calls: 4,
+          success_calls: 4,
+          failure_calls: 0,
+          success_rate: 1,
+          input_tokens: 40,
+          output_tokens: 10,
+          cached_tokens: 0,
+          cache_read_tokens: 0,
+          cache_creation_tokens: 0,
+          total_tokens: 50,
+          cost: 0.4,
+          average_latency_ms: null,
+          last_seen_ms: 1,
+        },
+      ],
+    };
+    useMonitoringAnalyticsMock.mockImplementation((params) => {
+      const base = resultFor(params);
+      if (params.include?.summary) {
+        return {
+          ...base,
+          data: unattributedResponse,
+        };
+      }
+      return base;
+    });
+
+    await renderHook();
+
+    const selectedKeyRequest = lastParams((params) => {
+      const scope = JSON.parse(params.dataScopeKey ?? '{}') as Record<string, unknown>;
+      return Object.prototype.hasOwnProperty.call(scope, 'selectedApiKeyHash');
+    });
+    expect(latestResult?.selectedApiKey?.id).toBe('unknown-client-api-key');
+    expect(selectedKeyRequest?.fromMs).toBeUndefined();
+    expect(selectedKeyRequest?.filters).toEqual({});
+    expect(JSON.parse(selectedKeyRequest?.dataScopeKey ?? '{}')).toMatchObject({
+      selectedApiKeyHash: '',
+    });
+  });
+
+  it('prefers a selectable key over a higher-ranked fallback group', async () => {
+    const mixedResponse = {
+      ...emptyAnalyticsResponse,
+      api_key_stats: [
+        {
+          id: 'unknown-client-api-key',
+          api_key_hash: '',
+          calls: 8,
+          success_calls: 8,
+          failure_calls: 0,
+          success_rate: 1,
+          input_tokens: 80,
+          output_tokens: 20,
+          cached_tokens: 0,
+          cache_read_tokens: 0,
+          cache_creation_tokens: 0,
+          total_tokens: 100,
+          cost: 0.8,
+          average_latency_ms: null,
+          last_seen_ms: 2,
+        },
+        {
+          id: 'abcdef1234567890',
+          api_key_hash: 'abcdef1234567890',
+          calls: 4,
+          success_calls: 4,
+          failure_calls: 0,
+          success_rate: 1,
+          input_tokens: 40,
+          output_tokens: 10,
+          cached_tokens: 0,
+          cache_read_tokens: 0,
+          cache_creation_tokens: 0,
+          total_tokens: 50,
+          cost: 0.4,
+          average_latency_ms: null,
+          last_seen_ms: 1,
+        },
+      ],
+    };
+    useMonitoringAnalyticsMock.mockImplementation((params) => {
+      const base = resultFor(params);
+      return params.include?.summary ? { ...base, data: mixedResponse } : base;
+    });
+
+    await renderHook();
+
+    const selectedKeyRequest = lastParams((params) => {
+      const scope = JSON.parse(params.dataScopeKey ?? '{}') as Record<string, unknown>;
+      return Object.prototype.hasOwnProperty.call(scope, 'selectedApiKeyHash');
+    });
+    expect(latestResult?.selectedApiKey?.apiKeyHash).toBe('abcdef1234567890');
+    expect(selectedKeyRequest?.filters).toMatchObject({
+      api_key_hashes: ['abcdef1234567890'],
+    });
+  });
+
   it('falls back to the last successful data while the main request is stale, instead of flashing empty', async () => {
     const populatedResponse = {
       ...emptyAnalyticsResponse,
