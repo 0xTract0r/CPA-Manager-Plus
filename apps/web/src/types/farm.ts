@@ -476,6 +476,19 @@ export interface FarmAccountEntry {
   // 一律归一到 unknown 展示，见 utils/health.ts
   // normalizeFarmTelemetryAliveState。
   telemetry_alive?: FarmTelemetryAliveState;
+  // farm-account-liveness-detection 缺口 B「健康盲区显式可见」契约字段（编排器
+  // accountView 内嵌 cpa.AuthFileEntry 透传 core 顶层投影 `farm_health_blind` /
+  // `farm_health_blind_at`，见 services/farm-orchestrator/internal/cpa/client.go
+  // AuthFileEntry）。语义：该账号「曾绑定过容器」但当前被反关联防泄漏门挡住健康
+  // 探测（core FarmHealthBlind），即**无法确认存活**——前端据此把卡片从绿降级为
+  // 灰 + 告警（不显绿），见 utils/health.ts deriveAccountAuthState 的
+  // liveness_unconfirmed 态。
+  //  - farm_health_blind：core 非 omitempty 恒返回（缺失即零值 false）；true 表示
+  //    健康盲区。旧编排器未透传时为 undefined，前端按 false 兜底（不臆造盲区）。
+  //  - farm_health_blind_at：进入健康盲区的时刻（RFC3339，omitempty）。这是「何时
+  //    失去确认能力」，不是「最后确认存活」——后者用 last_refresh 作最佳可得代理值。
+  farm_health_blind?: boolean;
+  farm_health_blind_at?: string;
 }
 
 // accountView.provisioning_state 取值（handlers.go provisioningState* 常量）。

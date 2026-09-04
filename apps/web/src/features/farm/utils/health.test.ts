@@ -15,6 +15,7 @@ import {
   deriveAccountAuthState,
   farmBoundToOutboundPlatform,
   farmEnrolledToBadgeVariant,
+  isFarmLivenessUnconfirmedReason,
   normalizeFarmTelemetryAliveState,
   normalizeFarmTelemetrySilenceState,
   provisioningStateToFarmHealthVariant,
@@ -153,11 +154,76 @@ describe('deriveAccountAuthState', () => {
     ).toBe('auto_quarantined');
   });
 
-  it('派生结果始终落在 6 态枚举内（无越界值）', () => {
+  // -------------------------------------------------------------------------
+  // farm-account-liveness-detection Phase 5 F1/F2「无法确认存活」：
+  // livenessUnconfirmedReason 非空时把假绿覆盖成 liveness_unconfirmed（灰），但被
+  // 更具确定性的确证态压过。
+  // -------------------------------------------------------------------------
+  it('F2：alive + token 陈旧信号 → liveness_unconfirmed（覆盖假绿，不显 healthy）', () => {
+    expect(
+      deriveAccountAuthState({
+        authStatus: 'alive',
+        livenessUnconfirmedReason: 'account_token_stale',
+      })
+    ).toBe('liveness_unconfirmed');
+  });
+
+  it('F1：alive + health-blind 信号 → liveness_unconfirmed（灰，不显绿）', () => {
+    expect(
+      deriveAccountAuthState({
+        authStatus: 'alive',
+        livenessUnconfirmedReason: 'account_health_blind',
+      })
+    ).toBe('liveness_unconfirmed');
+  });
+
+  it('unknown 快照 + 无法确认存活信号 → liveness_unconfirmed（比 unknown 更精确）', () => {
+    expect(
+      deriveAccountAuthState({
+        authStatus: 'unknown',
+        livenessUnconfirmedReason: 'account_token_stale',
+      })
+    ).toBe('liveness_unconfirmed');
+  });
+
+  it('确证态优先于 liveness：quarantine/disabled/reauth 压过 liveness_unconfirmed', () => {
+    expect(
+      deriveAccountAuthState({
+        autoQuarantined: true,
+        authStatus: 'alive',
+        livenessUnconfirmedReason: 'account_health_blind',
+      })
+    ).toBe('auto_quarantined');
+    expect(
+      deriveAccountAuthState({
+        disabled: true,
+        livenessUnconfirmedReason: 'account_token_stale',
+      })
+    ).toBe('operator_disabled');
+    expect(
+      deriveAccountAuthState({
+        authStatus: 'dead',
+        hasReauthUrl: true,
+        livenessUnconfirmedReason: 'account_token_stale',
+      })
+    ).toBe('needs_reauth');
+  });
+
+  it('无 liveness 信号时零行为变化（向后兼容）：alive→healthy、空→unknown', () => {
+    expect(deriveAccountAuthState({ authStatus: 'alive' })).toBe('healthy');
+    expect(deriveAccountAuthState({ authStatus: 'alive', livenessUnconfirmedReason: '' })).toBe(
+      'healthy'
+    );
+    expect(deriveAccountAuthState({})).toBe('unknown');
+  });
+
+  it('派生结果始终落在枚举内（无越界值）', () => {
     const inputs = [
       { autoQuarantined: true },
       { disabled: true },
       { authStatus: 'alive' },
+      { authStatus: 'alive', livenessUnconfirmedReason: 'account_token_stale' },
+      { livenessUnconfirmedReason: 'account_health_blind' },
       { authReason: 'account_token_dead' },
       { hasReauthUrl: true },
       { authStatus: 'dead' },
@@ -168,6 +234,24 @@ describe('deriveAccountAuthState', () => {
     for (const input of inputs) {
       expect(FARM_ACCOUNT_AUTH_STATES).toContain(deriveAccountAuthState(input));
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isFarmLivenessUnconfirmedReason：只认后端两个「无法确认存活」浮现 reason，其余
+// （含 undefined / 空串 / 普通 degraded reason）一律 false（不臆造盲区）。
+// ---------------------------------------------------------------------------
+describe('isFarmLivenessUnconfirmedReason', () => {
+  it('识别两个浮现 reason', () => {
+    expect(isFarmLivenessUnconfirmedReason('account_token_stale')).toBe(true);
+    expect(isFarmLivenessUnconfirmedReason('account_health_blind')).toBe(true);
+  });
+  it('其它值一律 false', () => {
+    expect(isFarmLivenessUnconfirmedReason(undefined)).toBe(false);
+    expect(isFarmLivenessUnconfirmedReason('')).toBe(false);
+    expect(isFarmLivenessUnconfirmedReason('ok')).toBe(false);
+    expect(isFarmLivenessUnconfirmedReason('keepalive_stale')).toBe(false);
+    expect(isFarmLivenessUnconfirmedReason('account_token_dead')).toBe(false);
   });
 });
 
@@ -324,6 +408,7 @@ describe('accountAuthStateToFarmHealthVariant', () => {
     auto_quarantined: 'err',
     operator_disabled: 'idle',
     unprovisioned: 'err',
+    liveness_unconfirmed: 'idle',
     unknown: 'idle',
   };
 
