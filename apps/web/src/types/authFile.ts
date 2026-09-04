@@ -382,3 +382,35 @@ export interface AuthFileAccountWarmup {
   age_days?: number | null;
   [key: string]: unknown;
 }
+
+/**
+ * claude 账号级 tier_override 合法值（core `coreauth.LegalTierOverrideValues('claude')`）。
+ * 「清除覆盖」在请求体里用 `null` 表示，不属于该联合。
+ */
+export type AuthFileAccountSchedulingTierOverride = 'max_20x' | 'max_5x' | 'pro';
+
+/**
+ * PATCH `/auth-files/account-scheduling` 请求体（core §8.3/§8.4/§8.5，是与
+ * `/auth-files/account-settings` 白名单完全独立的调度旋钮端点）：设置 / 清除
+ * 账号级 tier_override 与 rate_scale。契约：
+ *  - `name` 必填；`auth_index` 可选（多 auth 同名文件消歧）。
+ *  - `tier_override`：max_20x|max_5x|pro 强制档位；`null` 清除（回退 auto 探测）。
+ *  - `rate_scale`：> 0 覆盖速率乘子；`null` 清除（回退 core 默认 1.0）。
+ *  - `tier_override` / `rate_scale` 至少给一个（core 侧校验；缺失回 400）。
+ */
+export interface AuthFileAccountSchedulingPatchRequest {
+  name: string;
+  auth_index?: string | number;
+  tier_override?: AuthFileAccountSchedulingTierOverride | null;
+  rate_scale?: number | null;
+}
+
+/**
+ * PATCH `/auth-files/account-scheduling` 成功响应（200）：core 回显归一化后的
+ * `account_scheduling` 只读投影（合法值归一化 / tier_source 回退语义都以此为准，
+ * 前端据此重渲染，不乐观地把提交的表单值当新状态）。
+ */
+export interface AuthFileAccountSchedulingResponse {
+  name?: string;
+  account_scheduling: AuthFileAccountScheduling;
+}
