@@ -19,10 +19,11 @@ import { FarmTelemetryPanel } from './FarmTelemetryPanel';
  * 与 FarmContainerTable.test.tsx 同款稳定引用 mock 口径。
  */
 
-// t 返回 key、i18n.language 固定；引用稳定（详见 FarmContainerTable.test.tsx 说明）。
+// t 返回 key、i18n.language 固定；reason 插值额外保留原值，便于断言后端原因未被吞掉。
 vi.mock('react-i18next', () => {
   const stableUseTranslationResult = {
-    t: (key: string) => key,
+    t: (key: string, options?: Record<string, unknown>) =>
+      options && typeof options.reason === 'string' ? `${key}::${options.reason}` : key,
     i18n: { language: 'en' },
   };
   return {
