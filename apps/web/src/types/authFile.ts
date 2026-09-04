@@ -343,6 +343,15 @@ export interface AuthFileAccountScheduling {
    */
   rate_scale?: number;
   /**
+   * 账号养号（warm-up）状态投影（core
+   * internal/api/handlers/management/auth_files_adaptive_scheduling.go，取自
+   * sdk/cliproxy/auth.AccountWarmupStatusFor）。`mature` 是权威布尔（是否已走出
+   * 养号曲线进入成熟档），`stage` 是当前阶段名（合成态 "cold"/"mature" 或
+   * 配置曲线里的自定义阶段名），`age_days` 是账号年龄（未锚定 first_production_at
+   * 时为 null）。前端只按 `mature === false` 判定「养号中」，不臆造其它阶段语义。
+   */
+  warmup?: AuthFileAccountWarmup | null;
+  /**
    * 该账号索引下观测到的去重 SessionID 总数（P6，core
    * internal/usage.SessionAggregateForAuthIndex，按空闲窗口分桶）。
    * 恒为非负整数；0 是「确有其事的 0」（真的没有会话），不是「未知」——
@@ -355,5 +364,21 @@ export interface AuthFileAccountScheduling {
   sessions_active?: number;
   /** 按空闲窗口判定已关闭（超时）的会话数（<= sessions_total）。 */
   sessions_closed?: number;
+  [key: string]: unknown;
+}
+
+/**
+ * account_scheduling.warmup 子投影（core auth_files_adaptive_scheduling.go
+ * warmupView）。additive、只读；跨版本部署可能整体缺失（老 core 未投影 warmup），
+ * 消费方必须把缺失/非布尔的 `mature` 当作「不可判定」（不展示养号标注），只有
+ * `mature === false` 才明确判定为养号中。
+ */
+export interface AuthFileAccountWarmup {
+  /** 当前养号阶段名（合成态 "cold"/"mature"，或配置曲线自定义阶段名）。 */
+  stage?: string;
+  /** 是否已走出养号曲线进入成熟档（权威布尔；false = 养号中）。 */
+  mature?: boolean;
+  /** 账号年龄（天）；未锚定 first_production_at 时 core 下发 null。 */
+  age_days?: number | null;
   [key: string]: unknown;
 }

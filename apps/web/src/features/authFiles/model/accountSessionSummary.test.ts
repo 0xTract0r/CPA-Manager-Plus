@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   deriveAccountSessionSummary,
+  deriveAccountWarmupBadge,
   deriveSubscriptionTierBadge,
 } from './accountSessionSummary';
 
@@ -113,5 +114,58 @@ describe('deriveSubscriptionTierBadge', () => {
       tier: 'unknown',
       known: false,
     });
+  });
+});
+
+describe('deriveAccountWarmupBadge', () => {
+  it('returns null when account_scheduling is missing entirely (data-source unavailable)', () => {
+    expect(deriveAccountWarmupBadge(undefined)).toBeNull();
+    expect(deriveAccountWarmupBadge(null)).toBeNull();
+  });
+
+  it('returns null when the warmup sub-projection is absent (older core / version skew)', () => {
+    expect(deriveAccountWarmupBadge({ subscription_tier: 'max_5x' })).toBeNull();
+  });
+
+  it('returns null for a mature account (past the warm-up curve)', () => {
+    expect(
+      deriveAccountWarmupBadge({
+        warmup: { stage: 'mature', mature: true, age_days: 90 },
+      })
+    ).toBeNull();
+  });
+
+  it('returns null when mature is not an explicit boolean false (never guesses "warming")', () => {
+    // mature undefined / non-boolean => not determinable => no warm-up badge.
+    expect(deriveAccountWarmupBadge({ warmup: { stage: 'cold' } })).toBeNull();
+    expect(
+      deriveAccountWarmupBadge({
+        warmup: { stage: 'cold', mature: 'no' as unknown as boolean },
+      })
+    ).toBeNull();
+  });
+
+  it('flags "warming" only when core explicitly reports mature === false, carrying stage + age', () => {
+    expect(
+      deriveAccountWarmupBadge({
+        warmup: { stage: 'cold', mature: false, age_days: 2 },
+      })
+    ).toEqual({ warming: true, stage: 'cold', ageDays: 2 });
+  });
+
+  it('floors fractional ages and defends against non-numeric / missing age_days (null, not NaN)', () => {
+    expect(
+      deriveAccountWarmupBadge({ warmup: { stage: 'ramp-1', mature: false, age_days: 3.9 } })
+    ).toEqual({ warming: true, stage: 'ramp-1', ageDays: 3 });
+    expect(deriveAccountWarmupBadge({ warmup: { mature: false } })).toEqual({
+      warming: true,
+      stage: '',
+      ageDays: null,
+    });
+    expect(
+      deriveAccountWarmupBadge({
+        warmup: { stage: 'cold', mature: false, age_days: Number.NaN },
+      })
+    ).toEqual({ warming: true, stage: 'cold', ageDays: null });
   });
 });

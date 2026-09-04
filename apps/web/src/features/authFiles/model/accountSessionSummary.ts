@@ -89,3 +89,42 @@ export const deriveSubscriptionTierBadge = (
   }
   return { tier: 'unknown', known: false };
 };
+
+// ---------------------------------------------------------------------------
+// 养号（warm-up）标注（同一投影的 warmup 子对象）
+// ---------------------------------------------------------------------------
+
+export interface AccountWarmupBadge {
+  /** 恒为 true（本函数只在「养号中」时返回对象，成熟/不可判定时返回 null）。 */
+  warming: true;
+  /** core 下发的当前阶段名（可能为空字符串，仅作 tooltip 展示，不参与判定）。 */
+  stage: string;
+  /** 账号年龄（天）；core 未锚定时为 null。 */
+  ageDays: number | null;
+}
+
+/**
+ * 只在 core 明确报 `warmup.mature === false`（尚在养号曲线内）时返回养号标注；
+ * 其余一律返回 null 不展示：
+ *  - accountScheduling / warmup 整体缺失（老 core 未投影）→ 不可判定，不标注。
+ *  - `mature === true`（已成熟）→ 正常号，不标注。
+ *  - `mature` 非布尔（版本漂移/脏数据）→ 不可判定，不标注（绝不臆造养号态）。
+ *
+ * 注意：本函数 provider-agnostic，仅做纯数据判定；是否只对 claude 展示由调用方
+ * （AuthFileCard）按 provider gate 决定。
+ */
+export const deriveAccountWarmupBadge = (
+  accountScheduling: AuthFileAccountScheduling | null | undefined
+): AccountWarmupBadge | null => {
+  if (!accountScheduling || typeof accountScheduling !== 'object') return null;
+  const warmup = accountScheduling.warmup;
+  if (!warmup || typeof warmup !== 'object') return null;
+  if (warmup.mature !== false) return null;
+
+  const stage = typeof warmup.stage === 'string' ? warmup.stage.trim() : '';
+  const ageDays =
+    typeof warmup.age_days === 'number' && Number.isFinite(warmup.age_days)
+      ? Math.max(0, Math.floor(warmup.age_days))
+      : null;
+  return { warming: true, stage, ageDays };
+};

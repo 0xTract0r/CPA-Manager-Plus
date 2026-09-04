@@ -53,7 +53,10 @@ import {
 } from '@/features/authFiles/hooks/useAuthFilesReauth';
 import { AccountSpeedReadings } from '@/features/authFiles/components/AccountSpeedReadings';
 import { AccountSessionSummary } from '@/features/authFiles/components/AccountSessionSummary';
-import { deriveSubscriptionTierBadge } from '@/features/authFiles/model/accountSessionSummary';
+import {
+  deriveAccountWarmupBadge,
+  deriveSubscriptionTierBadge,
+} from '@/features/authFiles/model/accountSessionSummary';
 import { AuthFileQuotaSection } from '@/features/authFiles/components/AuthFileQuotaSection';
 import styles from '@/features/authFiles/AuthFilesPage.module.scss';
 import reauthStyles from '@/features/authFiles/components/AuthFileReauthInline.module.scss';
@@ -444,6 +447,23 @@ export function AuthFileCard(props: AuthFileCardProps) {
         defaultValue: SUBSCRIPTION_TIER_BADGE_DEFAULT_LABELS[subscriptionTierBadge.tier],
       })
     : '';
+
+  // 账号页重排（claude-only）：Claude 账号不再在卡片顶部渲染独立订阅徽标，改为把
+  // 「订阅档位（override-aware）+ 手动标记 + 养号标注」并进卡片洞察区的一行套餐区，
+  // 消除「顶部 Max 5x vs 底部 Max」冲突。codex 等其它 provider 顶部徽标行为不变。
+  const isClaudeProvider = resolvedProvider === 'claude';
+  // 顶部独立徽标只保留给非 claude（当前实际只有 codex 会命中 subscriptionTierBadge）。
+  const showTopTierBadge = Boolean(subscriptionTierBadge) && !isClaudeProvider;
+  // 套餐档位来源（Q10）：'override' = 账号级手工指定，加「手动」标记；'auto' 不加。
+  const claudeTierSource = isClaudeProvider ? file.account_scheduling?.tier_source : undefined;
+  // 养号标注（Q5）：仅在 core 明确 warmup.mature === false 时展示，成熟/缺失不标注。
+  const claudeWarmupBadge = isClaudeProvider
+    ? deriveAccountWarmupBadge(file.account_scheduling)
+    : null;
+  // 套餐区仅对非虚拟的 claude 账号、且 account_scheduling 投影存在（subscriptionTierBadge
+  // 非 null）时渲染；投影缺失（老 core）时不展示，与会话摘要的 unavailable 语义一致。
+  const showClaudeTierRow =
+    isClaudeProvider && !isRuntimeOnly && Boolean(subscriptionTierBadge);
   // 会话计数区块展示给所有非虚拟账号（不像速度读数那样限定"有活跃流量"——
   // 会话数本身就是"有没有活跃/近期会话"的答案，空态由组件内部呈现，不需要
   // 卡片层面预先过滤）。loading 复用逐账号「刷新状态」的既有 loading 信号：
@@ -535,7 +555,7 @@ export function AuthFileCard(props: AuthFileCardProps) {
                     {t('antigravity_subscription.refresh_short')}
                   </button>
                 )}
-                {subscriptionTierBadge && (
+                {showTopTierBadge && subscriptionTierBadge && (
                   <span
                     className={`${styles.tierBadge} ${subscriptionTierBadge.known ? styles.tierBadgeKnown : styles.tierBadgeUnknown}`}
                     title={t('auth_files.subscription_tier_badge_title', {
@@ -851,6 +871,59 @@ export function AuthFileCard(props: AuthFileCardProps) {
               </div>
             )}
 
+            {showClaudeTierRow && subscriptionTierBadge && (
+              <div
+                className={styles.claudeTierRow}
+                data-testid={`auth-file-claude-tier-row-${file.name}`}
+              >
+                <span className={styles.claudeTierLabel}>
+                  {t('auth_files.account_plan_label', { defaultValue: 'Plan' })}
+                </span>
+                <span
+                  className={`${styles.claudeTierValue} ${
+                    subscriptionTierBadge.known
+                      ? styles.claudeTierValueKnown
+                      : styles.claudeTierValueUnknown
+                  }`}
+                  title={t('auth_files.subscription_tier_badge_title', {
+                    tier: subscriptionTierBadgeLabel,
+                    defaultValue: 'Subscription tier: {{tier}}',
+                  })}
+                  data-testid={`auth-file-tier-badge-${file.name}`}
+                  data-tier={subscriptionTierBadge.tier}
+                >
+                  {subscriptionTierBadgeLabel}
+                </span>
+                {claudeTierSource === 'override' && (
+                  <span
+                    className={styles.claudeTierOverrideMarker}
+                    data-testid={`auth-file-tier-override-${file.name}`}
+                    title={t('auth_files.tier_source_override_title', {
+                      defaultValue:
+                        'This subscription tier is manually set via an account-level override, not auto-detected from the upstream plan.',
+                    })}
+                  >
+                    {t('auth_files.tier_source_override_badge', { defaultValue: 'Manual' })}
+                  </span>
+                )}
+                {claudeWarmupBadge && (
+                  <span
+                    className={styles.claudeWarmupMarker}
+                    data-testid={`auth-file-warmup-badge-${file.name}`}
+                    data-warmup-stage={claudeWarmupBadge.stage || undefined}
+                    title={t('auth_files.warmup_badge_title', {
+                      stage: claudeWarmupBadge.stage || '-',
+                      age: claudeWarmupBadge.ageDays ?? '-',
+                      defaultValue:
+                        'This account is still warming up (stage: {{stage}}, age: {{age}} day(s)); its per-account rate limits are ramping up and it has not reached full maturity yet.',
+                    })}
+                  >
+                    {t('auth_files.warmup_badge', { defaultValue: 'Warming up' })}
+                  </span>
+                )}
+              </div>
+            )}
+
             {showQuotaLayout && quotaType && (
               <AuthFileQuotaSection
                 file={file}
@@ -874,13 +947,24 @@ export function AuthFileCard(props: AuthFileCardProps) {
               />
             )}
 
-            {showSessionSummary && (
-              <AccountSessionSummary
-                accountScheduling={file.account_scheduling}
-                loading={isSessionSummaryLoading}
-                compact={compact}
-              />
-            )}
+            {/* Q9（会话数归组）：claude 账号把会话摘要包一层带上分隔线的分组容器，
+                与上方「健康状态」区块视觉上分开；其它 provider 保持原有结构不变。 */}
+            {showSessionSummary &&
+              (isClaudeProvider ? (
+                <div className={styles.claudeSessionGroup}>
+                  <AccountSessionSummary
+                    accountScheduling={file.account_scheduling}
+                    loading={isSessionSummaryLoading}
+                    compact={compact}
+                  />
+                </div>
+              ) : (
+                <AccountSessionSummary
+                  accountScheduling={file.account_scheduling}
+                  loading={isSessionSummaryLoading}
+                  compact={compact}
+                />
+              ))}
           </div>
 
           <div className={styles.cardActions}>
