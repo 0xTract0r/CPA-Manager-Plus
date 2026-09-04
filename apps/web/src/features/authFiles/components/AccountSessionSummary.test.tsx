@@ -1,7 +1,7 @@
 import { create, act, type ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { AccountSessionSummary } from './AccountSessionSummary';
-import type { AuthFileAdaptiveScheduling } from '@/types';
+import type { AuthFileAccountScheduling } from '@/types';
 
 // 复用仓库既有 i18n mock 口径：有 defaultValue 时展开 {{opt}} 插值，否则回原 key。
 vi.mock('react-i18next', () => ({
@@ -32,14 +32,14 @@ function renderJson(props: Parameters<typeof AccountSessionSummary>[0]): string 
 
 describe('AccountSessionSummary 四态', () => {
   it('loading 态：显示 Counting…，不渲染计数网格', () => {
-    const json = renderJson({ adaptiveScheduling: undefined, loading: true });
+    const json = renderJson({ accountScheduling: undefined, loading: true });
     expect(json).toContain('Counting');
     expect(json).not.toContain('account-session-total');
   });
 
-  it('unavailable 态（adaptive_scheduling 缺失/null）：显式"数据不可用"文案，绝不渲染成 0', () => {
+  it('unavailable 态（account_scheduling 缺失/null）：显式"数据不可用"文案，绝不渲染成 0', () => {
     for (const value of [undefined, null] as const) {
-      const json = renderJson({ adaptiveScheduling: value });
+      const json = renderJson({ accountScheduling: value });
       expect(json).toContain('Session data unavailable');
       // 硬断言：不可用态绝不能包含一个孤立的渲染出来的 "0"（防止被误判成"确有其事的 0"）。
       expect(json).not.toContain('account-session-total');
@@ -47,19 +47,19 @@ describe('AccountSessionSummary 四态', () => {
   });
 
   it('empty 态（sessions_total===0）：显式"暂无会话数据"，不是数字 0', () => {
-    const adaptiveScheduling: AuthFileAdaptiveScheduling = {
+    const accountScheduling: AuthFileAccountScheduling = {
       subscription_tier: 'pro',
       sessions_total: 0,
       sessions_active: 0,
       sessions_closed: 0,
     };
-    const json = renderJson({ adaptiveScheduling });
+    const json = renderJson({ accountScheduling });
     expect(json).toContain('No session data yet');
     expect(json).not.toContain('account-session-total');
   });
 
   it('ok 态：渲染总计/活跃/已关闭三个真实计数', () => {
-    const adaptiveScheduling: AuthFileAdaptiveScheduling = {
+    const accountScheduling: AuthFileAccountScheduling = {
       subscription_tier: 'max_20x',
       sessions_total: 7,
       sessions_active: 3,
@@ -67,7 +67,7 @@ describe('AccountSessionSummary 四态', () => {
     };
     let renderer!: ReactTestRenderer;
     act(() => {
-      renderer = create(<AccountSessionSummary adaptiveScheduling={adaptiveScheduling} />);
+      renderer = create(<AccountSessionSummary accountScheduling={accountScheduling} />);
     });
     const root = renderer.root;
 
@@ -92,8 +92,8 @@ describe('AccountSessionSummary 四态', () => {
     expect(container.props['data-account-session-status']).toBe('ok');
   });
 
-  it('loading 优先级高于 unavailable/empty：即便 adaptiveScheduling 缺失，loading=true 仍显示统计中', () => {
-    const json = renderJson({ adaptiveScheduling: undefined, loading: true });
+  it('loading 优先级高于 unavailable/empty：即便 accountScheduling 缺失，loading=true 仍显示统计中', () => {
+    const json = renderJson({ accountScheduling: undefined, loading: true });
     expect(json).toContain('Counting');
     expect(json).not.toContain('unavailable');
   });

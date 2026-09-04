@@ -1,11 +1,11 @@
 import { useTranslation } from 'react-i18next';
-import type { AuthFileAdaptiveScheduling } from '@/types';
+import type { AuthFileAccountScheduling } from '@/types';
 import { deriveAccountSessionSummary } from '@/features/authFiles/model/accountSessionSummary';
 import styles from '@/features/authFiles/AuthFilesPage.module.scss';
 
 export interface AccountSessionSummaryProps {
-  /** 该账号的 core adaptive_scheduling 投影（可能整体缺失，见类型注释）。 */
-  adaptiveScheduling?: AuthFileAdaptiveScheduling | null;
+  /** 该账号的 core account_scheduling 投影（可能整体缺失，见类型注释）。 */
+  accountScheduling?: AuthFileAccountScheduling | null;
   /**
    * 该账号数据是否正在刷新（复用调用方既有的逐账号「刷新状态」loading，见
    * AuthFileCard.statusRefreshing）——展示上把本区块降级为「统计中…」占位，
@@ -18,12 +18,12 @@ export interface AccountSessionSummaryProps {
 
 /**
  * P7（account-session-count-display）：账号级会话计数展示——总计 · 活跃 ·
- * 已关闭（core P6 SessionAggregateForAuthIndex，经 adaptive_scheduling 投影）。
+ * 已关闭（core P6 SessionAggregateForAuthIndex，经 account_scheduling 投影）。
  * 三态：loading（刷新中）/ unavailable（core 未下发该投影）/ empty（确认 0 条，
  * 显式「暂无会话数据」而非数字 0）；否则渲染三个计数。
  */
 export function AccountSessionSummary({
-  adaptiveScheduling,
+  accountScheduling,
   loading = false,
   compact = false,
 }: AccountSessionSummaryProps) {
@@ -53,7 +53,7 @@ export function AccountSessionSummary({
     );
   }
 
-  const summary = deriveAccountSessionSummary(adaptiveScheduling);
+  const summary = deriveAccountSessionSummary(accountScheduling);
 
   if (summary.status === 'unavailable') {
     return (

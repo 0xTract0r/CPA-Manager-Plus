@@ -1,8 +1,8 @@
-import type { AuthFileAdaptiveScheduling } from '@/types';
+import type { AuthFileAccountScheduling } from '@/types';
 
 /**
  * P7（account-session-count-display）纯数据层：把 core
- * `adaptive_scheduling.sessions_{total,active,closed}` 归一成一个三态展示模型。
+ * `account_scheduling.sessions_{total,active,closed}` 归一成一个三态展示模型。
  *
  * 三态含义（不是「加载中」这类异步态——sessions 数据随账号列表一次性到达，
  * 无独立请求，故不存在组件级 loading；调用方若需要"加载中"展示，应挂在页面
@@ -29,14 +29,14 @@ const toNonNegativeInt = (value: unknown): number => {
 };
 
 export const deriveAccountSessionSummary = (
-  adaptiveScheduling: AuthFileAdaptiveScheduling | null | undefined
+  accountScheduling: AuthFileAccountScheduling | null | undefined
 ): AccountSessionSummary => {
-  if (!adaptiveScheduling || typeof adaptiveScheduling !== 'object') {
+  if (!accountScheduling || typeof accountScheduling !== 'object') {
     return { status: 'unavailable', total: 0, active: 0, closed: 0 };
   }
-  const total = toNonNegativeInt(adaptiveScheduling.sessions_total);
-  const active = toNonNegativeInt(adaptiveScheduling.sessions_active);
-  const closed = toNonNegativeInt(adaptiveScheduling.sessions_closed);
+  const total = toNonNegativeInt(accountScheduling.sessions_total);
+  const active = toNonNegativeInt(accountScheduling.sessions_active);
+  const closed = toNonNegativeInt(accountScheduling.sessions_closed);
   return { status: total > 0 ? 'ok' : 'empty', total, active, closed };
 };
 
@@ -66,20 +66,20 @@ export interface SubscriptionTierBadge {
  * 渲染一个恒定"未知"徽标没有信息量，只会刷屏，所以这些 provider 返回 null
  * （不展示徽标），行为上与"确认未知"的 claude/codex 账号区分开。
  *
- * adaptiveScheduling 整体缺失时同样返回 null——那是"数据源不可用"（core 版本
+ * accountScheduling 整体缺失时同样返回 null——那是"数据源不可用"（core 版本
  * 跨度），不是"已确认未知档位"，两者是不同的降级语义，不应该展示成同一个
  * "未知"徽标掩盖过去。
  */
 export const deriveSubscriptionTierBadge = (
   providerKey: string,
-  adaptiveScheduling: AuthFileAdaptiveScheduling | null | undefined
+  accountScheduling: AuthFileAccountScheduling | null | undefined
 ): SubscriptionTierBadge | null => {
   if (providerKey !== 'claude' && providerKey !== 'codex') return null;
-  if (!adaptiveScheduling || typeof adaptiveScheduling !== 'object') return null;
+  if (!accountScheduling || typeof accountScheduling !== 'object') return null;
 
   const raw =
-    typeof adaptiveScheduling.subscription_tier === 'string'
-      ? adaptiveScheduling.subscription_tier.trim().toLowerCase()
+    typeof accountScheduling.subscription_tier === 'string'
+      ? accountScheduling.subscription_tier.trim().toLowerCase()
       : '';
   const knownValues: readonly string[] =
     providerKey === 'claude' ? CLAUDE_SUBSCRIPTION_TIER_VALUES : CODEX_SUBSCRIPTION_TIER_VALUES;

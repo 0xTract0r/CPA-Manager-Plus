@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AuthFileItem } from '@/types';
 import { AuthFileCard, type AuthFileCardProps } from './AuthFileCard';
 
-// P7（account-session-count-display）：账号卡消费 core adaptive_scheduling 投影
+// P7（account-session-count-display）：账号卡消费 core account_scheduling 投影
 // （会话计数 + 细粒度订阅等级）的渲染回归。用 fixture 数据（非真实网络请求）
 // 覆盖：有数据/空数据(sessions_total===0)/数据源缺失三种真实场景，锁定「暂无
 // 会话数据」不能被数字 0 顶替、「未知」档位必须显式展示。
@@ -58,7 +58,7 @@ describe('AuthFileCard: P7 session summary + subscription tier badge', () => {
       name: 'claude-acct-1.json',
       type: 'claude',
       disabled: false,
-      adaptive_scheduling: {
+      account_scheduling: {
         subscription_tier: 'max_20x',
         sessions_total: 12,
         sessions_active: 5,
@@ -86,7 +86,7 @@ describe('AuthFileCard: P7 session summary + subscription tier badge', () => {
       name: 'claude-acct-2.json',
       type: 'claude',
       disabled: false,
-      adaptive_scheduling: {
+      account_scheduling: {
         subscription_tier: 'default_claude_ai', // 上游未映射值，core 侧已折成 "unknown"
         sessions_total: 2,
         sessions_active: 1,
@@ -104,7 +104,7 @@ describe('AuthFileCard: P7 session summary + subscription tier badge', () => {
       name: 'claude-acct-3.json',
       type: 'claude',
       disabled: false,
-      adaptive_scheduling: {
+      account_scheduling: {
         subscription_tier: 'pro',
         sessions_total: 0,
         sessions_active: 0,
@@ -121,12 +121,12 @@ describe('AuthFileCard: P7 session summary + subscription tier badge', () => {
     expect(json).toContain('No session data yet');
   });
 
-  it('shows the unavailable state and no tier badge when adaptive_scheduling is entirely absent (older core / version skew)', () => {
+  it('shows the unavailable state and no tier badge when account_scheduling is entirely absent (older core / version skew)', () => {
     const file: AuthFileItem = {
       name: 'claude-acct-4.json',
       type: 'claude',
       disabled: false,
-      // adaptive_scheduling intentionally omitted — simulates a core deployment
+      // account_scheduling intentionally omitted — simulates a core deployment
       // that predates this projection (real, documented failure mode in this repo).
     };
     let renderer!: ReactTestRenderer;
@@ -147,7 +147,7 @@ describe('AuthFileCard: P7 session summary + subscription tier badge', () => {
       name: 'claude-acct-5.json',
       type: 'claude',
       disabled: false,
-      adaptive_scheduling: {
+      account_scheduling: {
         subscription_tier: 'pro',
         sessions_total: 9,
         sessions_active: 4,
@@ -170,12 +170,12 @@ describe('AuthFileCard: P7 session summary + subscription tier badge', () => {
     expect(renderer.root.findAllByProps({ 'data-testid': 'account-session-total' })).toHaveLength(0);
   });
 
-  it('does not render a tier badge for a non-claude/non-codex provider even with adaptive_scheduling present', () => {
+  it('does not render a tier badge for a non-claude/non-codex provider even with account_scheduling present', () => {
     const file: AuthFileItem = {
       name: 'qwen-acct-1.json',
       type: 'qwen',
       disabled: false,
-      adaptive_scheduling: {
+      account_scheduling: {
         subscription_tier: 'unknown',
         sessions_total: 3,
         sessions_active: 1,

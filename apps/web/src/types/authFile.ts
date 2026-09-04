@@ -286,14 +286,19 @@ export interface AuthFileItem {
   recent_requests?: RecentRequestBucket[];
   recentRequests?: RecentRequestBucket[];
   /**
-   * P7：账号会话计数 + 细粒度订阅等级只读投影，见 AuthFileAdaptiveScheduling
+   * P7：账号会话计数 + 细粒度订阅等级只读投影，见 AuthFileAccountScheduling
    * 类型注释。core 恒下发该顶层 key（即便个别嵌套值为 null），但跨版本/过渡
    * 期部署仍可能整体缺失该 key（部署的 core 落后于本次改动，仓库里已有先例——
    * 见 farm_enrolled/telemetry_alive 同款"编排器透传未落地前恒缺省"约定）。
    * 前端消费方必须把 undefined/null 当作"暂不可用"处理，不得当 0 或"未知"
    * 展示——那是两种不同的降级语义（数据源缺失 vs 数据源确认无法识别）。
+   *
+   * 字段历史：core 侧原名 `adaptive_scheduling`，已随 §8.5 命名空间统一改名为
+   * `account_scheduling`（见 core
+   * internal/api/handlers/management/auth_files.go / auth_files_adaptive_scheduling.go
+   * buildAccountSchedulingView）；前端同步跟改，子字段形状不变。
    */
-  adaptive_scheduling?: AuthFileAdaptiveScheduling | null;
+  account_scheduling?: AuthFileAccountScheduling | null;
   [key: string]: unknown;
 }
 
@@ -304,15 +309,17 @@ export interface AuthFilesResponse {
 
 /**
  * P7（account-session-count-display）：账号维度会话计数 + 细粒度订阅等级只读
- * 投影（core `entry["adaptive_scheduling"]`，见 core
+ * 投影（core `entry["account_scheduling"]`（原名 `adaptive_scheduling`，见 core
  * internal/api/handlers/management/auth_files_adaptive_scheduling.go
- * buildAdaptiveSchedulingView）。additive、namespaced，core 恒下发该顶层 key。
+ * buildAccountSchedulingView）。additive、namespaced，core 恒下发该顶层 key。
  *
- * 本期前端只消费 subscription_tier + sessions_{total,active,closed} 四个字段；
- * 该投影下还有 quota_utilization / first_production_at / warmup 等更多字段，
- * 本期不消费，用 `[key: string]: unknown` 兜底透传，避免类型收窄丢数据。
+ * 本期前端只消费 subscription_tier + sessions_{total,active,closed} 四个字段
+ * 用于渲染；tier_source / rate_scale 本期只补类型（契约同步），暂不接入任何
+ * UI 渲染逻辑。该投影下还有 quota_utilization / first_production_at / warmup
+ * 等更多字段，本期不消费，用 `[key: string]: unknown` 兜底透传，避免类型收窄
+ * 丢数据。
  */
-export interface AuthFileAdaptiveScheduling {
+export interface AuthFileAccountScheduling {
   /**
    * 细粒度订阅档位：
    *  - Claude: "max_20x" | "max_5x" | "pro" | "unknown"
@@ -323,6 +330,18 @@ export interface AuthFileAdaptiveScheduling {
    * 「未知」展示，不做模糊匹配。
    */
   subscription_tier?: string;
+  /**
+   * subscription_tier 的来源（core §8.4）：'auto' 表示由 rate_limit_tier /
+   * chatgpt_plan_type 自动探测得出；'override' 表示由账号级手工 tier_override
+   * 驱动。本期只加类型，不接入 UI 渲染。
+   */
+  tier_source?: 'auto' | 'override';
+  /**
+   * 该账号有效的速率乘子（core §8.3，AccountRateScale）：作用于派生出的速率
+   * 上限（rpm/burst/concurrency/daily budget），不影响调度权重；缺省时 core
+   * 恒回退 1.0（无效果）。本期只加类型，不接入 UI 渲染。
+   */
+  rate_scale?: number;
   /**
    * 该账号索引下观测到的去重 SessionID 总数（P6，core
    * internal/usage.SessionAggregateForAuthIndex，按空闲窗口分桶）。

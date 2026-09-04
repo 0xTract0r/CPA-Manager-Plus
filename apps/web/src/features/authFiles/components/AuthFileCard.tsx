@@ -434,10 +434,10 @@ export function AuthFileCard(props: AuthFileCardProps) {
 
   // P7（account-session-count-display）：细粒度订阅等级徽标——只对 core 实际
   // 投影该字段的 provider（claude/codex）展示，null 时（其它 provider，或
-  // adaptive_scheduling 整体缺失）不渲染，避免刷屏一堆无信息量的占位。
+  // account_scheduling 整体缺失）不渲染，避免刷屏一堆无信息量的占位。
   const subscriptionTierBadge = deriveSubscriptionTierBadge(
     resolvedProvider,
-    file.adaptive_scheduling
+    file.account_scheduling
   );
   const subscriptionTierBadgeLabel = subscriptionTierBadge
     ? t(`auth_files.subscription_tier_badge_${subscriptionTierBadge.tier}`, {
@@ -876,7 +876,7 @@ export function AuthFileCard(props: AuthFileCardProps) {
 
             {showSessionSummary && (
               <AccountSessionSummary
-                adaptiveScheduling={file.adaptive_scheduling}
+                accountScheduling={file.account_scheduling}
                 loading={isSessionSummaryLoading}
                 compact={compact}
               />

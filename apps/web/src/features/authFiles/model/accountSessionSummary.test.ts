@@ -5,7 +5,7 @@ import {
 } from './accountSessionSummary';
 
 describe('deriveAccountSessionSummary', () => {
-  it('returns unavailable when adaptive_scheduling is undefined (core version skew)', () => {
+  it('returns unavailable when account_scheduling is undefined (core version skew)', () => {
     expect(deriveAccountSessionSummary(undefined)).toEqual({
       status: 'unavailable',
       total: 0,
@@ -14,7 +14,7 @@ describe('deriveAccountSessionSummary', () => {
     });
   });
 
-  it('returns unavailable when adaptive_scheduling is explicitly null', () => {
+  it('returns unavailable when account_scheduling is explicitly null', () => {
     expect(deriveAccountSessionSummary(null)).toEqual({
       status: 'unavailable',
       total: 0,
@@ -63,11 +63,11 @@ describe('deriveAccountSessionSummary', () => {
 });
 
 describe('deriveSubscriptionTierBadge', () => {
-  it('returns null for non-claude/codex providers even when adaptive_scheduling is present', () => {
+  it('returns null for non-claude/codex providers even when account_scheduling is present', () => {
     expect(deriveSubscriptionTierBadge('qwen', { subscription_tier: 'unknown' })).toBeNull();
   });
 
-  it('returns null when adaptive_scheduling is missing entirely (data-source unavailable, not "confirmed unknown")', () => {
+  it('returns null when account_scheduling is missing entirely (data-source unavailable, not "confirmed unknown")', () => {
     expect(deriveSubscriptionTierBadge('claude', undefined)).toBeNull();
     expect(deriveSubscriptionTierBadge('claude', null)).toBeNull();
   });
