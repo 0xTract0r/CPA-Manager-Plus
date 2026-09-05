@@ -352,6 +352,14 @@ export interface AuthFileAccountScheduling {
    */
   warmup?: AuthFileAccountWarmup | null;
   /**
+   * 账号「首次投产时间」锚点（RFC3339 字符串或 null）。养号曲线以此为起点计算
+   * age_days / warmup.stage。未显式设置时 core 在账号首次服务时自动打戳，此时该
+   * 字段下发 null（回退「首次服务自动打戳」语义）。仅用于把开 adaptive 前已在
+   * 生产服务的老号迁移到真实首服日；前端设/清通过 PATCH `first_production_at`
+   * 字段（见 AuthFileAccountSchedulingPatchRequest），前端消费此投影回显当前锚点。
+   */
+  first_production_at?: string | null;
+  /**
    * 该账号索引下观测到的去重 SessionID 总数（P6，core
    * internal/usage.SessionAggregateForAuthIndex，按空闲窗口分桶）。
    * 恒为非负整数；0 是「确有其事的 0」（真的没有会话），不是「未知」——
@@ -396,6 +404,10 @@ export type AuthFileAccountSchedulingTierOverride = 'max_20x' | 'max_5x' | 'pro'
  *  - `name` 必填；`auth_index` 可选（多 auth 同名文件消歧）。
  *  - `tier_override`：max_20x|max_5x|pro 强制档位；`null` 清除（回退 auto 探测）。
  *  - `rate_scale`：> 0 覆盖速率乘子；`null` 清除（回退 core 默认 1.0）。
+ *  - `first_production_at`：首次投产锚点（养号起点），tri-state：
+ *      · RFC3339 字符串 → 设置为该时刻（core 校验必须 ≤ 现在，未来时间回 400）；
+ *      · `""` 或 `null` → 清除，回退到「首次服务自动打戳」；
+ *      · 省略该字段 → 保持不变（与 tier_override/rate_scale 相互独立，可同请求）。
  *  - `tier_override` / `rate_scale` 至少给一个（core 侧校验；缺失回 400）。
  */
 export interface AuthFileAccountSchedulingPatchRequest {
@@ -403,6 +415,7 @@ export interface AuthFileAccountSchedulingPatchRequest {
   auth_index?: string | number;
   tier_override?: AuthFileAccountSchedulingTierOverride | null;
   rate_scale?: number | null;
+  first_production_at?: string | null;
 }
 
 /**

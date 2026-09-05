@@ -94,6 +94,14 @@ const overrideScheduling: AuthFileAccountScheduling = {
   rate_scale: 0.5,
 };
 
+const anchoredScheduling: AuthFileAccountScheduling = {
+  subscription_tier: 'max_5x',
+  tier_source: 'auto',
+  rate_scale: 1,
+  first_production_at: '2026-01-01T00:00:00Z',
+  warmup: { stage: 'mature', mature: true, age_days: 240 },
+};
+
 describe('useAccountSchedulingControls', () => {
   beforeEach(() => {
     mocks.updateAccountScheduling.mockReset();
@@ -278,6 +286,114 @@ describe('useAccountSchedulingControls', () => {
     expect(mocks.updateAccountScheduling).toHaveBeenCalledWith(
       expect.objectContaining({ auth_index: 3 })
     );
+    harness.unmount();
+  });
+
+  it('derives an empty first_production_at input when the baseline has no anchor', () => {
+    const harness = mountHook({ fileName: 'acct.json', initialScheduling: autoScheduling });
+    const current = harness.getCurrent();
+    expect(current.firstProductionAtText).toBe('');
+    expect(current.firstProductionAtError).toBeNull();
+    harness.unmount();
+  });
+
+  it('[设 first_production_at] sends the picked date as RFC3339 (≤ now) when the anchor changes', async () => {
+    mocks.updateAccountScheduling.mockResolvedValue({
+      name: 'acct.json',
+      account_scheduling: anchoredScheduling,
+    });
+    const harness = mountHook({ fileName: 'acct.json', initialScheduling: autoScheduling });
+
+    // TZ-independent：期望值与实现都用 `new Date(localWallClock).toISOString()`。
+    const localInput = '2020-06-15T10:30';
+    act(() => harness.getCurrent().setFirstProductionAtText(localInput));
+    expect(harness.getCurrent().dirty).toBe(true);
+    expect(harness.getCurrent().firstProductionAtError).toBeNull();
+
+    await act(async () => {
+      await harness.getCurrent().applyScheduling();
+    });
+
+    expect(mocks.updateAccountScheduling).toHaveBeenCalledWith({
+      name: 'acct.json',
+      tier_override: null,
+      rate_scale: 1,
+      first_production_at: new Date(localInput).toISOString(),
+    });
+    harness.unmount();
+  });
+
+  it('[清 first_production_at] sends null when clearing an existing anchor', async () => {
+    mocks.updateAccountScheduling.mockResolvedValue({
+      name: 'acct.json',
+      account_scheduling: autoScheduling,
+    });
+    const harness = mountHook({ fileName: 'acct.json', initialScheduling: anchoredScheduling });
+
+    // 基线锚点非空 → 清空输入即视为「清除」。
+    expect(harness.getCurrent().firstProductionAtText).not.toBe('');
+    act(() => harness.getCurrent().setFirstProductionAtText(''));
+    expect(harness.getCurrent().dirty).toBe(true);
+
+    await act(async () => {
+      await harness.getCurrent().applyScheduling();
+    });
+
+    expect(mocks.updateAccountScheduling).toHaveBeenCalledWith(
+      expect.objectContaining({ first_production_at: null })
+    );
+    harness.unmount();
+  });
+
+  it('[未来] blocks apply and surfaces an error for a future first_production_at, without calling the API', async () => {
+    const harness = mountHook({ fileName: 'acct.json', initialScheduling: autoScheduling });
+
+    act(() => harness.getCurrent().setFirstProductionAtText('3000-01-01T00:00'));
+    expect(harness.getCurrent().firstProductionAtError).toBeTruthy();
+
+    await act(async () => {
+      await harness.getCurrent().applyScheduling();
+    });
+    expect(mocks.updateAccountScheduling).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it('omits first_production_at from the request when only the tier changes (unchanged = omit)', async () => {
+    mocks.updateAccountScheduling.mockResolvedValue({
+      name: 'acct.json',
+      account_scheduling: anchoredScheduling,
+    });
+    // 基线已有锚点：只改 tier 时不应把锚点一并回传（避免自动打戳被覆写成手工）。
+    const harness = mountHook({ fileName: 'acct.json', initialScheduling: anchoredScheduling });
+
+    act(() => harness.getCurrent().setTierOverride('max_20x'));
+    await act(async () => {
+      await harness.getCurrent().applyScheduling();
+    });
+
+    const requestArg = mocks.updateAccountScheduling.mock.calls[0][0];
+    expect('first_production_at' in requestArg).toBe(false);
+    harness.unmount();
+  });
+
+  it('refreshes first_production_at + warmup from the API response projection (no optimistic update)', async () => {
+    mocks.updateAccountScheduling.mockResolvedValue({
+      name: 'acct.json',
+      account_scheduling: anchoredScheduling,
+    });
+    const harness = mountHook({ fileName: 'acct.json', initialScheduling: autoScheduling });
+
+    act(() => harness.getCurrent().setFirstProductionAtText('2020-06-15T10:30'));
+    await act(async () => {
+      await harness.getCurrent().applyScheduling();
+    });
+
+    const current = harness.getCurrent();
+    expect(current.view).toEqual(anchoredScheduling);
+    expect(current.view?.warmup?.age_days).toBe(240);
+    // 用返回投影重派生输入值：锚点非空 → 输入非空，且不再 dirty。
+    expect(current.firstProductionAtText).not.toBe('');
+    expect(current.dirty).toBe(false);
     harness.unmount();
   });
 });

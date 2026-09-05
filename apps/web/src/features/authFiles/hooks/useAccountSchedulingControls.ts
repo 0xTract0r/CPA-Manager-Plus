@@ -62,6 +62,17 @@ export interface UseAccountSchedulingControlsResult {
   setRateScaleText: (value: string) => void;
   /** rate_scale 输入框校验错误（非数字或 <= 0）；为 null 表示合法（含空串=清除）。 */
   rateScaleError: string | null;
+  /**
+   * first_production_at 输入框当前值，`<input type="datetime-local">` 的本地 wall-clock
+   * 格式（`YYYY-MM-DDTHH:mm`）；空串表示「清除，回退自动打戳」。
+   */
+  firstProductionAtText: string;
+  setFirstProductionAtText: (value: string) => void;
+  /**
+   * first_production_at 前端校验错误（非法日期 / 未来时间）；为 null 表示合法
+   * （含空串=清除）。后端也会拦未来时间，这里是提交前的第一道拦截。
+   */
+  firstProductionAtError: string | null;
   /** 最近一次成功应用后 core 回显的投影；未应用过时等于打开弹窗时的基线。 */
   view: AuthFileAccountScheduling | null;
   /** 当前表单值是否偏离 view 派生出的基线（决定 Apply 按钮是否可点）。 */
@@ -101,6 +112,47 @@ function parseRateScaleInput(text: string): ParsedRateScale {
   return { kind: 'value', value: numeric };
 }
 
+/** 把毫秒时间戳格式化成 `<input type="datetime-local">` 的本地 wall-clock 值（分钟精度）。 */
+function msToDatetimeLocal(ms: number): string {
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/**
+ * 把投影里的 first_production_at（RFC3339）派生成 datetime-local 输入值。缺失 /
+ * null / 非法一律回退空串（= 未锚定，按自动打戳处理），不臆造时间。
+ */
+function deriveFirstProductionAtInput(
+  view: AuthFileAccountScheduling | null | undefined
+): string {
+  const raw = view?.first_production_at;
+  if (typeof raw !== 'string') return '';
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  const ms = Date.parse(trimmed);
+  return Number.isNaN(ms) ? '' : msToDatetimeLocal(ms);
+}
+
+type ParsedFirstProductionAt =
+  | { kind: 'empty' }
+  | { kind: 'value'; rfc3339: string }
+  | { kind: 'invalid' }
+  | { kind: 'future' };
+
+/**
+ * 解析 datetime-local 输入：空 = 清除；非法日期 = invalid；未来时间 = future
+ * （前端第一道拦截，后端也拦）；否则转成 RFC3339（UTC）用于提交。
+ */
+function parseFirstProductionAtInput(text: string, nowMs: number): ParsedFirstProductionAt {
+  const trimmed = text.trim();
+  if (!trimmed) return { kind: 'empty' };
+  const ms = Date.parse(trimmed);
+  if (Number.isNaN(ms)) return { kind: 'invalid' };
+  if (ms > nowMs) return { kind: 'future' };
+  return { kind: 'value', rfc3339: new Date(ms).toISOString() };
+}
+
 /** 从 400 响应体里提取 `legal_values`（core 返回 `{error, legal_values: string[]}`）。 */
 function extractLegalTierValues(data: unknown): string[] | null {
   if (!isRecord(data)) return null;
@@ -124,6 +176,9 @@ export function useAccountSchedulingControls(
   const [rateScaleText, setRateScaleText] = useState<string>(() =>
     deriveRateScaleText(initialScheduling)
   );
+  const [firstProductionAtText, setFirstProductionAtText] = useState<string>(() =>
+    deriveFirstProductionAtInput(initialScheduling)
+  );
   const [saving, setSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [legalTierValues, setLegalTierValues] = useState<string[] | null>(null);
@@ -136,12 +191,33 @@ export function useAccountSchedulingControls(
         })
       : null;
 
+  const parsedFirstProductionAt = parseFirstProductionAtInput(firstProductionAtText, Date.now());
+  const firstProductionAtError =
+    parsedFirstProductionAt.kind === 'invalid'
+      ? t('auth_files.account_settings_scheduling_first_production_at_invalid', {
+          defaultValue: 'Enter a valid date and time.',
+        })
+      : parsedFirstProductionAt.kind === 'future'
+        ? t('auth_files.account_settings_scheduling_first_production_at_future_error', {
+            defaultValue: "First production date can't be in the future.",
+          })
+        : null;
+
   const baselineTier = deriveTierChoice(view);
   const baselineRateText = deriveRateScaleText(view);
-  const dirty = tierOverride !== baselineTier || rateScaleText.trim() !== baselineRateText.trim();
+  const baselineFirstProductionAt = deriveFirstProductionAtInput(view);
+  const firstProductionAtDirty =
+    firstProductionAtText.trim() !== baselineFirstProductionAt.trim();
+  const dirty =
+    tierOverride !== baselineTier ||
+    rateScaleText.trim() !== baselineRateText.trim() ||
+    firstProductionAtDirty;
 
   const applyScheduling = useCallback(async () => {
     if (parsedRateScale.kind === 'invalid') return;
+    if (parsedFirstProductionAt.kind === 'invalid' || parsedFirstProductionAt.kind === 'future') {
+      return;
+    }
 
     setSaving(true);
     setErrorMessage(null);
@@ -155,6 +231,13 @@ export function useAccountSchedulingControls(
       if (authIndex !== undefined && authIndex !== null && String(authIndex).trim() !== '') {
         request.auth_index = authIndex;
       }
+      // first_production_at 是 tri-state：只在用户改动过时才带进请求（省略=不变），
+      // 避免调整 tier/rate 时误把已有（可能是自动打戳的）锚点覆写成手工值。
+      // 改动后：空 = null（清除，回退自动打戳）；有值 = RFC3339（≤ 现在）。
+      if (firstProductionAtDirty) {
+        request.first_production_at =
+          parsedFirstProductionAt.kind === 'value' ? parsedFirstProductionAt.rfc3339 : null;
+      }
 
       const response = await authFilesApi.updateAccountScheduling(request);
       const nextView = response.account_scheduling;
@@ -162,6 +245,7 @@ export function useAccountSchedulingControls(
       setView(nextView);
       setTierOverride(deriveTierChoice(nextView));
       setRateScaleText(deriveRateScaleText(nextView));
+      setFirstProductionAtText(deriveFirstProductionAtInput(nextView));
       showNotification(
         t('auth_files.account_settings_scheduling_saved_success', {
           name: fileName,
@@ -192,7 +276,17 @@ export function useAccountSchedulingControls(
     } finally {
       setSaving(false);
     }
-  }, [authIndex, fileName, onApplied, parsedRateScale, showNotification, t, tierOverride]);
+  }, [
+    authIndex,
+    fileName,
+    firstProductionAtDirty,
+    onApplied,
+    parsedFirstProductionAt,
+    parsedRateScale,
+    showNotification,
+    t,
+    tierOverride,
+  ]);
 
   return {
     tierOverride,
@@ -200,6 +294,9 @@ export function useAccountSchedulingControls(
     rateScaleText,
     setRateScaleText,
     rateScaleError,
+    firstProductionAtText,
+    setFirstProductionAtText,
+    firstProductionAtError,
     view,
     dirty,
     saving,

@@ -33,6 +33,21 @@ function formatRateScale(value: number | undefined | null): string {
   return typeof value === 'number' && Number.isFinite(value) ? String(value) : '1';
 }
 
+/** 当前本地时间的 datetime-local 值，用作 first_production_at 输入的 `max`（禁未来）。 */
+function nowDatetimeLocal(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** 把投影里的 RFC3339 锚点转成可读本地时间用于回显；非法/缺失回 null。 */
+function formatAnchorDisplay(value: string | null | undefined): string | null {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const ms = Date.parse(value);
+  if (Number.isNaN(ms)) return null;
+  return new Date(ms).toLocaleString();
+}
+
 export function AccountSchedulingPanel(props: AccountSchedulingPanelProps) {
   const { fileName, authIndex, initialScheduling, disabled = false, onApplied } = props;
   const { t } = useTranslation();
@@ -42,6 +57,9 @@ export function AccountSchedulingPanel(props: AccountSchedulingPanelProps) {
     rateScaleText,
     setRateScaleText,
     rateScaleError,
+    firstProductionAtText,
+    setFirstProductionAtText,
+    firstProductionAtError,
     view,
     dirty,
     saving,
@@ -72,6 +90,50 @@ export function AccountSchedulingPanel(props: AccountSchedulingPanelProps) {
   const isOverride = view?.tier_source === 'override';
   const effectiveRateScaleText = formatRateScale(view?.rate_scale);
   const controlsDisabled = disabled || saving;
+
+  const anchorDisplay = formatAnchorDisplay(view?.first_production_at);
+  const anchorStatusText = anchorDisplay
+    ? t('auth_files.account_settings_scheduling_first_production_at_current', {
+        value: anchorDisplay,
+        defaultValue: 'Current anchor: {{value}}',
+      })
+    : t('auth_files.account_settings_scheduling_first_production_at_auto', {
+        defaultValue: 'Auto (stamped on first serve)',
+      });
+
+  const warmup = view?.warmup;
+  const warmupParts: string[] = [];
+  if (warmup) {
+    const stage = typeof warmup.stage === 'string' ? warmup.stage.trim() : '';
+    if (stage) {
+      warmupParts.push(
+        t('auth_files.account_settings_scheduling_warmup_stage', {
+          stage,
+          defaultValue: 'Stage: {{stage}}',
+        })
+      );
+    }
+    if (typeof warmup.mature === 'boolean') {
+      warmupParts.push(
+        warmup.mature
+          ? t('auth_files.account_settings_scheduling_warmup_mature', { defaultValue: 'Mature' })
+          : t('auth_files.account_settings_scheduling_warmup_warming', {
+              defaultValue: 'Warming up',
+            })
+      );
+    }
+    warmupParts.push(
+      typeof warmup.age_days === 'number' && Number.isFinite(warmup.age_days)
+        ? t('auth_files.account_settings_scheduling_warmup_age', {
+            days: warmup.age_days,
+            defaultValue: 'Age: {{days}}d',
+          })
+        : t('auth_files.account_settings_scheduling_warmup_age_unknown', {
+            defaultValue: 'Age: not anchored',
+          })
+    );
+  }
+  const warmupStatusText = warmupParts.join(' · ');
 
   return (
     <div className={styles.panel} data-testid="account-settings-scheduling-panel">
@@ -156,6 +218,46 @@ export function AccountSchedulingPanel(props: AccountSchedulingPanelProps) {
         </div>
       </div>
 
+      <div className={styles.row}>
+        <Input
+          label={t('auth_files.account_settings_scheduling_first_production_at_label', {
+            defaultValue: 'First production date (warm-up anchor)',
+          })}
+          type="datetime-local"
+          max={nowDatetimeLocal()}
+          value={firstProductionAtText}
+          disabled={controlsDisabled}
+          data-testid="account-settings-scheduling-first-production-at-input"
+          onChange={(e) => setFirstProductionAtText(e.target.value)}
+          hint={t('auth_files.account_settings_scheduling_first_production_at_hint', {
+            defaultValue:
+              'Only for migrating an account that was already serving in production before adaptive scheduling to its real first-serve date. Setting it earlier than reality makes the account look overly mature and skips warm-up (ban risk). If unsure, leave empty = auto warm-up as a new account.',
+          })}
+          error={firstProductionAtError ?? undefined}
+          rightElement={
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              data-testid="account-settings-scheduling-first-production-at-clear"
+              disabled={controlsDisabled || firstProductionAtText.trim() === ''}
+              onClick={() => setFirstProductionAtText('')}
+            >
+              {t('auth_files.account_settings_scheduling_first_production_at_clear', {
+                defaultValue: 'Clear / restore auto',
+              })}
+            </Button>
+          }
+        />
+        <div
+          className={styles.effectiveState}
+          data-testid="account-settings-scheduling-first-production-at-status"
+        >
+          <span>{anchorStatusText}</span>
+          {warmupStatusText && <span>{warmupStatusText}</span>}
+        </div>
+      </div>
+
       {errorMessage && (
         <div className="error-box" data-testid="account-settings-scheduling-error">
           {errorMessage}
@@ -181,7 +283,9 @@ export function AccountSchedulingPanel(props: AccountSchedulingPanelProps) {
           size="sm"
           onClick={() => void applyScheduling()}
           loading={saving}
-          disabled={controlsDisabled || !dirty || Boolean(rateScaleError)}
+          disabled={
+            controlsDisabled || !dirty || Boolean(rateScaleError) || Boolean(firstProductionAtError)
+          }
           data-testid="account-settings-scheduling-apply"
         >
           {t('auth_files.account_settings_scheduling_apply', { defaultValue: 'Apply scheduling' })}
