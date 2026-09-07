@@ -4,6 +4,8 @@
 
 import { apiClient } from './client';
 import type {
+  AuthFileAccountSchedulingPatchRequest,
+  AuthFileAccountSchedulingResponse,
   AuthFileAccountSettings,
   AuthFileAccountSettingsPatchRequest,
   AuthFileAccountSettingsResponse,
@@ -696,6 +698,21 @@ export const authFilesApi = {
     );
     return (payload?.account_settings || payload) as AuthFileAccountSettings;
   },
+
+  /**
+   * 账号级调度旋钮（tier_override / rate_scale）：PATCH
+   * `/auth-files/account-scheduling`（core §8.3/§8.4/§8.5，独立于
+   * account-settings 白名单）。走同一套 apiClient 鉴权 / baseURL（apiBase 已含
+   * `/v0/management` 前缀，见 utils/connection.computeApiUrl）；错误（400/404/409/
+   * 503，含 400 的 `legal_values`）由 apiClient 统一封装抛出，调用方按需读取。
+   * 与 updateAccountSettings 不同：这里**不**扁平化返回体——core 回显的是
+   * `{name, account_scheduling}` 独立投影，消费方（useAccountSchedulingControls）
+   * 直接读 `.account_scheduling` 用返回投影重渲染。
+   */
+  updateAccountScheduling: (
+    request: AuthFileAccountSchedulingPatchRequest
+  ): Promise<AuthFileAccountSchedulingResponse> =>
+    apiClient.patch<AuthFileAccountSchedulingResponse>('/auth-files/account-scheduling', request),
 
   refreshStatus: async (name: string, options: AuthFileStatusRefreshOptions = {}) => {
     const payload = await apiClient.post<AuthFileStatusRefreshResponse>(

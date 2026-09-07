@@ -249,7 +249,7 @@ const initialRawConfig: Record<string, unknown> = {
 };
 
 const demoAuthFiles: AuthFilesResponse = {
-  total: 12,
+  total: 14,
   files: [
     {
       name: 'codex-team-01.json',
@@ -293,6 +293,17 @@ const demoAuthFiles: AuthFilesResponse = {
       account_snapshot: 'Research Team',
       success: 1520,
       failed: 9,
+      // Demo 账号 A：Max 20x + 已成熟（warmup.mature=true → 不渲染养号徽标）+ 会话数。
+      account_scheduling: {
+        subscription_tier: 'max_20x',
+        tier_source: 'auto',
+        rate_scale: 1,
+        warmup: { stage: 'mature', mature: true, age_days: 47 },
+        first_production_at: new Date(now() - 47 * day).toISOString(),
+        sessions_total: 15,
+        sessions_active: 3,
+        sessions_closed: 12,
+      },
     },
     {
       name: 'gemini-prod-01.json',
@@ -383,6 +394,66 @@ const demoAuthFiles: AuthFilesResponse = {
       account_snapshot: 'Batch Research',
       success: 934,
       failed: 18,
+      // Demo 账号 B：Max 5x + 养号中（warmup.mature=false → 渲染「养号中」徽标）+ 会话数。
+      account_scheduling: {
+        subscription_tier: 'max_5x',
+        tier_source: 'auto',
+        rate_scale: 0.6,
+        warmup: { stage: 'ramp-2', mature: false, age_days: 4 },
+        first_production_at: new Date(now() - 4 * day).toISOString(),
+        sessions_total: 9,
+        sessions_active: 2,
+        sessions_closed: 7,
+      },
+    },
+    {
+      name: 'claude-pro-03.json',
+      type: 'claude',
+      provider: 'claude',
+      authIndex: 'claude-pro-03',
+      disabled: false,
+      status: 'healthy',
+      size: 3760,
+      modified: now() - 5 * hour,
+      account_snapshot: 'Solo Pro',
+      success: 412,
+      failed: 3,
+      // Demo 账号 C：Pro + 已成熟（warmup.mature=true → 不渲染养号徽标）+ 会话数。
+      account_scheduling: {
+        subscription_tier: 'pro',
+        tier_source: 'auto',
+        rate_scale: 1,
+        warmup: { stage: 'mature', mature: true, age_days: 33 },
+        first_production_at: new Date(now() - 33 * day).toISOString(),
+        sessions_total: 6,
+        sessions_active: 1,
+        sessions_closed: 5,
+      },
+    },
+    {
+      name: 'claude-default-04.json',
+      type: 'claude',
+      provider: 'claude',
+      authIndex: 'claude-default-04',
+      disabled: false,
+      status: 'healthy',
+      size: 3610,
+      modified: now() - 90 * minute,
+      account_snapshot: 'Default Claude.ai',
+      success: 128,
+      failed: 2,
+      // Demo 账号 D：读不出档（subscription_tier 非已知枚举 → 前端归一为 unknown，
+      // claude 账号仍渲染「套餐: 未知」而非留白）+ 养号中（mature=false）+ 会话数。
+      account_scheduling: {
+        subscription_tier: 'default_claude_ai',
+        tier_source: 'auto',
+        rate_scale: 1,
+        warmup: { stage: 'cold', mature: false, age_days: 1 },
+        first_production_at: new Date(now() - 1 * day).toISOString(),
+        sessions_total: 4,
+        sessions_active: 1,
+        sessions_closed: 3,
+      },
     },
     {
       name: 'gemini-batch-02.json',

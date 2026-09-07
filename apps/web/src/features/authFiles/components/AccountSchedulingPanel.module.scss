@@ -1,0 +1,69 @@
+@use '../../../styles/variables' as *;
+
+// 与 AuthFilesAccountSettingsModal 的 .toggleCardWide（farm_enrolled 卡片）同视觉
+// 语言（边框/圆角/半透明底），独占 toggleGrid 整行——两个控件 + 状态角标 + Apply
+// 按钮信息密度比单个开关高，横向挤压容易折行错位。
+.panel {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 65%, transparent);
+  border-radius: $radius-sm;
+  background-color: color-mix(in srgb, var(--bg-primary) 75%, transparent);
+}
+
+.panelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-sm;
+
+  strong {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 600;
+  }
+}
+
+.controlsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+
+  @media (max-width: 560px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+
+  label {
+    color: var(--text-primary);
+    font-size: 12px;
+    font-weight: 600;
+  }
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-sm;
+  flex-wrap: wrap;
+}
+
+.effectiveState {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}

@@ -48,6 +48,7 @@ import {
 import { useFarmRotateProxy } from '@/features/farm/hooks/useFarmRotateProxy';
 import type { FarmEnv } from '@/types/farm';
 import { AccountFastImpactPanel } from './AccountFastImpactPanel';
+import { AccountSchedulingPanel } from './AccountSchedulingPanel';
 import { AuthFilesReauthHistoryPanel } from './AuthFilesReauthHistoryPanel';
 import { AuthFilesStatusHistoryPanel } from './AuthFilesStatusHistoryPanel';
 import styles from './AuthFilesAccountSettingsModal.module.scss';
@@ -1808,6 +1809,20 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
                         })}
                       </div>
                     </div>
+                  )}
+
+                  {/* P7：账号级调度旋钮（tier_override / rate_scale）。tier_override 目前只对
+                      claude 生效（core `claude: max_20x|max_5x|pro`），与 codex fast 卡按
+                      isCodexProvider 门控对称——这里按 isClaudeProvider 挂载。面板独占
+                      toggleGrid 整行（.panel grid-column: 1 / -1），基线投影取自账号列表
+                      entry 的 account_scheduling（GET account-settings 不含该只读投影）。 */}
+                  {isClaudeProvider && (
+                    <AccountSchedulingPanel
+                      fileName={editor.fileName}
+                      authIndex={editor.authIndex}
+                      initialScheduling={editor.file?.account_scheduling}
+                      disabled={disableControls || editor.saving}
+                    />
                   )}
                 </div>
 

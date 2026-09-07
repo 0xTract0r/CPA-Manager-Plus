@@ -968,20 +968,13 @@ const renderClaudeItems = (
   const { createElement: h, Fragment } = React;
   const windows = quota.windows ?? [];
   const extraUsage = quota.extraUsage ?? null;
-  const planType = quota.planType ?? null;
   const nodes: ReactNode[] = [];
 
-  if (planType) {
-    nodes.push(
-      h(
-        'div',
-        { key: 'plan', className: styleMap.codexPlan },
-        h('span', { className: styleMap.codexPlanLabel }, t('claude_quota.plan_label')),
-        h('span', { className: styleMap.codexPlanValue }, t(`claude_quota.${planType}`))
-      )
-    );
-  }
-
+  // 账号页重排（Q8）：Claude 配额卡不再渲染 `quota.planType` 的「套餐」行——该行取自
+  // claude usage 的 plan_type，与调度用的 account_scheduling.subscription_tier 口径不一致
+  // （曾出现「顶部 Max 5x vs 底部 Max」冲突）。订阅档位统一改由账号卡的套餐区
+  // （AuthFileCard 的 claudeTierRow，override-aware）单点展示；这里只保留额度窗口与
+  // extra-usage 计费信息，避免重复且误导的档位来源。
   if (extraUsage && extraUsage.is_enabled) {
     const usedLabel = `$${(extraUsage.used_credits / 100).toFixed(2)} / $${(extraUsage.monthly_limit / 100).toFixed(2)}`;
     nodes.push(

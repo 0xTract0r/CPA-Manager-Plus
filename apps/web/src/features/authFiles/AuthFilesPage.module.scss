@@ -1267,6 +1267,88 @@
   border: 1px solid var(--border-subtle);
 }
 
+// 账号页重排（claude-only）：卡片洞察区的「套餐档位」行。把订阅档位（override-aware）
+// + 手动标记 + 养号标注并进这一行统一展示，取代原来的顶部独立徽标 + 底部 plan_type 行。
+// 这些均为 claude 专属类，不复用、不改动 codex 共享的 .codexPlan*。
+.claudeTierRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.claudeTierLabel {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.claudeTierValue {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  letter-spacing: 0;
+}
+
+.claudeTierValueKnown {
+  color: var(--primary-color);
+  background: var(--color-primary-light-9);
+  border: 1px solid var(--color-primary-light-7);
+}
+
+.claudeTierValueUnknown {
+  color: var(--text-tertiary);
+  background: color-mix(in srgb, var(--surface-subtle) 86%, transparent);
+  border: 1px solid var(--border-subtle);
+}
+
+// Q10 手动 override 标记：区分「自动识别」vs「手动指定」档位，用中性 info 配色。
+.claudeTierOverrideMarker {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--info-text, #1e40af);
+  background: var(--info-bg, #dbeafe);
+  border: 1px solid var(--info-border, #93c5fd);
+}
+
+// Q5 养号标注：标记尚在养号曲线内（非成熟）的号，用弱化 warning 配色提示「新号/限速爬升中」。
+.claudeWarmupMarker {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--warning-text);
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-border);
+}
+
+// Q9 会话数归组：claude 卡片把会话摘要包一层带上分隔线的分组容器，与上方
+// 「健康状态」区块视觉上分开。仅 claude 使用，不影响其它 provider 的会话摘要结构。
+.claudeSessionGroup {
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+
 .subscriptionError {
   display: flex;
   align-items: flex-start;

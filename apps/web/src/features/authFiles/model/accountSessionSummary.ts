@@ -1,8 +1,8 @@
-import type { AuthFileAdaptiveScheduling } from '@/types';
+import type { AuthFileAccountScheduling } from '@/types';
 
 /**
  * P7（account-session-count-display）纯数据层：把 core
- * `adaptive_scheduling.sessions_{total,active,closed}` 归一成一个三态展示模型。
+ * `account_scheduling.sessions_{total,active,closed}` 归一成一个三态展示模型。
  *
  * 三态含义（不是「加载中」这类异步态——sessions 数据随账号列表一次性到达，
  * 无独立请求，故不存在组件级 loading；调用方若需要"加载中"展示，应挂在页面
@@ -29,14 +29,14 @@ const toNonNegativeInt = (value: unknown): number => {
 };
 
 export const deriveAccountSessionSummary = (
-  adaptiveScheduling: AuthFileAdaptiveScheduling | null | undefined
+  accountScheduling: AuthFileAccountScheduling | null | undefined
 ): AccountSessionSummary => {
-  if (!adaptiveScheduling || typeof adaptiveScheduling !== 'object') {
+  if (!accountScheduling || typeof accountScheduling !== 'object') {
     return { status: 'unavailable', total: 0, active: 0, closed: 0 };
   }
-  const total = toNonNegativeInt(adaptiveScheduling.sessions_total);
-  const active = toNonNegativeInt(adaptiveScheduling.sessions_active);
-  const closed = toNonNegativeInt(adaptiveScheduling.sessions_closed);
+  const total = toNonNegativeInt(accountScheduling.sessions_total);
+  const active = toNonNegativeInt(accountScheduling.sessions_active);
+  const closed = toNonNegativeInt(accountScheduling.sessions_closed);
   return { status: total > 0 ? 'ok' : 'empty', total, active, closed };
 };
 
@@ -66,20 +66,20 @@ export interface SubscriptionTierBadge {
  * 渲染一个恒定"未知"徽标没有信息量，只会刷屏，所以这些 provider 返回 null
  * （不展示徽标），行为上与"确认未知"的 claude/codex 账号区分开。
  *
- * adaptiveScheduling 整体缺失时同样返回 null——那是"数据源不可用"（core 版本
+ * accountScheduling 整体缺失时同样返回 null——那是"数据源不可用"（core 版本
  * 跨度），不是"已确认未知档位"，两者是不同的降级语义，不应该展示成同一个
  * "未知"徽标掩盖过去。
  */
 export const deriveSubscriptionTierBadge = (
   providerKey: string,
-  adaptiveScheduling: AuthFileAdaptiveScheduling | null | undefined
+  accountScheduling: AuthFileAccountScheduling | null | undefined
 ): SubscriptionTierBadge | null => {
   if (providerKey !== 'claude' && providerKey !== 'codex') return null;
-  if (!adaptiveScheduling || typeof adaptiveScheduling !== 'object') return null;
+  if (!accountScheduling || typeof accountScheduling !== 'object') return null;
 
   const raw =
-    typeof adaptiveScheduling.subscription_tier === 'string'
-      ? adaptiveScheduling.subscription_tier.trim().toLowerCase()
+    typeof accountScheduling.subscription_tier === 'string'
+      ? accountScheduling.subscription_tier.trim().toLowerCase()
       : '';
   const knownValues: readonly string[] =
     providerKey === 'claude' ? CLAUDE_SUBSCRIPTION_TIER_VALUES : CODEX_SUBSCRIPTION_TIER_VALUES;
@@ -88,4 +88,43 @@ export const deriveSubscriptionTierBadge = (
     return { tier: raw as KnownSubscriptionTier, known: true };
   }
   return { tier: 'unknown', known: false };
+};
+
+// ---------------------------------------------------------------------------
+// 养号（warm-up）标注（同一投影的 warmup 子对象）
+// ---------------------------------------------------------------------------
+
+export interface AccountWarmupBadge {
+  /** 恒为 true（本函数只在「养号中」时返回对象，成熟/不可判定时返回 null）。 */
+  warming: true;
+  /** core 下发的当前阶段名（可能为空字符串，仅作 tooltip 展示，不参与判定）。 */
+  stage: string;
+  /** 账号年龄（天）；core 未锚定时为 null。 */
+  ageDays: number | null;
+}
+
+/**
+ * 只在 core 明确报 `warmup.mature === false`（尚在养号曲线内）时返回养号标注；
+ * 其余一律返回 null 不展示：
+ *  - accountScheduling / warmup 整体缺失（老 core 未投影）→ 不可判定，不标注。
+ *  - `mature === true`（已成熟）→ 正常号，不标注。
+ *  - `mature` 非布尔（版本漂移/脏数据）→ 不可判定，不标注（绝不臆造养号态）。
+ *
+ * 注意：本函数 provider-agnostic，仅做纯数据判定；是否只对 claude 展示由调用方
+ * （AuthFileCard）按 provider gate 决定。
+ */
+export const deriveAccountWarmupBadge = (
+  accountScheduling: AuthFileAccountScheduling | null | undefined
+): AccountWarmupBadge | null => {
+  if (!accountScheduling || typeof accountScheduling !== 'object') return null;
+  const warmup = accountScheduling.warmup;
+  if (!warmup || typeof warmup !== 'object') return null;
+  if (warmup.mature !== false) return null;
+
+  const stage = typeof warmup.stage === 'string' ? warmup.stage.trim() : '';
+  const ageDays =
+    typeof warmup.age_days === 'number' && Number.isFinite(warmup.age_days)
+      ? Math.max(0, Math.floor(warmup.age_days))
+      : null;
+  return { warming: true, stage, ageDays };
 };

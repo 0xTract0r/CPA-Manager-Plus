@@ -286,14 +286,19 @@ export interface AuthFileItem {
   recent_requests?: RecentRequestBucket[];
   recentRequests?: RecentRequestBucket[];
   /**
-   * P7：账号会话计数 + 细粒度订阅等级只读投影，见 AuthFileAdaptiveScheduling
+   * P7：账号会话计数 + 细粒度订阅等级只读投影，见 AuthFileAccountScheduling
    * 类型注释。core 恒下发该顶层 key（即便个别嵌套值为 null），但跨版本/过渡
    * 期部署仍可能整体缺失该 key（部署的 core 落后于本次改动，仓库里已有先例——
    * 见 farm_enrolled/telemetry_alive 同款"编排器透传未落地前恒缺省"约定）。
    * 前端消费方必须把 undefined/null 当作"暂不可用"处理，不得当 0 或"未知"
    * 展示——那是两种不同的降级语义（数据源缺失 vs 数据源确认无法识别）。
+   *
+   * 字段历史：core 侧原名 `adaptive_scheduling`，已随 §8.5 命名空间统一改名为
+   * `account_scheduling`（见 core
+   * internal/api/handlers/management/auth_files.go / auth_files_adaptive_scheduling.go
+   * buildAccountSchedulingView）；前端同步跟改，子字段形状不变。
    */
-  adaptive_scheduling?: AuthFileAdaptiveScheduling | null;
+  account_scheduling?: AuthFileAccountScheduling | null;
   [key: string]: unknown;
 }
 
@@ -304,15 +309,17 @@ export interface AuthFilesResponse {
 
 /**
  * P7（account-session-count-display）：账号维度会话计数 + 细粒度订阅等级只读
- * 投影（core `entry["adaptive_scheduling"]`，见 core
+ * 投影（core `entry["account_scheduling"]`（原名 `adaptive_scheduling`，见 core
  * internal/api/handlers/management/auth_files_adaptive_scheduling.go
- * buildAdaptiveSchedulingView）。additive、namespaced，core 恒下发该顶层 key。
+ * buildAccountSchedulingView）。additive、namespaced，core 恒下发该顶层 key。
  *
- * 本期前端只消费 subscription_tier + sessions_{total,active,closed} 四个字段；
- * 该投影下还有 quota_utilization / first_production_at / warmup 等更多字段，
- * 本期不消费，用 `[key: string]: unknown` 兜底透传，避免类型收窄丢数据。
+ * 本期前端只消费 subscription_tier + sessions_{total,active,closed} 四个字段
+ * 用于渲染；tier_source / rate_scale 本期只补类型（契约同步），暂不接入任何
+ * UI 渲染逻辑。该投影下还有 quota_utilization / first_production_at / warmup
+ * 等更多字段，本期不消费，用 `[key: string]: unknown` 兜底透传，避免类型收窄
+ * 丢数据。
  */
-export interface AuthFileAdaptiveScheduling {
+export interface AuthFileAccountScheduling {
   /**
    * 细粒度订阅档位：
    *  - Claude: "max_20x" | "max_5x" | "pro" | "unknown"
@@ -323,6 +330,35 @@ export interface AuthFileAdaptiveScheduling {
    * 「未知」展示，不做模糊匹配。
    */
   subscription_tier?: string;
+  /**
+   * subscription_tier 的来源（core §8.4）：'auto' 表示由 rate_limit_tier /
+   * chatgpt_plan_type 自动探测得出；'override' 表示由账号级手工 tier_override
+   * 驱动。本期只加类型，不接入 UI 渲染。
+   */
+  tier_source?: 'auto' | 'override';
+  /**
+   * 该账号有效的速率乘子（core §8.3，AccountRateScale）：作用于派生出的速率
+   * 上限（rpm/burst/concurrency/daily budget），不影响调度权重；缺省时 core
+   * 恒回退 1.0（无效果）。本期只加类型，不接入 UI 渲染。
+   */
+  rate_scale?: number;
+  /**
+   * 账号养号（warm-up）状态投影（core
+   * internal/api/handlers/management/auth_files_adaptive_scheduling.go，取自
+   * sdk/cliproxy/auth.AccountWarmupStatusFor）。`mature` 是权威布尔（是否已走出
+   * 养号曲线进入成熟档），`stage` 是当前阶段名（合成态 "cold"/"mature" 或
+   * 配置曲线里的自定义阶段名），`age_days` 是账号年龄（未锚定 first_production_at
+   * 时为 null）。前端只按 `mature === false` 判定「养号中」，不臆造其它阶段语义。
+   */
+  warmup?: AuthFileAccountWarmup | null;
+  /**
+   * 账号「首次投产时间」锚点（RFC3339 字符串或 null）。养号曲线以此为起点计算
+   * age_days / warmup.stage。未显式设置时 core 在账号首次服务时自动打戳，此时该
+   * 字段下发 null（回退「首次服务自动打戳」语义）。仅用于把开 adaptive 前已在
+   * 生产服务的老号迁移到真实首服日；前端设/清通过 PATCH `first_production_at`
+   * 字段（见 AuthFileAccountSchedulingPatchRequest），前端消费此投影回显当前锚点。
+   */
+  first_production_at?: string | null;
   /**
    * 该账号索引下观测到的去重 SessionID 总数（P6，core
    * internal/usage.SessionAggregateForAuthIndex，按空闲窗口分桶）。
@@ -337,4 +373,57 @@ export interface AuthFileAdaptiveScheduling {
   /** 按空闲窗口判定已关闭（超时）的会话数（<= sessions_total）。 */
   sessions_closed?: number;
   [key: string]: unknown;
+}
+
+/**
+ * account_scheduling.warmup 子投影（core auth_files_adaptive_scheduling.go
+ * warmupView）。additive、只读；跨版本部署可能整体缺失（老 core 未投影 warmup），
+ * 消费方必须把缺失/非布尔的 `mature` 当作「不可判定」（不展示养号标注），只有
+ * `mature === false` 才明确判定为养号中。
+ */
+export interface AuthFileAccountWarmup {
+  /** 当前养号阶段名（合成态 "cold"/"mature"，或配置曲线自定义阶段名）。 */
+  stage?: string;
+  /** 是否已走出养号曲线进入成熟档（权威布尔；false = 养号中）。 */
+  mature?: boolean;
+  /** 账号年龄（天）；未锚定 first_production_at 时 core 下发 null。 */
+  age_days?: number | null;
+  [key: string]: unknown;
+}
+
+/**
+ * claude 账号级 tier_override 合法值（core `coreauth.LegalTierOverrideValues('claude')`）。
+ * 「清除覆盖」在请求体里用 `null` 表示，不属于该联合。
+ */
+export type AuthFileAccountSchedulingTierOverride = 'max_20x' | 'max_5x' | 'pro';
+
+/**
+ * PATCH `/auth-files/account-scheduling` 请求体（core §8.3/§8.4/§8.5，是与
+ * `/auth-files/account-settings` 白名单完全独立的调度旋钮端点）：设置 / 清除
+ * 账号级 tier_override 与 rate_scale。契约：
+ *  - `name` 必填；`auth_index` 可选（多 auth 同名文件消歧）。
+ *  - `tier_override`：max_20x|max_5x|pro 强制档位；`null` 清除（回退 auto 探测）。
+ *  - `rate_scale`：> 0 覆盖速率乘子；`null` 清除（回退 core 默认 1.0）。
+ *  - `first_production_at`：首次投产锚点（养号起点），tri-state：
+ *      · RFC3339 字符串 → 设置为该时刻（core 校验必须 ≤ 现在，未来时间回 400）；
+ *      · `""` 或 `null` → 清除，回退到「首次服务自动打戳」；
+ *      · 省略该字段 → 保持不变（与 tier_override/rate_scale 相互独立，可同请求）。
+ *  - `tier_override` / `rate_scale` 至少给一个（core 侧校验；缺失回 400）。
+ */
+export interface AuthFileAccountSchedulingPatchRequest {
+  name: string;
+  auth_index?: string | number;
+  tier_override?: AuthFileAccountSchedulingTierOverride | null;
+  rate_scale?: number | null;
+  first_production_at?: string | null;
+}
+
+/**
+ * PATCH `/auth-files/account-scheduling` 成功响应（200）：core 回显归一化后的
+ * `account_scheduling` 只读投影（合法值归一化 / tier_source 回退语义都以此为准，
+ * 前端据此重渲染，不乐观地把提交的表单值当新状态）。
+ */
+export interface AuthFileAccountSchedulingResponse {
+  name?: string;
+  account_scheduling: AuthFileAccountScheduling;
 }
