@@ -278,7 +278,10 @@ describe('AuthFileCard: P7 session summary + subscription tier badge', () => {
     expect(renderer.root.findAllByProps({ 'data-testid': 'account-session-total' })).toHaveLength(0);
   });
 
-  it('does not render a tier badge for a non-claude/non-codex provider even with account_scheduling present', () => {
+  it('renders no scheduling-derived controls for a non-claude provider even with account_scheduling present (claude-only)', () => {
+    // 账号调度派生控件（订阅档徽标 + 会话数摘要）已收敛为 claude-only。即便某个
+    // 非 claude 账号意外携带 account_scheduling 投影，卡片也不得展示这些控件——
+    // 前端独立 gate，与后端「只给 claude 下发 account_scheduling」构成双保险。
     const file: AuthFileItem = {
       name: 'qwen-acct-1.json',
       type: 'qwen',
@@ -294,11 +297,39 @@ describe('AuthFileCard: P7 session summary + subscription tier badge', () => {
     act(() => {
       renderer = create(<AuthFileCard {...baseProps} file={file} />);
     });
+    // No subscription-tier badge for a non-claude provider.
     expect(
       renderer.root.findAllByProps({ 'data-testid': `auth-file-tier-badge-${file.name}` })
     ).toHaveLength(0);
-    // Session summary is still generic/provider-agnostic and should render.
-    const summary = renderer.root.findByProps({ 'data-testid': 'account-session-summary' });
-    expect(summary.props['data-account-session-status']).toBe('ok');
+    // No session summary either — session counts are claude-only now.
+    expect(
+      renderer.root.findAllByProps({ 'data-testid': 'account-session-summary' })
+    ).toHaveLength(0);
+  });
+
+  it('renders no top tier badge nor session summary for a codex provider (the pre-fix regression)', () => {
+    // 修复前 codex 会在卡片顶部渲染订阅档徽标（常显示"未知/Unknown"）并展示会话
+    // 数摘要；claude-only 收敛后两者都不得出现。
+    const file: AuthFileItem = {
+      name: 'codex-acct-1.json',
+      type: 'codex',
+      disabled: false,
+      account_scheduling: {
+        subscription_tier: 'plus',
+        sessions_total: 6,
+        sessions_active: 2,
+        sessions_closed: 4,
+      },
+    };
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(<AuthFileCard {...baseProps} file={file} />);
+    });
+    expect(
+      renderer.root.findAllByProps({ 'data-testid': `auth-file-tier-badge-${file.name}` })
+    ).toHaveLength(0);
+    expect(
+      renderer.root.findAllByProps({ 'data-testid': 'account-session-summary' })
+    ).toHaveLength(0);
   });
 });
