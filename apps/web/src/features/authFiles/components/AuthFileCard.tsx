@@ -448,12 +448,12 @@ export function AuthFileCard(props: AuthFileCardProps) {
       })
     : '';
 
-  // 账号页重排（claude-only）：Claude 账号不再在卡片顶部渲染独立订阅徽标，改为把
-  // 「订阅档位（override-aware）+ 手动标记 + 养号标注」并进卡片洞察区的一行套餐区，
-  // 消除「顶部 Max 5x vs 底部 Max」冲突。codex 等其它 provider 顶部徽标行为不变。
+  // 账号页重排（claude-only）：账号调度派生控件整体收敛为 claude-only。Claude 账号
+  // 把「订阅档位（override-aware）+ 手动标记 + 养号标注」并进卡片洞察区的一行套餐区
+  // （showClaudeTierRow），不再在卡片顶部渲染独立订阅徽标；非 claude（codex/gemini/
+  // grok 等）不再展示任何订阅档徽标——deriveSubscriptionTierBadge 已 claude-only 兜底
+  // （非 claude 恒 null），此处不再保留顶部徽标分支。
   const isClaudeProvider = resolvedProvider === 'claude';
-  // 顶部独立徽标只保留给非 claude（当前实际只有 codex 会命中 subscriptionTierBadge）。
-  const showTopTierBadge = Boolean(subscriptionTierBadge) && !isClaudeProvider;
   // 套餐档位来源（Q10）：'override' = 账号级手工指定，加「手动」标记；'auto' 不加。
   const claudeTierSource = isClaudeProvider ? file.account_scheduling?.tier_source : undefined;
   // 养号标注（Q5）：仅在 core 明确 warmup.mature === false 时展示，成熟/缺失不标注。
@@ -464,12 +464,13 @@ export function AuthFileCard(props: AuthFileCardProps) {
   // 非 null）时渲染；投影缺失（老 core）时不展示，与会话摘要的 unavailable 语义一致。
   const showClaudeTierRow =
     isClaudeProvider && !isRuntimeOnly && Boolean(subscriptionTierBadge);
-  // 会话计数区块展示给所有非虚拟账号（不像速度读数那样限定"有活跃流量"——
-  // 会话数本身就是"有没有活跃/近期会话"的答案，空态由组件内部呈现，不需要
-  // 卡片层面预先过滤）。loading 复用逐账号「刷新状态」的既有 loading 信号：
-  // 该请求正在刷新这条账号记录，展示上把会话数据块降级为"统计中…"占位，
-  // 避免继续渲染即将被替换的旧计数。
-  const showSessionSummary = !isRuntimeOnly;
+  // 会话计数区块收敛为 claude-only：只有非虚拟的 claude 账号展示会话摘要，非
+  // claude（codex/gemini/grok 等）不再展示会话数（与订阅档/养号/调度面板一起
+  // 构成 claude-only 的账号调度控件集）。空态由组件内部呈现，不需要卡片层预先
+  // 过滤。loading 复用逐账号「刷新状态」的既有 loading 信号：该请求正在刷新这
+  // 条账号记录，展示上把会话数据块降级为"统计中…"占位，避免继续渲染即将被替换
+  // 的旧计数。
+  const showSessionSummary = isClaudeProvider && !isRuntimeOnly;
   const isSessionSummaryLoading = statusRefreshing[file.name] === true;
 
   return (
@@ -554,19 +555,6 @@ export function AuthFileCard(props: AuthFileCardProps) {
                   >
                     {t('antigravity_subscription.refresh_short')}
                   </button>
-                )}
-                {showTopTierBadge && subscriptionTierBadge && (
-                  <span
-                    className={`${styles.tierBadge} ${subscriptionTierBadge.known ? styles.tierBadgeKnown : styles.tierBadgeUnknown}`}
-                    title={t('auth_files.subscription_tier_badge_title', {
-                      tier: subscriptionTierBadgeLabel,
-                      defaultValue: 'Subscription tier: {{tier}}',
-                    })}
-                    data-testid={`auth-file-tier-badge-${file.name}`}
-                    data-tier={subscriptionTierBadge.tier}
-                  >
-                    {subscriptionTierBadgeLabel}
-                  </span>
                 )}
                 {codexStatusBadges.map((badge) => {
                   const label = t(badge.labelKey, {
@@ -947,24 +935,18 @@ export function AuthFileCard(props: AuthFileCardProps) {
               />
             )}
 
-            {/* Q9（会话数归组）：claude 账号把会话摘要包一层带上分隔线的分组容器，
-                与上方「健康状态」区块视觉上分开；其它 provider 保持原有结构不变。 */}
-            {showSessionSummary &&
-              (isClaudeProvider ? (
-                <div className={styles.claudeSessionGroup}>
-                  <AccountSessionSummary
-                    accountScheduling={file.account_scheduling}
-                    loading={isSessionSummaryLoading}
-                    compact={compact}
-                  />
-                </div>
-              ) : (
+            {/* Q9（会话数归组）：会话摘要已收敛为 claude-only（showSessionSummary
+                已含 isClaudeProvider gate），包一层带分隔线的分组容器，与上方
+                「健康状态」区块视觉上分开。 */}
+            {showSessionSummary && (
+              <div className={styles.claudeSessionGroup}>
                 <AccountSessionSummary
                   accountScheduling={file.account_scheduling}
                   loading={isSessionSummaryLoading}
                   compact={compact}
                 />
-              ))}
+              </div>
+            )}
           </div>
 
           <div className={styles.cardActions}>

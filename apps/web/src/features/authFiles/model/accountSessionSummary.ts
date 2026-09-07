@@ -61,10 +61,11 @@ export interface SubscriptionTierBadge {
 }
 
 /**
- * 只对 core 实际投影细粒度档位的 provider（claude/codex）返回徽标数据；其它
- * provider core 恒回退 "unknown"（design.md/account_tier.go default 分支），
- * 渲染一个恒定"未知"徽标没有信息量，只会刷屏，所以这些 provider 返回 null
- * （不展示徽标），行为上与"确认未知"的 claude/codex 账号区分开。
+ * 订阅档位徽标收敛为 claude-only：只有 claude 账号返回徽标数据，其它 provider
+ * （codex/gemini/grok 等）一律返回 null（不展示徽标）。这是前端侧的独立 gate，
+ * 与后端「只给 claude 账号下发 account_scheduling」构成双保险——即便某个非
+ * claude 账号意外携带了 account_scheduling 投影，这里也直接拦掉，保证非 claude
+ * 卡片彻底不出现订阅档控件。
  *
  * accountScheduling 整体缺失时同样返回 null——那是"数据源不可用"（core 版本
  * 跨度），不是"已确认未知档位"，两者是不同的降级语义，不应该展示成同一个
@@ -74,15 +75,14 @@ export const deriveSubscriptionTierBadge = (
   providerKey: string,
   accountScheduling: AuthFileAccountScheduling | null | undefined
 ): SubscriptionTierBadge | null => {
-  if (providerKey !== 'claude' && providerKey !== 'codex') return null;
+  if (providerKey !== 'claude') return null;
   if (!accountScheduling || typeof accountScheduling !== 'object') return null;
 
   const raw =
     typeof accountScheduling.subscription_tier === 'string'
       ? accountScheduling.subscription_tier.trim().toLowerCase()
       : '';
-  const knownValues: readonly string[] =
-    providerKey === 'claude' ? CLAUDE_SUBSCRIPTION_TIER_VALUES : CODEX_SUBSCRIPTION_TIER_VALUES;
+  const knownValues: readonly string[] = CLAUDE_SUBSCRIPTION_TIER_VALUES;
 
   if (knownValues.includes(raw)) {
     return { tier: raw as KnownSubscriptionTier, known: true };

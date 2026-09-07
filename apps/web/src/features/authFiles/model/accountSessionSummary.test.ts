@@ -64,7 +64,7 @@ describe('deriveAccountSessionSummary', () => {
 });
 
 describe('deriveSubscriptionTierBadge', () => {
-  it('returns null for non-claude/codex providers even when account_scheduling is present', () => {
+  it('returns null for non-claude providers even when account_scheduling is present', () => {
     expect(deriveSubscriptionTierBadge('qwen', { subscription_tier: 'unknown' })).toBeNull();
   });
 
@@ -88,15 +88,11 @@ describe('deriveSubscriptionTierBadge', () => {
     });
   });
 
-  it('resolves known Codex tiers', () => {
-    expect(deriveSubscriptionTierBadge('codex', { subscription_tier: 'plus' })).toEqual({
-      tier: 'plus',
-      known: true,
-    });
-    expect(deriveSubscriptionTierBadge('codex', { subscription_tier: 'pro' })).toEqual({
-      tier: 'pro',
-      known: true,
-    });
+  it('returns null for codex now that the subscription-tier badge is claude-only', () => {
+    // 订阅档徽标已收敛为 claude-only（前端独立 gate，与后端只给 claude 下发
+    // account_scheduling 构成双保险）；即便 codex 携带已知 tier 字段也不再返回徽标。
+    expect(deriveSubscriptionTierBadge('codex', { subscription_tier: 'plus' })).toBeNull();
+    expect(deriveSubscriptionTierBadge('codex', { subscription_tier: 'pro' })).toBeNull();
   });
 
   it('explicitly surfaces "unknown" — never guesses — for an unrecognized or missing tier string', () => {
