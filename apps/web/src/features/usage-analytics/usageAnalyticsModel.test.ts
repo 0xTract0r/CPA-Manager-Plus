@@ -6,6 +6,7 @@ import {
   analyzeUsageBucket,
   buildApiKeyRows,
   buildCredentialRows,
+  buildEntityTrendSeries,
   buildSelectedApiKeyTrendSeries,
   buildSelectedCredentialTrendSeries,
   buildDrilldownPreview,
@@ -29,6 +30,7 @@ import {
   computeCacheHitRate,
   computeRowAverageCostPerCall,
   computeRowCacheHitRate,
+  getSelectableApiKeyHash,
   getUsageRangeBounds,
   maskApiKeyHash,
   resolveUsageApiKeyLabel,
@@ -94,6 +96,31 @@ describe('usage analytics request model', () => {
     ).toEqual({
       failed_only: true,
     });
+  });
+
+  it('keeps fallback API key groups out of filters and detail links', () => {
+    expect(getSelectableApiKeyHash('unknown-client-api-key')).toBe('');
+    expect(getSelectableApiKeyHash(' UNKNOWN-CLIENT-API-KEY:legacy ')).toBe('');
+    expect(getSelectableApiKeyHash('all')).toBe('');
+    expect(getSelectableApiKeyHash(' ABCDEF1234567890 ')).toBe('abcdef1234567890');
+    expect(buildUsageAnalyticsFilters({ apiKeyHash: 'unknown-client-api-key:legacy' })).toEqual({});
+
+    const point = buildUsageTimeline(
+      [
+        {
+          bucket_ms: NOW_MS,
+          label: '',
+          calls: 1,
+          tokens: 1,
+          success: 1,
+          failure: 0,
+        },
+      ],
+      'hour'
+    )[0];
+    expect(buildMonitoringDetailUrl(point, { apiKeyHash: 'unknown-client-api-key' })).toBe(
+      `/monitoring?from_ms=${NOW_MS}&to_ms=${NOW_MS + HOUR_MS}`
+    );
   });
 
   it('builds the minimum analytics include for each active tab', () => {
@@ -734,6 +761,7 @@ describe('usage analytics adapters', () => {
       expect(row.label).toBe(UNATTRIBUTED_API_KEY_LABEL);
       expect(row.label).not.toMatch(/^sk-\*{2,}/);
       expect(row.label).not.toContain('@gmail.com');
+      expect(row.apiKeyHash).toBe('');
     });
   });
 
@@ -1262,6 +1290,38 @@ describe('model rank derivations', () => {
       model: 'gpt-5.6-sol',
     });
     expect(computeRowCacheHitRate(row)).toBeCloseTo(0.989, 3);
+  });
+
+  it('excludes fallback keys from trend series while preserving their share in totals', () => {
+    const known = rankRow({
+      id: 'abcdef1234567890',
+      apiKeyHash: 'abcdef1234567890',
+      requestCount: 40,
+    });
+    const fallback = rankRow({
+      id: 'unknown-client-api-key',
+      apiKeyHash: '',
+      requestCount: 60,
+    });
+    const timeline = buildUsageTimeline(
+      [
+        {
+          bucket_ms: NOW_MS,
+          label: '',
+          calls: 100,
+          tokens: 100,
+          success: 100,
+          failure: 0,
+        },
+      ],
+      'hour'
+    );
+
+    const series = buildEntityTrendSeries([known], timeline, 'requestCount', 4, [known, fallback]);
+
+    expect(series).toHaveLength(1);
+    expect(series[0].id).toBe('abcdef1234567890');
+    expect(series[0].points[0].value).toBe(40);
   });
 
   it('builds the reverse key distribution for a model from API key breakdowns', () => {

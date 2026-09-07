@@ -417,6 +417,13 @@
   color: var(--text-secondary);
 }
 
+// liveness_unconfirmed（无法确认存活）：徽标本身是 idle 灰（spec「显灰不显绿」），
+// 但副行「最后确认存活」文案用告警文本色，与灰徽标 + 告警三角图标一起构成
+// 「灰 + 告警」，避免被误读成纯中性 unknown。
+.authDetail_livenessUnconfirmed {
+  color: var(--warning-text, #8a6d1a);
+}
+
 .asOfInline {
   color: var(--text-secondary);
 }

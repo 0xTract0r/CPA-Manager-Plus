@@ -347,12 +347,16 @@ func TestNormalizeRawReadsCPA7118UsageFields(t *testing.T) {
 		t.Fatalf("event tokens = %#v", event)
 	}
 	if !event.Failed || event.FailStatusCode != 429 ||
-		!strings.Contains(event.FailBody, "rate limit exceeded") ||
-		!strings.Contains(event.FailBody, "Retry-After") {
+		event.FailBody != "rate limit exceeded" {
 		t.Fatalf("event failure = %#v", event)
 	}
-	if !strings.Contains(event.FailSummary, "rate limit exceeded") || !strings.Contains(event.FailSummary, "Retry-After") {
+	if event.FailSummary != "rate limit exceeded" || strings.Contains(event.FailSummary, "Retry-After") {
 		t.Fatalf("fail summary = %q", event.FailSummary)
+	}
+	if event.ResponseMetadata == nil || event.ResponseMetadata.Errors == nil ||
+		event.ResponseMetadata.Errors.RetryAfterSeconds == nil ||
+		*event.ResponseMetadata.Errors.RetryAfterSeconds != 30 {
+		t.Fatalf("response metadata = %#v", event.ResponseMetadata)
 	}
 	if event.LatencyMS == nil || *event.LatencyMS != 1500 {
 		t.Fatalf("latency = %#v", event.LatencyMS)
@@ -375,8 +379,8 @@ func TestNormalizeRawReadsCPA7118UsageFields(t *testing.T) {
 		detail.ExecutorType != "codex" || detail.Tokens.CacheReadTokens != 4 ||
 		detail.Tokens.CacheCreationTokens != 1 || detail.FailStatusCode != 429 ||
 		detail.Tokens.CachedTokens != 0 || detail.Tokens.CacheTokens != 0 ||
-		!strings.Contains(detail.FailSummary, "rate limit exceeded") ||
-		!strings.Contains(detail.FailSummary, "Retry-After") || detail.TTFTMS == nil ||
+		detail.FailSummary != "rate limit exceeded" ||
+		strings.Contains(detail.FailSummary, "Retry-After") || detail.TTFTMS == nil ||
 		*detail.TTFTMS != 450 {
 		t.Fatalf("detail = %#v", detail)
 	}

@@ -47,6 +47,7 @@ import {
   formatHeatmapMetricValue,
   formatLocalDateTime,
   formatMetricValue,
+  getSelectableApiKeyHash,
   hasUsageData,
   maskApiKeyHash,
   parseDateTimeLocalValue,
@@ -2050,11 +2051,13 @@ function KeyAnomalyTable({
   locale,
   rows,
   onOpen,
+  canOpen,
   type = 'apiKey',
 }: {
   locale: string;
   rows: UsageKeyAnomalyRow[];
   onOpen?: (row: UsageKeyAnomalyRow) => void;
+  canOpen?: (row: UsageKeyAnomalyRow) => boolean;
   type?: 'apiKey' | 'credential';
 }) {
   const { t } = useTranslation();
@@ -2098,9 +2101,17 @@ function KeyAnomalyTable({
                 <td>{formatPercent(row.row.failureCount / Math.max(row.row.requestCount, 1))}</td>
                 {onOpen ? (
                   <td>
-                    <button type="button" className={styles.linkButton} onClick={() => onOpen(row)}>
-                      {t('usage_analytics.view_request_details')}
-                    </button>
+                    {canOpen?.(row) === false ? (
+                      '-'
+                    ) : (
+                      <button
+                        type="button"
+                        className={styles.linkButton}
+                        onClick={() => onOpen(row)}
+                      >
+                        {t('usage_analytics.view_request_details')}
+                      </button>
+                    )}
                   </td>
                 ) : null}
               </tr>
@@ -2326,20 +2337,21 @@ function UsageAnalyticsPageInner() {
 
   const incomingOptionCache = useMemo<StableUsageOptionCache>(() => {
     const apiKeys = mergeSelectOptions([
-      ...(usage.filterOptions?.api_key_hashes ?? []).map((hash) => ({
-        value: hash,
-        label: resolveUsageApiKeyLabel(hash, usage.apiKeyDisplayMap),
-      })),
-      ...(usage.filterOptions?.api_key_stats ?? []).map((row) => {
-        const hash = row.api_key_hash || row.id;
-        return {
-          value: hash,
-          label: resolveUsageApiKeyLabel(hash, usage.apiKeyDisplayMap),
-        };
+      ...(usage.filterOptions?.api_key_hashes ?? []).flatMap((value) => {
+        const hash = getSelectableApiKeyHash(value);
+        return hash
+          ? [{ value: hash, label: resolveUsageApiKeyLabel(hash, usage.apiKeyDisplayMap) }]
+          : [];
       }),
-      ...usage.apiKeyRows.map((row) => {
-        const hash = row.apiKeyHash || row.id;
-        return { value: hash, label: row.label };
+      ...(usage.filterOptions?.api_key_stats ?? []).flatMap((row) => {
+        const hash = getSelectableApiKeyHash(row.api_key_hash);
+        return hash
+          ? [{ value: hash, label: resolveUsageApiKeyLabel(hash, usage.apiKeyDisplayMap) }]
+          : [];
+      }),
+      ...usage.apiKeyRows.flatMap((row) => {
+        const hash = getSelectableApiKeyHash(row.apiKeyHash);
+        return hash ? [{ value: hash, label: row.label }] : [];
       }),
     ]);
 
@@ -2390,8 +2402,13 @@ function UsageAnalyticsPageInner() {
     rememberVisibleOptions();
     usage.setFilters(patch);
   };
-  const buildApiKeyMonitoringUrl = (apiKeyHash: string, status?: UsageAnalyticsStatus) =>
-    usage.bounds
+  const buildApiKeyMonitoringUrl = (
+    value: string,
+    status?: UsageAnalyticsStatus
+  ): string | null => {
+    const apiKeyHash = getSelectableApiKeyHash(value);
+    if (!apiKeyHash) return null;
+    return usage.bounds
       ? buildMonitoringDetailUrl(
           { bucketMs: usage.bounds.fromMs, bucketEndMs: usage.bounds.toMs },
           {
@@ -2401,6 +2418,7 @@ function UsageAnalyticsPageInner() {
           }
         )
       : `/monitoring?api_key_hash=${encodeURIComponent(apiKeyHash)}`;
+  };
   const buildCredentialMonitoringUrl = (
     row: Pick<UsageRankRow, 'authFile' | 'projectId'> | null | undefined,
     status?: UsageAnalyticsStatus
@@ -2419,11 +2437,11 @@ function UsageAnalyticsPageInner() {
           row?.projectId || ''
         )}`;
   const openApiKeyCombinationHeatmap = () => {
-    const apiKeyHash = usage.selectedApiKey?.apiKeyHash || usage.selectedApiKey?.id || '';
+    const apiKeyHash = getSelectableApiKeyHash(usage.selectedApiKey?.apiKeyHash);
     if (apiKeyHash) {
       updateFilters({ apiKeyHash });
+      usage.setActiveTab('heatmap');
     }
-    usage.setActiveTab('heatmap');
   };
 
   const usageTabItems = useMemo<ReadonlyArray<SegmentedTabItem<UsageAnalyticsTab>>>(
@@ -2501,6 +2519,7 @@ function UsageAnalyticsPageInner() {
   const credentialRankRowLimit = 10;
   const visibleModelRows = showAllModels ? usage.modelRows : usage.modelRows.slice(0, rankRowLimit);
   const visibleApiKeyRows = usage.apiKeyRows.slice(0, 8);
+  const selectedApiKeyHash = getSelectableApiKeyHash(usage.selectedApiKey?.apiKeyHash);
   const visibleCredentialRows = usage.credentialRows.slice(0, credentialRankRowLimit);
   const selectedModelKeyDistribution = useMemo(
     () =>
@@ -3186,8 +3205,9 @@ function UsageAnalyticsPageInner() {
               <RankTable
                 rows={visibleApiKeyRows}
                 type="apiKey"
-                selectedId={usage.selectedApiKey?.apiKeyHash}
-                onSelect={(row) => usage.setSelectedApiKeyHash(row.apiKeyHash || row.id)}
+                selectedId={selectedApiKeyHash}
+                canSelect={(row) => Boolean(getSelectableApiKeyHash(row.apiKeyHash))}
+                onSelect={(row) => usage.setSelectedApiKeyHash(row.apiKeyHash || '')}
               />
             </div>
             <div className={styles.panel}>
@@ -3215,7 +3235,7 @@ function UsageAnalyticsPageInner() {
               <EntityTrendChart
                 series={usage.selectedApiKeyTrendSeries}
                 metric={usage.trendMetric}
-                highlightId={usage.selectedApiKey?.apiKeyHash || usage.selectedApiKey?.id}
+                highlightId={selectedApiKeyHash}
               />
             </div>
             {usage.selectedApiKey ? (
@@ -3223,43 +3243,44 @@ function UsageAnalyticsPageInner() {
                 row={usage.selectedApiKey}
                 type="apiKey"
                 action={
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() =>
-                      navigate(
-                        buildApiKeyMonitoringUrl(
-                          usage.selectedApiKey?.apiKeyHash || usage.selectedApiKey?.id || ''
-                        )
-                      )
-                    }
-                  >
-                    <IconExternalLink size={14} />
-                    {t('usage_analytics.view_request_details')}
-                  </Button>
+                  selectedApiKeyHash ? (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => {
+                        const url = buildApiKeyMonitoringUrl(selectedApiKeyHash);
+                        if (url) navigate(url);
+                      }}
+                    >
+                      <IconExternalLink size={14} />
+                      {t('usage_analytics.view_request_details')}
+                    </Button>
+                  ) : undefined
                 }
               />
             ) : null}
             <div className={`${styles.warningPanel} ${styles.fullWidthPanel}`}>
               <div className={styles.panelHeader}>
                 <h2>{t('usage_analytics.api_key_warning_title')}</h2>
-                <button type="button" onClick={openApiKeyCombinationHeatmap}>
-                  {t('usage_analytics.view_exception_combinations')}
-                </button>
+                {selectedApiKeyHash ? (
+                  <button type="button" onClick={openApiKeyCombinationHeatmap}>
+                    {t('usage_analytics.view_exception_combinations')}
+                  </button>
+                ) : null}
               </div>
               <KeyAnomalyTable
                 rows={usage.keyAnomalies}
                 locale={i18n.language}
-                onOpen={(row) =>
-                  navigate(
-                    buildApiKeyMonitoringUrl(
-                      row.row.apiKeyHash || row.id,
-                      row.reasonKey === 'usage_analytics.anomaly_reason_error_rate'
-                        ? 'failed'
-                        : usage.filters.status
-                    )
-                  )
-                }
+                canOpen={(row) => Boolean(getSelectableApiKeyHash(row.row.apiKeyHash))}
+                onOpen={(row) => {
+                  const url = buildApiKeyMonitoringUrl(
+                    row.row.apiKeyHash || '',
+                    row.reasonKey === 'usage_analytics.anomaly_reason_error_rate'
+                      ? 'failed'
+                      : usage.filters.status
+                  );
+                  if (url) navigate(url);
+                }}
               />
             </div>
           </section>
@@ -3633,11 +3654,13 @@ function RankTable({
   type,
   selectedId,
   onSelect,
+  canSelect,
 }: {
   rows: UsageRankRow[];
   type: 'model' | 'apiKey' | 'credential';
   selectedId?: string;
   onSelect: (row: UsageRankRow) => void;
+  canSelect?: (row: UsageRankRow) => boolean;
 }) {
   const { t } = useTranslation();
   const entityHeader =
@@ -3678,12 +3701,15 @@ function RankTable({
         </thead>
         <tbody>
           {rows.map((row, index) => {
-            const active = selectedId === (type === 'apiKey' ? row.apiKeyHash : row.id);
+            const selectable = canSelect?.(row) ?? true;
+            const active =
+              selectable && selectedId === (type === 'apiKey' ? row.apiKeyHash : row.id);
             return (
               <tr
                 key={row.id}
                 className={active ? styles.selectedRow : ''}
-                onClick={() => onSelect(row)}
+                aria-disabled={selectable ? undefined : true}
+                onClick={selectable ? () => onSelect(row) : undefined}
               >
                 <td>{index + 1}</td>
                 <td>
@@ -3696,7 +3722,7 @@ function RankTable({
                       <IconModelCluster size={16} />
                     )}
                     {type === 'apiKey' ? getApiKeyRowDisplayLabel(row) : row.label}
-                    {type === 'apiKey' ? <IconCopy size={13} /> : null}
+                    {type === 'apiKey' && selectable ? <IconCopy size={13} /> : null}
                   </span>
                 </td>
                 <td>{compactNumber(row.requestCount)}</td>

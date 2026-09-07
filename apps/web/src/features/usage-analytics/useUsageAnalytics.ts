@@ -33,6 +33,7 @@ import {
   buildUsageAnalyticsFilterSelectorsInclude,
   buildUsageAnalyticsInclude,
   buildUsageTimeline,
+  getSelectableApiKeyHash,
   getUsageRangeBounds,
   resolveUsageGranularity,
   USAGE_ANALYTICS_DEFAULT_FILTERS,
@@ -92,9 +93,10 @@ export function useUsageAnalytics() {
   const [initialUiState] = useState<UsageAnalyticsUiState>(() =>
     buildUsageAnalyticsUiStateFromSearchParams(searchParams, readUsageAnalyticsUiState())
   );
-  const [filters, setFiltersState] = useState<UsageAnalyticsFiltersState>(
-    () => initialUiState.filters
-  );
+  const [filters, setFiltersState] = useState<UsageAnalyticsFiltersState>(() => ({
+    ...initialUiState.filters,
+    apiKeyHash: getSelectableApiKeyHash(initialUiState.filters.apiKeyHash) || 'all',
+  }));
   const [activeTabState, setActiveTabState] = useState<UsageAnalyticsTab>(
     () => initialUiState.activeTab
   );
@@ -228,7 +230,14 @@ export function useUsageAnalytics() {
     () => resolveUsageGranularity(filters, nowMs),
     [filters, nowMs]
   );
-  const analyticsFilters = useMemo(() => buildUsageAnalyticsFilters(filters), [filters]);
+  const analyticsFilters = useMemo(
+    () =>
+      buildUsageAnalyticsFilters({
+        ...filters,
+        apiKeyHash: getSelectableApiKeyHash(filters.apiKeyHash) || 'all',
+      }),
+    [filters]
+  );
 
   useEffect(() => {
     const nextState = { activeTab: activeTabState, filters };
@@ -351,9 +360,7 @@ export function useUsageAnalytics() {
     throttleMs: 0,
   });
 
-  const analyticsData = analytics.dataStale
-    ? lastGoodAnalyticsData
-    : analytics.data;
+  const analyticsData = analytics.dataStale ? lastGoodAnalyticsData : analytics.data;
   const filterSelectorsData = filterSelectorsAnalytics.dataStale
     ? null
     : filterSelectorsAnalytics.data;
@@ -408,7 +415,12 @@ export function useUsageAnalytics() {
   const selectedModel =
     adapted.modelRows.find((row) => row.id === selectedModelId) ?? adapted.modelRows[0] ?? null;
   const selectedApiKey =
-    adapted.apiKeyRows.find((row) => row.apiKeyHash === selectedApiKeyHash) ??
+    (selectedApiKeyHash
+      ? adapted.apiKeyRows.find(
+          (row) => getSelectableApiKeyHash(row.apiKeyHash) === selectedApiKeyHash
+        )
+      : undefined) ??
+    adapted.apiKeyRows.find((row) => Boolean(getSelectableApiKeyHash(row.apiKeyHash))) ??
     adapted.apiKeyRows[0] ??
     null;
   const selectedCredential =
@@ -420,11 +432,16 @@ export function useUsageAnalytics() {
     () => buildEntityTrendSeries(adapted.modelRows, adapted.timeline, trendMetric, 4),
     [adapted.modelRows, adapted.timeline, trendMetric]
   );
-  const apiKeyTrendSeries = useMemo(
-    () => buildEntityTrendSeries(adapted.apiKeyRows, adapted.timeline, trendMetric, 4),
-    [adapted.apiKeyRows, adapted.timeline, trendMetric]
+  const apiKeyTrendRows = useMemo(
+    () => adapted.apiKeyRows.filter((row) => Boolean(getSelectableApiKeyHash(row.apiKeyHash))),
+    [adapted.apiKeyRows]
   );
-  const selectedApiKeyFilterHash = selectedApiKey?.apiKeyHash || selectedApiKey?.id || '';
+  const apiKeyTrendSeries = useMemo(
+    () =>
+      buildEntityTrendSeries(apiKeyTrendRows, adapted.timeline, trendMetric, 4, adapted.apiKeyRows),
+    [adapted.apiKeyRows, adapted.timeline, apiKeyTrendRows, trendMetric]
+  );
+  const selectedApiKeyFilterHash = getSelectableApiKeyHash(selectedApiKey?.apiKeyHash);
   const selectedApiKeyTimelineFilters = useMemo(
     () =>
       selectedApiKeyFilterHash
@@ -534,7 +551,13 @@ export function useUsageAnalytics() {
   );
   const setFilters = useCallback((patch: Partial<UsageAnalyticsFiltersState>) => {
     setFiltersState((current) => {
-      const next = { ...current, ...patch };
+      const next = {
+        ...current,
+        ...patch,
+        ...(patch.apiKeyHash === undefined
+          ? {}
+          : { apiKeyHash: getSelectableApiKeyHash(patch.apiKeyHash) || 'all' }),
+      };
       writeUsageAnalyticsUiState({ filters: next });
       return next;
     });
@@ -576,6 +599,10 @@ export function useUsageAnalytics() {
 
   const selectHeatmapDate = useCallback((key: string) => {
     setSelectedHeatmapDateKey(key || USAGE_HEATMAP_ALL_DATES_KEY);
+  }, []);
+
+  const selectApiKeyHash = useCallback((hash: string) => {
+    setSelectedApiKeyHash(getSelectableApiKeyHash(hash));
   }, []);
 
   const refresh = useCallback(() => {
@@ -668,7 +695,7 @@ export function useUsageAnalytics() {
     selectedModel,
     setSelectedModelId,
     selectedApiKey,
-    setSelectedApiKeyHash,
+    setSelectedApiKeyHash: selectApiKeyHash,
     selectedCredential,
     setSelectedCredentialId,
   };

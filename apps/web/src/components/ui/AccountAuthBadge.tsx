@@ -40,6 +40,9 @@ const AUTH_STATE_ICON: Record<FarmAccountAuthState, (props: IconProps) => ReactE
   operator_disabled: IconEyeOff,
   // unprovisioned：未绑定·不可出站——用告警三角强调「异常，但可通过接入农场恢复」。
   unprovisioned: IconAlertTriangle,
+  // liveness_unconfirmed：无法确认存活（health-blind / token 陈旧）——底层色是 idle
+  // 灰，但配告警三角图标构成「灰 + 告警」，一眼区别于纯中性 unknown 的 info 图标。
+  liveness_unconfirmed: IconAlertTriangle,
   unknown: IconInfo,
 };
 
@@ -55,6 +58,7 @@ const AUTH_STATE_TRAILING_ICON: Record<
   auto_quarantined: null,
   operator_disabled: null,
   unprovisioned: null,
+  liveness_unconfirmed: null,
   unknown: null,
 };
 

@@ -45,6 +45,7 @@ import {
   findAccountStateForAccount,
   healthReasonToFarmHealthVariant,
   isAccountStateStale,
+  isFarmLivenessUnconfirmedReason,
   normalizeFarmTelemetryAliveState,
   provisioningStateToFarmHealthVariant,
   telemetryAliveStateToBadgeVariant,
@@ -99,6 +100,24 @@ const DEVICE_ID_SOURCE_VARIANT: Record<FarmDeviceIDSource, 'success' | 'warning'
 // C5「请求节奏 sparkline」：至少要 2 个间隔样本才画得出折线（单点画不出节奏
 // 形状）；不足时改显文案，不渲染空图。
 const CADENCE_SPARKLINE_MIN_SAMPLES = 2;
+
+/**
+ * farm-account-liveness-detection Phase 5 F1/F2：把「无法确认存活」的两条独立来源
+ * 归一成单个 reason（供 deriveAccountAuthState 覆盖假绿）：
+ *  ① 账号顶层 farm_health_blind=true（core 反关联防泄漏门挡住健康探测的直接投影）；
+ *  ② 绑定容器 health_reason 浮现为 account_token_stale / account_health_blind
+ *     （编排器把 token/健康陈旧降级为 degraded 时透传的字面 reason）。
+ * 两者都无 → undefined（零行为变化，健康号不误伤）。① 优先——它是账号级直接事实，
+ * 不依赖容器是否还在注册表里可 join。
+ */
+function resolveLivenessUnconfirmedReason(
+  farmHealthBlind: boolean | undefined,
+  containerHealthReason: string | undefined
+): string | undefined {
+  if (farmHealthBlind === true) return 'account_health_blind';
+  if (isFarmLivenessUnconfirmedReason(containerHealthReason)) return containerHealthReason;
+  return undefined;
+}
 
 /**
  * 账号健康区：复用 GET /api/farm/accounts?env=<env>（编排器透传 CPA 该
@@ -241,6 +260,13 @@ export function FarmAccountsPanel({
         autoQuarantined: Boolean(account.auto_quarantined),
         disabled: account.disabled || normalizedStatus === 'disabled',
         hasReauthUrl: Boolean(account.reauth_url),
+        // F1/F2「无法确认存活」：与下方每行徽标同源——health-blind（账号顶层）或绑定
+        // 容器 health_reason 浮现的 token/健康陈旧，把假绿覆盖成 liveness_unconfirmed，
+        // 让筛选/排序与徽标一致（否则灰徽标却被「正常」筛选漏进/漏出）。
+        livenessUnconfirmedReason: resolveLivenessUnconfirmedReason(
+          account.farm_health_blind,
+          joined?.health_reason
+        ),
         // 契约字段：farm_bound=false 的 Claude 账号 → unprovisioned 异常态。
         farmBound: account.farm_bound,
         // 冷启动 reauth 宽限门（与下方每行徽标同源）：新号刚 onboard <~2min 内把
@@ -538,12 +564,19 @@ export function FarmAccountsPanel({
                 joinedContainer?.binding?.bound_at,
                 joinedContainer?.created_at
               );
+              // F1/F2「无法确认存活」：health-blind（账号顶层）或绑定容器 health_reason
+              // 浮现的 token/健康陈旧 → 覆盖 alive 假绿为 liveness_unconfirmed（灰 + 告警）。
+              const livenessUnconfirmedReason = resolveLivenessUnconfirmedReason(
+                account.farm_health_blind,
+                joinedContainer?.health_reason
+              );
               const authState = deriveAccountAuthState({
                 authStatus: authStatusRaw,
                 authReason: authReasonRaw,
                 autoQuarantined: isAutoQuarantined,
                 disabled: isDisabled,
                 hasReauthUrl: reauthNeeded,
+                livenessUnconfirmedReason,
                 // 契约字段：未绑定 Claude 账号 → unprovisioned（不可出站异常态）。
                 farmBound: account.farm_bound,
                 onboardAtMs,
@@ -581,6 +614,17 @@ export function FarmAccountsPanel({
                 authDetailLabel = t('farm.accountHealth.unprovisionedHint', {
                   defaultValue:
                     '未绑定容器：若本账号已配住宅代理，出站仍安全经该代理；未配代理则 fail-closed 不出站。遥测 device_id 未经容器对齐，暂用合成假名（接入农场后转真）。',
+                });
+              } else if (authState === 'liveness_unconfirmed') {
+                // F1「呈现最后确认存活时刻」：以 last_refresh（最近一次 token 刷新成功）作
+                // 「最后确认存活」的最佳可得代理值——没有专门的「上次 auth_status=alive」时刻
+                // 字段（见交付 GAP）。缺失时显「未知」，不伪造。
+                const lastConfirmedAliveLabel = account.last_refresh
+                  ? formatDateTimeUtc8(account.last_refresh, i18n.language)
+                  : t('farm.accountHealth.lastConfirmedAliveUnknown', { defaultValue: '未知' });
+                authDetailLabel = t('farm.accountHealth.livenessUnconfirmedHint', {
+                  at: lastConfirmedAliveLabel,
+                  defaultValue: '无法确认账号存活（探测受阻或凭证陈旧）——最后确认存活: {{at}}',
                 });
               }
               // 账号态副行详情只在非健康态展示（healthy 的 label 已够）。
@@ -944,8 +988,13 @@ export function FarmAccountsPanel({
                       />
                       {showAuthDetail ? (
                         <span
-                          className={`${styles.authDetailText} ${styles[`authDetail_${authVariant}`]}`}
+                          className={`${styles.authDetailText} ${
+                            authState === 'liveness_unconfirmed'
+                              ? styles.authDetail_livenessUnconfirmed
+                              : styles[`authDetail_${authVariant}`]
+                          }`}
                           data-testid={`farm-account-auth-reason-${account.name}`}
+                          data-auth-state={authState}
                         >
                           {authDetailLabel}
                         </span>

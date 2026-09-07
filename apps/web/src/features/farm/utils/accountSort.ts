@@ -40,15 +40,18 @@ export interface FarmAccountSortState {
  * unprovisioned/auto_quarantined 最高——都属「当前不可出站」。unknown 介于
  * 中间偏低（信息缺失但非确证故障）。initializing（冷启动过渡态）排在 healthy 之上、
  * unknown 之下的低区——它是「刚 onboard、暂视为非异常」的中性态，不该被排到异常区。
+ * liveness_unconfirmed（无法确认存活）排在 unknown 之上、确证故障态之下——它比「根本
+ * 不知道」更值得关注（曾确认过、现在确认不了），但不是确证的 disabled/reauth/隔离终态。
  */
 export const AUTH_STATE_SEVERITY: Record<FarmAccountAuthState, number> = {
   healthy: 0,
   initializing: 1,
   unknown: 2,
-  operator_disabled: 3,
-  needs_reauth: 4,
-  unprovisioned: 5,
-  auto_quarantined: 6,
+  liveness_unconfirmed: 3,
+  operator_disabled: 4,
+  needs_reauth: 5,
+  unprovisioned: 6,
+  auto_quarantined: 7,
 };
 
 /** device_id 源严重度（越大越偏离「真实容器同步」，用于排序）。 */
