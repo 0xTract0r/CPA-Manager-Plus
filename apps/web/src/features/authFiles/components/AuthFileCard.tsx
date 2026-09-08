@@ -236,36 +236,9 @@ export function AuthFileCard(props: AuthFileCardProps) {
   // 无健康数据（成功/失败均为 0）时不占整块 HEALTH 面板，改成一行紧凑占位。
   const hasStatusData = statusData.totalSuccess + statusData.totalFailure > 0;
 
-  // 卡片头部健康 pill（点⑤）：把原本埋在卡片中部 HEALTH 面板的近期请求成败数据
-  // 提到头部，一眼可见，不用滚动。复用同一 statusData，语义分层：
-  //  - warning：隔离 / 需重认证 / 有近期失败 / 结构化告警。
-  //  - healthy：有近期成功且无上述告警。
-  //  - neutral：无近期数据（或虚拟占位卡不渲染）。
-  const headerHealthTone: 'healthy' | 'warning' | 'neutral' = isRuntimeOnly
-    ? 'neutral'
-    : isAutoQuarantined || isReauthRequired || hasStatusWarning || statusData.totalFailure > 0
-      ? 'warning'
-      : statusData.totalSuccess > 0
-        ? 'healthy'
-        : 'neutral';
-  const headerHealthPillClass =
-    headerHealthTone === 'healthy'
-      ? styles.healthPillHealthy
-      : headerHealthTone === 'warning'
-        ? styles.healthPillWarning
-        : styles.healthPillNeutral;
-  const headerHealthPillText = hasStatusData
-    ? t('auth_files.card_health_pill_counts', {
-        success: statusData.totalSuccess,
-        failure: statusData.totalFailure,
-        defaultValue: '✓ {{success}} · ✗ {{failure}}',
-      })
-    : t('auth_files.card_health_pill_no_data', { defaultValue: 'No recent data' });
-  const headerHealthPillTitle = t('auth_files.card_health_pill_title', {
-    success: statusData.totalSuccess,
-    failure: statusData.totalFailure,
-    defaultValue: 'Recent request health: {{success}} success / {{failure}} failure',
-  });
+  // 近期请求成/败原本有一个独立 ✓/✗ pill，但它与卡片中部「成功/失败」累计计数重复
+  // （二者都是成败计数，只是时间口径不同、卡面未标注差异），已移除。近期请求趋势改由
+  // 下方「健康状态」色块条 + 成功率% 单独承载；「成功/失败」保留为累计总量。
 
   // 隔离/异常原因常驻可见文本的第二行：接线 recent_requests 的 Failed 计数
   // （与卡片下方 HEALTH 面板同一数据源 statusData.totalFailure，避免展示口径
@@ -516,15 +489,8 @@ export function AuthFileCard(props: AuthFileCardProps) {
                 >
                   {stateLabel}
                 </span>
-                {!isRuntimeOnly && (
-                  <span
-                    className={`${styles.healthPill} ${headerHealthPillClass}`}
-                    title={headerHealthPillTitle}
-                    data-testid={`auth-file-health-pill-${file.name}`}
-                  >
-                    {headerHealthPillText}
-                  </span>
-                )}
+                {/* 顶部状态徽标簇只放「账号状态」（启用/健康/隔离/需重认证等）；近期请求
+                    成败已不在此渲染（原 ✓/✗ pill 与中部「成功/失败」累计计数重复，已移除）。 */}
                 {missingProxyUrl && (
                   <span
                     className={`${styles.stateBadge} ${styles.stateBadgeWarning}`}

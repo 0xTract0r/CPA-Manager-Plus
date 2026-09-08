@@ -43,6 +43,17 @@ const minute = 60 * 1000;
 const hour = 60 * minute;
 const day = 24 * hour;
 
+// Demo：生成「近期请求」10 分钟色块序列（喂卡片「健康状态」色块条 + 成功率%）。
+// 每个元素 = [成功数, 失败数]，代表一个 10 分钟窗口；time 仅作展示、不参与排布。
+const demoRecentRequests = (
+  pattern: ReadonlyArray<readonly [number, number]>,
+): { time: string; success: number; failed: number }[] =>
+  pattern.map(([success, failed], index) => ({
+    time: new Date(now() - (pattern.length - index) * 10 * minute).toISOString(),
+    success,
+    failed,
+  }));
+
 const startOfLocalDayIso = (input = now()) => {
   const date = new Date(input);
   return new Date(date.getFullYear(), date.getMonth(), date.getDate()).toISOString();
@@ -265,6 +276,10 @@ const demoAuthFiles: AuthFilesResponse = {
       account_id: 'acct_codex_team',
       success: 1842,
       failed: 18,
+      recent_requests: demoRecentRequests([
+        [7, 0], [10, 0], [5, 0], [12, 1], [8, 0], [0, 0], [9, 0], [11, 0],
+        [6, 0], [13, 0], [7, 1], [9, 0], [10, 0], [8, 0], [12, 0], [6, 0],
+      ]),
     },
     {
       name: 'codex-fallback-02.json',
@@ -293,6 +308,10 @@ const demoAuthFiles: AuthFilesResponse = {
       account_snapshot: 'Research Team',
       success: 1520,
       failed: 9,
+      recent_requests: demoRecentRequests([
+        [5, 0], [8, 0], [11, 0], [6, 0], [9, 1], [7, 0], [0, 0], [10, 0],
+        [12, 0], [5, 0], [8, 0], [9, 0], [6, 1], [11, 0], [7, 0], [10, 0],
+      ]),
       // Demo 账号 A：Max 20x + 已成熟（warmup.mature=true → 不渲染养号徽标）+ 会话数。
       account_scheduling: {
         subscription_tier: 'max_20x',
@@ -400,6 +419,10 @@ const demoAuthFiles: AuthFilesResponse = {
       account_snapshot: 'Batch Research',
       success: 934,
       failed: 18,
+      recent_requests: demoRecentRequests([
+        [3, 0], [4, 1], [2, 0], [5, 0], [0, 0], [3, 0], [4, 0], [1, 1],
+        [3, 0], [2, 0], [4, 0], [3, 0], [0, 0], [2, 0], [3, 0], [4, 0],
+      ]),
       // Demo 账号 B：Max 5x + 养号中（warmup.mature=false → 渲染「养号中」徽标）+ 会话数。
       account_scheduling: {
         subscription_tier: 'max_5x',
@@ -429,6 +452,10 @@ const demoAuthFiles: AuthFilesResponse = {
       account_snapshot: 'Solo Pro',
       success: 412,
       failed: 3,
+      recent_requests: demoRecentRequests([
+        [2, 0], [3, 0], [0, 0], [4, 0], [1, 0], [3, 0], [2, 0], [0, 0],
+        [3, 0], [2, 0], [4, 0], [1, 0], [0, 0], [3, 0], [2, 0], [3, 0],
+      ]),
       // Demo 账号 C：Pro + 已成熟（warmup.mature=true → 不渲染养号徽标）+ 会话数。
       account_scheduling: {
         subscription_tier: 'pro',
@@ -459,6 +486,10 @@ const demoAuthFiles: AuthFilesResponse = {
       account_snapshot: 'Default Claude.ai',
       success: 128,
       failed: 2,
+      recent_requests: demoRecentRequests([
+        [0, 0], [0, 0], [1, 0], [2, 0], [0, 0], [1, 0], [3, 0], [0, 0],
+        [2, 0], [1, 1], [0, 0], [2, 0], [1, 0], [0, 0], [2, 0], [1, 0],
+      ]),
       // Demo 账号 D：读不出档（subscription_tier 非已知枚举 → 前端归一为 unknown，
       // claude 账号仍渲染「套餐: 未知」而非留白）+ 养号中（mature=false）+ 会话数。
       account_scheduling: {
