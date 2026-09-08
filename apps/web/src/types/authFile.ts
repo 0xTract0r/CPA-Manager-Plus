@@ -360,6 +360,19 @@ export interface AuthFileAccountScheduling {
    */
   first_production_at?: string | null;
   /**
+   * 「候选锚点时间戳」只读投影：把这个账号真实拥有的、可作为 first_production_at
+   * 锚点的时间戳摆出来，让用户一键选中而不用手打/猜（用户误清锚点后找回的主路径）。
+   * additive、namespaced；跨版本/过渡期部署可能整体缺失（部署的 core 尚未投影，
+   * 同 warmup/farm_enrolled 的「透传未落地前恒缺省」约定）。缺失/为 null 时前端
+   * 只提供「当前时间」候选（前端本地计算，不依赖此投影），不报错。
+   *
+   * 语义边界：只暴露贴近「最近活动」锚点语义的候选（后端投影是 high-water 的
+   * last_activity_at，实为该号 CLI 设备版本高水位时间、仅在版本升级时更新，非逐次
+   * 服务——锚点被清后首服时间已不可考），刻意**不**包含 Anthropic 账号创建时间
+   * （会让账号显得过于成熟、skip 养号 → 封号风险，产品明确不要）。
+   */
+  anchor_candidates?: AuthFileAccountAnchorCandidates | null;
+  /**
    * 该账号索引下观测到的去重 SessionID 总数（P6，core
    * internal/usage.SessionAggregateForAuthIndex，按空闲窗口分桶）。
    * 恒为非负整数；0 是「确有其事的 0」（真的没有会话），不是「未知」——
@@ -388,6 +401,25 @@ export interface AuthFileAccountWarmup {
   mature?: boolean;
   /** 账号年龄（天）；未锚定 first_production_at 时 core 下发 null。 */
   age_days?: number | null;
+  [key: string]: unknown;
+}
+
+/**
+ * account_scheduling.anchor_candidates 子投影：可作为 first_production_at 锚点的
+ * 候选时间戳（RFC3339）。每个字段都是可选/可为 null——某候选缺失时前端不渲染对应
+ * 的一键按钮（优雅降级）。刻意不含账号创建时间（见 anchor_candidates 注释）。
+ */
+export interface AuthFileAccountAnchorCandidates {
+  /**
+   * 该账号「最近活动」时间（high-water）。底层是该号 CLI 设备版本的高水位时间戳，
+   * 只在设备版本升级时才更新，不是逐次服务的时间：对只用过一个版本的号 ≈ 首次服务，
+   * 对升级过的老号可能晚于真实首服。锚点一旦被清空，真正的首次服务时间已不再留存。
+   * 如实叫「最近活动」（既非逐次「服务」也非「首次服务」）更准也更安全（绝不会把号
+   * 显得过于成熟）。最贴近锚点语义，前端作为推荐候选高亮。
+   */
+  last_activity_at?: string | null;
+  /** 该账号「首次认证 / 接入本系统」时间（次选候选）。 */
+  first_auth_at?: string | null;
   [key: string]: unknown;
 }
 

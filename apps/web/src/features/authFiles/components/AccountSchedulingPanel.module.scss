@@ -51,6 +51,54 @@
   }
 }
 
+// 字段动作按钮行（rate_scale 的「恢复默认」、first_production_at 的「设为当前时间」
+// 与两步确认「清除」）。放在输入框下方常规 flow，用 flex + gap 排布，不用绝对定位
+// 悬浮槽——避免像旧的 Input rightElement 那样盖住数字步进器 / 原生日期选择器。
+.fieldActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+// 首次投产锚点为空时，在「清除」按钮原位显示的「当前已是自动」状态文字（次级信息），
+// 替代旧的变灰「清除 / 恢复自动」按钮，消除「无法恢复默认」的误读。
+.autoStatus {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+// 候选锚点一键选择区：小标题 + 一行可换行的候选按钮（最近活动 / 首次认证 /
+// 当前时间）。同 .fieldActions 用常规 flow + flex-wrap，不用绝对定位悬浮槽，避免
+// 与输入框、其它动作按钮重叠。
+.candidates {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.candidatesLabel {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.candidateButtons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+// 候选按钮里的具体时间：等宽数字对齐，稍降不透明度做次级信息，但不改颜色——
+// 避免在 primary（推荐）实心按钮上出现低对比文字。
+.candidateTime {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+
 .footer {
   display: flex;
   align-items: center;
