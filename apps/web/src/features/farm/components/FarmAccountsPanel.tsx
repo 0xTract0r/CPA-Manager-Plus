@@ -65,7 +65,6 @@ import {
 import {
   type FarmContainerView,
   type FarmDeviceIDSource,
-  type FarmEnv,
 } from '@/types/farm';
 import type { FarmDetailTab } from './FarmContainerDetailContent';
 import { formatDateTimeUtc8 } from '@/utils/datetime';
@@ -171,14 +170,17 @@ export function FarmAccountsPanel({
   // env 不再前端写死 'test'：改由 useFarmDeploymentEnv 从 /usage-service/info 的 farmEnv
   // 取真实部署环境（生产 cpamp→prod、测试 cpamp→test），供底层拉取用。info 未就绪或
   // 请求失败时该 hook 回退 'test'（与历史行为一致），避免测试部署被误判成生产。
-  const env: FarmEnv = useFarmDeploymentEnv();
+  // resolved 在 env 从 info 解析出来前为 false——账号/账号态查询据此 gate，不用回退值
+  // 'test' 先打错环境（生产页加载期误打测试 CPA 的竞态修复）。gate 期间底层 hook 初始
+  // loading=true，AsyncPanel 展示「加载中」而非空/错。
+  const { env, resolved } = useFarmDeploymentEnv();
   // 默认筛选改为「正常」（绑定 + 健康）——用户拍板：账号面板默认只看正常账号，
   // 异常/未绑定的按需切筛选查看，避免正常态被一堆异常淹没。
   const [authFilter, setAuthFilter] = useState<FarmAccountAuthFilter>('normal');
   const [query, setQuery] = useState('');
   // 列排序：默认按认证态严重度降序（异常优先），operator 一眼看到最需处理的账号。
   const [sort, setSort] = useState<FarmAccountSortState>({ key: 'authState', direction: 'desc' });
-  const { accounts, loading, error, reload } = useFarmAccounts(env);
+  const { accounts, loading, error, reload } = useFarmAccounts(env, resolved);
   const { onboardingAccountId, onboard } = useFarmOnboard({ reload });
   // 两平面徽标的数据源：containers 列表带 account_auth_status/account_auth_reason
   // （已绑定账号才有）+ health_reason（容器运行态列真实 reason）；account-state
@@ -187,7 +189,7 @@ export function FarmAccountsPanel({
     enabled: sharedContainers === undefined,
   });
   const containers = sharedContainers ?? independentlyLoadedContainers;
-  const { accountStates } = useFarmAccountState(env);
+  const { accountStates } = useFarmAccountState(env, resolved);
   // 容器运行态 as-of 陈旧判定用的稳定「当前时刻」，见 STALE_CLOCK_TICK_MS 注释。
   const [nowMs, setNowMs] = useState(() => Date.now());
   useInterval(() => setNowMs(Date.now()), STALE_CLOCK_TICK_MS);

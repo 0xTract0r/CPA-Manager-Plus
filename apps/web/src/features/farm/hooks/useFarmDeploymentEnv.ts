@@ -13,9 +13,21 @@ import type { FarmEnv } from '@/types/farm';
  *
  * 回退策略：加载中、接口缺字段或请求失败一律回退 'test'（绝不回退 'prod'）——保持与
  * 历史行为一致，避免测试部署被误判成生产；生产部署则在 info 返回后自动校正为 'prod'。
+ *
+ * resolved 标志：区分「env 还没解析出来（仍是回退值 'test'）」与「已从 info 校正」。
+ * 消费方（农场页账号查询）在 resolved 前不应发请求——否则生产页加载期会先拿回退
+ * 'test' 打到测试环境 CPA（错环境、还污染测试端失败计数），等 info 返回才切 'prod'
+ * 重发。成功和失败分支都置 resolved=true（失败也已确定回退为 'test'，不再是待定态）。
  */
-export function useFarmDeploymentEnv(): FarmEnv {
+export interface UseFarmDeploymentEnvResult {
+  env: FarmEnv;
+  /** false 表示 env 尚未从 /usage-service/info 解析出来（仍是回退值），消费方应据此 gate 掉请求。 */
+  resolved: boolean;
+}
+
+export function useFarmDeploymentEnv(): UseFarmDeploymentEnvResult {
   const [env, setEnv] = useState<FarmEnv>('test');
+  const [resolved, setResolved] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -24,10 +36,12 @@ export function useFarmDeploymentEnv(): FarmEnv {
         const info = await usageServiceApi.getInfo(detectApiBaseFromLocation());
         if (!cancelled) {
           setEnv(info.farmEnv ?? 'test');
+          setResolved(true);
         }
       } catch {
         if (!cancelled) {
           setEnv('test');
+          setResolved(true);
         }
       }
     };
@@ -37,5 +51,5 @@ export function useFarmDeploymentEnv(): FarmEnv {
     };
   }, []);
 
-  return env;
+  return { env, resolved };
 }

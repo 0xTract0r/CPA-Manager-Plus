@@ -22,14 +22,22 @@ export interface UseFarmAccountStateResult {
  *
  * 未装配（s.accountState==nil）时后端优雅退化为空列表而非报错，这里同样
  * 不视为 error。
+ *
+ * `enabled`（默认 true，保持所有现有调用向后兼容——仍挂载即发）：与 useFarmAccounts
+ * 同款 gate——农场页在部署环境解析出来前传 false，避免用回退值 'test' 先打到错环境。
+ * 初始 loading=true，未 enabled 时既不发请求、也不置 error。
  */
-export function useFarmAccountState(env: FarmEnv): UseFarmAccountStateResult {
+export function useFarmAccountState(
+  env: FarmEnv,
+  enabled: boolean = true
+): UseFarmAccountStateResult {
   const { t } = useTranslation();
   const [accountStates, setAccountStates] = useState<FarmAccountStateView[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   const reload = useCallback(async () => {
+    if (!enabled) return;
     setLoading(true);
     setError('');
     try {
@@ -41,11 +49,11 @@ export function useFarmAccountState(env: FarmEnv): UseFarmAccountStateResult {
     } finally {
       setLoading(false);
     }
-  }, [env, t]);
+  }, [env, enabled, t]);
 
   useEffect(() => {
-    reload();
-  }, [reload]);
+    if (enabled) reload();
+  }, [enabled, reload]);
 
   return { accountStates, loading, error, reload };
 }
