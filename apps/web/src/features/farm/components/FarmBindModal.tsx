@@ -36,7 +36,7 @@ export function FarmBindModal({
   const { t } = useTranslation();
   // 环境默认取真实部署环境（生产 cpamp→prod、测试 cpamp→test），不再前端写死 'test'；
   // info 未就绪时该 hook 回退 'test'（与历史行为一致）。resolved=false 表示 env 还没
-  // 解析出来——此时 gate 掉账号查询、并禁用确认按钮，关掉「解析前点确认打错环境」的窄窗口。
+  // 解析出来——此时禁用确认按钮，关掉「解析前点确认打错环境」的窄窗口。
   const { env: deploymentEnv, resolved } = useFarmDeploymentEnv();
   const [containerId, setContainerId] = useState('');
   const [env, setEnv] = useState<FarmEnv>(deploymentEnv);
@@ -49,7 +49,12 @@ export function FarmBindModal({
     () => containers.filter((c) => !c.binding && c.status !== 'down'),
     [containers]
   );
-  const { accounts, loading: accountsLoading } = useFarmAccounts(env, resolved);
+  // 本组件在容器页是常驻挂载（不是 {open && <FarmBindModal/>}），弹窗关闭时本地
+  // env 不会跟随部署环境同步（下面的同步 effect 有 if (!open) return），一直停在
+  // 初始回退值 'test'。查询门控额外收进 open：关闭态本就不需要账号列表，直接不查；
+  // 打开且 env 已从部署环境同步后才发请求，避免容器页加载期（弹窗还关着）用回退值
+  // 'test' 残留打到测试 CPA。
+  const { accounts, loading: accountsLoading } = useFarmAccounts(env, resolved && open);
   const availableAccounts = useMemo(() => accounts.filter((a) => !a.disabled), [accounts]);
 
   useEffect(() => {
