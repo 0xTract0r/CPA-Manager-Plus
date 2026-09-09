@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import { AsyncPanel } from '@/components/ui/AsyncPanel';
 import { useFarmAccounts } from '../hooks/useFarmAccounts';
+import { useFarmDeploymentEnv } from '../hooks/useFarmDeploymentEnv';
 import type { FarmContainerView, FarmCreateBindingRequest, FarmEnv } from '@/types/farm';
 import { FARM_ENVS } from '@/types/farm';
 import styles from './FarmBindModal.module.scss';
@@ -33,8 +34,11 @@ export function FarmBindModal({
   onSubmit,
 }: FarmBindModalProps) {
   const { t } = useTranslation();
+  // 环境默认取真实部署环境（生产 cpamp→prod、测试 cpamp→test），不再前端写死 'test'；
+  // info 未就绪时该 hook 回退 'test'（与历史行为一致）。
+  const deploymentEnv = useFarmDeploymentEnv();
   const [containerId, setContainerId] = useState('');
-  const [env, setEnv] = useState<FarmEnv>('test');
+  const [env, setEnv] = useState<FarmEnv>(deploymentEnv);
   const [accountId, setAccountId] = useState('');
 
   // R5-2 改绑防误绑：可绑定候选只留「无绑定且非 down」的容器。down 容器已被编排器
@@ -54,10 +58,10 @@ export function FarmBindModal({
         ? preselectedContainerId
         : (unboundContainers[0]?.id ?? '')
     );
-    setEnv('test');
+    setEnv(deploymentEnv);
     setAccountId('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, preselectedContainerId]);
+  }, [open, preselectedContainerId, deploymentEnv]);
 
   useEffect(() => {
     if (!accountId) return;

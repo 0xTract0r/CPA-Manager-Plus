@@ -20,6 +20,7 @@ import {
 import { isDemoMode } from '@/features/demo/demoMode';
 import { normalizeApiBase } from '@/utils/connection';
 import type { ModelPrice } from '@/utils/usage';
+import type { FarmEnv } from '@/types/farm';
 
 const USAGE_SERVICE_ERROR_CODES = new Set([
   'request_failed',
@@ -65,6 +66,9 @@ export interface UsageServiceInfo {
   migrationStatus?: string;
   dataKeyReady?: boolean;
   hasHistoricalData?: boolean;
+  // 本 cpamp 部署实例管哪个环境（prod / test），由 manager-server 从 FARM_ENV
+  // 或编排器 URL 端口推断后下发；农场页据此请求，替掉前端硬编码的 'test'。
+  farmEnv?: FarmEnv;
 }
 
 export interface UsageServiceCollectorStatus {

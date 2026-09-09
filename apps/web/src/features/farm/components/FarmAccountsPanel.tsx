@@ -29,6 +29,7 @@ import {
 import { useFarmAccounts } from '../hooks/useFarmAccounts';
 import { useFarmAccountState } from '../hooks/useFarmAccountState';
 import { useFarmContainers } from '../hooks/useFarmContainers';
+import { useFarmDeploymentEnv } from '../hooks/useFarmDeploymentEnv';
 import { useFarmOnboard } from '../hooks/useFarmOnboard';
 import { useFarmProbeCadenceSeries } from '../hooks/useFarmProbeCadenceSeries';
 import { CadenceSparkline } from './CadenceSparkline';
@@ -164,10 +165,13 @@ export function FarmAccountsPanel({
   const { t, i18n } = useTranslation();
   // 订阅全局时区（TZ2/#49）：切换时区时本组件重渲染，内部 formatDateTimeUtc8 同步刷新。
   useTimezone();
-  // C8「筛选维度改造」：环境（test/prod）对本部署无意义——编排器当前只服务 test，
-  // 生产账号不会出现在这个列表里。env 固定为 test 仅用于底层拉取，不再作为可见
-  // 筛选维度；对 operator 有意义的「账号认证态」+「备注/账号名搜索」改为客户端筛选。
-  const env: FarmEnv = 'test';
+  // C8「筛选维度改造」：环境（test/prod）不作为可见筛选维度——单个 cpamp 部署实例
+  // 只服务它自己所在的那个环境，同屏不会混入另一环境的账号；对 operator 有意义的
+  // 「账号认证态」+「备注/账号名搜索」改为客户端筛选。
+  // env 不再前端写死 'test'：改由 useFarmDeploymentEnv 从 /usage-service/info 的 farmEnv
+  // 取真实部署环境（生产 cpamp→prod、测试 cpamp→test），供底层拉取用。info 未就绪或
+  // 请求失败时该 hook 回退 'test'（与历史行为一致），避免测试部署被误判成生产。
+  const env: FarmEnv = useFarmDeploymentEnv();
   // 默认筛选改为「正常」（绑定 + 健康）——用户拍板：账号面板默认只看正常账号，
   // 异常/未绑定的按需切筛选查看，避免正常态被一堆异常淹没。
   const [authFilter, setAuthFilter] = useState<FarmAccountAuthFilter>('normal');

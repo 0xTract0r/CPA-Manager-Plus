@@ -44,6 +44,9 @@ type InfoResult struct {
 	MigrationStatus    string `json:"migrationStatus,omitempty"`
 	DataKeyReady       bool   `json:"dataKeyReady"`
 	HasHistoricalData  bool   `json:"hasHistoricalData"`
+	// FarmEnv：本 cpamp 部署实例管哪个环境（prod / test），由 config 从
+	// FARM_ENV 或编排器 URL 端口推断，供前端农场页按真实部署环境请求。
+	FarmEnv string `json:"farmEnv,omitempty"`
 }
 
 type Service struct {
@@ -94,6 +97,7 @@ func (s *Service) Info(ctx context.Context) (InfoResult, error) {
 		MigrationStatus:    bootstrapState.Status,
 		DataKeyReady:       bootstrapState.DataKeyReady,
 		HasHistoricalData:  bootstrapState.HasHistoricalData,
+		FarmEnv:            s.cfg.FarmEnv,
 	}, nil
 }
 

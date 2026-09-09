@@ -27,6 +27,7 @@ type Config struct {
 	ManagementKey                string
 	FarmOrchestratorURL          string
 	FarmOrchestratorKey          string
+	FarmEnv                      string
 	AdminKey                     string
 	DataKey                      string
 	DataKeyPath                  string
@@ -125,14 +126,33 @@ func LoadWithOptions(options LoadOptions) (Config, error) {
 		dataKeyPath = filepath.Join(dataDir, "data.key")
 	}
 
+	farmOrchestratorURL := env("FARM_ORCH_URL", "")
+
+	// FarmEnv：本部署实例「管哪个环境」（prod / test），供前端农场页按真实部署环境
+	// 请求，替掉前端硬编码的 'test'。
+	//   1. 显式 FARM_ENV 最高优先——未来若部署注入该变量，这里自动优先生效、无需改码。
+	//   2. 生产与测试 cpamp 目前共用同一镜像、且当前部署均未注入 FARM_ENV，故为空时
+	//      从它所连接的编排器 URL 端口兜底推断：生产编排器 host bind/port 为
+	//      10.1.1.201:18451（见 cpamp-preview-201.yml / farm-production-config-checklist.md），
+	//      含 ":18451" 判为 "prod"；否则（如 test 的 :18450、本地开发）回退 "test"。
+	farmEnv := env("FARM_ENV", "")
+	if farmEnv == "" {
+		if strings.Contains(farmOrchestratorURL, ":18451") {
+			farmEnv = "prod"
+		} else {
+			farmEnv = "test"
+		}
+	}
+
 	return Config{
 		HTTPAddr:                     env("HTTP_ADDR", stringFallback(cfgFile.HTTPAddr, "0.0.0.0:18317")),
 		DataDir:                      dataDir,
 		DBPath:                       env("USAGE_DB_PATH", dbPathFallback),
 		CPAUpstreamURL:               env("CPA_UPSTREAM_URL", cfgFile.CPAUpstreamURL),
 		ManagementKey:                readSecret("CPA_MANAGEMENT_KEY", "CPA_MANAGEMENT_KEY_FILE", managementKeyFile),
-		FarmOrchestratorURL:          env("FARM_ORCH_URL", ""),
+		FarmOrchestratorURL:          farmOrchestratorURL,
 		FarmOrchestratorKey:          readSecret("FARM_ORCH_KEY", "FARM_ORCH_KEY_FILE", defaultFarmOrchKeySecretFile),
+		FarmEnv:                      farmEnv,
 		AdminKey:                     readSecret("CPA_MANAGER_ADMIN_KEY", "CPA_MANAGER_ADMIN_KEY_FILE", adminKeyFile),
 		DataKey:                      readSecret("CPA_MANAGER_DATA_KEY", "CPA_MANAGER_DATA_KEY_FILE", dataKeyFile),
 		DataKeyPath:                  env("CPA_MANAGER_DATA_KEY_PATH", dataKeyPath),
