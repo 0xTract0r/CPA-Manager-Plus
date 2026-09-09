@@ -35,8 +35,9 @@ export function FarmBindModal({
 }: FarmBindModalProps) {
   const { t } = useTranslation();
   // 环境默认取真实部署环境（生产 cpamp→prod、测试 cpamp→test），不再前端写死 'test'；
-  // info 未就绪时该 hook 回退 'test'（与历史行为一致）。
-  const deploymentEnv = useFarmDeploymentEnv();
+  // info 未就绪时该 hook 回退 'test'（与历史行为一致）。resolved=false 表示 env 还没
+  // 解析出来——此时 gate 掉账号查询、并禁用确认按钮，关掉「解析前点确认打错环境」的窄窗口。
+  const { env: deploymentEnv, resolved } = useFarmDeploymentEnv();
   const [containerId, setContainerId] = useState('');
   const [env, setEnv] = useState<FarmEnv>(deploymentEnv);
   const [accountId, setAccountId] = useState('');
@@ -48,7 +49,7 @@ export function FarmBindModal({
     () => containers.filter((c) => !c.binding && c.status !== 'down'),
     [containers]
   );
-  const { accounts, loading: accountsLoading } = useFarmAccounts(env);
+  const { accounts, loading: accountsLoading } = useFarmAccounts(env, resolved);
   const availableAccounts = useMemo(() => accounts.filter((a) => !a.disabled), [accounts]);
 
   useEffect(() => {
@@ -81,7 +82,8 @@ export function FarmBindModal({
     label: a.status ? `${a.name} · ${a.status}` : a.name,
   }));
 
-  const canSubmit = Boolean(containerId && env && accountId) && !submitting;
+  // resolved 前禁用确认：env 尚未从部署 info 解析出来时提交会用回退值 'test' 打错环境。
+  const canSubmit = Boolean(containerId && env && accountId) && !submitting && resolved;
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
