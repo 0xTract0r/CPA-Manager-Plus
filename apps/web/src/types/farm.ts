@@ -1263,8 +1263,9 @@ export interface FarmStandbyContainerItem {
   // 该容器当前/上次绑定账号标识（脱敏口径与全站一致，后端回填才有）。
   account_id?: string;
   note?: string;
-  // 进入待机（停机）态的时刻（RFC3339，后端字段名 stopped_since）。缺失时前端显 '—'。
-  stopped_since?: string;
+  // 进入待机态的时刻（RFC3339，后端字段名 standby_since，见 standby.go json tag）。
+  // 缺失时前端显 '—'。
+  standby_since?: string;
   // 容器当前状态（后端回填，通常为 'standby'）。
   status?: string;
 }
@@ -1283,11 +1284,13 @@ export interface FarmStandbyContainersSummary {
 
 // 已退役但未回收的卷汇总。诚实边界：per-volume 占盘（disk_bytes）后端当前**未接入、恒为
 // null**——前端必须区分"未知/未接入"与"0B"，绝不把 null 渲染成 0B 误导 operator。
+// 逐卷明细的实际字段对齐后端 standby.go：device_id（已脱敏）+ retired_at；per-item 占盘
+// 同样未接入，故不在条目上声明 disk_bytes。当前面板不渲染 items 明细，此类型只保正确性。
 export interface FarmRetiredVolumeItem {
-  container_id?: string;
-  note?: string;
-  // 单卷占盘字节数；未接入时为 null（不伪造 0）。
-  disk_bytes?: number | null;
+  // 该卷对应容器的 device_id（已脱敏，后端回填）。
+  device_id?: string;
+  // 退役时刻（RFC3339，后端字段名 retired_at）。
+  retired_at?: string;
 }
 
 export interface FarmRetiredVolumesSummary {

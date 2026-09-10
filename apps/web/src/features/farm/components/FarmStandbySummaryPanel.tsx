@@ -231,7 +231,7 @@ export function FarmStandbySummaryPanel({ env = 'test' }: { env?: FarmEnv } = {}
                       </span>
                       <span className={styles.rowMeta}>
                         {t('farm.standbySummary.standbySince', {
-                          at: fmtTime(item.stopped_since),
+                          at: fmtTime(item.standby_since),
                           defaultValue: '待机于 {{at}}',
                         })}
                       </span>
