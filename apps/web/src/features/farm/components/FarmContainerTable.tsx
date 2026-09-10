@@ -35,6 +35,12 @@ interface FarmContainerTableProps {
   error: string;
   unbindingContainerId: string | null;
   retiringContainerId: string | null;
+  // farm-account-standby-control R2：待机/恢复 in-flight 标记 + 动作回调。可选——
+  // 不传时容器池不渲染待机/恢复按钮（与改造前行为一致）。
+  standbyingContainerId?: string | null;
+  resumingContainerId?: string | null;
+  onStandby?: (container: FarmContainerView) => void;
+  onResume?: (container: FarmContainerView) => void;
   onBind: (container: FarmContainerView) => void;
   onUnbind: (container: FarmContainerView) => void;
   onRetire: (container: FarmContainerView) => void;
@@ -57,6 +63,10 @@ const STATUS_BADGE_VARIANT: Record<string, 'success' | 'warning' | 'error' | 'mu
   running: 'success',
   degraded: 'warning',
   down: 'error',
+  // standby（待机）= 有意的可逆停摆，非异常、非归档——用中性 muted（与 created/
+  // starting 同色系），靠行内状态文案「待机」与「已退役/运行中」区分语义，沿用
+  // 同仓"同色不同文案"的既有范式（多个 muted 态用精确文案区分）。
+  standby: 'muted',
   retired: 'muted',
   orphaned: 'warning',
 };
@@ -67,10 +77,17 @@ const STATUS_BADGE_VARIANT: Record<string, 'success' | 'warning' | 'error' | 'mu
 // （见 types/farm.ts），两者都会落进该桶——所以它的展示标签用「非活跃 / Inactive」
 // 而非「已退役」，保证过滤标签与行内容（可能是已退役或幽灵态）语义自洽；行内
 // 状态徽标仍按各自精确状态（已退役 / 幽灵态）着色区分。
-type FarmContainerGroup = 'active' | 'created' | 'degraded' | 'down' | 'retired';
+type FarmContainerGroup = 'active' | 'created' | 'degraded' | 'down' | 'standby' | 'retired';
 export type FarmContainerFilter = 'all' | FarmContainerGroup;
 
-const FARM_CONTAINER_GROUPS: FarmContainerGroup[] = ['active', 'created', 'degraded', 'down', 'retired'];
+const FARM_CONTAINER_GROUPS: FarmContainerGroup[] = [
+  'active',
+  'created',
+  'degraded',
+  'down',
+  'standby',
+  'retired',
+];
 
 function groupOfStatus(status: string): FarmContainerGroup {
   switch (status) {
@@ -80,6 +97,10 @@ function groupOfStatus(status: string): FarmContainerGroup {
       return 'degraded';
     case 'down':
       return 'down';
+    // standby 是独立可逆停摆态，单列一组（非 active、非 down 异常、非归档），方便
+    // operator 专门挑出待机容器恢复或退役。默认活跃轮询含 standby（非 archived）。
+    case 'standby':
+      return 'standby';
     case 'retired':
     case 'orphaned':
       return 'retired';
@@ -108,6 +129,10 @@ export function FarmContainerTable({
   error,
   unbindingContainerId,
   retiringContainerId,
+  standbyingContainerId,
+  resumingContainerId,
+  onStandby,
+  onResume,
   onBind,
   onUnbind,
   onRetire,
@@ -277,6 +302,10 @@ export function FarmContainerTable({
               const isRetiring = retiringContainerId === container.id;
               const isArchived = container.status === 'retired' || container.status === 'orphaned';
               const isBound = Boolean(container.binding);
+              // R2 待机/恢复：standby 态只提供「恢复」，非 standby 的活跃容器提供「待机」。
+              const isStandby = container.status === 'standby';
+              const isStandbying = standbyingContainerId === container.id;
+              const isResuming = resumingContainerId === container.id;
 
               // 健康原因徽标（P0-1 假降级修复的落地点：keepalive_stale_ok 与
               // 真正的 keepalive_stale/no_keepalive_data 用不同语义色区分）。
@@ -510,16 +539,56 @@ export function FarmContainerTable({
                         // 已归档容器不再提供任何行操作：不能重新绑定（设备已
                         // 不受农场管控），也不能再退役一次。
                         <span className={styles.mono}>—</span>
+                      ) : isStandby ? (
+                        // R2：待机容器只提供「恢复」；未绑定的待机容器额外可退役。
+                        <>
+                          {onResume ? (
+                            <Button
+                              variant="primary"
+                              size="sm"
+                              loading={isResuming}
+                              onClick={() => onResume(container)}
+                              data-testid={`farm-resume-button-${container.id}`}
+                            >
+                              {t('farm.standby.action_resume', { defaultValue: '恢复' })}
+                            </Button>
+                          ) : null}
+                          {!isBound ? (
+                            <Button
+                              variant="danger"
+                              size="sm"
+                              loading={isRetiring}
+                              onClick={() => onRetire(container)}
+                              data-testid={`farm-retire-button-${container.id}`}
+                            >
+                              {t('farm.actions.retire')}
+                            </Button>
+                          ) : null}
+                        </>
                       ) : isBound ? (
-                        <Button
-                          variant="danger"
-                          size="sm"
-                          loading={isUnbinding}
-                          onClick={() => onUnbind(container)}
-                          data-testid={`farm-unbind-button-${container.id}`}
-                        >
-                          {t('farm.containers.action_unbind')}
-                        </Button>
+                        <>
+                          {/* R2：活跃容器可「待机」（停容器+停遥测+保卷，可逆）。 */}
+                          {onStandby ? (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              loading={isStandbying}
+                              onClick={() => onStandby(container)}
+                              data-testid={`farm-standby-button-${container.id}`}
+                            >
+                              {t('farm.standby.action_standby', { defaultValue: '待机' })}
+                            </Button>
+                          ) : null}
+                          <Button
+                            variant="danger"
+                            size="sm"
+                            loading={isUnbinding}
+                            onClick={() => onUnbind(container)}
+                            data-testid={`farm-unbind-button-${container.id}`}
+                          >
+                            {t('farm.containers.action_unbind')}
+                          </Button>
+                        </>
                       ) : (
                         <>
                           <Button
@@ -530,6 +599,17 @@ export function FarmContainerTable({
                           >
                             {t('farm.containers.action_bind')}
                           </Button>
+                          {onStandby ? (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              loading={isStandbying}
+                              onClick={() => onStandby(container)}
+                              data-testid={`farm-standby-button-${container.id}`}
+                            >
+                              {t('farm.standby.action_standby', { defaultValue: '待机' })}
+                            </Button>
+                          ) : null}
                           <Button
                             variant="danger"
                             size="sm"

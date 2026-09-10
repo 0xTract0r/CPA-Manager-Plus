@@ -92,6 +92,7 @@ import { useAuthFilesAccountSettings } from '@/features/authFiles/hooks/useAuthF
 import { useAuthFilesTestMessage } from '@/features/authFiles/hooks/useAuthFilesTestMessage';
 import { useAuthFilesStatusBarCache } from '@/features/authFiles/hooks/useAuthFilesStatusBarCache';
 import { useAntigravitySubscriptions } from '@/features/authFiles/hooks/useAntigravitySubscriptions';
+import { useFarmEnrolledDisableGuard } from '@/features/farm/hooks/useFarmEnrolledDisableGuard';
 import {
   BATCH_BAR_BASE_TRANSFORM,
   BATCH_BAR_HIDDEN_TRANSFORM,
@@ -332,6 +333,13 @@ export function AuthFilesPage() {
     batchDelete,
   } = useAuthFilesData({
     onStatusHistoryChanged: (fileName: string) => bumpAuditReloadKeyRef.current(fileName),
+  });
+
+  // farm-account-standby-control R1：停用 farm_enrolled 账号时先弹语义澄清对话框
+  // （停用只停服务、容器仍温着发遥测；可选"一并移出农场"调 standby 待机）。
+  // 非 farm_enrolled / 非 Claude / 重新启用一律原样透传 handleStatusToggle。
+  const { guardedToggle: guardedStatusToggle } = useFarmEnrolledDisableGuard({
+    onToggle: handleStatusToggle,
   });
 
   // 迁移自旧版：「测试消息」弹窗（可选模型 + 自定义文案），详见 useAuthFilesTestMessage。
@@ -2037,7 +2045,7 @@ export function AuthFilesPage() {
                       onDownload={handleDownload}
                       onOpenAccountSettings={openAccountSettingsEditor}
                       onDelete={handleDelete}
-                      onToggleStatus={handleStatusToggle}
+                      onToggleStatus={guardedStatusToggle}
                       onToggleSelect={() => toggleSelect(getAuthFileSelectionKey(file))}
                     />
                   );

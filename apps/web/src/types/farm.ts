@@ -275,16 +275,33 @@ export interface FarmTelemetrySilenceStateView {
 // retired = 已退役（软删归档，容器与卷按 delete_volume 参数决定是否清）；
 // orphaned = 幽灵态（注册表存在但对应容器/绑定关系异常，等待 operator 收敛为 retired）。
 // 两者都属于 store.IsArchivedStatus，默认容器列表视图会排除，见 handleListContainers。
+// standby = 待机（farm-account-standby-control R2：docker stop + 停遥测 + 保卷，
+// 幂等可逆，resume 可恢复到 running）。与 retired 的区别：retired 是软删归档/不可逆
+// 动作（设备脱管），standby 是临时停摆、随时可恢复且保留身份卷——徽标与分组都要
+// 把两者区分开，避免 operator 把"温着待机"误当"已退役"。后端字段名以并行实现为准，
+// 当前按 store.StatusStandby 约定取字面 'standby'。
 export const FARM_CONTAINER_STATUSES = [
   'created',
   'starting',
   'running',
   'degraded',
   'down',
+  'standby',
   'retired',
   'orphaned',
 ] as const;
 export type FarmContainerStatus = (typeof FARM_CONTAINER_STATUSES)[number];
+
+// farm-account-standby-control R2：POST /api/farm/containers/{id}/standby 与
+// /resume 的成功响应体（body 统一 { confirm:true }）。两端点语义互为逆操作、均
+// 幂等：standby 返回 status='standby'、resume 返回 status='running'，message 为
+// 可选的人类可读说明（失败走 farmClient 既有错误处理，由调用方就地呈现）。字段名
+// 若后端并行实现微调，只需改这里与 services/api/farm.ts 薄封装层。
+export interface FarmContainerStandbyResponse {
+  container_id: string;
+  status: string; // standby 端点恒 'standby'；resume 端点恒 'running'
+  message?: string;
+}
 
 // 环境枚举（store.IsValidEnv 只认 test / prod）
 export const FARM_ENVS = ['test', 'prod'] as const;
@@ -1218,4 +1235,57 @@ export interface FarmIdentityLineageResponse {
   // true=审计发现**同一 device_id 曾出现在两个不同住宅出口**（反关联不变量被破坏的信号）。
   // 正常系统恒 false（D1 每次换 IP 必换 device_id）。
   cross_ip_reuse_detected: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// farm-account-standby-control R4：累积清理看板（GET /api/farm/standby-summary?env=）
+// ---------------------------------------------------------------------------
+// 目的：提醒人工清理、防遗忘堆积——把"停用超 N 天的账号 / 待机中的容器 / 已退役但
+// 卷未回收"三类沉积量聚合成一屏。字段名照抄 lead 给的并行后端契约；standby_containers
+// 的 items 形状后端契约未完全定死（契约写作 "items:[...]"），这里按最小可展示集合定义、
+// 字段全部可选兜底，后端微调只需同步本结构与 services/api/farm.ts。
+
+// 停用超阈值账号单条（account_id 必有；note/disabled_since 可缺——后端未回填时前端显占位，不伪造）。
+export interface FarmStandbyDisabledAccountItem {
+  account_id: string;
+  note?: string;
+  // 该账号进入停用态的时刻（RFC3339）。缺失时前端显 '—'，不臆造。
+  disabled_since?: string;
+}
+
+// 待机中的容器单条（container_id 必有；其余可缺）。
+export interface FarmStandbyContainerItem {
+  container_id: string;
+  // 该容器当前/上次绑定账号标识（脱敏口径与全站一致，后端回填才有）。
+  account_id?: string;
+  note?: string;
+  // 进入待机态的时刻（RFC3339）。缺失时前端显 '—'。
+  standby_since?: string;
+}
+
+export interface FarmStandbyDisabledAccountsSummary {
+  // 判定"停用超 N 天"的天数阈值（后端口径，前端只展示不重算）。
+  threshold_days: number;
+  count: number;
+  items: FarmStandbyDisabledAccountItem[];
+}
+
+export interface FarmStandbyContainersSummary {
+  count: number;
+  items: FarmStandbyContainerItem[];
+}
+
+export interface FarmRetiredVolumesSummary {
+  count: number;
+  // 已退役但尚未回收的卷占用字节数总和。
+  disk_bytes: number;
+}
+
+// GET /api/farm/standby-summary?env={test|prod} 成功响应体。未装配/无数据时后端应
+// 优雅退化为各计数 0 + 空 items（前端据此渲染"无需清理"空态，不报错）。
+export interface FarmStandbySummaryResponse {
+  env: string;
+  disabled_accounts: FarmStandbyDisabledAccountsSummary;
+  standby_containers: FarmStandbyContainersSummary;
+  retired_volumes: FarmRetiredVolumesSummary;
 }

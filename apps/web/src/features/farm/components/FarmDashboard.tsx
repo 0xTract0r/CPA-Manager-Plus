@@ -10,6 +10,7 @@ import { FarmAlertsPanel } from './FarmAlertsPanel';
 import { FarmCapacityPanel } from './FarmCapacityPanel';
 import { FarmConfigPanel } from './FarmConfigPanel';
 import { FarmOverviewBar } from './FarmOverviewBar';
+import { FarmStandbySummaryPanel } from './FarmStandbySummaryPanel';
 import styles from './FarmDashboard.module.scss';
 
 /**
@@ -137,6 +138,9 @@ export function FarmDashboard() {
 
           {/* 容量就绪度 + 「认证即自动供」状态。 */}
           <FarmCapacityPanel />
+
+          {/* 累积清理看板（R4）：停用超 N 天账号 / 待机容器 / 未回收退役卷，提醒人工清理。 */}
+          <FarmStandbySummaryPanel />
         </div>
       )}
     </div>

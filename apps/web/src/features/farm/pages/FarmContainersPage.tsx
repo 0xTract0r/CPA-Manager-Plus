@@ -16,6 +16,7 @@ const FARM_CONTAINER_FILTER_VALUES: readonly FarmContainerFilter[] = [
   'created',
   'degraded',
   'down',
+  'standby',
   'retired',
 ];
 
@@ -27,6 +28,7 @@ function parseInitialFilter(raw: string | null): FarmContainerFilter {
 import { useFarmBindings } from '../hooks/useFarmBindings';
 import { useFarmContainers } from '../hooks/useFarmContainers';
 import { useFarmRetire } from '../hooks/useFarmRetire';
+import { useFarmStandby } from '../hooks/useFarmStandby';
 import { FarmSubPage } from './FarmSubPage';
 
 /**
@@ -43,6 +45,19 @@ export function FarmContainersPage() {
     reload,
   });
   const { retiringContainerId, retire } = useFarmRetire({ setContainers, reload });
+  // R2：待机/恢复。乐观更新复用 useFarmContainers 的 setContainers（失败回滚）。
+  const { standbyingContainerId, resumingContainerId, standby, resume } = useFarmStandby({
+    setContainers,
+    reload,
+  });
+  const handleStandby = useCallback(
+    (container: FarmContainerView) => standby({ id: container.id }),
+    [standby]
+  );
+  const handleResume = useCallback(
+    (container: FarmContainerView) => resume({ id: container.id }),
+    [resume]
+  );
 
   // 初始筛选支持 ?filter= 深链（KPI 磁贴导航来源）；之后由表格筛选控件接管。
   const [searchParams] = useSearchParams();
@@ -78,6 +93,10 @@ export function FarmContainersPage() {
         error={error}
         unbindingContainerId={unbindingContainerId}
         retiringContainerId={retiringContainerId}
+        standbyingContainerId={standbyingContainerId}
+        resumingContainerId={resumingContainerId}
+        onStandby={handleStandby}
+        onResume={handleResume}
         onBind={openBindModal}
         onUnbind={unbind}
         onRetire={retire}
