@@ -136,6 +136,12 @@
   font-variant-numeric: tabular-nums;
 }
 
+// 停用天数徽标：紧凑不换行，数字等宽。
+.ageBadge {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
 @include mobile {
   .header {
     flex-wrap: wrap;

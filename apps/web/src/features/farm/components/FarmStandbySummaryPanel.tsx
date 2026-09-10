@@ -48,6 +48,17 @@ export function FarmStandbySummaryPanel({ env = 'test' }: { env?: FarmEnv } = {}
   const fmtTime = (value?: string) =>
     value ? formatDateTimeUtc8(value, i18n.language) : '—';
 
+  // F4：per-volume 占盘后端当前恒为 null（未接入），必须区分"未知/未接入"与"0B"——
+  // null/undefined 显"未知/未接入"，有值才 formatFileSize，绝不把未知渲染成 0B 误导。
+  const diskBytes = retiredVolumes?.disk_bytes;
+  const diskUsageLabel =
+    diskBytes == null
+      ? t('farm.standbySummary.diskUnknown', { defaultValue: '占盘 未知/未接入' })
+      : t('farm.standbySummary.diskUsage', {
+          size: formatFileSize(diskBytes),
+          defaultValue: '占盘 {{size}}',
+        });
+
   const nothingToClean =
     !loading && !error && disabledCount === 0 && standbyCount === 0 && retiredVolumeCount === 0;
 
@@ -129,12 +140,7 @@ export function FarmStandbySummaryPanel({ env = 'test' }: { env?: FarmEnv } = {}
               >
                 {retiredVolumeCount}
               </span>
-              <span className={styles.metricNote}>
-                {t('farm.standbySummary.diskUsage', {
-                  size: formatFileSize(retiredVolumes?.disk_bytes ?? 0),
-                  defaultValue: '占盘 {{size}}',
-                })}
-              </span>
+              <span className={styles.metricNote}>{diskUsageLabel}</span>
             </div>
           </div>
 
@@ -166,10 +172,26 @@ export function FarmStandbySummaryPanel({ env = 'test' }: { env?: FarmEnv } = {}
               {expandDisabled ? (
                 <ul className={styles.list} data-testid="farm-standby-summary-disabled-list">
                   {disabled.items.map((item) => (
-                    <li key={item.account_id} className={styles.row}>
+                    <li
+                      key={item.account_id}
+                      className={styles.row}
+                      data-testid={`farm-standby-summary-disabled-item-${item.account_id}`}
+                    >
                       <span className={styles.rowPrimary} title={item.account_id}>
                         {item.note || item.account_id}
                       </span>
+                      {/* F5：停用天数是"防遗忘"最有用的信号，作为主要计量前置展示。 */}
+                      {typeof item.age_days === 'number' ? (
+                        <span
+                          className={`status-badge warning ${styles.ageBadge}`}
+                          data-testid={`farm-standby-summary-disabled-age-${item.account_id}`}
+                        >
+                          {t('farm.standbySummary.ageDays', {
+                            days: item.age_days,
+                            defaultValue: '停用 {{days}} 天',
+                          })}
+                        </span>
+                      ) : null}
                       <span className={styles.rowMeta}>
                         {t('farm.standbySummary.disabledSince', {
                           at: fmtTime(item.disabled_since),
@@ -209,7 +231,7 @@ export function FarmStandbySummaryPanel({ env = 'test' }: { env?: FarmEnv } = {}
                       </span>
                       <span className={styles.rowMeta}>
                         {t('farm.standbySummary.standbySince', {
-                          at: fmtTime(item.standby_since),
+                          at: fmtTime(item.stopped_since),
                           defaultValue: '待机于 {{at}}',
                         })}
                       </span>

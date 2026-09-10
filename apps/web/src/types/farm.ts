@@ -1245,12 +1245,16 @@ export interface FarmIdentityLineageResponse {
 // 的 items 形状后端契约未完全定死（契约写作 "items:[...]"），这里按最小可展示集合定义、
 // 字段全部可选兜底，后端微调只需同步本结构与 services/api/farm.ts。
 
-// 停用超阈值账号单条（account_id 必有；note/disabled_since 可缺——后端未回填时前端显占位，不伪造）。
+// 停用超阈值账号单条（account_id 必有；其余可缺——后端未回填时前端显占位，不伪造）。
 export interface FarmStandbyDisabledAccountItem {
   account_id: string;
   note?: string;
   // 该账号进入停用态的时刻（RFC3339）。缺失时前端显 '—'，不臆造。
   disabled_since?: string;
+  // 已停用天数（后端派生，"防遗忘"最有用的信号，前端只展示不重算）。缺失显 '—'。
+  age_days?: number;
+  // 该账号是否已纳入农场治理（用于判断"停用后容器是否还温着"）。
+  farm_enrolled?: boolean;
 }
 
 // 待机中的容器单条（container_id 必有；其余可缺）。
@@ -1259,8 +1263,10 @@ export interface FarmStandbyContainerItem {
   // 该容器当前/上次绑定账号标识（脱敏口径与全站一致，后端回填才有）。
   account_id?: string;
   note?: string;
-  // 进入待机态的时刻（RFC3339）。缺失时前端显 '—'。
-  standby_since?: string;
+  // 进入待机（停机）态的时刻（RFC3339，后端字段名 stopped_since）。缺失时前端显 '—'。
+  stopped_since?: string;
+  // 容器当前状态（后端回填，通常为 'standby'）。
+  status?: string;
 }
 
 export interface FarmStandbyDisabledAccountsSummary {
@@ -1275,16 +1281,32 @@ export interface FarmStandbyContainersSummary {
   items: FarmStandbyContainerItem[];
 }
 
+// 已退役但未回收的卷汇总。诚实边界：per-volume 占盘（disk_bytes）后端当前**未接入、恒为
+// null**——前端必须区分"未知/未接入"与"0B"，绝不把 null 渲染成 0B 误导 operator。
+export interface FarmRetiredVolumeItem {
+  container_id?: string;
+  note?: string;
+  // 单卷占盘字节数；未接入时为 null（不伪造 0）。
+  disk_bytes?: number | null;
+}
+
 export interface FarmRetiredVolumesSummary {
   count: number;
-  // 已退役但尚未回收的卷占用字节数总和。
-  disk_bytes: number;
+  // 已退役但尚未回收的卷占用字节数总和；**当前后端恒为 null**（per-volume 占盘未接入），
+  // 前端据此显"未知/未接入"而非 0B。
+  disk_bytes: number | null;
+  // 说明性备注（如"占盘统计未接入"），后端可选回填。
+  note?: string;
+  // 逐卷明细（后端可选回填）。
+  items?: FarmRetiredVolumeItem[];
 }
 
 // GET /api/farm/standby-summary?env={test|prod} 成功响应体。未装配/无数据时后端应
 // 优雅退化为各计数 0 + 空 items（前端据此渲染"无需清理"空态，不报错）。
 export interface FarmStandbySummaryResponse {
   env: string;
+  // 本次汇总生成时刻（RFC3339，后端 generated_at）。可缺。
+  generated_at?: string;
   disabled_accounts: FarmStandbyDisabledAccountsSummary;
   standby_containers: FarmStandbyContainersSummary;
   retired_volumes: FarmRetiredVolumesSummary;

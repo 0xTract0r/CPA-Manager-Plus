@@ -4297,10 +4297,12 @@
       "standbyLabel": "待机容器",
       "retiredVolumesLabel": "未回收退役卷",
       "diskUsage": "占盘 {{size}}",
+      "diskUnknown": "占盘 未知/未接入",
       "nothingToClean": "暂无需要清理的累积项。",
       "collapse": "收起",
       "expandDisabled": "展开 {{count}} 个停用账号",
       "expandStandby": "展开 {{count}} 个待机容器",
+      "ageDays": "停用 {{days}} 天",
       "disabledSince": "停用于 {{at}}",
       "standbySince": "待机于 {{at}}"
     },
