@@ -31,6 +31,7 @@ import {
 import { useFarmAccounts } from '../hooks/useFarmAccounts';
 import { useFarmAccountState } from '../hooks/useFarmAccountState';
 import { useFarmContainers } from '../hooks/useFarmContainers';
+import { useFarmDeploymentEnv } from '../hooks/useFarmDeploymentEnv';
 import { useFarmOnboard } from '../hooks/useFarmOnboard';
 import { useFarmStandby } from '../hooks/useFarmStandby';
 import { useFarmProbeCadenceSeries } from '../hooks/useFarmProbeCadenceSeries';
@@ -67,7 +68,6 @@ import {
 import {
   type FarmContainerView,
   type FarmDeviceIDSource,
-  type FarmEnv,
 } from '@/types/farm';
 import type { FarmDetailTab } from './FarmContainerDetailContent';
 import { formatDateTimeUtc8 } from '@/utils/datetime';
@@ -167,17 +167,23 @@ export function FarmAccountsPanel({
   const { t, i18n } = useTranslation();
   // 订阅全局时区（TZ2/#49）：切换时区时本组件重渲染，内部 formatDateTimeUtc8 同步刷新。
   useTimezone();
-  // C8「筛选维度改造」：环境（test/prod）对本部署无意义——编排器当前只服务 test，
-  // 生产账号不会出现在这个列表里。env 固定为 test 仅用于底层拉取，不再作为可见
-  // 筛选维度；对 operator 有意义的「账号认证态」+「备注/账号名搜索」改为客户端筛选。
-  const env: FarmEnv = 'test';
+  // C8「筛选维度改造」：环境（test/prod）不作为可见筛选维度——单个 cpamp 部署实例
+  // 只服务它自己所在的那个环境，同屏不会混入另一环境的账号；对 operator 有意义的
+  // 「账号认证态」+「备注/账号名搜索」改为客户端筛选。
+  // env 不再前端写死 'test'：改由 useFarmDeploymentEnv 从 /usage-service/info 的 farmEnv
+  // 取真实部署环境（生产 cpamp→prod、测试 cpamp→test），供底层拉取用。info 未就绪或
+  // 请求失败时该 hook 回退 'test'（与历史行为一致），避免测试部署被误判成生产。
+  // resolved 在 env 从 info 解析出来前为 false——账号/账号态查询据此 gate，不用回退值
+  // 'test' 先打错环境（生产页加载期误打测试 CPA 的竞态修复）。gate 期间底层 hook 初始
+  // loading=true，AsyncPanel 展示「加载中」而非空/错。
+  const { env, resolved } = useFarmDeploymentEnv();
   // 默认筛选改为「正常」（绑定 + 健康）——用户拍板：账号面板默认只看正常账号，
   // 异常/未绑定的按需切筛选查看，避免正常态被一堆异常淹没。
   const [authFilter, setAuthFilter] = useState<FarmAccountAuthFilter>('normal');
   const [query, setQuery] = useState('');
   // 列排序：默认按认证态严重度降序（异常优先），operator 一眼看到最需处理的账号。
   const [sort, setSort] = useState<FarmAccountSortState>({ key: 'authState', direction: 'desc' });
-  const { accounts, loading, error, reload } = useFarmAccounts(env);
+  const { accounts, loading, error, reload } = useFarmAccounts(env, resolved);
   const { onboardingAccountId, onboard } = useFarmOnboard({ reload });
   // R2：账号视图的「移出农场/待机」「恢复」动作。账号面板不持有容器数组做乐观更新，
   // 成功后仅靠账号 reload 刷新（farm_container_status 随之更新）。
@@ -194,7 +200,7 @@ export function FarmAccountsPanel({
     enabled: sharedContainers === undefined,
   });
   const containers = sharedContainers ?? independentlyLoadedContainers;
-  const { accountStates } = useFarmAccountState(env);
+  const { accountStates } = useFarmAccountState(env, resolved);
   // 容器运行态 as-of 陈旧判定用的稳定「当前时刻」，见 STALE_CLOCK_TICK_MS 注释。
   const [nowMs, setNowMs] = useState(() => Date.now());
   useInterval(() => setNowMs(Date.now()), STALE_CLOCK_TICK_MS);
