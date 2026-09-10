@@ -10,8 +10,8 @@ export interface UseFarmEnrolledDisableGuardOptions {
   // 账号页原生的停用/启用切换（useAuthFilesData.handleStatusToggle）。被本 guard 包一层：
   // 停用一个 farm_enrolled 账号时先弹语义澄清对话框，其余情况原样透传。
   onToggle: (item: AuthFileItem, enabled: boolean) => void;
-  // 编排器环境。农场页既有约定：本部署编排器只服务 test，生产账号不出现在农场列表，
-  // 故默认 'test'；后端若支持 prod，由调用方传入。
+  // 编排器环境。调用方（AuthFilesPage）从 useFarmDeploymentEnv 解析真实部署环境传入
+  // （prod/test）；默认 'test' 仅作回退，绝不回退 'prod'（与 403 env 修复同策略）。
   env?: FarmEnv;
 }
 

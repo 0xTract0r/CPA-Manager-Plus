@@ -8,7 +8,7 @@ import { formatDateTimeUtc8 } from '@/utils/datetime';
 import { useTimezone } from '@/hooks/useTimezone';
 import type { StatusBadgeVariant } from '../utils/health';
 import { useFarmStandbySummary } from '../hooks/useFarmStandbySummary';
-import type { FarmEnv } from '@/types/farm';
+import { useFarmDeploymentEnv } from '../hooks/useFarmDeploymentEnv';
 import styles from './FarmStandbySummaryPanel.module.scss';
 
 // 计数徽标着色：>0 用 warning（提醒人工清理），=0 用 muted（无需处理，不刷绿误导成“健康指标”）。
@@ -25,14 +25,16 @@ function countTone(count: number): StatusBadgeVariant {
  *  ③ 已退役但未回收的卷数 + 占盘。
  *
  * 诚实边界：各 count=0 + 空 items 视为“无需清理”正向空态，不报错、不伪造待办；
- * 时间戳缺失显 '—' 不臆造；disk_bytes 走全站 formatFileSize。env 按农场页既有约定
- * 取 'test'（本部署编排器只服务 test）。
+ * 时间戳缺失显 '—' 不臆造；disk_bytes 走全站 formatFileSize。env 由 useFarmDeploymentEnv
+ * 解析真实部署环境（prod/test），resolved 前不发查询——避免生产页错查测试环境（与 403 同类）。
  */
-export function FarmStandbySummaryPanel({ env = 'test' }: { env?: FarmEnv } = {}) {
+export function FarmStandbySummaryPanel() {
   const { t, i18n } = useTranslation();
   // 订阅全局时区：切换时区时重渲染，内部 formatDateTimeUtc8 同步刷新。
   useTimezone();
-  const { summary, loading, error, reload } = useFarmStandbySummary(env);
+  // env 不写死 'test'：从 /usage-service/info 解析真实环境；resolved 前 gate 掉查询。
+  const { env, resolved } = useFarmDeploymentEnv();
+  const { summary, loading, error, reload } = useFarmStandbySummary(env, resolved);
   const [expandDisabled, setExpandDisabled] = useState(false);
   const [expandStandby, setExpandStandby] = useState(false);
 

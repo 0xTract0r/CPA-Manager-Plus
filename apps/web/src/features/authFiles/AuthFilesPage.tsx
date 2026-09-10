@@ -93,6 +93,7 @@ import { useAuthFilesTestMessage } from '@/features/authFiles/hooks/useAuthFiles
 import { useAuthFilesStatusBarCache } from '@/features/authFiles/hooks/useAuthFilesStatusBarCache';
 import { useAntigravitySubscriptions } from '@/features/authFiles/hooks/useAntigravitySubscriptions';
 import { useFarmEnrolledDisableGuard } from '@/features/farm/hooks/useFarmEnrolledDisableGuard';
+import { useFarmDeploymentEnv } from '@/features/farm/hooks/useFarmDeploymentEnv';
 import {
   BATCH_BAR_BASE_TRANSFORM,
   BATCH_BAR_HIDDEN_TRANSFORM,
@@ -338,8 +339,12 @@ export function AuthFilesPage() {
   // farm-account-standby-control R1：停用 farm_enrolled 账号时先弹语义澄清对话框
   // （停用只停服务、容器仍温着发遥测；可选"一并移出农场"调 standby 待机）。
   // 非 farm_enrolled / 非 Claude / 重新启用一律原样透传 handleStatusToggle。
+  // env 由 useFarmDeploymentEnv 解析真实部署环境传入（不写死 'test'）：guard 在用户选
+  // "一并移出农场"时按 env 查 /api/farm/accounts 定位容器，生产页必须用 prod 才找得到。
+  const { env: farmEnv } = useFarmDeploymentEnv();
   const { guardedToggle: guardedStatusToggle } = useFarmEnrolledDisableGuard({
     onToggle: handleStatusToggle,
+    env: farmEnv,
   });
 
   // 迁移自旧版：「测试消息」弹窗（可选模型 + 自定义文案），详见 useAuthFilesTestMessage。

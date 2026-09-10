@@ -19,16 +19,21 @@ export interface UseFarmStandbySummaryResult {
  * 提醒人工清理。与容量面板同款：默认零配置（同源代理 + cpamp 会话身份），复用
  * FARM_OVERVIEW_POLL_INTERVAL_MS（30s）节拍轮询，让看板随巡检近实时刷新。
  *
- * env 当前按农场页既有约定取 'test'（见 FarmAccountsPanel：本部署编排器只服务 test，
- * 生产账号不出现在此列表）。后端若后续支持 prod，调用方传入对应 env 即可。
+ * env 由调用方从 useFarmDeploymentEnv 解析后传入（prod/test），不再写死 'test'——否则
+ * 生产 cpamp 的看板会错查测试环境（与 403 env 竞态同类）。enabled 门：env 尚未 resolved
+ * 时传 false，避免先用回退值 'test' 打一发测试环境 CPA。
  */
-export function useFarmStandbySummary(env: FarmEnv): UseFarmStandbySummaryResult {
+export function useFarmStandbySummary(
+  env: FarmEnv,
+  enabled: boolean = true
+): UseFarmStandbySummaryResult {
   const { t } = useTranslation();
   const [summary, setSummary] = useState<FarmStandbySummaryResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   const reload = useCallback(async () => {
+    if (!enabled) return;
     setError('');
     try {
       const data = await farmApi.getStandbySummary(env);
@@ -39,15 +44,16 @@ export function useFarmStandbySummary(env: FarmEnv): UseFarmStandbySummaryResult
     } finally {
       setLoading(false);
     }
-  }, [env, t]);
+  }, [env, enabled, t]);
 
   useEffect(() => {
+    if (!enabled) return;
     setLoading(true);
     reload();
-  }, [reload]);
+  }, [reload, enabled]);
 
   useInterval(() => {
-    reload();
+    if (enabled) reload();
   }, FARM_OVERVIEW_POLL_INTERVAL_MS);
 
   return { summary, loading, error, reload };
