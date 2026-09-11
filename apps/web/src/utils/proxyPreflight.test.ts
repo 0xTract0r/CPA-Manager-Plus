@@ -54,44 +54,81 @@ describe('normalizeProxyForCompare', () => {
 
 describe('findAccountsUsingProxy', () => {
   const accounts: ProxyOwnerAccount[] = [
-    { name: 'a.json', label: 'AC-14', proxyUrl: 'socks5://user:pass@host:1080' },
-    { name: 'b.json', label: 'AC-15', proxyUrl: 'http://other:8080' },
+    {
+      provider: 'claude',
+      name: 'a.json',
+      label: 'AC-14',
+      proxyUrl: 'socks5://user:pass@host:1080',
+    },
+    { provider: 'claude', name: 'b.json', label: 'AC-15', proxyUrl: 'http://other:8080' },
   ];
 
+  it('只比较同认证类型并归一化 Claude 别名，未知类型不参与', () => {
+    const mixed = ['Claude', 'claude', 'Claude Code', 'anthropic', 'codex', ''].map((provider) => ({
+      name: provider || 'unknown',
+      provider,
+      proxyUrl: 'http://p:1',
+    }));
+    expect(findAccountsUsingProxy('http://p:1', mixed, { provider: ' CLAUDE ' })).toEqual([
+      'Claude',
+      'claude',
+      'Claude Code',
+      'anthropic',
+    ]);
+    expect(findAccountsUsingProxy('http://p:1', mixed, { provider: 'codex' })).toEqual(['codex']);
+    expect(findAccountsUsingProxy('http://p:1', mixed, { provider: '' })).toEqual([]);
+  });
+
   it('returns the conflicting account label when the same proxy is reused', () => {
-    expect(findAccountsUsingProxy('socks5://user:pass@host:1080', accounts)).toEqual(['AC-14']);
+    expect(
+      findAccountsUsingProxy('socks5://user:pass@host:1080', accounts, { provider: 'claude' })
+    ).toEqual(['AC-14']);
   });
 
   it('matches after normalization (surrounding whitespace + host/scheme case)', () => {
-    expect(findAccountsUsingProxy('  SOCKS5://user:pass@HOST:1080 ', accounts)).toEqual(['AC-14']);
+    expect(
+      findAccountsUsingProxy('  SOCKS5://user:pass@HOST:1080 ', accounts, { provider: 'claude' })
+    ).toEqual(['AC-14']);
   });
 
   it('does not treat same host:port with different credentials as a duplicate', () => {
-    expect(findAccountsUsingProxy('socks5://other:creds@host:1080', accounts)).toEqual([]);
+    expect(
+      findAccountsUsingProxy('socks5://other:creds@host:1080', accounts, { provider: 'claude' })
+    ).toEqual([]);
   });
 
   it('excludes the account itself via excludeName (editing own proxy is not a conflict)', () => {
     expect(
-      findAccountsUsingProxy('socks5://user:pass@host:1080', accounts, { excludeName: 'a.json' })
+      findAccountsUsingProxy('socks5://user:pass@host:1080', accounts, {
+        provider: 'claude',
+        excludeName: 'a.json',
+      })
     ).toEqual([]);
   });
 
   it('returns [] for empty proxy (emptiness is handled by format validation upstream)', () => {
-    expect(findAccountsUsingProxy('   ', accounts)).toEqual([]);
+    expect(findAccountsUsingProxy('   ', accounts, { provider: 'claude' })).toEqual([]);
   });
 
   it('collects multiple conflicting labels and de-dupes them, preserving first order', () => {
     const many: ProxyOwnerAccount[] = [
-      { name: 'a.json', label: 'AC-14', proxyUrl: 'http://p:1' },
-      { name: 'b.json', label: 'AC-15', proxyUrl: 'http://p:1' },
-      { name: 'c.json', label: 'AC-14', proxyUrl: 'http://p:1' },
+      { provider: 'claude', name: 'a.json', label: 'AC-14', proxyUrl: 'http://p:1' },
+      { provider: 'claude', name: 'b.json', label: 'AC-15', proxyUrl: 'http://p:1' },
+      { provider: 'claude', name: 'c.json', label: 'AC-14', proxyUrl: 'http://p:1' },
     ];
-    expect(findAccountsUsingProxy('http://p:1', many)).toEqual(['AC-14', 'AC-15']);
+    expect(findAccountsUsingProxy('http://p:1', many, { provider: 'claude' })).toEqual([
+      'AC-14',
+      'AC-15',
+    ]);
   });
 
   it('falls back to name when an account has no label', () => {
-    const noLabel: ProxyOwnerAccount[] = [{ name: 'acct-claude.json', proxyUrl: 'http://p:1' }];
-    expect(findAccountsUsingProxy('http://p:1', noLabel)).toEqual(['acct-claude.json']);
+    const noLabel: ProxyOwnerAccount[] = [
+      { provider: 'claude', name: 'acct-claude.json', proxyUrl: 'http://p:1' },
+    ];
+    expect(findAccountsUsingProxy('http://p:1', noLabel, { provider: 'claude' })).toEqual([
+      'acct-claude.json',
+    ]);
   });
 });
 

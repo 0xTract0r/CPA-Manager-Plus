@@ -125,7 +125,11 @@ describe('useAuthFilesAccountSettings 保存前代理查重 (scenario ②)', () 
   it('改成其它账号在用的代理 → 查重命中：不落库、不探针，报错含冲突账号名', async () => {
     // 另一个账号 AC-15 已经在用 NEW_PROXY。
     const accounts: AuthFileItem[] = [
-      { name: 'other.json', account_settings: { proxy_url: NEW_PROXY, note: 'AC-15' } } as AuthFileItem,
+      {
+        name: 'other.json',
+        type: 'claude',
+        account_settings: { proxy_url: NEW_PROXY, note: 'AC-15' },
+      } as AuthFileItem,
     ];
     const harness = mountHook(accounts);
     await openEditor(harness);
@@ -153,7 +157,11 @@ describe('useAuthFilesAccountSettings 保存前代理查重 (scenario ②)', () 
   it('保留自身原有代理（未变更，仅改备注）→ 不误判为重复，继续进探针 + 保存', async () => {
     // 另一账号也用同一 OLD_PROXY（历史遗留同代理）；但本次未改动代理 → 应跳过查重，不阻断。
     const accounts: AuthFileItem[] = [
-      { name: 'other.json', account_settings: { proxy_url: OLD_PROXY, note: 'AC-15' } } as AuthFileItem,
+      {
+        name: 'other.json',
+        type: 'claude',
+        account_settings: { proxy_url: OLD_PROXY, note: 'AC-15' },
+      } as AuthFileItem,
     ];
     const harness = mountHook(accounts);
     await openEditor(harness);
@@ -175,14 +183,20 @@ describe('useAuthFilesAccountSettings 保存前代理查重 (scenario ②)', () 
     harness.unmount();
   });
 
-  it('改成没人用的新代理 → 查重不命中，继续进探针 + 保存', async () => {
+  it.each(['claude', 'codex'])('类型 %s：新代理或跨类型复用均继续探针及保存', async (provider) => {
     const accounts: AuthFileItem[] = [
-      { name: 'other.json', account_settings: { proxy_url: NEW_PROXY, note: 'AC-15' } } as AuthFileItem,
+      {
+        name: 'other.json',
+        type: 'claude',
+        account_settings: { proxy_url: NEW_PROXY, note: 'AC-15' },
+      } as AuthFileItem,
     ];
+    accounts[0].type = provider;
+    const target = provider === 'codex' ? NEW_PROXY : UNIQUE_PROXY;
     const harness = mountHook(accounts);
     await openEditor(harness);
     act(() => {
-      harness.getCurrent().handleAccountSettingsChange('proxyUrl', UNIQUE_PROXY);
+      harness.getCurrent().handleAccountSettingsChange('proxyUrl', target);
     });
     runProxyPreflightMock.mockResolvedValue({
       ok: true,
@@ -199,7 +213,7 @@ describe('useAuthFilesAccountSettings 保存前代理查重 (scenario ②)', () 
     expect(runProxyPreflightMock).toHaveBeenCalledTimes(1);
     expect(authFilesMock.updateAccountSettings).toHaveBeenCalledTimes(1);
     const updateArg = authFilesMock.updateAccountSettings.mock.calls[0][0];
-    expect(updateArg.proxy_url).toBe(UNIQUE_PROXY);
+    expect(updateArg.proxy_url).toBe(target);
     harness.unmount();
   });
 });

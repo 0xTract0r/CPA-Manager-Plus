@@ -11,8 +11,9 @@ import { Input } from '@/components/ui/Input';
 // 直接断言查重先于连通性（L2 在 L1 之前）。
 
 const { mocks } = vi.hoisted(() => {
-  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
-    true;
+  (
+    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT = true;
   return {
     mocks: {
       startAuth: vi.fn(),
@@ -40,7 +41,11 @@ vi.mock('react-router-dom', () => ({
 vi.mock('@/stores', () => ({
   useNotificationStore: () => ({ showNotification: mocks.showNotification }),
   useAuthStore: (selector: (state: Record<string, unknown>) => unknown) =>
-    selector({ connectionStatus: 'disconnected', apiBase: 'http://manager.local', supportsPlugin: false }),
+    selector({
+      connectionStatus: 'disconnected',
+      apiBase: 'http://manager.local',
+      supportsPlugin: false,
+    }),
   useThemeStore: (selector: (state: { resolvedTheme: 'light' }) => unknown) =>
     selector({ resolvedTheme: 'light' }),
 }));
@@ -111,7 +116,9 @@ describe('OAuthPage 新增账号起 OAuth 前的代理查重门禁 (scenario ①
   it('查重命中（现有账号已用同一代理）→ 不进探针、不进 OAuth，报错含冲突账号名', async () => {
     // 现有账号 AC-14 已经在用同一代理（列表内联 account_settings.proxy_url）。
     mocks.authFilesList.mockResolvedValue({
-      files: [{ name: 'ac14.json', account_settings: { proxy_url: PROXY, note: 'AC-14' } }],
+      files: [
+        { name: 'ac14.json', type: 'codex', account_settings: { proxy_url: PROXY, note: 'AC-14' } },
+      ],
     });
 
     let renderer!: ReactTestRenderer;
@@ -141,10 +148,19 @@ describe('OAuthPage 新增账号起 OAuth 前的代理查重门禁 (scenario ①
     });
   });
 
-  it('查重不命中 → 继续到连通性探针（探针 ok:true 进 OAuth）', async () => {
+  it.each(['codex', 'claude'])('类型 %s：新代理或跨类型复用继续探针及 OAuth', async (provider) => {
     // 现有账号用的是另一个代理 → 不冲突。
     mocks.authFilesList.mockResolvedValue({
-      files: [{ name: 'other.json', account_settings: { proxy_url: 'http://other:8080', note: 'AC-15' } }],
+      files: [
+        {
+          name: 'other.json',
+          type: provider,
+          account_settings: {
+            proxy_url: provider === 'claude' ? PROXY : 'http://other:8080',
+            note: 'AC-15',
+          },
+        },
+      ],
     });
     mocks.runProxyPreflight.mockResolvedValue({
       ok: true,

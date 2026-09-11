@@ -620,7 +620,7 @@ export function OAuthPage() {
       translate: (reason) => t(`proxy_preflight.reason_${reason}`),
       checkDuplicate: async (value) => {
         const filesResponse = await authFilesApi.list();
-        return findAccountsUsingProxy(value, (filesResponse.files || []).map(toProxyOwnerAccount));
+        return findAccountsUsingProxy(value, (filesResponse.files || []).map(toProxyOwnerAccount), { provider });
       },
       duplicateMessage: (accounts) =>
         t('proxy_preflight.duplicate_account', { accounts: accounts.join('、') }),
@@ -793,7 +793,8 @@ export function OAuthPage() {
           const filesResponse = await authFilesApi.list();
           return findAccountsUsingProxy(
             value,
-            (filesResponse.files || []).map(toProxyOwnerAccount)
+            (filesResponse.files || []).map(toProxyOwnerAccount),
+            { provider }
           );
         },
         duplicateMessage: (accounts) =>

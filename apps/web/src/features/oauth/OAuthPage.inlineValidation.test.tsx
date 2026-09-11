@@ -11,8 +11,9 @@ import { Input } from '@/components/ui/Input';
 // runProxyPreflight（连通性探针）；查重账号来源 authFilesApi.list 按用例注入。
 
 const { mocks } = vi.hoisted(() => {
-  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
-    true;
+  (
+    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT = true;
   return {
     mocks: {
       startAuth: vi.fn(),
@@ -44,7 +45,11 @@ vi.mock('react-router-dom', () => ({
 vi.mock('@/stores', () => ({
   useNotificationStore: () => ({ showNotification: mocks.showNotification }),
   useAuthStore: (selector: (state: Record<string, unknown>) => unknown) =>
-    selector({ connectionStatus: 'disconnected', apiBase: 'http://manager.local', supportsPlugin: false }),
+    selector({
+      connectionStatus: 'disconnected',
+      apiBase: 'http://manager.local',
+      supportsPlugin: false,
+    }),
   useThemeStore: (selector: (state: { resolvedTheme: 'light' }) => unknown) =>
     selector({ resolvedTheme: 'light' }),
 }));
@@ -149,7 +154,9 @@ describe('OAuthPage 代理输入框内联实时校验（失焦触发 + 提交门
 
   it('blur 填重复代理 → 就地标红指名冲突账号、不发探针', async () => {
     mocks.authFilesList.mockResolvedValue({
-      files: [{ name: 'ac14.json', account_settings: { proxy_url: PROXY, note: 'AC-14' } }],
+      files: [
+        { name: 'ac14.json', type: 'codex', account_settings: { proxy_url: PROXY, note: 'AC-14' } },
+      ],
     });
 
     let renderer!: ReactTestRenderer;
@@ -230,7 +237,10 @@ describe('OAuthPage 代理输入框内联实时校验（失焦触发 + 提交门
       await findLoginButton(renderer).props.onClick();
     });
     expect(mocks.startAuth).toHaveBeenCalledTimes(1);
-    expect(mocks.startAuth).toHaveBeenCalledWith('codex', expect.objectContaining({ proxyUrl: PROXY }));
+    expect(mocks.startAuth).toHaveBeenCalledWith(
+      'codex',
+      expect.objectContaining({ proxyUrl: PROXY })
+    );
     expect(mocks.runProxyPreflight).toHaveBeenCalledTimes(1);
 
     await act(async () => renderer.unmount());

@@ -169,7 +169,7 @@ export async function ensureProxyReachableForSave(params: {
  */
 // ===== 代理查重（二级校验 / L2）=====
 //
-// 反关联要求：两个账号共用同一出口代理 → 出口 IP 聚类 → 可被上游关联。故凡是填代理的入口
+// 反关联要求：同认证类型的两个账号共用同一出口代理 → 出口 IP 聚类 → 可被上游关联。故凡是填代理的入口
 // （新增账号 OAuth / 编辑已有账号代理），在慢的连通性探针（L1）之前先做本地秒级查重（L2）：
 // 命中现有账号占用即阻断，不必再触网探针。查重是纯前端比较，不新增后端。
 
@@ -181,7 +181,17 @@ export interface ProxyOwnerAccount {
   label?: string;
   /** 该账号当前的 proxy_url（可空）。 */
   proxyUrl: string;
+  /** 认证类型；未知类型不参与反关联查重。 */
+  provider?: string;
 }
+
+/** 认证类型归一化，Claude Code/Anthropic 属于同一 Claude 认证族。 */
+export const normalizeProxyProvider = (value: string): string => {
+  const key = value.trim().toLowerCase().replace(/[ _]+/g, '-');
+  if (['claude-code', 'anthropic'].includes(key)) return 'claude';
+  if (['x-ai', 'grok'].includes(key)) return 'xai';
+  return key;
+};
 
 /**
  * 归一化 proxy_url 用于查重比较：
@@ -216,20 +226,24 @@ export const normalizeProxyForCompare = (proxyUrl: string): string => {
  * 找出「已经在使用同一 proxy_url」的现有账号，返回它们的展示名（label ?? name）。
  * 空结果表示无冲突（可继续放行到连通性探针）。
  * - proxyUrl 为空 → 返回 []（是否必填由各入口的格式校验负责，这里不越权拦空）。
+ * - options.provider：只比较同认证类型的账号，未知类型不参与。
  * - options.excludeName：排除该 name 的账号（编辑自身账号代理时排除自己）。
  * - 展示名去重，保持首次出现顺序。
  */
 export function findAccountsUsingProxy(
   proxyUrl: string,
   accounts: ProxyOwnerAccount[],
-  options: { excludeName?: string } = {}
+  options: { provider: string; excludeName?: string }
 ): string[] {
   const target = normalizeProxyForCompare(proxyUrl);
   if (!target) return [];
   const { excludeName } = options;
+  const provider = normalizeProxyProvider(options.provider);
+  if (!provider) return [];
   const conflicts: string[] = [];
   const seen = new Set<string>();
   for (const account of accounts) {
+    if (normalizeProxyProvider(account.provider ?? '') !== provider) continue;
     if (excludeName !== undefined && account.name === excludeName) continue;
     if (normalizeProxyForCompare(account.proxyUrl) !== target) continue;
     const label = (account.label || '').trim() || account.name;
@@ -255,9 +269,7 @@ export async function ensureProxiesReachableForSave(params: {
 
   // 变更前已落库的代理值集合（去空白、去空值）；命中即视为未变更 → 跳过该项探针。
   const previousProxyUrls = new Set(
-    (params.previousProxyUrls ?? [])
-      .map((url) => (url || '').trim())
-      .filter((url) => url !== '')
+    (params.previousProxyUrls ?? []).map((url) => (url || '').trim()).filter((url) => url !== '')
   );
 
   params.onProbeStart?.();
