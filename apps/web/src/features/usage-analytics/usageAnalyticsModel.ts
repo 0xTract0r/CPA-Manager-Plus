@@ -707,6 +707,7 @@ export const buildUsageAnalyticsInclude = (
   switch (activeTab) {
     case 'performance':
       include.performance = true;
+      include.account_stats = true;
       break;
     case 'overview':
       Object.assign(include, {

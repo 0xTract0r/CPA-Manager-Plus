@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Button } from '@/components/ui/Button';
+import type { AuthFileItem } from '@/types/authFile';
 import { EChartsView } from '@/components/charts/EChartsView';
 import { useTimezone } from '@/hooks';
 import { formatInUtc8 } from '@/utils/datetime';
@@ -8,10 +10,14 @@ import {
   coverage,
   milliseconds,
   metricNumber,
-  normalizeThresholds,
+  DEFAULT_THRESHOLDS,
+  parseThresholdDraft,
+  buildPerformanceAccountDirectory,
+  resolvePerformanceAccount,
   performanceStatus,
   readThresholds,
   THRESHOLD_KEY,
+  type PerformanceAccountSnapshot,
 } from './performanceModel';
 import styles from './PerformancePanel.module.scss';
 
@@ -20,16 +26,34 @@ export function PerformancePanel({
   onModel,
   onRequests,
   mock = false,
+  authFiles = [],
+  accountSnapshots = [],
 }: {
   data?: PerformanceData;
   onModel: (model: string) => void;
   onRequests: (model: string) => void;
   mock?: boolean;
+  authFiles?: AuthFileItem[];
+  accountSnapshots?: PerformanceAccountSnapshot[];
 }) {
   const { t, i18n } = useTranslation();
   const { timeZone } = useTimezone();
   const text = (key: string) => t(`performance.${key}`);
   const [thresholds, setThresholds] = useState(readThresholds);
+  const toDraft = (value: typeof thresholds) => ({
+    latencySeconds: String(value.latencySeconds),
+    minTps: String(value.minTps),
+    minSamples: String(value.minSamples),
+  });
+  const [draft, setDraft] = useState(() => toDraft(thresholds));
+  const [formError, setFormError] = useState(false);
+  const accountDirectory = useMemo(
+    () => buildPerformanceAccountDirectory(authFiles, accountSnapshots),
+    [authFiles, accountSnapshots]
+  );
+  const usesDefaults = (Object.keys(DEFAULT_THRESHOLDS) as Array<keyof typeof thresholds>).every(
+    (key) => thresholds[key] === DEFAULT_THRESHOLDS[key]
+  );
   const [sort, setSort] = useState('latency');
   const [saveError, setSaveError] = useState(false);
   const models = useMemo(
@@ -59,17 +83,17 @@ export function PerformancePanel({
     [
       text('latencyP95'),
       milliseconds(summary.latency_ms.p95),
-      `${text('average')} ${milliseconds(summary.latency_ms.mean)}`,
+      `${text('latencyHint')} · ${text('average')} ${milliseconds(summary.latency_ms.mean)}`,
     ],
     [
       text('ttfbP95'),
       milliseconds(summary.ttfb_ms.p95),
-      `${text('validSamples')} ${coverage(summary.ttfb_ms)}`,
+      `${text('ttfbHint')} · ${text('validSamples')} ${coverage(summary.ttfb_ms)}`,
     ],
     [
       text('speedP50'),
-      metricNumber(summary.total_tps.p50),
-      `P10 ${metricNumber(summary.total_tps.p10)} · token/s`,
+      `${metricNumber(summary.total_tps.p50)} token/s`,
+      `${text('slowSpeed')} ${metricNumber(summary.total_tps.p10)} token/s`,
     ],
     [
       text('success'),
@@ -100,7 +124,15 @@ export function PerformancePanel({
       splitLine: { lineStyle: { color: '#8692a622' } },
     },
     series: (speed ? (['p50', 'p10'] as const) : (['p50', 'p95'] as const)).map((key) => ({
-      name: key.toUpperCase(),
+      name: text(
+        speed
+          ? key === 'p50'
+            ? 'typicalSpeed'
+            : 'slowSpeed'
+          : key === 'p50'
+            ? 'typicalLatency'
+            : 'latencyP95'
+      ),
       type: 'line',
       showSymbol: data.timeline.length <= 36,
       connectNulls: false,
@@ -110,8 +142,9 @@ export function PerformancePanel({
       }),
     })),
   });
-  const updateThreshold = (key: keyof typeof thresholds, value: string) => {
-    const next = normalizeThresholds({ ...thresholds, [key]: value });
+  const applyThresholds = (next: typeof thresholds) => {
+    setDraft(toDraft(next));
+    setFormError(false);
     setThresholds(next);
     try {
       localStorage.setItem(THRESHOLD_KEY, JSON.stringify(next));
@@ -140,6 +173,12 @@ export function PerformancePanel({
         ))}
       </div>
       {summary.total_calls === 0 ? <p className={styles.empty}>{text('empty')}</p> : null}
+      <details className={styles.guide}>
+        <summary>{text('readingGuide')}</summary>
+        <p>{text('typicalHelp')}</p>
+        <p>{text('latencyHelp')}</p>
+        <p>{text('speedHelp')}</p>
+      </details>
       <div className={styles.charts}>
         <div className={styles.panel}>
           <h3>{text('latencyTrend')}</h3>
@@ -169,41 +208,75 @@ export function PerformancePanel({
               <option value="model">{text('model')}</option>
             </select>
           </label>
-          <label>
-            {text('maxLatency')}
-            <input
-              type="number"
-              min="1"
-              max="3600"
-              value={thresholds.latencySeconds}
-              onChange={(event) => updateThreshold('latencySeconds', event.target.value)}
-            />
-          </label>
-          <label>
-            {text('minSpeed')}
-            <input
-              type="number"
-              min="1"
-              max="100000"
-              value={thresholds.minTps}
-              onChange={(event) => updateThreshold('minTps', event.target.value)}
-            />
-          </label>
-          <label>
-            {text('minSamples')}
-            <input
-              type="number"
-              min="1"
-              max="1000000"
-              value={thresholds.minSamples}
-              onChange={(event) => updateThreshold('minSamples', event.target.value)}
-            />
-          </label>
         </div>
-        <p>
-          {text('thresholdHint')}
-          {saveError ? ` ${text('saveError')}` : ''}
-        </p>
+        <div className={styles.thresholdOverview}>
+          <div>
+            <strong>{text(usesDefaults ? 'defaultReference' : 'customReference')}</strong>
+            <p>
+              {t('performance.thresholdSummary', {
+                latency: thresholds.latencySeconds,
+                speed: thresholds.minTps,
+                samples: thresholds.minSamples,
+              })}
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => applyThresholds({ ...DEFAULT_THRESHOLDS })}
+          >
+            {text('resetDefaults')}
+          </Button>
+        </div>
+        <details className={styles.guide}>
+          <summary>{text('editThresholds')}</summary>
+          <p>{text('thresholdHint')}</p>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              const next = parseThresholdDraft(draft);
+              if (!next) {
+                setFormError(true);
+                return;
+              }
+              applyThresholds(next);
+            }}
+          >
+            <div className={styles.filters}>
+              {(
+                [
+                  ['latencySeconds', 'maxLatency', 'latencySettingHelp'],
+                  ['minTps', 'minSpeed', 'speedSettingHelp'],
+                  ['minSamples', 'minSamples', 'sampleSettingHelp'],
+                ] as const
+              ).map(([key, label, hint]) => (
+                <label key={key}>
+                  {text(label)}
+                  <input
+                    aria-label={text(label)}
+                    aria-describedby={'performance-' + key + '-hint'}
+                    type="number"
+                    required
+                    min="0"
+                    step={key === 'minSamples' ? '1' : 'any'}
+                    max={key === 'latencySeconds' ? 3600 : key === 'minTps' ? 100000 : 1000000}
+                    value={draft[key]}
+                    onChange={(event) =>
+                      setDraft((previous) => ({ ...previous, [key]: event.target.value }))
+                    }
+                  />
+                  <small id={'performance-' + key + '-hint'}>{text(hint)}</small>
+                </label>
+              ))}
+            </div>
+            {formError ? <p role="alert">{text('invalidSettings')}</p> : null}
+            <Button type="submit" size="sm">
+              {text('applySettings')}
+            </Button>
+          </form>
+        </details>
+        {saveError ? <p role="alert">{text('saveError')}</p> : null}
         {alerts.length > 0 ? (
           <p className={styles.alert} role="status">
             {text('alert')}: {alerts.map((row) => row.model).join(' · ')}
@@ -219,7 +292,7 @@ export function PerformancePanel({
                 <th>{text('latencyP95')}</th>
                 <th>{text('ttfbP95')}</th>
                 <th>{text('speedP50')}</th>
-                <th>TPS P10</th>
+                <th title={text('speedHelp')}>{text('slowSpeed')}</th>
                 <th>{text('coverage')}</th>
                 <th>{text('status')}</th>
                 <th>{text('details')}</th>
@@ -259,18 +332,19 @@ export function PerformancePanel({
         </div>
       </div>
       <div className={styles.charts}>
-        <div className={styles.panel}>
-          <h3>{text('distribution')}</h3>
+        <details className={styles.panel}>
+          <summary>{text('distribution')}</summary>
+          <p>{text('distributionHelp')}</p>
           <div className={styles.tableWrap}>
             <table>
               <thead>
                 <tr>
                   <th>{text('metric')}</th>
                   <th>{text('average')}</th>
-                  <th>P10</th>
-                  <th>P50</th>
-                  <th>P95</th>
-                  <th>P99</th>
+                  <th>{text('p10Label')}</th>
+                  <th>{text('p50Label')}</th>
+                  <th>{text('p95Label')}</th>
+                  <th>{text('p99Label')}</th>
                   <th>{text('validSamples')}</th>
                 </tr>
               </thead>
@@ -291,9 +365,9 @@ export function PerformancePanel({
               </tbody>
             </table>
           </div>
-        </div>
-        <div className={styles.panel}>
-          <h3>{text('capacity')}</h3>
+        </details>
+        <details className={styles.panel}>
+          <summary>{text('capacity')}</summary>
           <div className={styles.tableWrap}>
             <table>
               <tbody>
@@ -320,7 +394,7 @@ export function PerformancePanel({
             </table>
           </div>
           <p>{text('concurrencyHint')}</p>
-        </div>
+        </details>
       </div>
       <div className={styles.panel}>
         <h3>{text('accounts')}</h3>
@@ -329,6 +403,7 @@ export function PerformancePanel({
             <thead>
               <tr>
                 <th>{text('account')}</th>
+                <th className={styles.accountNote}>{text('accountNote')}</th>
                 <th>{text('provider')}</th>
                 <th>{text('attempts')}</th>
                 <th>{text('latencyP95')}</th>
@@ -337,16 +412,35 @@ export function PerformancePanel({
               </tr>
             </thead>
             <tbody>
-              {data.accounts.map((row) => (
-                <tr key={`${row.provider}:${row.account_key}`}>
-                  <td>{row.account_key || '—'}</td>
-                  <td>{row.provider || '—'}</td>
-                  <td>{row.total_calls}</td>
-                  <td>{milliseconds(row.latency_ms.p95)}</td>
-                  <td>{metricNumber(row.total_tps.p50)}</td>
-                  <td>${metricNumber(row.estimated_cost, 4)}</td>
-                </tr>
-              ))}
+              {data.accounts.map((row) => {
+                const identity = resolvePerformanceAccount(row, accountDirectory);
+                return (
+                  <tr key={`${row.provider}:${row.account_key}`}>
+                    <td className={styles.accountIdentity}>
+                      <strong>
+                        {identity?.email || identity?.name || text('unidentifiedAccount')}
+                      </strong>
+                      {identity?.email && identity.name && identity.email !== identity.name ? (
+                        <small>{identity.name}</small>
+                      ) : null}
+                      {!identity ? <small>{text('accountMissingHint')}</small> : null}
+                      {identity?.historical ? <small>{text('historicalAccount')}</small> : null}
+                      <details>
+                        <summary>{text('accountIdentifier')}</summary>
+                        <code>{row.account_key || '—'}</code>
+                      </details>
+                    </td>
+                    <td className={styles.accountNote}>
+                      {identity?.note || text(identity?.historical ? 'noHistoricalNote' : 'noNote')}
+                    </td>
+                    <td>{row.provider || '—'}</td>
+                    <td>{row.total_calls}</td>
+                    <td>{milliseconds(row.latency_ms.p95)}</td>
+                    <td>{metricNumber(row.total_tps.p50)}</td>
+                    <td>${metricNumber(row.estimated_cost, 4)}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

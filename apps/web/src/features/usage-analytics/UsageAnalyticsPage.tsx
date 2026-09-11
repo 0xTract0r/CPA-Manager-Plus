@@ -2954,7 +2954,7 @@ function UsageAnalyticsPageInner() {
       ) : null}
 
       {usage.activeTab === 'performance' ? (
-        <PerformancePanel data={usage.performance} mock={isDemoMode()}
+        <PerformancePanel data={usage.performance} mock={isDemoMode()} authFiles={usage.performanceAuthFiles} accountSnapshots={usage.performanceAccountSnapshots}
           onModel={(model) => updateFilters({model})}
           onRequests={(model) => navigate(usage.bounds ? buildMonitoringDetailUrl({bucketMs:usage.bounds.fromMs,bucketEndMs:usage.bounds.toMs}, {...usage.filters, model}) : `/monitoring?model=${encodeURIComponent(model)}`)} />
       ) : null}

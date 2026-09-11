@@ -182,7 +182,7 @@ export function demoPerformance(
     accounts: [...grouped((event) => `${event.auth_provider_snapshot}|${event.auth_index}`)].map(
       ([, rows]) => ({
         ...group(rows, duration),
-        account_key: rows[0].auth_label_snapshot,
+        account_key: rows[0].auth_index,
         provider: rows[0].auth_provider_snapshot,
       })
     ),

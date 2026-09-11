@@ -4,6 +4,12 @@
 
 The Model performance tab aggregates the full filtered event range: latency and first-response percentiles, overall output TPS, account costs, throughput, and sample coverage. Select a model to filter it, or View requests to inspect its trace. Thresholds are browser-local, on-page alerts; no external notifications are sent.
 
+No setup is required: reference defaults are 60 seconds for most requests, 10 token/s for slower output, and 30 valid samples before evaluation. Edit the optional alert section and Apply, or Restore defaults. These controls do not change model speed or request timeouts.
+
+The main view uses plain-language labels: typical is the middle value, most durations cover about 95% of requests, and about 10% of requests are slower than the slower-speed value. Detailed percentiles are expandable. Account rows show email/name and note from matching current credentials; missing identities are explicitly indicated and internal identifiers are tucked into an expandable section.
+
+When an old ID no longer matches a current credential, a recorded historical email is shown with a source label. A current note is reused only for a unique email/provider match; missing historical notes are not inferred, and current identities take precedence.
+
 Overall TPS is output tokens / executor attempt duration for successful valid events; means average event speeds. First response is the first upstream body byte, not necessarily text. Executor timing is not client end-to-end timing, and content chunks are not tokens.
 
 Trace lookup covers the selected event plus/minus 24 hours and at most 100 events, combining records with the same attempt ID. Reporter-internal retries may remain unobserved. Concurrency is reconstructed only from completed telemetry intervals, not live queues. Historical missing stages cannot be recovered. Exact percentile queries reject more than 100000 matched events; narrow the filters rather than silently sampling. Cost remains an estimate, and these metrics do not assess answer quality.
