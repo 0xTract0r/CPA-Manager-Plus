@@ -61,13 +61,25 @@ export type PerformanceAccountIdentity = {
   name: string;
   note: string;
   provider: string;
+  historical?: boolean;
+};
+export type PerformanceAccountSnapshot = {
+  id?: string;
+  auth_indices?: string[];
+  source_hashes?: string[];
+  account_snapshot?: string;
+  auth_label_snapshot?: string;
+  auth_provider_snapshot?: string;
 };
 const accountText = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
 const accountEmail = (value: unknown) => {
   const text = accountText(value);
   return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(text) ? text : '';
 };
-export function buildPerformanceAccountDirectory(files: AuthFileItem[]) {
+export function buildPerformanceAccountDirectory(
+  files: AuthFileItem[],
+  snapshots: PerformanceAccountSnapshot[] = []
+) {
   const directory = new Map<string, PerformanceAccountIdentity | null>();
   const insert = (key: string, value: PerformanceAccountIdentity) => {
     if (!directory.has(key)) directory.set(key, value);
@@ -85,11 +97,45 @@ export function buildPerformanceAccountDirectory(files: AuthFileItem[]) {
     for (const key of new Set([
       index,
       accountText(file.name),
+      identity.email.toLowerCase(),
       ...buildLegacyAuthIndexAliases(file),
     ])) {
       if (!key) continue;
       insert(JSON.stringify([provider, key]), identity);
       insert(JSON.stringify(['', key]), identity);
+    }
+  }
+  const currentKeys = new Set(directory.keys());
+  for (const snapshot of snapshots) {
+    const email =
+      accountEmail(snapshot.account_snapshot) || accountEmail(snapshot.auth_label_snapshot);
+    const name = accountText(snapshot.auth_label_snapshot);
+    if (!email && !name) continue;
+    const provider = accountText(snapshot.auth_provider_snapshot).toLowerCase();
+    // 当前邮箱与供应商唯一对应时才复用备注，历史邮箱本身仍标注来源。
+    const current = email
+      ? directory.get(JSON.stringify([provider, email.toLowerCase()]))
+      : undefined;
+    const identity: PerformanceAccountIdentity = {
+      email,
+      name: current?.name || name,
+      note: current?.note || '',
+      provider: current?.provider || provider,
+      historical: true,
+    };
+    for (const rawKey of [
+      snapshot.id,
+      ...(snapshot.auth_indices || []),
+      ...(snapshot.source_hashes || []),
+    ]) {
+      const key = normalizeAuthIndex(rawKey);
+      if (!key) continue;
+      for (const compound of [
+        JSON.stringify([identity.provider, key]),
+        JSON.stringify(['', key]),
+      ]) {
+        if (!currentKeys.has(compound)) insert(compound, identity);
+      }
     }
   }
   return directory;

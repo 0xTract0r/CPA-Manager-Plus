@@ -4942,6 +4942,8 @@
     "accountIdentifier": "查看账号标识",
     "unidentifiedAccount": "未关联账号资料",
     "accountMissingHint": "当前认证文件中未找到此账号，暂时没有邮箱和备注。",
-    "noNote": "未填写备注"
+    "noNote": "未填写备注",
+    "historicalAccount": "历史记录（邮箱关联）",
+    "noHistoricalNote": "无备注记录"
   }
 }

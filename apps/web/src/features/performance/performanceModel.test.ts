@@ -90,3 +90,76 @@ describe('readable performance controls and accounts', () => {
     expect(resolvePerformanceAccount({ account_key: 'missing' }, directory)).toBeUndefined();
   });
 });
+
+describe('historical performance identities', () => {
+  it('uses a recorded email and uniquely matching current note after an id changes', () => {
+    const files = [
+      {
+        name: 'current.json',
+        authIndex: 'current-id',
+        provider: 'codex',
+        email: 'team@example.com',
+        note: 'Main team',
+      },
+    ];
+    const directory = buildPerformanceAccountDirectory(files, [
+      {
+        auth_indices: ['old-id'],
+        account_snapshot: 'team@example.com',
+        auth_label_snapshot: 'Old filename',
+        auth_provider_snapshot: 'codex',
+      },
+    ]);
+    expect(
+      resolvePerformanceAccount({ account_key: 'old-id', provider: 'codex' }, directory)
+    ).toMatchObject({ email: 'team@example.com', note: 'Main team', historical: true });
+    expect(
+      resolvePerformanceAccount({ account_key: 'current-id', provider: 'codex' }, directory)
+        ?.historical
+    ).toBeUndefined();
+  });
+  it('does not invent notes or overwrite current identities with historical snapshots', () => {
+    const directory = buildPerformanceAccountDirectory(
+      [
+        {
+          name: 'current.json',
+          authIndex: 'current',
+          provider: 'codex',
+          email: 'current@example.com',
+          note: 'Current note',
+        },
+      ],
+      [
+        {
+          auth_indices: ['current'],
+          account_snapshot: 'other@example.com',
+          auth_provider_snapshot: 'codex',
+        },
+        {
+          auth_indices: ['removed'],
+          account_snapshot: 'removed@example.com',
+          auth_provider_snapshot: 'codex',
+        },
+        {
+          auth_indices: ['ambiguous'],
+          account_snapshot: 'one@example.com',
+          auth_provider_snapshot: 'codex',
+        },
+        {
+          auth_indices: ['ambiguous'],
+          account_snapshot: 'two@example.com',
+          auth_provider_snapshot: 'codex',
+        },
+      ]
+    );
+    expect(
+      resolvePerformanceAccount({ account_key: 'current', provider: 'codex' }, directory)?.email
+    ).toBe('current@example.com');
+    expect(
+      resolvePerformanceAccount({ account_key: 'removed', provider: 'codex' }, directory)
+    ).toMatchObject({ email: 'removed@example.com', note: '', historical: true });
+    expect(
+      resolvePerformanceAccount({ account_key: 'ambiguous', provider: 'codex' }, directory)
+    ).toBeUndefined();
+  });
+});

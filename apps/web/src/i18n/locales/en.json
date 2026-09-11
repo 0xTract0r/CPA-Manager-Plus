@@ -4901,6 +4901,8 @@
     "accountIdentifier": "Show account identifier",
     "unidentifiedAccount": "Account details unavailable",
     "accountMissingHint": "No matching current credential was found, so email and note are unavailable.",
-    "noNote": "No note"
+    "noNote": "No note",
+    "historicalAccount": "Historical record (email association)",
+    "noHistoricalNote": "No recorded note"
   }
 }

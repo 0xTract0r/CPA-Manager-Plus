@@ -650,6 +650,7 @@ export function useUsageAnalytics() {
     refresh,
     performance: analyticsData?.performance,
     performanceAuthFiles: monitoringMeta.authFiles,
+    performanceAccountSnapshots: analyticsData?.account_stats,
     summary: adapted.summary,
     summaryDelta,
     timeline: adapted.timeline,

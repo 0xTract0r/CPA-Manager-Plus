@@ -17,6 +17,7 @@ import {
   performanceStatus,
   readThresholds,
   THRESHOLD_KEY,
+  type PerformanceAccountSnapshot,
 } from './performanceModel';
 import styles from './PerformancePanel.module.scss';
 
@@ -26,12 +27,14 @@ export function PerformancePanel({
   onRequests,
   mock = false,
   authFiles = [],
+  accountSnapshots = [],
 }: {
   data?: PerformanceData;
   onModel: (model: string) => void;
   onRequests: (model: string) => void;
   mock?: boolean;
   authFiles?: AuthFileItem[];
+  accountSnapshots?: PerformanceAccountSnapshot[];
 }) {
   const { t, i18n } = useTranslation();
   const { timeZone } = useTimezone();
@@ -44,7 +47,10 @@ export function PerformancePanel({
   });
   const [draft, setDraft] = useState(() => toDraft(thresholds));
   const [formError, setFormError] = useState(false);
-  const accountDirectory = useMemo(() => buildPerformanceAccountDirectory(authFiles), [authFiles]);
+  const accountDirectory = useMemo(
+    () => buildPerformanceAccountDirectory(authFiles, accountSnapshots),
+    [authFiles, accountSnapshots]
+  );
   const usesDefaults = (Object.keys(DEFAULT_THRESHOLDS) as Array<keyof typeof thresholds>).every(
     (key) => thresholds[key] === DEFAULT_THRESHOLDS[key]
   );
@@ -418,12 +424,15 @@ export function PerformancePanel({
                         <small>{identity.name}</small>
                       ) : null}
                       {!identity ? <small>{text('accountMissingHint')}</small> : null}
+                      {identity?.historical ? <small>{text('historicalAccount')}</small> : null}
                       <details>
                         <summary>{text('accountIdentifier')}</summary>
                         <code>{row.account_key || '—'}</code>
                       </details>
                     </td>
-                    <td className={styles.accountNote}>{identity?.note || text('noNote')}</td>
+                    <td className={styles.accountNote}>
+                      {identity?.note || text(identity?.historical ? 'noHistoricalNote' : 'noNote')}
+                    </td>
                     <td>{row.provider || '—'}</td>
                     <td>{row.total_calls}</td>
                     <td>{milliseconds(row.latency_ms.p95)}</td>
