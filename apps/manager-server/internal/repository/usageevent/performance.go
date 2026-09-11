@@ -171,6 +171,10 @@ func (r *repository) PerformanceWithFilter(ctx context.Context, filter Analytics
 			timeline[bucket].BucketMS = bucket
 		}
 		telemetry := usage.TelemetryFromJSON(raw)
+		// 历史 export 不一定保留 ttft_ms；缺失时使用已采集的首响应体偏移，仍不是首文字时间。
+		if (!ttfb.Valid || ttfb.Int64 <= 0) && telemetry != nil && telemetry.FirstBodyMS != nil && *telemetry.FirstBodyMS > 0 {
+			ttfb = sql.NullInt64{Int64: *telemetry.FirstBodyMS, Valid: true}
+		}
 		eventCost := 0.0
 		if cost != nil {
 			eventCost = cost(e)

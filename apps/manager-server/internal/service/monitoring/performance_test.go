@@ -103,6 +103,30 @@ func TestPerformanceFullScopeTelemetryAndRequestFilter(t *testing.T) {
 	}
 }
 
+func TestPerformanceFirstResponseFromImportedTelemetry(t *testing.T) {
+	db := newMonitoringTestStore(t)
+	ctx := context.Background()
+	from := int64(1778000000000)
+	latency, firstBody, legacy := int64(10000), int64(1000), int64(500)
+	a := monitoringEvent("import-first-body", from+1, "model", "account", "source", false, 10, 100, 0, 0, 110, &latency)
+	a.Telemetry = &usage.Telemetry{Version: 1, AttemptID: "import-first-body", FirstBodyMS: &firstBody}
+	b := a
+	b.EventHash = "legacy-first-body"
+	b.Telemetry = &usage.Telemetry{Version: 1, AttemptID: "legacy-first-body", FirstBodyMS: &firstBody}
+	b.TTFTMS = &legacy
+	if _, err := db.InsertEvents(ctx, []usage.Event{a, b}); err != nil {
+		t.Fatal(err)
+	}
+	response, err := New(db).Analytics(ctx, Request{FromMS: from, ToMS: from + 10000, Include: Include{Performance: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	metric := response.Performance.Summary.TTFBMS
+	if metric.Samples != 2 || metric.P95 == nil || *metric.P95 != 1000 || metric.Mean == nil || *metric.Mean != 750 {
+		t.Fatalf("first response fallback changed existing samples or lost telemetry: %+v", metric)
+	}
+}
+
 func TestPerformanceEmptyBucketsAndNearestRank(t *testing.T) {
 	db := newMonitoringTestStore(t)
 	ctx := context.Background()
