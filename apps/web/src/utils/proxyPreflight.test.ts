@@ -64,7 +64,7 @@ describe('findAccountsUsingProxy', () => {
   ];
 
   it('只比较同认证类型并归一化 Claude 别名，未知类型不参与', () => {
-    const mixed = ['Claude', 'claude', 'Claude Code', 'anthropic', 'codex', ''].map((provider) => ({
+    const mixed = ['Claude', 'claude', 'Claude Code', 'anthropic', 'codex', 'unknown', ''].map((provider) => ({
       name: provider || 'unknown',
       provider,
       proxyUrl: 'http://p:1',
@@ -77,6 +77,7 @@ describe('findAccountsUsingProxy', () => {
     ]);
     expect(findAccountsUsingProxy('http://p:1', mixed, { provider: 'codex' })).toEqual(['codex']);
     expect(findAccountsUsingProxy('http://p:1', mixed, { provider: '' })).toEqual([]);
+    expect(findAccountsUsingProxy('http://p:1', mixed, { provider: 'UNKNOWN' })).toEqual([]);
   });
 
   it('returns the conflicting account label when the same proxy is reused', () => {

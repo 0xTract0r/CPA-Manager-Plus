@@ -188,6 +188,7 @@ export interface ProxyOwnerAccount {
 /** 认证类型归一化，Claude Code/Anthropic 属于同一 Claude 认证族。 */
 export const normalizeProxyProvider = (value: string): string => {
   const key = value.trim().toLowerCase().replace(/[ _]+/g, '-');
+  if (key === 'unknown') return '';
   if (['claude-code', 'anthropic'].includes(key)) return 'claude';
   if (['x-ai', 'grok'].includes(key)) return 'xai';
   return key;
