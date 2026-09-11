@@ -61,6 +61,37 @@ const anchoredScheduling: AuthFileAccountScheduling = {
   warmup: { stage: 'mature', mature: true, age_days: 240 },
 };
 
+// effective_limits：mature 号不受养号压速影响，日预算 / token 日预算都是 0（无限制）。
+const matureEffectiveLimitsScheduling: AuthFileAccountScheduling = {
+  subscription_tier: 'max_5x',
+  tier_source: 'auto',
+  rate_scale: 1,
+  effective_limits: {
+    rpm: 180,
+    burst: 40,
+    concurrency: 16,
+    daily_budget: 0,
+    token_daily_budget: 0,
+    pacing_applies: false,
+  },
+};
+
+// effective_limits：养号号有非 0 日预算，且 pacing_applies=true（rpm 只是上限，
+// 实际 rpm 可能被动态压速进一步降低）。
+const warmingEffectiveLimitsScheduling: AuthFileAccountScheduling = {
+  subscription_tier: 'max_5x',
+  tier_source: 'auto',
+  rate_scale: 0.5,
+  effective_limits: {
+    rpm: 60,
+    burst: 10,
+    concurrency: 4,
+    daily_budget: 500,
+    token_daily_budget: 200000,
+    pacing_applies: true,
+  },
+};
+
 type Harness = {
   renderer: ReactTestRenderer;
   getSelect: () => ReturnType<ReactTestRenderer['root']['findByType']>;
@@ -650,6 +681,47 @@ describe('AccountSchedulingPanel', () => {
     expect(panel.getResetButton()).toBeDefined();
     expect(panel.getFirstProductionSetNow()).toBeDefined();
     expect(panel.getFirstProductionClear()).toBeDefined();
+    panel.renderer.unmount();
+  });
+
+  it('[生效上限] renders the effective-limits line for a mature account, with budgets shown as "unlimited" not 0', () => {
+    const panel = mountPanel({ initialScheduling: matureEffectiveLimitsScheduling });
+    expect(panel.getText()).toContain(
+      'Effective limits: rpm 180 · burst 40 · concurrency 16 · daily budget unlimited · token daily budget unlimited'
+    );
+    // mature 号（pacing_applies=false）不显示养号压速提示。
+    const pacingNote = panel.renderer.root.findAll(
+      (node) =>
+        node.props?.['data-testid'] === 'account-settings-scheduling-effective-limits-pacing-note'
+    );
+    expect(pacingNote.length).toBe(0);
+    panel.renderer.unmount();
+  });
+
+  it('[生效上限·养号] renders non-zero budgets as numbers and shows the dynamic-pacing note when pacing_applies is true', () => {
+    const panel = mountPanel({ initialScheduling: warmingEffectiveLimitsScheduling });
+    expect(panel.getText()).toContain(
+      'Effective limits: rpm 60 · burst 10 · concurrency 4 · daily budget 500 · token daily budget 200,000'
+    );
+    expect(panel.getText()).toContain(
+      'Warm-up account: actual rpm may be further reduced by dynamic pacing.'
+    );
+    panel.renderer.unmount();
+  });
+
+  it('[生效上限·降级] omits the effective-limits block entirely when the projection is absent (older core)', () => {
+    // autoScheduling 没有 effective_limits 字段（老后端未投影的降级形态）。
+    const panel = mountPanel();
+    expect(panel.getText()).not.toContain('Effective limits:');
+    const limitsNode = panel.renderer.root.findAll(
+      (node) => node.props?.['data-testid'] === 'account-settings-scheduling-effective-limits'
+    );
+    expect(limitsNode.length).toBe(0);
+    const pacingNote = panel.renderer.root.findAll(
+      (node) =>
+        node.props?.['data-testid'] === 'account-settings-scheduling-effective-limits-pacing-note'
+    );
+    expect(pacingNote.length).toBe(0);
     panel.renderer.unmount();
   });
 });

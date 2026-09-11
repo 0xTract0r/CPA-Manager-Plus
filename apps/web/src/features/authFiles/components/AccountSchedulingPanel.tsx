@@ -34,6 +34,36 @@ function formatRateScale(value: number | undefined | null): string {
   return typeof value === 'number' && Number.isFinite(value) ? String(value) : '1';
 }
 
+/** 生效上限里的普通数值（rpm/突发/并发）：非有限数（含缺失）显示 "--"，不臆造。 */
+function formatEffectiveLimitNumber(value: number | undefined, locale: string): string {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '--';
+  try {
+    return new Intl.NumberFormat(locale).format(value);
+  } catch {
+    return String(value);
+  }
+}
+
+/**
+ * 日预算类字段（daily_budget / token_daily_budget）：core 用 0 表示「无上限」
+ * （通常是已走出养号曲线的成熟号），必须显示成 unlimitedText 而不是裸 0——
+ * 裸 0 会被误读成「预算已耗尽/额度为 0」。缺失（非有限数）时保守显示 "--"，
+ * 不等同于「无限制」（避免把「不知道」臆造成「没有上限」）。
+ */
+function formatEffectiveBudget(
+  value: number | undefined,
+  locale: string,
+  unlimitedText: string
+): string {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '--';
+  if (value === 0) return unlimitedText;
+  try {
+    return new Intl.NumberFormat(locale).format(value);
+  } catch {
+    return String(value);
+  }
+}
+
 /** 把一个 Date 格式化成 `<input type="datetime-local">` 的本地 wall-clock 值（分钟精度）。 */
 function toDatetimeLocal(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -70,7 +100,8 @@ interface AnchorCandidate {
 
 export function AccountSchedulingPanel(props: AccountSchedulingPanelProps) {
   const { fileName, authIndex, initialScheduling, disabled = false, onApplied } = props;
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const locale = i18n?.language || i18n?.resolvedLanguage || 'en';
   const {
     tierOverride,
     setTierOverride,
@@ -240,6 +271,33 @@ export function AccountSchedulingPanel(props: AccountSchedulingPanelProps) {
     );
   }
   const warmupStatusText = warmupParts.join(' · ');
+
+  // 「当前生效上限」：rate_scale 已经乘完的实际上限，免用户自己心算「乘子 ×
+  // 基础上限」。additive 投影，老 core 未下发时 effective_limits 整体缺失，
+  // 此时不渲染这块（不展示空/0 误导用户）。
+  const effectiveLimits = view?.effective_limits ?? null;
+  const hasEffectiveLimits = effectiveLimits != null && typeof effectiveLimits === 'object';
+  const effectiveUnlimitedText = t('auth_files.account_settings_scheduling_effective_unlimited', {
+    defaultValue: 'unlimited',
+  });
+  const effectiveLimitsText = hasEffectiveLimits
+    ? t('auth_files.account_settings_scheduling_effective_limits_label', {
+        rpm: formatEffectiveLimitNumber(effectiveLimits?.rpm, locale),
+        burst: formatEffectiveLimitNumber(effectiveLimits?.burst, locale),
+        concurrency: formatEffectiveLimitNumber(effectiveLimits?.concurrency, locale),
+        dailyBudget: formatEffectiveBudget(effectiveLimits?.daily_budget, locale, effectiveUnlimitedText),
+        tokenDailyBudget: formatEffectiveBudget(
+          effectiveLimits?.token_daily_budget,
+          locale,
+          effectiveUnlimitedText
+        ),
+        defaultValue:
+          'Effective limits: rpm {{rpm}} · burst {{burst}} · concurrency {{concurrency}} · daily budget {{dailyBudget}} · token daily budget {{tokenDailyBudget}}',
+      })
+    : null;
+  // 养号号（pacing_applies=true）：这里的 rpm 只是上限，实际 rpm 可能被动态
+  // 压速进一步降低，加一行小字提示避免用户误以为 rpm 就是恒定实际速率。
+  const showEffectivePacingNote = hasEffectiveLimits && effectiveLimits?.pacing_applies === true;
 
   return (
     <div className={styles.panel} data-testid="account-settings-scheduling-panel">
@@ -439,12 +497,29 @@ export function AccountSchedulingPanel(props: AccountSchedulingPanelProps) {
       )}
 
       <div className={styles.footer}>
-        <span className={styles.effectiveState} data-testid="account-settings-scheduling-effective">
-          {t('auth_files.account_settings_scheduling_effective_rate', {
-            rate: effectiveRateScaleText,
-            defaultValue: 'Effective rate scale: {{rate}}',
-          })}
-        </span>
+        <div className={styles.effectiveState} data-testid="account-settings-scheduling-effective">
+          <span>
+            {t('auth_files.account_settings_scheduling_effective_rate', {
+              rate: effectiveRateScaleText,
+              defaultValue: 'Effective rate scale: {{rate}}',
+            })}
+          </span>
+          {/* effective_limits 是 additive 投影，老 core 未下发时 effectiveLimitsText
+              为 null，这块连同下面的养号压速提示一起不渲染（优雅降级）。 */}
+          {effectiveLimitsText && (
+            <span data-testid="account-settings-scheduling-effective-limits">
+              {effectiveLimitsText}
+            </span>
+          )}
+          {showEffectivePacingNote && (
+            <span data-testid="account-settings-scheduling-effective-limits-pacing-note">
+              {t('auth_files.account_settings_scheduling_effective_pacing_note', {
+                defaultValue:
+                  'Warm-up account: actual rpm may be further reduced by dynamic pacing.',
+              })}
+            </span>
+          )}
+        </div>
         <Button
           type="button"
           variant="secondary"
