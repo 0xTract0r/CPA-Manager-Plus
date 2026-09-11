@@ -40,7 +40,8 @@ vi.mock('react-i18next', () => ({
       if (options && typeof options.accounts === 'string') return `${key}|${options.accounts}`;
       if (options && (typeof options.ip === 'string' || typeof options.ip === 'number'))
         return `${key}|${options.ip}`;
-      if (options && typeof options.defaultValue === 'string') return options.defaultValue as string;
+      if (options && typeof options.defaultValue === 'string')
+        return options.defaultValue as string;
       return key;
     },
   }),
@@ -147,7 +148,11 @@ describe('useAuthFilesAccountSettings 代理输入框内联实时校验（失焦
 
   it('blur 填重复代理 → 内联标红指名冲突账号、不发探针', async () => {
     const accounts: AuthFileItem[] = [
-      { name: 'other.json', account_settings: { proxy_url: NEW_PROXY, note: 'AC-15' } } as AuthFileItem,
+      {
+        name: 'other.json',
+        type: 'claude',
+        account_settings: { proxy_url: NEW_PROXY, note: 'AC-15' },
+      } as AuthFileItem,
     ];
     const harness = mountHook(accounts);
     await openEditor(harness);

@@ -814,6 +814,7 @@ export function useAuthFilesAccountSettings(
       checkDuplicate: (value) =>
         findAccountsUsingProxy(value, accounts.map(toProxyOwnerAccount), {
           excludeName: fileName,
+          provider: editor.providerKey || editor.provider,
         }),
       duplicateMessage: (list) =>
         t('proxy_preflight.duplicate_account', { accounts: list.join('、') }),
@@ -932,7 +933,7 @@ export function useAuthFilesAccountSettings(
         const conflicts = findAccountsUsingProxy(
           editor.proxyUrl,
           accounts.map(toProxyOwnerAccount),
-          { excludeName: editor.fileName }
+          { excludeName: editor.fileName, provider: editor.providerKey || editor.provider }
         );
         if (conflicts.length > 0) {
           const message = t('proxy_preflight.duplicate_account', {

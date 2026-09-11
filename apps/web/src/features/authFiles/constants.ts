@@ -359,6 +359,7 @@ export const toProxyOwnerAccount = (file: AuthFileItem): ProxyOwnerAccount => ({
   name: file.name,
   label: getAuthFileAccountLabel(file),
   proxyUrl: getAuthFileProxyUrl(file),
+  provider: String(file.type || file.provider || ''),
 });
 
 // 身份变更审计入口（reauth / status 历史）门槛：仅 OAuth 账号显示。对照旧版
@@ -490,7 +491,7 @@ export const formatModified = (item: AuthFileItem): string => {
   const date =
     Number.isFinite(asNumber) && !Number.isNaN(asNumber)
       ? new Date(asNumber < 1e12 ? asNumber * 1000 : asNumber)
-      : parseTimestamp(raw) ?? new Date(String(raw));
+      : (parseTimestamp(raw) ?? new Date(String(raw)));
   // 与旧版一致：强制 UTC+8（Asia/Shanghai）展示，不跟随浏览器本地时区。
   return Number.isNaN(date.getTime())
     ? '-'
