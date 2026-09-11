@@ -11,6 +11,7 @@ import (
 )
 
 type Repository interface {
+	PerformanceWithFilter(ctx context.Context, filter AnalyticsFilter, granularity string, location *time.Location, cost func(PerformanceEvent) float64) (Performance, error)
 	InsertBatch(ctx context.Context, events []model.UsageEvent) (model.InsertResult, error)
 	ListRecent(ctx context.Context, limit int) ([]model.UsageEvent, error)
 	ModelUsageSummary(ctx context.Context, limit int) (model.ModelUsageSummary, error)
@@ -77,8 +78,8 @@ func (r *repository) InsertBatch(ctx context.Context, events []model.UsageEvent)
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, cache_read_tokens, cache_creation_tokens, total_tokens,
 		latency_ms, ttft_ms, failed, fail_status_code, fail_summary,
 		response_metadata_json, header_quota_recover_at_ms, header_quota_used_percent, header_quota_plan_type, header_error_kind, header_error_code, header_trace_id,
-		fail_body, raw_json, created_at_ms
-	) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		fail_body, raw_json, created_at_ms, telemetry_json
+	) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return model.InsertResult{}, err
 	}
@@ -147,6 +148,7 @@ func (r *repository) InsertBatch(ctx context.Context, events []model.UsageEvent)
 			nullString(event.FailBody),
 			nullString(rawJSON),
 			event.CreatedAtMS,
+			nullString(usage.TelemetryJSON(event.Telemetry)),
 		)
 		if err != nil {
 			return model.InsertResult{}, err
@@ -177,7 +179,7 @@ func (r *repository) ListRecent(ctx context.Context, limit int) ([]model.UsageEv
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, cache_read_tokens, cache_creation_tokens, total_tokens,
 		latency_ms, ttft_ms, failed, fail_status_code, fail_summary,
 		coalesce(response_metadata_json, ''), header_quota_recover_at_ms, header_quota_used_percent, coalesce(header_quota_plan_type, ''), coalesce(header_error_kind, ''), coalesce(header_error_code, ''), coalesce(header_trace_id, ''),
-		created_at_ms
+		created_at_ms, coalesce(telemetry_json, '')
 		from usage_events
 		order by timestamp_ms desc, id desc
 		limit ?`, limit)
@@ -190,6 +192,7 @@ func (r *repository) ListRecent(ctx context.Context, limit int) ([]model.UsageEv
 	for rows.Next() {
 		var event model.UsageEvent
 		var requestID, provider, executorType, endpoint, method, path, authType, authIndex, source, sourceHash, apiKeyHash, accountSnapshot, authLabelSnapshot, authFileSnapshot, authProviderSnapshot, authProjectIDSnapshot, requestedModel, resolvedModel, reasoningEffort, serviceTier, failSummary sql.NullString
+		var telemetryJSON string
 		var responseMetadataJSON, quotaPlanType, errorKind, errorCode, traceID string
 		var authSnapshotAt sql.NullInt64
 		var latency, ttft sql.NullInt64
@@ -244,6 +247,7 @@ func (r *repository) ListRecent(ctx context.Context, limit int) ([]model.UsageEv
 			&errorCode,
 			&traceID,
 			&event.CreatedAtMS,
+			&telemetryJSON,
 		); err != nil {
 			return nil, err
 		}
@@ -252,6 +256,7 @@ func (r *repository) ListRecent(ctx context.Context, limit int) ([]model.UsageEv
 		event.ExecutorType = executorType.String
 		event.Endpoint = endpoint.String
 		event.Method = method.String
+		event.Telemetry = usage.TelemetryFromJSON(telemetryJSON)
 		event.Path = path.String
 		event.AuthType = authType.String
 		event.AuthIndex = authIndex.String

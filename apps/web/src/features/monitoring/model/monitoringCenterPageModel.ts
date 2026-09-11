@@ -612,7 +612,7 @@ export const buildPrimarySummaryCards = ({
     label: shortLabel(t, 'monitoring.call_success_rate_short', 'monitoring.call_success_rate'),
     fullLabel: t('monitoring.call_success_rate'),
     value: formatPercent(summary.successRate),
-    meta: formatDurationMs(summary.averageLatencyMs, { locale }),
+    meta: `${t('usage_analytics.metric_average_latency')} ${formatDurationMs(summary.averageLatencyMs, { locale })}`,
     tone: summary.successRate >= 0.95 ? 'good' : summary.successRate >= 0.85 ? 'warn' : 'bad',
     icon: 'success',
     accent: 'green',

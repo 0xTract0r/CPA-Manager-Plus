@@ -52,6 +52,8 @@ var DefaultCodexInspectionConfig = model.DefaultCodexInspectionConfig
 var NormalizeCodexInspectionConfig = model.NormalizeCodexInspectionConfig
 
 // Aggregation result types re-exported for service-layer consumers.
+type Performance = usageevent.Performance
+type PerformanceEvent = usageevent.PerformanceEvent
 type Aggregate = usageevent.Aggregate
 type ModelStat = usageevent.ModelStat
 type RecentFailure = usageevent.RecentFailure
@@ -488,4 +490,8 @@ func (s *Store) ActiveDaysWithFilter(ctx context.Context, filter AnalyticsFilter
 
 func (s *Store) ZeroTokenModelsWithFilter(ctx context.Context, filter AnalyticsFilter) ([]string, error) {
 	return s.UsageEvents.ZeroTokenModelsWithFilter(ctx, filter)
+}
+
+func (s *Store) PerformanceWithFilter(ctx context.Context, filter AnalyticsFilter, granularity string, location *time.Location, cost func(PerformanceEvent) float64) (Performance, error) {
+	return s.UsageEvents.PerformanceWithFilter(ctx, filter, granularity, location, cost)
 }

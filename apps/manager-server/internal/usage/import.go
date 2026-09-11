@@ -403,6 +403,7 @@ func eventFromExportedRecord(record map[string]any) (Event, bool, error) {
 	}
 
 	event := Event{
+		Telemetry:             TelemetryFromRecord(record),
 		RequestID:             readString(record, "request_id", "requestId"),
 		EventHash:             eventHash,
 		TimestampMS:           timestampMS,
@@ -595,12 +596,15 @@ func eventFromLegacyDetail(
 	requestID := readString(detail, "request_id", "requestId", "id")
 
 	event := Event{
-		RequestID:    requestID,
-		TimestampMS:  timestampMS,
-		Timestamp:    normalizedTimestamp,
-		Provider:     readString(detail, "provider", "type", "auth_type", "authType"),
-		ExecutorType: readString(detail, "executor_type", "executorType"),
-		Model:        model,
+		Telemetry:      TelemetryFromRecord(detail),
+		RequestedModel: readString(detail, "requested_model", "requestedModel"),
+		ResolvedModel:  readString(detail, "resolved_model", "resolvedModel"),
+		RequestID:      requestID,
+		TimestampMS:    timestampMS,
+		Timestamp:      normalizedTimestamp,
+		Provider:       readString(detail, "provider", "type", "auth_type", "authType"),
+		ExecutorType:   readString(detail, "executor_type", "executorType"),
+		Model:          model,
 		// Endpoint is set to apiKeyLabel here ONLY so buildEventHash's
 		// empty-request_id content-digest branch stays byte-for-byte identical
 		// to before this fix (that branch intentionally freezes historical
@@ -650,6 +654,12 @@ func eventFromLegacyDetail(
 		FailBody:              failBody,
 		RawJSON:               rawJSON,
 		CreatedAtMS:           now,
+	}
+	if event.ResolvedModel == "" {
+		event.ResolvedModel = model
+	}
+	if event.RequestedModel != "" {
+		event.Model = event.RequestedModel
 	}
 	if event.Model == "" {
 		event.Model = "-"

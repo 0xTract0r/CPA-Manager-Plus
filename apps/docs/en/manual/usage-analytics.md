@@ -1,5 +1,13 @@
 # Usage Analytics
 
+## Model Performance
+
+The Model performance tab aggregates the full filtered event range: latency and first-response percentiles, overall output TPS, account costs, throughput, and sample coverage. Select a model to filter it, or View requests to inspect its trace. Thresholds are browser-local, on-page alerts; no external notifications are sent.
+
+Overall TPS is output tokens / executor attempt duration for successful valid events; means average event speeds. First response is the first upstream body byte, not necessarily text. Executor timing is not client end-to-end timing, and content chunks are not tokens.
+
+Trace lookup covers the selected event plus/minus 24 hours and at most 100 events, combining records with the same attempt ID. Reporter-internal retries may remain unobserved. Concurrency is reconstructed only from completed telemetry intervals, not live queues. Historical missing stages cannot be recovered. Exact percentile queries reject more than 100000 matched events; narrow the filters rather than silently sampling. Cost remains an estimate, and these metrics do not assess answer quality.
+
 Usage Analytics answers "where did the money go?" and "which requests caused the abnormal pattern?" It uses request-monitoring events and [Model Prices](./model-prices.md). It does not change provider billing.
 
 ## Pick The Range First
@@ -41,4 +49,3 @@ If the model name is an alias or internal name, add the matching entry in [Model
 - If model names are rewritten by clients, providers, or route aliases, maintain the corresponding name in Model Prices.
 - Missing token fields can make cost incomplete.
 - Requests lost while Manager Server was stopped or queue data expired cannot be reconstructed.
-

@@ -13,29 +13,30 @@ import (
 )
 
 type Event struct {
-	RequestID             string `json:"request_id,omitempty"`
-	EventHash             string `json:"event_hash"`
-	TimestampMS           int64  `json:"timestamp_ms"`
-	Timestamp             string `json:"timestamp"`
-	Provider              string `json:"provider,omitempty"`
-	ExecutorType          string `json:"executor_type,omitempty"`
-	Model                 string `json:"model"`
-	RequestedModel        string `json:"requested_model,omitempty"`
-	ResolvedModel         string `json:"resolved_model,omitempty"`
-	Endpoint              string `json:"endpoint,omitempty"`
-	Method                string `json:"method,omitempty"`
-	Path                  string `json:"path,omitempty"`
-	AuthType              string `json:"auth_type,omitempty"`
-	AuthIndex             string `json:"auth_index,omitempty"`
-	Source                string `json:"source,omitempty"`
-	SourceHash            string `json:"source_hash,omitempty"`
-	APIKeyHash            string `json:"api_key_hash,omitempty"`
-	AccountSnapshot       string `json:"account_snapshot,omitempty"`
-	AuthLabelSnapshot     string `json:"auth_label_snapshot,omitempty"`
-	AuthFileSnapshot      string `json:"auth_file_snapshot,omitempty"`
-	AuthProviderSnapshot  string `json:"auth_provider_snapshot,omitempty"`
-	AuthProjectIDSnapshot string `json:"auth_project_id_snapshot,omitempty"`
-	AuthSnapshotAtMS      int64  `json:"auth_snapshot_at_ms,omitempty"`
+	Telemetry             *Telemetry `json:"telemetry,omitempty"`
+	RequestID             string     `json:"request_id,omitempty"`
+	EventHash             string     `json:"event_hash"`
+	TimestampMS           int64      `json:"timestamp_ms"`
+	Timestamp             string     `json:"timestamp"`
+	Provider              string     `json:"provider,omitempty"`
+	ExecutorType          string     `json:"executor_type,omitempty"`
+	Model                 string     `json:"model"`
+	RequestedModel        string     `json:"requested_model,omitempty"`
+	ResolvedModel         string     `json:"resolved_model,omitempty"`
+	Endpoint              string     `json:"endpoint,omitempty"`
+	Method                string     `json:"method,omitempty"`
+	Path                  string     `json:"path,omitempty"`
+	AuthType              string     `json:"auth_type,omitempty"`
+	AuthIndex             string     `json:"auth_index,omitempty"`
+	Source                string     `json:"source,omitempty"`
+	SourceHash            string     `json:"source_hash,omitempty"`
+	APIKeyHash            string     `json:"api_key_hash,omitempty"`
+	AccountSnapshot       string     `json:"account_snapshot,omitempty"`
+	AuthLabelSnapshot     string     `json:"auth_label_snapshot,omitempty"`
+	AuthFileSnapshot      string     `json:"auth_file_snapshot,omitempty"`
+	AuthProviderSnapshot  string     `json:"auth_provider_snapshot,omitempty"`
+	AuthProjectIDSnapshot string     `json:"auth_project_id_snapshot,omitempty"`
+	AuthSnapshotAtMS      int64      `json:"auth_snapshot_at_ms,omitempty"`
 	// ReasoningEffort is the request-side effort setting added by CPA v7.1.18+.
 	// It is not the same as response-side tokens.reasoning_tokens usage.
 	ReasoningEffort     string `json:"reasoning_effort,omitempty"`
@@ -102,6 +103,7 @@ func (tokens *LongContextTokens) AddIfLongContext(input, output, cached, cacheRe
 }
 
 type Detail struct {
+	Telemetry             *Telemetry              `json:"telemetry,omitempty"`
 	Timestamp             string                  `json:"timestamp"`
 	Source                string                  `json:"source"`
 	AuthIndex             string                  `json:"auth_index,omitempty"`
@@ -244,6 +246,7 @@ func NormalizeRaw(raw []byte) (Event, error) {
 	}
 
 	event := Event{
+		Telemetry:             TelemetryFromRecord(record),
 		RequestID:             readString(record, "request_id", "requestId", "id"),
 		TimestampMS:           timestampMS,
 		Timestamp:             timestamp,
@@ -329,6 +332,7 @@ func BuildPayload(events []Event) Payload {
 			event.CacheCreationTokens,
 		)
 		modelEntry.Details = append(modelEntry.Details, Detail{
+			Telemetry:             event.Telemetry,
 			Timestamp:             event.Timestamp,
 			Source:                event.Source,
 			AuthIndex:             event.AuthIndex,
@@ -611,6 +615,14 @@ func hashString(value string) string {
 //     every historical empty-id hash and keeps NormalizeRaw and
 //     eventFromLegacyDetail byte-identical for the id-less case.
 func buildEventHash(event Event) string {
+	// v1 以真实 attempt 和模型拆账去重，保持旧事件 hash 不变。
+	if event.Telemetry != nil && event.Telemetry.AttemptID != "" {
+		resolved := event.ResolvedModel
+		if resolved == "" {
+			resolved = event.Model
+		}
+		return hashString("attempt|" + event.Telemetry.AttemptID + "|" + resolved)
+	}
 	if event.RequestID != "" {
 		// Namespaced so a request-id-keyed hash can never collide with the
 		// content-digest branch below (which starts with an empty first field).

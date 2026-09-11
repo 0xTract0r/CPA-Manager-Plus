@@ -197,6 +197,7 @@ export const buildEventRows = (
         channelDisabled: channelMeta?.disabled || false,
         failed: detail.failed === true,
         statsIncluded,
+        telemetry: detail.telemetry,
         latencyMs,
         ttftMs,
         tokensPerSecond,

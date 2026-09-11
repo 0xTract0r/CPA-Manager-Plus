@@ -43,6 +43,7 @@ var (
 )
 
 type AnalyticsFilter struct {
+	RequestIDs       []string
 	FromMS           int64
 	ToMS             int64
 	SearchQuery      string
@@ -340,6 +341,7 @@ type TaskBucket struct {
 }
 
 type EventPageItem struct {
+	Telemetry              *usage.Telemetry
 	ID                     int64
 	RequestID              string
 	EventHash              string
@@ -1744,7 +1746,7 @@ func (r *repository) EventsPageWithFilter(ctx context.Context, filter AnalyticsF
 	coalesce(header_quota_plan_type, ''),
 	coalesce(header_error_kind, ''),
 	coalesce(header_error_code, ''),
-	coalesce(header_trace_id, '')
+	coalesce(header_trace_id, ''), coalesce(telemetry_json, '')
 from usage_events `+where+`
 order by timestamp_ms desc, id desc
 limit ?`, args...)
@@ -1757,7 +1759,7 @@ limit ?`, args...)
 	for rows.Next() {
 		var item EventPageItem
 		var failed int
-		var responseMetadataJSON string
+		var responseMetadataJSON, telemetryJSON string
 		if err := rows.Scan(
 			&item.ID,
 			&item.RequestID,
@@ -1800,9 +1802,11 @@ limit ?`, args...)
 			&item.HeaderErrorKind,
 			&item.HeaderErrorCode,
 			&item.HeaderTraceID,
+			&telemetryJSON,
 		); err != nil {
 			return EventsPage{}, err
 		}
+		item.Telemetry = usage.TelemetryFromJSON(telemetryJSON)
 		item.Failed = failed != 0
 		item.ResponseMetadata = usage.ResponseHeaderMetadataFromJSON(responseMetadataJSON)
 		items = append(items, item)
@@ -2022,6 +2026,7 @@ func analyticsWhere(filter AnalyticsFilter) (string, []any) {
 			args = append(args, value)
 		}
 	}
+	addInCondition("request_id", filter.RequestIDs)
 	addInCondition("model", filter.Models)
 	addProviderCondition(filter.Providers, &conditions, &args)
 	addAccountCondition(filter.Accounts, &conditions, &args)

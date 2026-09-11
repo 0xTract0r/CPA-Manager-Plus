@@ -1,3 +1,4 @@
+import { RequestTracePanel } from '@/features/performance/RequestTracePanel';
 import {
   useCallback,
   useEffect,
@@ -1675,6 +1676,7 @@ export function RealtimeEventsPanel({
   // 由查看器命中 GET /request-log-by-id/{id} 取回原始 .log 文本并在网页端直接渲染 + 检索，
   // 顶部提供关键词高亮与上一处/下一处导航，底部保留「下载」。三态：无 request_id→不显示按钮
   // (下方 fallback 显示「不可溯源」)；加载中→占位；404/缺失/过保留期→查看器内报错且不登出。
+  const [traceRow, setTraceRow] = useState<MonitoringEventRow | null>(null);
   const [requestLogId, setRequestLogId] = useState<string | null>(null);
   const closeRequestLogViewer = useCallback(() => {
     setRequestLogId(null);
@@ -1877,6 +1879,7 @@ export function RealtimeEventsPanel({
                             tooltipId={`${tooltipIdPrefix}-apikey-tooltip-${row.id}`}
                           />
                         ) : null}
+                        <button type="button" className={styles.realtimeRequestLogButton} onClick={() => setTraceRow(row)}>{t('performance.traceTitle')}</button>
                         {row.requestId ? (
                           <button
                             type="button"
@@ -2091,6 +2094,7 @@ export function RealtimeEventsPanel({
           ) : null}
         </div>
       ) : null}
+      {traceRow ? <RequestTracePanel row={traceRow} onClose={() => setTraceRow(null)} /> : null}
       <RequestLogViewer
         open={Boolean(requestLogId)}
         requestId={requestLogId}

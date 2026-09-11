@@ -648,6 +648,7 @@ export function useUsageAnalytics() {
     unavailableReason: analytics.unavailableReason,
     lastRefreshedAt: analytics.lastRefreshedAt,
     refresh,
+    performance: analyticsData?.performance,
     summary: adapted.summary,
     summaryDelta,
     timeline: adapted.timeline,
