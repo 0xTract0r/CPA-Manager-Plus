@@ -102,7 +102,7 @@ export function PerformancePanel({
     series: (speed ? (['p50', 'p10'] as const) : (['p50', 'p95'] as const)).map((key) => ({
       name: key.toUpperCase(),
       type: 'line',
-      showSymbol: false,
+      showSymbol: data.timeline.length <= 36,
       connectNulls: false,
       data: data.timeline.map((row) => {
         const value = (speed ? row.total_tps : row.latency_ms)[key];
