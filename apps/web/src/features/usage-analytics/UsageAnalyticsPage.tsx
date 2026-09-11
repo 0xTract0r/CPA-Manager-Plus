@@ -1,3 +1,5 @@
+import { PerformancePanel } from '@/features/performance/PerformancePanel';
+import { isDemoMode } from '@/features/demo/demoMode';
 import { useCallback, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -2949,6 +2951,12 @@ function UsageAnalyticsPageInner() {
             <DrilldownPreviewPanel rows={usage.drilldownPreview} locale={i18n.language} />
           ) : null}
         </>
+      ) : null}
+
+      {usage.activeTab === 'performance' ? (
+        <PerformancePanel data={usage.performance} mock={isDemoMode()}
+          onModel={(model) => updateFilters({model})}
+          onRequests={(model) => navigate(usage.bounds ? buildMonitoringDetailUrl({bucketMs:usage.bounds.fromMs,bucketEndMs:usage.bounds.toMs}, {...usage.filters, model}) : `/monitoring?model=${encodeURIComponent(model)}`)} />
       ) : null}
 
       {usage.activeTab === 'trends' ? (

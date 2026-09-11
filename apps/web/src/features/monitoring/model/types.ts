@@ -1,3 +1,4 @@
+import type { RequestTelemetry } from '@/features/performance/types';
 import type { ApiKeyAlias } from '@/services/api/usageService';
 import type { ResponseHeaderMetadata } from '@/services/api/usageService';
 import type { AuthFileItem } from '@/types/authFile';
@@ -151,6 +152,7 @@ export type MonitoringFailureRow = {
 };
 
 export type MonitoringEventRow = {
+  telemetry?: RequestTelemetry;
   id: string;
   timestamp: string;
   timestampMs: number;

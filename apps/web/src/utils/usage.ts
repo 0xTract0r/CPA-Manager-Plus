@@ -1,3 +1,4 @@
+import type { RequestTelemetry } from '@/features/performance/types';
 import i18n from '@/i18n';
 import { maskApiKey } from './format';
 import { normalizeAuthIndex } from './authIndex';
@@ -111,6 +112,7 @@ export interface UsageResponseHeaderMetadata {
 }
 
 export interface UsageDetail {
+  telemetry?: RequestTelemetry;
   timestamp: string;
   source: string;
   auth_index: string | number | null;

@@ -551,6 +551,7 @@ func ensureUsageEventSnapshotColumns(db *sql.DB) error {
 		{name: "cache_read_tokens", definition: "integer not null default 0"},
 		{name: "cache_creation_tokens", definition: "integer not null default 0"},
 		{name: "ttft_ms", definition: "integer"},
+		{name: "telemetry_json", definition: "text"},
 		{name: "fail_status_code", definition: "integer"},
 		{name: "fail_summary", definition: "text"},
 		{name: "response_metadata_json", definition: "text"},

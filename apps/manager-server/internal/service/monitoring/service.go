@@ -49,6 +49,7 @@ type Request struct {
 }
 
 type Filters struct {
+	RequestIDs       []string `json:"request_ids"`
 	Models           []string `json:"models"`
 	Providers        []string `json:"providers"`
 	Accounts         []string `json:"accounts"`
@@ -73,6 +74,7 @@ type Filters struct {
 }
 
 type Include struct {
+	Performance        bool              `json:"performance"`
 	Summary            bool              `json:"summary"`
 	SummaryComparison  bool              `json:"summary_comparison"`
 	Timeline           bool              `json:"timeline"`
@@ -109,6 +111,7 @@ type DrilldownPreview struct {
 }
 
 type Response struct {
+	Performance        *store.Performance        `json:"performance,omitempty"`
 	GeneratedAtMS      int64                     `json:"generated_at_ms"`
 	Granularity        string                    `json:"granularity"`
 	Summary            *Summary                  `json:"summary,omitempty"`
@@ -609,6 +612,7 @@ type EventRow struct {
 	ReasoningTokens        int64                         `json:"reasoning_tokens"`
 	TotalTokens            int64                         `json:"total_tokens"`
 	LatencyMS              *int64                        `json:"latency_ms"`
+	Telemetry              *usage.Telemetry              `json:"telemetry,omitempty"`
 	TTFTMS                 *int64                        `json:"ttft_ms"`
 	Failed                 bool                          `json:"failed"`
 	FailStatusCode         *int64                        `json:"fail_status_code,omitempty"`
@@ -701,6 +705,19 @@ func (s *Service) Analytics(ctx context.Context, req Request) (Response, error) 
 		filterOptionsOut  *FilterOptions
 	)
 
+	if req.Include.Performance {
+		group.Go(func() error {
+			p, err := s.store.PerformanceWithFilter(groupCtx, filter, granularity, location, func(e store.PerformanceEvent) float64 {
+				stat := store.ModelStat{Model: e.Model, BillingModel: e.ResolvedModel, ServiceTier: e.ServiceTier, InputTokens: e.InputTokens, OutputTokens: e.OutputTokens, CachedTokens: e.CachedTokens, CacheReadTokens: e.CacheReadTokens, CacheCreationTokens: e.CacheCreationTokens}
+				stat.LongContextTokens.AddIfLongContext(e.InputTokens, e.OutputTokens, e.CachedTokens, e.CacheReadTokens, e.CacheCreationTokens)
+				return costForStat(stat, prices)
+			})
+			if err == nil {
+				response.Performance = &p
+			}
+			return err
+		})
+	}
 	if req.Include.Summary {
 		group.Go(func() error {
 			agg, err := s.store.AggregateWithFilter(groupCtx, filter)
@@ -1131,6 +1148,7 @@ func buildFilter(req Request) store.AnalyticsFilter {
 		includeFailed = *req.Filters.IncludeFailed
 	}
 	return store.AnalyticsFilter{
+		RequestIDs:       req.Filters.RequestIDs,
 		FromMS:           req.FromMS,
 		ToMS:             req.ToMS,
 		SearchQuery:      req.SearchQuery,
@@ -2459,6 +2477,7 @@ func buildEvents(page store.EventsPage, totalCount int64) *EventsResponse {
 			TotalTokens:            item.TotalTokens,
 			LatencyMS:              nullableInt(item.LatencyMS.Valid, item.LatencyMS.Int64),
 			TTFTMS:                 nullableInt(item.TTFTMS.Valid, item.TTFTMS.Int64),
+			Telemetry:              item.Telemetry,
 			Failed:                 item.Failed,
 			FailStatusCode:         nullableInt(item.FailStatusCode.Valid, item.FailStatusCode.Int64),
 			FailSummary:            item.FailSummary,

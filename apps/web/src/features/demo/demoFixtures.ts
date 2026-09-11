@@ -1,3 +1,4 @@
+import { demoPerformance, withDemoTelemetry } from '@/features/performance/demoPerformance';
 import type {
   AccountActionCandidate,
   AccountProcessingPolicy,
@@ -2111,7 +2112,7 @@ const buildMonitoringAnalytics = (
   const reasoningEffortDemoCycle = ['high', undefined, 'medium', undefined, 'low'] as const;
   const serviceTierDemoCycle = ['auto', 'auto', 'priority', 'flex', undefined] as const;
 
-  const events: DemoMonitoringEventRow[] = Array.from({ length: 72 }, (_, index) => {
+  const rawEvents: DemoMonitoringEventRow[] = Array.from({ length: 72 }, (_, index) => {
     const profile = eventProfiles[index % eventProfiles.length];
     const failed = index % 9 === 0 || index % 22 === 0;
     const quotaFailure = failed && index % 2 === 0;
@@ -2188,6 +2189,7 @@ const buildMonitoringAnalytics = (
     };
   });
 
+  const events = rawEvents.map(withDemoTelemetry);
   const recentFailures = events
     .filter((event) => event.failed)
     .slice(0, 8)
@@ -2565,7 +2567,8 @@ const buildMonitoringAnalytics = (
       },
     ],
     recent_failures: recentFailures,
-    events: eventsPage,
+    performance: request?.include?.performance ? demoPerformance(events, request) : undefined,
+    events: request?.filters?.request_ids?.length ? {...eventsPage, items: eventsPage.items.filter(event => request.filters!.request_ids!.includes(event.request_id || ""))} : eventsPage,
     drilldown_preview: drilldownPreview,
   };
 };

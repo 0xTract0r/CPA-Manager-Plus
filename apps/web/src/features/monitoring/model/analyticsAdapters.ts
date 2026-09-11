@@ -912,6 +912,7 @@ export const buildUsageDetailsFromAnalyticsEvents = (
     reasoning_effort: readString(item.reasoning_effort),
     service_tier: readString(item.service_tier),
     executor_type: readString(item.executor_type),
+    telemetry: item.telemetry,
     latency_ms: item.latency_ms ?? undefined,
     ttft_ms: item.ttft_ms ?? undefined,
     tokens: {

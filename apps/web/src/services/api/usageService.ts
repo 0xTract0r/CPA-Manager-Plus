@@ -1,3 +1,4 @@
+import type { PerformanceData, RequestTelemetry } from '@/features/performance/types';
 import axios from 'axios';
 import type { UsagePayload } from '@/features/monitoring/hooks/useUsageData';
 import {
@@ -636,6 +637,7 @@ export interface DashboardSummaryParams {
 }
 
 export interface MonitoringAnalyticsFilters {
+  request_ids?: string[];
   models?: string[];
   providers?: string[];
   accounts?: string[];
@@ -671,6 +673,7 @@ export interface MonitoringAnalyticsDrilldownPreviewRequest {
 }
 
 export interface MonitoringAnalyticsInclude {
+  performance?: boolean;
   summary?: boolean;
   summary_comparison?: boolean;
   timeline?: boolean;
@@ -1185,6 +1188,7 @@ export interface MonitoringAnalyticsRecentFailure {
 }
 
 export interface MonitoringAnalyticsEventRow {
+  telemetry?: RequestTelemetry;
   request_id?: string;
   event_hash: string;
   timestamp_ms: number;
@@ -1235,6 +1239,7 @@ export interface MonitoringAnalyticsEventsResponse {
 }
 
 export interface MonitoringAnalyticsResponse {
+  performance?: PerformanceData;
   generated_at_ms: number;
   granularity: 'hour' | 'day' | string;
   summary?: MonitoringAnalyticsSummary;
