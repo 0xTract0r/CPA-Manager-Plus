@@ -1879,7 +1879,14 @@ export function RealtimeEventsPanel({
                             tooltipId={`${tooltipIdPrefix}-apikey-tooltip-${row.id}`}
                           />
                         ) : null}
-                        <button type="button" className={styles.realtimeRequestLogButton} onClick={() => setTraceRow(row)}>{t('performance.traceTitle')}</button>
+                        <button
+                          type="button"
+                          className={styles.realtimeRequestLogTrigger}
+                          onClick={() => setTraceRow(row)}
+                          title={t('performance.traceTitle')}
+                        >
+                          <span>{t('performance.traceTitle')}</span>
+                        </button>
                         {row.requestId ? (
                           <button
                             type="button"
