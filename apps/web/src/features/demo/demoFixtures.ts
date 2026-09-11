@@ -2116,16 +2116,33 @@ const buildMonitoringAnalytics = (
   const reasoningEffortDemoCycle = ['high', undefined, 'medium', undefined, 'low'] as const;
   const serviceTierDemoCycle = ['auto', 'auto', 'priority', 'flex', undefined] as const;
 
-  const rawEvents: DemoMonitoringEventRow[] = Array.from({ length: 72 }, (_, index) => {
-    const profile = eventProfiles[index % eventProfiles.length];
-    const failed = index % 9 === 0 || index % 22 === 0;
+  // 实际使用形态的合成样本，不复制生产身份或请求。
+  const usageProfiles = [
+    { ...eventProfiles[3], model: 'gpt-6-astra' },
+    { ...eventProfiles[1], model: 'claude-opus-4-8' },
+    { ...eventProfiles[7], model: 'claude-haiku-4-5-20251001' },
+  ];
+  const rawEvents: DemoMonitoringEventRow[] = Array.from({ length: 3800 }, (_, index) => {
+    const profile =
+      index < 72
+        ? eventProfiles[index % eventProfiles.length]
+        : usageProfiles[index % usageProfiles.length];
+    const failed = index % 61 === 0;
     const quotaFailure = failed && index % 2 === 0;
-    const inputTokens = 620 + ((index * 113) % 2600);
-    const outputTokens = 210 + ((index * 71) % 980);
+    const inputTokens = 5000 + ((index * 113) % 150000);
+    const shortTask = profile.model.includes('haiku');
+    const outputTokens = failed
+      ? 0
+      : shortTask ? 35 + (index % 80) : index % 4 === 0
+        ? 12 + (index % 25)
+        : 210 + ((index * 71) % 6000);
     const cachedTokens = index % 3 === 0 ? 180 + ((index * 17) % 520) : 0;
     const reasoningTokens = index % 4 === 0 ? 80 + ((index * 13) % 360) : 0;
     const totalTokens = inputTokens + outputTokens + cachedTokens + reasoningTokens;
-    const timestampMs = analyticsNow - (index * 5 + (index % 4)) * minute;
+    const timestampMs = analyticsNow - (index * 0.37 + (index % 4) * 0.01) * minute;
+    const responseMs = shortTask ? 500 + (index % 900) : 1200 + ((index * 19) % 7500);
+    const generationTps = shortTask ? 65 : profile.provider === 'codex' ? 25 + (index % 20) : 50 + (index % 40);
+    const durationMs = responseMs + Math.round(outputTokens * 1000 / generationTps);
     return {
       request_id: `demo-request-${String(index + 1).padStart(3, '0')}`,
       event_hash: `demo-event-${String(index + 1).padStart(3, '0')}`,
@@ -2157,8 +2174,8 @@ const buildMonitoringAnalytics = (
       cache_creation_tokens: Math.round(cachedTokens * 0.22),
       reasoning_tokens: reasoningTokens,
       total_tokens: totalTokens,
-      latency_ms: failed ? 2400 + ((index * 97) % 1800) : 780 + ((index * 83) % 1540),
-      ttft_ms: failed ? 820 + ((index * 23) % 360) : 180 + ((index * 19) % 420),
+      latency_ms: failed ? 2400 + ((index * 97) % 1800) : durationMs,
+      ttft_ms: failed ? undefined : responseMs,
       failed,
       fail_status_code: failed ? (quotaFailure ? 429 : 503) : undefined,
       fail_summary: failed

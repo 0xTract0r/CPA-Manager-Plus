@@ -8,6 +8,7 @@ import { formatInUtc8 } from '@/utils/datetime';
 import type { PerformanceData, PerformanceGroup } from './types';
 import {
   coverage,
+  comparePerformanceValues,
   milliseconds,
   metricNumber,
   DEFAULT_THRESHOLDS,
@@ -54,20 +55,108 @@ export function PerformancePanel({
   const usesDefaults = (Object.keys(DEFAULT_THRESHOLDS) as Array<keyof typeof thresholds>).every(
     (key) => thresholds[key] === DEFAULT_THRESHOLDS[key]
   );
-  const [sort, setSort] = useState('latency');
+  const [modelQuery, setModelQuery] = useState('');
+  const [modelStatus, setModelStatus] = useState('all');
+  const [accountQuery, setAccountQuery] = useState('');
+  const [provider, setProvider] = useState('all');
+  const [modelSort, setModelSort] = useState({ key: 'attempts', descending: true });
+  const [accountSort, setAccountSort] = useState({ key: 'attempts', descending: true });
   const [saveError, setSaveError] = useState(false);
-  const models = useMemo(
-    () =>
-      [...(data?.models ?? [])].sort((a, b) => {
-        if (sort === 'model') return a.model.localeCompare(b.model);
-        const av = sort === 'speed' ? a.total_tps.p50 : a.latency_ms.p95;
-        const bv = sort === 'speed' ? b.total_tps.p50 : b.latency_ms.p95;
-        if (av === null) return bv === null ? a.model.localeCompare(b.model) : 1;
-        if (bv === null) return -1;
-        return bv - av;
-      }),
-    [data?.models, sort]
-  );
+  const value = (row: PerformanceGroup, key: string) => {
+    switch (key) {
+      case 'attempts':
+        return row.total_calls;
+      case 'success':
+        return row.total_calls ? row.success_calls / row.total_calls : null;
+      case 'latencyP95':
+        return row.latency_ms.p95;
+      case 'ttfbP95':
+        return row.ttfb_ms.p95;
+      case 'speedP50':
+        return row.total_tps.p50;
+      case 'slowSpeed':
+        return row.total_tps.p10;
+      case 'coverage':
+        return row.total_tps.samples;
+      case 'cost':
+        return row.estimated_cost;
+      case 'status':
+        return text(performanceStatus(row, thresholds));
+      default:
+        return null;
+    }
+  };
+  const models = [...(data?.models ?? [])]
+    .filter(
+      (row) =>
+        row.model.toLowerCase().includes(modelQuery.trim().toLowerCase()) &&
+        (modelStatus === 'all' || performanceStatus(row, thresholds) === modelStatus)
+    )
+    .sort((a, b) =>
+      comparePerformanceValues(
+        modelSort.key === 'model' ? a.model : value(a, modelSort.key),
+        modelSort.key === 'model' ? b.model : value(b, modelSort.key),
+        modelSort.descending
+      )
+    );
+  const accountRows = (data?.accounts ?? []).map((row) => ({
+    ...row,
+    identity: resolvePerformanceAccount(row, accountDirectory),
+  }));
+  const accountValue = (row: (typeof accountRows)[number], key: string) =>
+    key === 'account'
+      ? row.identity?.email || row.identity?.name || null
+      : key === 'accountNote'
+        ? row.identity?.note || null
+        : key === 'provider'
+          ? row.provider
+          : value(row, key);
+  const accounts = accountRows
+    .filter(
+      (row) =>
+        (provider === 'all' || row.provider === provider) &&
+        [
+          row.identity?.email,
+          row.identity?.name,
+          row.identity?.note,
+          row.account_key,
+          row.provider,
+        ].some((field) => field?.toLowerCase().includes(accountQuery.trim().toLowerCase()))
+    )
+    .sort((a, b) =>
+      comparePerformanceValues(
+        accountValue(a, accountSort.key),
+        accountValue(b, accountSort.key),
+        accountSort.descending
+      )
+    );
+  const sortHeader = (key: string, account = false) => {
+    const current = account ? accountSort : modelSort;
+    const set = account ? setAccountSort : setModelSort;
+    const selected = current.key === key;
+    return (
+      <th
+        key={key}
+        scope="col"
+        aria-sort={selected ? (current.descending ? 'descending' : 'ascending') : 'none'}
+      >
+        <button
+          type="button"
+          onClick={() =>
+            set({
+              key,
+              descending: selected
+                ? !current.descending
+                : !['model', 'account', 'accountNote', 'provider', 'status'].includes(key),
+            })
+          }
+        >
+          {text(key)}{' '}
+          <span aria-hidden="true">{selected ? (current.descending ? '↓' : '↑') : '↕'}</span>
+        </button>
+      </th>
+    );
+  };
   if (!data)
     return (
       <div className={styles.empty} data-testid="performance-unavailable">
@@ -75,7 +164,7 @@ export function PerformancePanel({
       </div>
     );
   const summary = data.summary;
-  const alerts = models.filter((row) => performanceStatus(row, thresholds) === 'slow');
+  const alerts = data.models.filter((row) => performanceStatus(row, thresholds) === 'slow');
   const successRate = summary.total_calls
     ? (summary.success_calls / summary.total_calls) * 100
     : null;
@@ -201,14 +290,40 @@ export function PerformancePanel({
         <h3>{text('compare')}</h3>
         <div className={styles.filters}>
           <label>
-            {text('sort')}
-            <select value={sort} onChange={(event) => setSort(event.target.value)}>
-              <option value="latency">{text('latencyP95')}</option>
-              <option value="speed">{text('speedP50')}</option>
-              <option value="model">{text('model')}</option>
+            {text('searchModel')}
+            <input
+              type="search"
+              value={modelQuery}
+              placeholder={text('modelSearchHint')}
+              onChange={(event) => setModelQuery(event.target.value)}
+            />
+          </label>
+          <label>
+            {text('status')}
+            <select aria-label={text('status')} value={modelStatus} onChange={(event) => setModelStatus(event.target.value)}>
+              {['all', 'slow', 'healthy', 'insufficient'].map((key) => (
+                <option key={key} value={key}>
+                  {text(key)}
+                </option>
+              ))}
             </select>
           </label>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => {
+              setModelQuery('');
+              setModelStatus('all');
+              setModelSort({ key: 'attempts', descending: true });
+            }}
+          >
+            {text('resetTable')}
+          </Button>
+          <span role="status">
+            {t('performance.rowCount', { shown: models.length, total: data.models.length })}
+          </span>
         </div>
+        <p>{text('tableScope')}</p>
         <div className={styles.thresholdOverview}>
           <div>
             <strong>{text(usesDefaults ? 'defaultReference' : 'customReference')}</strong>
@@ -286,19 +401,28 @@ export function PerformancePanel({
           <table>
             <thead>
               <tr>
-                <th>{text('model')}</th>
-                <th>{text('attempts')}</th>
-                <th>{text('success')}</th>
-                <th>{text('latencyP95')}</th>
-                <th>{text('ttfbP95')}</th>
-                <th>{text('speedP50')}</th>
-                <th title={text('speedHelp')}>{text('slowSpeed')}</th>
-                <th>{text('coverage')}</th>
-                <th>{text('status')}</th>
+                {[
+                  'model',
+                  'attempts',
+                  'success',
+                  'latencyP95',
+                  'ttfbP95',
+                  'speedP50',
+                  'slowSpeed',
+                  'coverage',
+                  'status',
+                ].map((key) => sortHeader(key))}
                 <th>{text('details')}</th>
               </tr>
             </thead>
             <tbody>
+              {models.length === 0 ? (
+                <tr>
+                  <td colSpan={10} className={styles.empty}>
+                    {text('noMatches')}
+                  </td>
+                </tr>
+              ) : null}
               {models.map((row) => (
                 <tr key={row.model}>
                   <td>
@@ -398,22 +522,68 @@ export function PerformancePanel({
       </div>
       <div className={styles.panel}>
         <h3>{text('accounts')}</h3>
+        <div className={styles.filters}>
+          <label>
+            {text('searchAccount')}
+            <input
+              type="search"
+              value={accountQuery}
+              placeholder={text('accountSearchHint')}
+              onChange={(event) => setAccountQuery(event.target.value)}
+            />
+          </label>
+          <label>
+            {text('provider')}
+            <select aria-label={text('provider')} value={provider} onChange={(event) => setProvider(event.target.value)}>
+              <option value="all">{text('all')}</option>
+              {[...new Set(data.accounts.map((row) => row.provider))].sort().map((key) => (
+                <option key={key} value={key}>
+                  {key || text('unknown')}
+                </option>
+              ))}
+            </select>
+          </label>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => {
+              setAccountQuery('');
+              setProvider('all');
+              setAccountSort({ key: 'attempts', descending: true });
+            }}
+          >
+            {text('resetTable')}
+          </Button>
+          <span role="status">
+            {t('performance.rowCount', { shown: accounts.length, total: data.accounts.length })}
+          </span>
+        </div>
+        <p>{text('tableScope')}</p>
         <div className={styles.tableWrap}>
           <table>
             <thead>
               <tr>
-                <th>{text('account')}</th>
-                <th className={styles.accountNote}>{text('accountNote')}</th>
-                <th>{text('provider')}</th>
-                <th>{text('attempts')}</th>
-                <th>{text('latencyP95')}</th>
-                <th>{text('speedP50')}</th>
-                <th>{text('cost')}</th>
+                {[
+                  'account',
+                  'accountNote',
+                  'provider',
+                  'attempts',
+                  'latencyP95',
+                  'speedP50',
+                  'cost',
+                ].map((key) => sortHeader(key, true))}
               </tr>
             </thead>
             <tbody>
-              {data.accounts.map((row) => {
-                const identity = resolvePerformanceAccount(row, accountDirectory);
+              {accounts.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className={styles.empty}>
+                    {text('noMatches')}
+                  </td>
+                </tr>
+              ) : null}
+              {accounts.map((row) => {
+                const identity = row.identity;
                 return (
                   <tr key={`${row.provider}:${row.account_key}`}>
                     <td className={styles.accountIdentity}>

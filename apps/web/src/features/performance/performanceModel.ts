@@ -175,3 +175,18 @@ export const metricNumber = (value: number | null | undefined, digits = 1) =>
     : value.toLocaleString(undefined, { maximumFractionDigits: digits });
 export const milliseconds = (value: number | null | undefined) =>
   value == null ? '—' : `${metricNumber(value / 1000, 2)} s`;
+
+// 两个对比表共用：按原始数值排序；未知值无论升降序始终排末尾。
+export function comparePerformanceValues(
+  a: string | number | null | undefined,
+  b: string | number | null | undefined,
+  descending: boolean
+): number {
+  if (a == null) return b == null ? 0 : 1;
+  if (b == null) return -1;
+  const result =
+    typeof a === 'number' && typeof b === 'number'
+      ? a - b
+      : String(a).localeCompare(String(b), undefined, { numeric: true });
+  return descending ? -result : result;
+}

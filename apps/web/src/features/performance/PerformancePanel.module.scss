@@ -261,3 +261,55 @@
   text-align: left;
   line-height: 1.6;
 }
+
+.filters {
+  margin-bottom: 14px;
+  input[type='search'] {
+    width: 280px;
+    max-width: 100%;
+  }
+  > span {
+    font-size: 12px;
+    color: var(--text-secondary);
+    padding-bottom: 8px;
+  }
+}
+.tableWrap {
+  max-height: 580px;
+  th {
+    position: sticky;
+    top: 0;
+    background: var(--bg-secondary);
+    z-index: 1;
+  }
+  th button {
+    color: inherit;
+    white-space: nowrap;
+  }
+  th[aria-sort='ascending'],
+  th[aria-sort='descending'] {
+    color: var(--primary-color);
+  }
+  button:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 4px;
+    border-radius: 2px;
+  }
+  tbody tr:hover {
+    background: var(--bg-primary);
+  }
+}
+@media (max-width: 540px) {
+  .filters label {
+    max-width: 100%;
+  }
+}
+
+// 表头允许换行，避免长术语把状态和排障入口挤出桌面视口。
+.tableWrap {
+  th { white-space: normal; min-width: 66px; }
+  th button { white-space: normal; text-align: inherit; line-height: 1.5; }
+  th, td { padding: 12px 8px; }
+  td:first-child { max-width: 210px; white-space: normal; overflow-wrap: anywhere; }
+  td:first-child > button { overflow-wrap: anywhere; }
+}
