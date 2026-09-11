@@ -649,6 +649,7 @@ export function useUsageAnalytics() {
     lastRefreshedAt: analytics.lastRefreshedAt,
     refresh,
     performance: analyticsData?.performance,
+    performanceAuthFiles: monitoringMeta.authFiles,
     summary: adapted.summary,
     summaryDelta,
     timeline: adapted.timeline,
