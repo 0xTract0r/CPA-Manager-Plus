@@ -455,10 +455,10 @@ export const USAGE_ANALYTICS_DEFAULT_FILTERS: UsageAnalyticsFiltersState = {
 };
 
 export const USAGE_ANALYTICS_TABS: UsageAnalyticsTab[] = [
-  'performance',
   'overview',
   'trends',
   'models',
+  'performance',
   'apiKeys',
   'credentials',
   'heatmap',
