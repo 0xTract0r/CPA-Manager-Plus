@@ -4250,6 +4250,7 @@
       "running": "运行中",
       "degraded": "异常",
       "down": "已停止",
+      "standby": "待机",
       "retired": "已退役",
       "orphaned": "幽灵态"
     },
@@ -4266,6 +4267,45 @@
       "keepVolume": "保留卷（默认，推荐）",
       "deleteVolume": "同时删除卷（不可逆，会清除 machine ID 与 Claude 状态）"
     },
+    "standby": {
+      "action_standby": "待机",
+      "action_resume": "恢复",
+      "menuStandby": "移出农场（待机）",
+      "confirmTitle": "移出农场（待机）",
+      "confirmBody": "将容器 {{label}} 移出农场待机：停止容器与遥测上报、保留专属卷与身份（device_id）。这是可逆操作，稍后可随时“恢复”重新启动。",
+      "confirmAction": "移出农场（待机）",
+      "standbySuccess": "已将 {{label}} 移出农场待机",
+      "standbyFailed": "移出农场待机失败",
+      "resumeTitle": "恢复容器",
+      "resumeBody": "将待机容器 {{label}} 恢复到运行态：重新启动容器并继续发送遥测。",
+      "resumeAction": "恢复",
+      "resumeSuccess": "已恢复 {{label}}",
+      "resumeFailed": "恢复失败",
+      "disableTitle": "停用账号",
+      "disableExplain": "“停用”只停止 {{label}} 的服务出站；它的农场容器仍在温着、继续发送遥测。请选择处理方式：",
+      "disableServiceOnly": "仅停服务（保持现状）——容器继续温着、继续发遥测",
+      "disableStandby": "一并移出农场（停遥测）——停容器 + 停遥测 + 保留卷，可恢复",
+      "disableConfirm": "确认停用",
+      "accountNoContainer": "{{label}} 当前未绑定农场容器，已仅停服务（无需待机）",
+      "accountStandbySuccess": "已将 {{label}} 移出农场待机（停容器 + 停遥测 + 保留卷）",
+      "accountStandbyFailed": "移出农场待机失败（服务已停用）"
+    },
+    "standbySummary": {
+      "title": "清理待办",
+      "caption": "以下为农场累积待清理项，定期人工处理可避免温容器/退役卷无声堆积。",
+      "disabledLabel": "停用超 {{days}} 天账号",
+      "standbyLabel": "待机容器",
+      "retiredVolumesLabel": "未回收退役卷",
+      "diskUsage": "占盘 {{size}}",
+      "diskUnknown": "占盘 未知/未接入",
+      "nothingToClean": "暂无需要清理的累积项。",
+      "collapse": "收起",
+      "expandDisabled": "展开 {{count}} 个停用账号",
+      "expandStandby": "展开 {{count}} 个待机容器",
+      "ageDays": "停用 {{days}} 天",
+      "disabledSince": "停用于 {{at}}",
+      "standbySince": "待机于 {{at}}"
+    },
     "onboardConfirm": {
       "title": "确认接入农场？",
       "body": "接入后会立即为账号 {{id}} 在此环境创建真实容器、绑定真实账号，并通过住宅代理对外发起请求，不是只读操作。请确认该账号可用且住宅代理配额充足后再继续，取消不会产生任何副作用。"
@@ -4279,6 +4319,7 @@
       "retired": "非活跃",
       "degraded": "异常",
       "down": "已停止",
+      "standby": "待机",
       "created": "已入池"
     },
     "usage": {

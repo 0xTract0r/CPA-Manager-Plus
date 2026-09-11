@@ -21,7 +21,9 @@ import {
   IconChevronRight,
   IconInfo,
   IconModelCluster,
+  IconMoon,
   IconMoreVertical,
+  IconRefreshCw,
   IconSatellite,
   IconShield,
   IconTimer,
@@ -31,6 +33,7 @@ import { useFarmAccountState } from '../hooks/useFarmAccountState';
 import { useFarmContainers } from '../hooks/useFarmContainers';
 import { useFarmDeploymentEnv } from '../hooks/useFarmDeploymentEnv';
 import { useFarmOnboard } from '../hooks/useFarmOnboard';
+import { useFarmStandby } from '../hooks/useFarmStandby';
 import { useFarmProbeCadenceSeries } from '../hooks/useFarmProbeCadenceSeries';
 import { CadenceSparkline } from './CadenceSparkline';
 import { ResponsiveTable } from './ResponsiveTable';
@@ -182,6 +185,14 @@ export function FarmAccountsPanel({
   const [sort, setSort] = useState<FarmAccountSortState>({ key: 'authState', direction: 'desc' });
   const { accounts, loading, error, reload } = useFarmAccounts(env, resolved);
   const { onboardingAccountId, onboard } = useFarmOnboard({ reload });
+  // R2：账号视图的「移出农场/待机」「恢复」动作。账号面板不持有容器数组做乐观更新，
+  // 成功后仅靠账号 reload 刷新（farm_container_status 随之更新）。
+  const {
+    standbyingContainerId,
+    resumingContainerId,
+    standby: standbyContainer,
+    resume: resumeContainer,
+  } = useFarmStandby({ reload });
   // 两平面徽标的数据源：containers 列表带 account_auth_status/account_auth_reason
   // （已绑定账号才有）+ health_reason（容器运行态列真实 reason）；account-state
   // 列表只用来补 as-of 时间戳/陈旧标记。
@@ -787,6 +798,38 @@ export function FarmAccountsPanel({
                   onClick: () => onboard(account.name, env),
                 },
               ];
+
+              // R2：已绑定容器的账号追加「移出农场/待机」或「恢复」菜单项（二选一，
+              // 按容器当前是否待机决定），调 standby/resume 端点。备注名优先作 label。
+              const standbyContainerId =
+                account.farm_bound && account.farm_container_id
+                  ? account.farm_container_id
+                  : null;
+              if (standbyContainerId) {
+                const standbyLabel = account.note || account.account || account.name;
+                const isStandbyContainer = account.farm_container_status === 'standby';
+                const isStandbyingThis = standbyingContainerId === standbyContainerId;
+                const isResumingThis = resumingContainerId === standbyContainerId;
+                if (isStandbyContainer) {
+                  accountMenuItems.push({
+                    key: 'resume',
+                    label: t('farm.standby.action_resume', { defaultValue: '恢复' }),
+                    icon: <IconRefreshCw size={15} aria-hidden="true" />,
+                    disabled: isResumingThis,
+                    onClick: () =>
+                      resumeContainer({ id: standbyContainerId, label: standbyLabel }),
+                  });
+                } else {
+                  accountMenuItems.push({
+                    key: 'standby',
+                    label: t('farm.standby.menuStandby', { defaultValue: '移出农场（待机）' }),
+                    icon: <IconMoon size={15} aria-hidden="true" />,
+                    disabled: isStandbyingThis,
+                    onClick: () =>
+                      standbyContainer({ id: standbyContainerId, label: standbyLabel }),
+                  });
+                }
+              }
 
               // ---------------------------------------------------------
               // #50 / R5-1（AC11）账号时间字段：创建 / 首次登录 / 存活 / 封禁

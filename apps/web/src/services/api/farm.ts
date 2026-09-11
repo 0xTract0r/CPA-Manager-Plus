@@ -57,6 +57,8 @@ import type {
   FarmRotateProxyRequest,
   FarmRotateProxyResponse,
   FarmRotationSuggestionsResponse,
+  FarmContainerStandbyResponse,
+  FarmStandbySummaryResponse,
   FarmUnbindResponse,
   FarmUsageResponse,
 } from '@/types/farm';
@@ -111,6 +113,32 @@ export const farmApi = {
       `/api/farm/containers/${encodeURIComponent(containerId)}`,
       { params: { delete_volume: options?.deleteVolume ? 'true' : 'false' } }
     ),
+
+  // farm-account-standby-control R2 待机：POST /api/farm/containers/{id}/standby
+  // body { confirm:true }（docker stop + 停遥测 + 保卷，幂等可逆）。confirm 恒传
+  // true——二次确认在调用方（useFarmStandby）已做，这里只是兑现后端"必须显式确认"
+  // 的写端点契约，与 rotateProxy 同款。成功体恒 status='standby'。
+  standbyContainer: (containerId: string) =>
+    farmClient.post<FarmContainerStandbyResponse>(
+      `/api/farm/containers/${encodeURIComponent(containerId)}/standby`,
+      { confirm: true }
+    ),
+
+  // R2 恢复：POST /api/farm/containers/{id}/resume body { confirm:true }，待机的
+  // 逆操作，幂等。成功体恒 status='running'。
+  resumeContainer: (containerId: string) =>
+    farmClient.post<FarmContainerStandbyResponse>(
+      `/api/farm/containers/${encodeURIComponent(containerId)}/resume`,
+      { confirm: true }
+    ),
+
+  // R4 累积清理看板：GET /api/farm/standby-summary?env={test|prod}。聚合"停用超 N 天
+  // 账号 / 待机容器 / 未回收退役卷"三类沉积量，供 FarmStandbySummaryPanel 提醒人工清理。
+  // 未装配/无数据时后端优雅退化为各计数 0 + 空 items（前端渲染"无需清理"空态，不报错）。
+  getStandbySummary: (env: FarmEnv) =>
+    farmClient.get<FarmStandbySummaryResponse>('/api/farm/standby-summary', {
+      params: { env },
+    }),
 
   listAccounts: (env: FarmEnv) =>
     farmClient.get<FarmAccountEntry[]>('/api/farm/accounts', { params: { env } }),
