@@ -169,7 +169,7 @@ describe('useMonitoringAnalytics', () => {
           toMs={20_000}
           nowMs={20_000}
           searchQuery=" error "
-          filters={{ models: ['gpt-5'] }}
+          filters={{ models: ['gpt-5'], search_auth_indices: ['auth-note'] }}
           include={{ summary: true, granularity: 'day' }}
         />
       );
@@ -184,7 +184,7 @@ describe('useMonitoringAnalytics', () => {
       ...getExpectedTimeZonePayload(),
       now_ms: 20_000,
       search_query: 'error',
-      filters: { models: ['gpt-5'] },
+      filters: { models: ['gpt-5'], search_auth_indices: ['auth-note'] },
       include: { summary: true, granularity: 'day' },
     });
   });

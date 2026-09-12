@@ -46,6 +46,7 @@ export type AccountIdentityView = {
   email: string;
   maskedEmail: string;
   fallback: string;
+  maskedFallback: string;
   primary: string;
   secondary: string;
   hasNote: boolean;
@@ -62,11 +63,12 @@ export const resolveAccountIdentity = ({
   const normalizedFallback = stripAccountFileSuffix(fallback);
   const normalizedEmail = readEmailLike(email) || readEmailLike(normalizedFallback);
   const maskedEmail = normalizedEmail ? maskAccountEmail(normalizedEmail) : '';
+  const maskedFallback = maskAccountEmailsInText(normalizedFallback);
   const hasNote = Boolean(normalizedNote);
-  const primary = hasNote ? normalizedNote : maskedEmail || normalizedFallback || '-';
+  const primary = hasNote ? normalizedNote : maskedEmail || maskedFallback || '-';
   const secondary = hasNote
     ? maskedEmail ||
-      (normalizedFallback && normalizedFallback !== primary ? normalizedFallback : '')
+      (normalizedFallback && normalizedFallback !== primary ? maskedFallback : '')
     : '';
   const title = Array.from(
     new Set([normalizedNote, normalizedEmail, normalizedFallback].filter(Boolean))
@@ -77,6 +79,7 @@ export const resolveAccountIdentity = ({
     email: normalizedEmail,
     maskedEmail,
     fallback: normalizedFallback,
+    maskedFallback,
     primary,
     secondary,
     hasNote,
@@ -204,4 +207,14 @@ export const findAuthIndicesMatchingIdentityQuery = (
         .filter(Boolean)
     )
   );
+};
+
+export const withIdentitySearchAuthIndices = <T extends object>(
+  filters: T,
+  authIndices: readonly string[]
+): T & { search_auth_indices?: string[] } => {
+  const normalized = Array.from(new Set(authIndices.map(readText).filter(Boolean)));
+  return normalized.length > 0
+    ? { ...filters, search_auth_indices: normalized }
+    : (filters as T & { search_auth_indices?: string[] });
 };

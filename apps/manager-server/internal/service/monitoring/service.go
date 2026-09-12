@@ -49,24 +49,26 @@ type Request struct {
 }
 
 type Filters struct {
-	RequestIDs       []string `json:"request_ids"`
-	Models           []string `json:"models"`
-	Providers        []string `json:"providers"`
-	Accounts         []string `json:"accounts"`
-	AuthFiles        []string `json:"auth_files"`
-	AuthIndices      []string `json:"auth_indices"`
-	APIKeyHashes     []string `json:"api_key_hashes"`
-	SourceHashes     []string `json:"source_hashes"`
-	ProjectIDs       []string `json:"project_ids"`
-	RequestTypes     []string `json:"request_types"`
-	HeaderErrorKinds []string `json:"header_error_kinds"`
-	HeaderErrorCodes []string `json:"header_error_codes"`
-	HeaderQuotaPlans []string `json:"header_quota_plans"`
-	HeaderTraceIDs   []string `json:"header_trace_ids"`
-	IncludeFailed    *bool    `json:"include_failed"`
-	FailedOnly       bool     `json:"failed_only"`
-	MinLatencyMS     int64    `json:"min_latency_ms"`
-	CacheStatus      string   `json:"cache_status"`
+	RequestIDs  []string `json:"request_ids"`
+	Models      []string `json:"models"`
+	Providers   []string `json:"providers"`
+	Accounts    []string `json:"accounts"`
+	AuthFiles   []string `json:"auth_files"`
+	AuthIndices []string `json:"auth_indices"`
+	// SearchAuthIndices 与顶层 search_query 取 OR，不替代 AuthIndices 等显式筛选。
+	SearchAuthIndices []string `json:"search_auth_indices"`
+	APIKeyHashes      []string `json:"api_key_hashes"`
+	SourceHashes      []string `json:"source_hashes"`
+	ProjectIDs        []string `json:"project_ids"`
+	RequestTypes      []string `json:"request_types"`
+	HeaderErrorKinds  []string `json:"header_error_kinds"`
+	HeaderErrorCodes  []string `json:"header_error_codes"`
+	HeaderQuotaPlans  []string `json:"header_quota_plans"`
+	HeaderTraceIDs    []string `json:"header_trace_ids"`
+	IncludeFailed     *bool    `json:"include_failed"`
+	FailedOnly        bool     `json:"failed_only"`
+	MinLatencyMS      int64    `json:"min_latency_ms"`
+	CacheStatus       string   `json:"cache_status"`
 	// MaxCacheHitRate 是"低命中率全量筛"(G2b)阈值:只保留命中率严格小于该值的事件。
 	// nil = 不筛选;非 nil 时即便是 0 也生效,与 store.AnalyticsFilter.MaxCacheHitRate
 	// 的指针语义保持一致。
@@ -1148,29 +1150,30 @@ func buildFilter(req Request) store.AnalyticsFilter {
 		includeFailed = *req.Filters.IncludeFailed
 	}
 	return store.AnalyticsFilter{
-		RequestIDs:       req.Filters.RequestIDs,
-		FromMS:           req.FromMS,
-		ToMS:             req.ToMS,
-		SearchQuery:      req.SearchQuery,
-		SearchAPIKeyHash: req.SearchAPIKeyHash,
-		Models:           req.Filters.Models,
-		Providers:        req.Filters.Providers,
-		Accounts:         req.Filters.Accounts,
-		AuthFiles:        req.Filters.AuthFiles,
-		AuthIndices:      req.Filters.AuthIndices,
-		APIKeyHashes:     req.Filters.APIKeyHashes,
-		SourceHashes:     req.Filters.SourceHashes,
-		ProjectIDs:       req.Filters.ProjectIDs,
-		RequestTypes:     req.Filters.RequestTypes,
-		HeaderErrorKinds: req.Filters.HeaderErrorKinds,
-		HeaderErrorCodes: req.Filters.HeaderErrorCodes,
-		HeaderQuotaPlans: req.Filters.HeaderQuotaPlans,
-		HeaderTraceIDs:   req.Filters.HeaderTraceIDs,
-		IncludeFailed:    includeFailed,
-		FailedOnly:       req.Filters.FailedOnly,
-		MinLatencyMS:     req.Filters.MinLatencyMS,
-		CacheStatus:      req.Filters.CacheStatus,
-		MaxCacheHitRate:  req.Filters.MaxCacheHitRate,
+		RequestIDs:        req.Filters.RequestIDs,
+		FromMS:            req.FromMS,
+		ToMS:              req.ToMS,
+		SearchQuery:       req.SearchQuery,
+		SearchAPIKeyHash:  req.SearchAPIKeyHash,
+		Models:            req.Filters.Models,
+		Providers:         req.Filters.Providers,
+		Accounts:          req.Filters.Accounts,
+		AuthFiles:         req.Filters.AuthFiles,
+		AuthIndices:       req.Filters.AuthIndices,
+		SearchAuthIndices: req.Filters.SearchAuthIndices,
+		APIKeyHashes:      req.Filters.APIKeyHashes,
+		SourceHashes:      req.Filters.SourceHashes,
+		ProjectIDs:        req.Filters.ProjectIDs,
+		RequestTypes:      req.Filters.RequestTypes,
+		HeaderErrorKinds:  req.Filters.HeaderErrorKinds,
+		HeaderErrorCodes:  req.Filters.HeaderErrorCodes,
+		HeaderQuotaPlans:  req.Filters.HeaderQuotaPlans,
+		HeaderTraceIDs:    req.Filters.HeaderTraceIDs,
+		IncludeFailed:     includeFailed,
+		FailedOnly:        req.Filters.FailedOnly,
+		MinLatencyMS:      req.Filters.MinLatencyMS,
+		CacheStatus:       req.Filters.CacheStatus,
+		MaxCacheHitRate:   req.Filters.MaxCacheHitRate,
 	}
 }
 

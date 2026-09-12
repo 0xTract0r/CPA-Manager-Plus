@@ -1153,6 +1153,56 @@ func TestAnalyticsSearchMatchesAccountSnapshotsWhenSourceIsMasked(t *testing.T) 
 	}
 }
 
+func TestAnalyticsSearchIncludesIdentityAuthIndicesWithoutDroppingTextMatches(t *testing.T) {
+	db := newMonitoringTestStore(t)
+	ctx := context.Background()
+	fromMS := int64(1_778_070_000_000)
+	toMS := fromMS + 60*60*1000
+
+	byIdentity := monitoringEvent("search-by-identity", fromMS+1_000, "plain-model", "auth-note", "source-a", false, 1, 1, 0, 0, 2, nil)
+	byText := monitoringEvent("search-by-text", fromMS+2_000, "needle-or-42-model", "auth-text", "source-b", false, 1, 1, 0, 0, 2, nil)
+	excluded := monitoringEvent("search-excluded", fromMS+3_000, "plain-model", "auth-other", "source-c", false, 1, 1, 0, 0, 2, nil)
+	if _, err := db.InsertEvents(ctx, []usage.Event{byIdentity, byText, excluded}); err != nil {
+		t.Fatalf("insert events: %v", err)
+	}
+
+	request := Request{
+		FromMS:      fromMS,
+		ToMS:        toMS,
+		SearchQuery: "needle-or-42",
+		Filters: Filters{
+			SearchAuthIndices: []string{"auth-note"},
+		},
+		Include: Include{Summary: true, EventsPage: &EventsPage{Limit: 10}},
+	}
+	resp, err := New(db).Analytics(ctx, request)
+	if err != nil {
+		t.Fatalf("analytics OR search: %v", err)
+	}
+	if resp.Summary == nil || resp.Summary.TotalCalls != 2 {
+		t.Fatalf("OR search summary = %#v", resp.Summary)
+	}
+	if resp.Events == nil || len(resp.Events.Items) != 2 {
+		t.Fatalf("OR search events = %#v", resp.Events)
+	}
+	got := map[string]bool{}
+	for _, item := range resp.Events.Items {
+		got[item.EventHash] = true
+	}
+	if !got["search-by-identity"] || !got["search-by-text"] || got["search-excluded"] {
+		t.Fatalf("OR search event hashes = %#v", got)
+	}
+
+	request.Filters.AuthIndices = []string{"auth-text"}
+	resp, err = New(db).Analytics(ctx, request)
+	if err != nil {
+		t.Fatalf("analytics scoped OR search: %v", err)
+	}
+	if resp.Events == nil || len(resp.Events.Items) != 1 || resp.Events.Items[0].EventHash != "search-by-text" {
+		t.Fatalf("scoped OR search events = %#v", resp.Events)
+	}
+}
+
 func TestAnalyticsReportsZeroTokenModels(t *testing.T) {
 	db := newMonitoringTestStore(t)
 	ctx := context.Background()

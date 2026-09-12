@@ -58,4 +58,34 @@ describe('AccountIdentity', () => {
       'false'
     );
   });
+
+  it('masks a different email-like fallback and reveals it only on hover', () => {
+    let renderer: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        <AccountIdentity
+          identity={resolveAccountIdentity({
+            note: '生产账号',
+            email: 'account@example.test',
+            fallback: 'archive.owner@example.test.json',
+          })}
+          showFallback
+          testId="identity"
+        />
+      );
+    });
+
+    const fallback = renderer!.root.findByProps({
+      'data-testid': 'identity-fallback-email',
+    });
+    expect(fallback.children).toEqual(['ar***@example.test']);
+    expect(
+      renderer!.root.findAll((node) => node.children.includes('archive.owner@example.test'))
+    ).toHaveLength(0);
+
+    act(() => fallback.props.onMouseEnter());
+    expect(renderer!.root.findByProps({ role: 'tooltip' }).children).toEqual([
+      'archive.owner@example.test',
+    ]);
+  });
 });

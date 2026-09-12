@@ -8,6 +8,7 @@ import { readString } from '@/features/monitoring/model/base';
 import type { MonitoringChannelMeta } from '@/features/monitoring/model/types';
 import { loadMonitoringMetaPayload } from '@/features/monitoring/services/monitoringMetaService';
 import { useTimezone } from '@/hooks';
+import type { MonitoringAnalyticsFilters } from '@/services/api/usageService';
 import { useConfigStore } from '@/stores';
 import type { AuthFileItem } from '@/types/authFile';
 import type { CredentialInfo } from '@/types/sourceInfo';
@@ -16,6 +17,7 @@ import { normalizeAuthIndex } from '@/utils/usage';
 import {
   findAuthIndicesMatchingIdentityQuery,
   resolveAuthFileAccountIdentity,
+  withIdentitySearchAuthIndices,
 } from '@/utils/accountIdentity';
 import {
   adaptUsageAnalyticsData,
@@ -209,24 +211,14 @@ export function useUsageAnalytics() {
     () => findAuthIndicesMatchingIdentityQuery(monitoringMeta.authFiles, debouncedSearchQuery),
     [debouncedSearchQuery, monitoringMeta.authFiles]
   );
-  const identitySearchMatched = Boolean(
-    debouncedSearchQuery && identitySearchAuthIndices.length > 0
-  );
-  const effectiveSearchQuery = identitySearchMatched ? '' : debouncedSearchQuery;
   const applyIdentitySearchScope = useCallback(
-    <T extends { auth_indices?: string[] }>(base: T): T => {
-      if (!identitySearchMatched) return base;
-      const existing = base.auth_indices ?? [];
-      const scoped =
-        existing.length > 0
-          ? identitySearchAuthIndices.filter((value) => existing.includes(value))
-          : identitySearchAuthIndices;
-      return {
-        ...base,
-        auth_indices: scoped.length > 0 ? scoped : ['__cpamp_no_matching_auth__'],
-      };
-    },
-    [identitySearchAuthIndices, identitySearchMatched]
+    (base: MonitoringAnalyticsFilters): MonitoringAnalyticsFilters =>
+      withIdentitySearchAuthIndices(base, identitySearchAuthIndices),
+    [identitySearchAuthIndices]
+  );
+  const identitySearchFilters = useMemo(
+    () => withIdentitySearchAuthIndices({}, identitySearchAuthIndices),
+    [identitySearchAuthIndices]
   );
 
   const bounds = useMemo(() => getUsageRangeBounds(filters, nowMs), [filters, nowMs]);
@@ -292,13 +284,13 @@ export function useUsageAnalytics() {
         drilldownPreview,
         filters: analyticsFilters,
         granularity: resolvedGranularity,
-        searchQuery: effectiveSearchQuery,
+        searchQuery: debouncedSearchQuery,
       }),
     [
       activeTabState,
       analyticsFilters,
       bounds,
-      effectiveSearchQuery,
+      debouncedSearchQuery,
       drilldownPreview,
       resolvedGranularity,
     ]
@@ -309,7 +301,7 @@ export function useUsageAnalytics() {
     toMs: bounds?.toMs,
     nowMs,
     dataScopeKey,
-    searchQuery: effectiveSearchQuery,
+    searchQuery: debouncedSearchQuery,
     filters: analyticsFilters,
     include,
     throttleMs: 0,
@@ -337,16 +329,18 @@ export function useUsageAnalytics() {
     () =>
       JSON.stringify({
         bounds,
-        searchQuery: effectiveSearchQuery,
+        filters: identitySearchFilters,
+        searchQuery: debouncedSearchQuery,
       }),
-    [bounds, effectiveSearchQuery]
+    [bounds, debouncedSearchQuery, identitySearchFilters]
   );
   const filterSelectorsAnalytics = useMonitoringAnalytics({
     fromMs: bounds?.fromMs,
     toMs: bounds?.toMs,
     nowMs,
     dataScopeKey: filterSelectorsDataScopeKey,
-    searchQuery: effectiveSearchQuery,
+    searchQuery: debouncedSearchQuery,
+    filters: identitySearchFilters,
     include: filterSelectorsInclude,
     throttleMs: 0,
   });
@@ -369,16 +363,16 @@ export function useUsageAnalytics() {
             }
           : null,
         filters: analyticsFilters,
-        searchQuery: effectiveSearchQuery,
+        searchQuery: debouncedSearchQuery,
       }),
-    [analyticsFilters, effectiveSearchQuery, selectedHeatmapDate]
+    [analyticsFilters, debouncedSearchQuery, selectedHeatmapDate]
   );
   const heatmapDateAnalytics = useMonitoringAnalytics({
     fromMs: selectedHeatmapDate?.fromMs,
     toMs: selectedHeatmapDate?.toMs,
     nowMs,
     dataScopeKey: heatmapDateDataScopeKey,
-    searchQuery: effectiveSearchQuery,
+    searchQuery: debouncedSearchQuery,
     filters: analyticsFilters,
     include: heatmapDateInclude,
     throttleMs: 0,
@@ -489,13 +483,13 @@ export function useUsageAnalytics() {
         bounds,
         filters: selectedApiKeyTimelineFilters,
         granularity: resolvedGranularity,
-        searchQuery: effectiveSearchQuery,
+        searchQuery: debouncedSearchQuery,
         selectedApiKeyHash: selectedApiKeyFilterHash,
       }),
     [
       activeTabState,
       bounds,
-      effectiveSearchQuery,
+      debouncedSearchQuery,
       resolvedGranularity,
       selectedApiKeyFilterHash,
       selectedApiKeyTimelineFilters,
@@ -506,7 +500,7 @@ export function useUsageAnalytics() {
     toMs: activeTabState === 'apiKeys' && selectedApiKeyFilterHash ? bounds?.toMs : undefined,
     nowMs,
     dataScopeKey: selectedApiKeyTimelineDataScopeKey,
-    searchQuery: effectiveSearchQuery,
+    searchQuery: debouncedSearchQuery,
     filters: selectedApiKeyTimelineFilters,
     include: selectedApiKeyTimelineInclude,
     throttleMs: 0,

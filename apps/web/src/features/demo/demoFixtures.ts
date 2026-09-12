@@ -76,7 +76,9 @@ const demoScaleAuthFiles: AuthFileItem[] = Array.from({ length: 34 }, (_, index)
       ? 'Ops.Owner+Blue@Accounts.Example.Test'
       : `${provider}.pool+${sequence}@accounts.example.test`;
   return {
-    name: `${provider}-scaled-${sequence}.json`,
+    // 生产导入中可能遇到“邮箱式文件名与账号邮箱不同”的旧数据；保留一条专门验证双邮箱都脱敏。
+    name:
+      index === 33 ? 'archive.owner@example.test.json' : `${provider}-scaled-${sequence}.json`,
     type: provider,
     provider,
     authIndex: `${provider}-scaled-${sequence}`,

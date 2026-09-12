@@ -7,6 +7,7 @@ import {
   maskAccountEmailsInText,
   resolveAccountIdentity,
   resolveAuthFileAccountIdentity,
+  withIdentitySearchAuthIndices,
 } from './accountIdentity';
 
 describe('accountIdentity', () => {
@@ -73,6 +74,15 @@ describe('accountIdentity', () => {
     ).toBe('ow***@example.test failed; qa***@lab.example.test retry');
   });
 
+  it('never exposes an embedded email through a non-email fallback label', () => {
+    expect(
+      resolveAccountIdentity({ fallback: 'archive-owner@example.test-backup' })
+    ).toMatchObject({
+      primary: 'ar***@example.test-backup',
+      fallback: 'archive-owner@example.test-backup',
+    });
+  });
+
   it('finds current files by strong identity keys without relying on duplicate notes', () => {
     const files = [
       { name: 'a.json', authIndex: 'auth-a', provider: 'codex', note: '同名池' },
@@ -97,5 +107,17 @@ describe('accountIdentity', () => {
     expect(findAuthIndicesMatchingIdentityQuery(files, 'owner+blue')).toEqual(['auth-a']);
     expect(findAuthIndicesMatchingIdentityQuery(files, 'a.json')).toEqual([]);
     expect(findAuthIndicesMatchingIdentityQuery(files, 'auth-a')).toEqual([]);
+  });
+
+  it('adds identity matches as a separate search scope without replacing filters', () => {
+    const filters = withIdentitySearchAuthIndices(
+      { models: ['needle-model'], auth_indices: ['explicit-scope'] },
+      ['auth-note', 'auth-note', '']
+    );
+    expect(filters).toEqual({
+      models: ['needle-model'],
+      auth_indices: ['explicit-scope'],
+      search_auth_indices: ['auth-note'],
+    });
   });
 });

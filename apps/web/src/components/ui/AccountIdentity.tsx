@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
-import type { AccountIdentityView } from '@/utils/accountIdentity';
+import { readEmailLike, type AccountIdentityView } from '@/utils/accountIdentity';
 import styles from './AccountIdentity.module.scss';
 
 type TooltipPlacement = 'above' | 'below';
@@ -119,6 +119,7 @@ export function AccountIdentity({
     identity.fallback &&
     identity.fallback !== identity.primary &&
     identity.fallback !== identity.email;
+  const fallbackEmail = readEmailLike(identity.fallback);
 
   return (
     <span
@@ -150,11 +151,21 @@ export function AccountIdentity({
           testId={testId ? `${testId}-email` : undefined}
         />
       ) : identity.secondary ? (
-        <span className={styles.secondary}>{identity.secondary}</span>
+        <span className={styles.secondary} title={identity.fallback || undefined}>
+          {identity.secondary}
+        </span>
       ) : null}
-      {fallbackVisible ? (
+      {fallbackVisible && fallbackEmail ? (
+        <AccountEmailReveal
+          email={fallbackEmail}
+          masked={identity.maskedFallback}
+          className={styles.fallback}
+          focusable={emailFocusable}
+          testId={testId ? `${testId}-fallback-email` : undefined}
+        />
+      ) : fallbackVisible ? (
         <span className={styles.fallback} title={identity.fallback}>
-          {identity.fallback}
+          {identity.maskedFallback}
         </span>
       ) : null}
     </span>

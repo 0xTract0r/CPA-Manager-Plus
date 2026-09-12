@@ -309,8 +309,22 @@ try {
   await page.getByTestId('auth-file-card-antigravity-scaled-04.json').waitFor();
   await authSearch.fill('Ops.Owner+Blue@Accounts.Example.Test');
   await page.getByTestId('auth-file-card-claude-scaled-02.json').waitFor();
+  await authSearch.fill('antigravity.pool+34@accounts.example.test');
+  await assertIdentity('auth-file-identity-archive.owner@example.test.json', {
+    note: '共享备注 · 蓝组',
+    masked: 'an***@accounts.example.test',
+    full: 'antigravity.pool+34@accounts.example.test',
+  });
+  const emailFallback = page.getByTestId(
+    'auth-file-identity-archive.owner@example.test.json-fallback-email'
+  );
+  assert.equal((await emailFallback.innerText()).trim(), 'ar***@example.test');
+  await emailFallback.hover();
+  await page
+    .getByTestId('auth-file-identity-archive.owner@example.test.json-fallback-email-tooltip')
+    .waitFor({ state: 'visible' });
   await page.screenshot({ path: shot('auth-files-desktop.png'), fullPage: true });
-  checks.push('认证文件：备注主显、邮箱脱敏 tooltip、备注/完整邮箱搜索');
+  checks.push('认证文件：备注主显、账号与邮箱式 fallback 双重脱敏、备注/完整邮箱搜索');
 
   await open('/quota', '[data-testid^="quota-account-identity-"]');
   const quotaSearch = page.locator('input[placeholder*="备注"]').first();

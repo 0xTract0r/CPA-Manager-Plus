@@ -8,6 +8,7 @@ import { collectUsageDetailsWithEndpoint, normalizeAuthIndex } from '@/utils/usa
 import {
   findAuthIndicesMatchingIdentityQuery,
   resolveAuthFileAccountIdentity,
+  withIdentitySearchAuthIndices,
 } from '@/utils/accountIdentity';
 import { readString } from '../model/base';
 import { buildApiKeyDisplayMap } from '../model/apiKeys';
@@ -464,21 +465,10 @@ export function useMonitoringData({
     () => findAuthIndicesMatchingIdentityQuery(authFiles, searchQuery),
     [authFiles, searchQuery]
   );
-  const identitySearchMatched = Boolean(searchQuery.trim() && identitySearchAuthIndices.length > 0);
-  const effectiveSearchQuery = identitySearchMatched ? '' : searchQuery;
   const analyticsFilters = useMemo(() => {
     const base = buildAnalyticsFilters(scopeFilters, authMetaMap, channels);
-    if (!identitySearchMatched) return base;
-    const existing = base.auth_indices ?? [];
-    const scoped =
-      existing.length > 0
-        ? identitySearchAuthIndices.filter((value) => existing.includes(value))
-        : identitySearchAuthIndices;
-    return {
-      ...base,
-      auth_indices: scoped.length > 0 ? scoped : ['__cpamp_no_matching_auth__'],
-    };
-  }, [authMetaMap, channels, identitySearchAuthIndices, identitySearchMatched, scopeFilters]);
+    return withIdentitySearchAuthIndices(base, identitySearchAuthIndices);
+  }, [authMetaMap, channels, identitySearchAuthIndices, scopeFilters]);
 
   const analyticsGranularity = useMemo(
     () => (shouldUseHourlyTimeline(timeRange, customTimeRange) ? 'hour' : 'day'),
@@ -537,7 +527,7 @@ export function useMonitoringData({
     toMs: overviewBounds?.endMs,
     nowMs: overviewClock.nowMs,
     dataScopeKey: eventsScopeKey,
-    searchQuery: effectiveSearchQuery,
+    searchQuery,
     searchApiKeyHash,
     filters: analyticsFilters,
     include: {
@@ -568,7 +558,7 @@ export function useMonitoringData({
     toMs: analyticsBounds?.endMs,
     nowMs: analyticsNowMs,
     dataScopeKey: eventsScopeKey,
-    searchQuery: effectiveSearchQuery,
+    searchQuery,
     searchApiKeyHash,
     filters: analyticsFilters,
     include: {
