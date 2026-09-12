@@ -36,7 +36,10 @@ import { CodexInspectionStatusPanel } from '@/features/monitoring/components/Cod
 import { InspectionConfigDrawer } from '@/features/monitoring/components/InspectionConfigDrawer';
 import { InspectionConfigFields } from '@/features/monitoring/components/InspectionConfigFields';
 import { CodexReauthDialog } from '@/features/oauth/CodexReauthDialog';
-import type { CodexReauthTarget } from '@/features/oauth/codexReauthModel';
+import {
+  createCodexReauthTargetFromAuthFile,
+  type CodexReauthTarget,
+} from '@/features/oauth/codexReauthModel';
 import {
   CODEX_INSPECTION_RESULT_PAGE_SIZE_OPTIONS,
   buildCodexInspectionPaginationState,
@@ -612,8 +615,10 @@ export function CodexInspectionPage() {
   );
 
   const handleOpenCodexReauth = useCallback((item: CodexInspectionResultItem) => {
+    const identityTarget = createCodexReauthTargetFromAuthFile(item.raw);
     setCodexReauthTarget({
-      account: item.displayAccount || item.accountId || item.fileName,
+      ...identityTarget,
+      account: identityTarget.account || item.displayAccount || item.accountId || item.fileName,
       fileName: item.fileName,
       authIndex: item.authIndex,
       accountId: item.accountId,

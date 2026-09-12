@@ -37,7 +37,11 @@ import {
   type QuotaSectionViewMode,
 } from '@/features/quota/quotaPageUiState';
 import { useGridColumns } from './useGridColumns';
-import { IconEye, IconEyeOff, IconRefreshCw } from '@/components/ui/icons';
+import { IconRefreshCw } from '@/components/ui/icons';
+import {
+  getAuthFileIdentitySearchValues,
+  resolveAuthFileAccountIdentity,
+} from '@/utils/accountIdentity';
 import styles from '@/features/quota/QuotaPage.module.scss';
 
 type QuotaUpdater<T> = T | ((prev: T) => T);
@@ -56,7 +60,11 @@ const stringifySearchValue = (value: unknown): string[] => {
 };
 
 const compareFileName = (left: AuthFileItem, right: AuthFileItem) =>
-  left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: 'base' });
+  resolveAuthFileAccountIdentity(left).primary.localeCompare(
+    resolveAuthFileAccountIdentity(right).primary,
+    undefined,
+    { numeric: true, sensitivity: 'base' }
+  ) || left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: 'base' });
 
 interface QuotaPaginationState<T> {
   pageSize: number;
@@ -148,7 +156,6 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
   onViewModeChange,
   onReauthAccount,
   accountDisplayMode,
-  onAccountDisplayModeChange,
   headerSnapshotLookup,
   coreQuotaSnapshotLookup,
 }: QuotaSectionProps<TState, TData>) {
@@ -163,11 +170,9 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
   /* Removed useRef */
   const [columns, gridRef] = useGridColumns(380); // Min card width 380px matches SCSS
   const [internalViewMode, setInternalViewMode] = useState<QuotaSectionViewMode>('paged');
-  const [internalAccountDisplayMode, setInternalAccountDisplayMode] =
-    useState<QuotaAccountDisplayMode>(DEFAULT_QUOTA_ACCOUNT_DISPLAY_MODE);
   const [showTooManyWarning, setShowTooManyWarning] = useState(false);
   const resolvedViewMode = viewMode ?? internalViewMode;
-  const resolvedAccountDisplayMode = accountDisplayMode ?? internalAccountDisplayMode;
+  const resolvedAccountDisplayMode = accountDisplayMode ?? DEFAULT_QUOTA_ACCOUNT_DISPLAY_MODE;
   const setViewMode = useCallback(
     (nextViewMode: QuotaSectionViewMode) => {
       if (onViewModeChange) {
@@ -177,16 +182,6 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
       }
     },
     [onViewModeChange]
-  );
-  const setAccountDisplayMode = useCallback(
-    (nextMode: QuotaAccountDisplayMode) => {
-      if (onAccountDisplayModeChange) {
-        onAccountDisplayModeChange(nextMode);
-      } else {
-        setInternalAccountDisplayMode(nextMode);
-      }
-    },
-    [onAccountDisplayModeChange]
   );
   const getAccountDisplayName = useCallback(
     (file: AuthFileItem) =>
@@ -240,6 +235,7 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
       if (!normalizedSearchQuery) return true;
       const fileQuota = getDisplayQuota(file);
       const searchValues = [
+        getAuthFileIdentitySearchValues(file),
         file.name,
         file.type,
         file.provider,
@@ -500,41 +496,11 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
   );
 
   const isRefreshing = sectionLoading || loading;
-  const nextAccountDisplayMode: QuotaAccountDisplayMode =
-    resolvedAccountDisplayMode === 'masked' ? 'full' : 'masked';
-  const AccountDisplayIcon = resolvedAccountDisplayMode === 'masked' ? IconEyeOff : IconEye;
-  const accountDisplayHint = t(
-    resolvedAccountDisplayMode === 'masked'
-      ? 'quota_management.show_full_credentials_hint'
-      : 'quota_management.show_masked_credentials_hint'
-  );
-
   return (
     <Card
       title={titleNode}
       extra={
         <div className={styles.headerActions}>
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            className={[
-              styles.accountDisplayModeButton,
-              resolvedAccountDisplayMode === 'full' ? styles.accountDisplayModeButtonActive : '',
-            ]
-              .filter(Boolean)
-              .join(' ')}
-            onClick={() => setAccountDisplayMode(nextAccountDisplayMode)}
-            title={accountDisplayHint}
-            aria-label={accountDisplayHint}
-          >
-            <AccountDisplayIcon size={15} aria-hidden="true" />
-            {t(
-              resolvedAccountDisplayMode === 'masked'
-                ? 'quota_management.account_display_masked'
-                : 'quota_management.account_display_full'
-            )}
-          </Button>
           <div className={styles.viewModeToggle}>
             <Button
               variant="secondary"

@@ -89,7 +89,9 @@ const buildSourceKeysFromAnalyticsIdentity = (
     });
   });
 
-  return Array.from(keys).filter((key) => key && key !== 'source:-').sort();
+  return Array.from(keys)
+    .filter((key) => key && key !== 'source:-')
+    .sort();
 };
 
 const normalizeFilterText = (value: string | null | undefined) =>
@@ -323,7 +325,10 @@ export const buildAnalyticsFilters = (
   }
   // G2b：低命中率阈值下推到后端做 SQL 层全量筛选。0 是合法阈值（理论上会排除所有行），
   // 因此用 typeof === 'number' 判断"是否启用"，不能像 minLatencyMs 那样额外要求 > 0。
-  if (typeof scopeFilters.maxCacheHitRate === 'number' && Number.isFinite(scopeFilters.maxCacheHitRate)) {
+  if (
+    typeof scopeFilters.maxCacheHitRate === 'number' &&
+    Number.isFinite(scopeFilters.maxCacheHitRate)
+  ) {
     filters.max_cache_hit_rate = scopeFilters.maxCacheHitRate;
   }
   if (isActiveFilterValue(scopeFilters.headerTraceId)) {
@@ -604,7 +609,8 @@ export const buildAccountRowsFromAnalytics = (
         { authMetaMap, authFileMap, sourceInfoMap, channelByAuthIndex }
       );
       const account = firstReadableValue(display.account, row.account_snapshot, row.id);
-      const displayAccount = firstReadableValue(display.primary, account);
+      const accountNote = firstReadableValue(...authMetas.map((meta) => meta.note));
+      const displayAccount = firstReadableValue(accountNote, account, display.primary);
       const authLabels = uniqueReadableValues([
         ...authMetas.map((meta) => meta.label),
         row.auth_label_snapshot,

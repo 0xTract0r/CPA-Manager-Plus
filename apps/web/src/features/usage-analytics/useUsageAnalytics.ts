@@ -14,6 +14,10 @@ import type { CredentialInfo } from '@/types/sourceInfo';
 import { buildSourceInfoMap } from '@/utils/sourceResolver';
 import { normalizeAuthIndex } from '@/utils/usage';
 import {
+  findAuthIndicesMatchingIdentityQuery,
+  resolveAuthFileAccountIdentity,
+} from '@/utils/accountIdentity';
+import {
   adaptUsageAnalyticsData,
   analyzeUsageBucket,
   buildSelectedApiKeyTrendSeries,
@@ -158,12 +162,7 @@ export function useUsageAnalytics() {
       const authIndex = normalizeAuthIndex(entry['auth_index'] ?? entry.authIndex);
       if (!authIndex) return;
       map.set(authIndex, {
-        name:
-          readString(entry.label) ||
-          readString(entry.name) ||
-          readString(entry.email) ||
-          readString(entry.account) ||
-          authIndex,
+        name: resolveAuthFileAccountIdentity(entry).primary || authIndex,
         type: readString(entry.provider) || readString(entry.type),
       });
     });
@@ -206,6 +205,29 @@ export function useUsageAnalytics() {
     filters.searchQuery.trim(),
     USAGE_SEARCH_DEBOUNCE_MS
   );
+  const identitySearchAuthIndices = useMemo(
+    () => findAuthIndicesMatchingIdentityQuery(monitoringMeta.authFiles, debouncedSearchQuery),
+    [debouncedSearchQuery, monitoringMeta.authFiles]
+  );
+  const identitySearchMatched = Boolean(
+    debouncedSearchQuery && identitySearchAuthIndices.length > 0
+  );
+  const effectiveSearchQuery = identitySearchMatched ? '' : debouncedSearchQuery;
+  const applyIdentitySearchScope = useCallback(
+    <T extends { auth_indices?: string[] }>(base: T): T => {
+      if (!identitySearchMatched) return base;
+      const existing = base.auth_indices ?? [];
+      const scoped =
+        existing.length > 0
+          ? identitySearchAuthIndices.filter((value) => existing.includes(value))
+          : identitySearchAuthIndices;
+      return {
+        ...base,
+        auth_indices: scoped.length > 0 ? scoped : ['__cpamp_no_matching_auth__'],
+      };
+    },
+    [identitySearchAuthIndices, identitySearchMatched]
+  );
 
   const bounds = useMemo(() => getUsageRangeBounds(filters, nowMs), [filters, nowMs]);
   const heatmapRangeContext = useMemo(
@@ -232,11 +254,13 @@ export function useUsageAnalytics() {
   );
   const analyticsFilters = useMemo(
     () =>
-      buildUsageAnalyticsFilters({
-        ...filters,
-        apiKeyHash: getSelectableApiKeyHash(filters.apiKeyHash) || 'all',
-      }),
-    [filters]
+      applyIdentitySearchScope(
+        buildUsageAnalyticsFilters({
+          ...filters,
+          apiKeyHash: getSelectableApiKeyHash(filters.apiKeyHash) || 'all',
+        })
+      ),
+    [applyIdentitySearchScope, filters]
   );
 
   useEffect(() => {
@@ -268,13 +292,13 @@ export function useUsageAnalytics() {
         drilldownPreview,
         filters: analyticsFilters,
         granularity: resolvedGranularity,
-        searchQuery: debouncedSearchQuery,
+        searchQuery: effectiveSearchQuery,
       }),
     [
       activeTabState,
       analyticsFilters,
       bounds,
-      debouncedSearchQuery,
+      effectiveSearchQuery,
       drilldownPreview,
       resolvedGranularity,
     ]
@@ -285,7 +309,7 @@ export function useUsageAnalytics() {
     toMs: bounds?.toMs,
     nowMs,
     dataScopeKey,
-    searchQuery: debouncedSearchQuery,
+    searchQuery: effectiveSearchQuery,
     filters: analyticsFilters,
     include,
     throttleMs: 0,
@@ -313,16 +337,16 @@ export function useUsageAnalytics() {
     () =>
       JSON.stringify({
         bounds,
-        searchQuery: debouncedSearchQuery,
+        searchQuery: effectiveSearchQuery,
       }),
-    [bounds, debouncedSearchQuery]
+    [bounds, effectiveSearchQuery]
   );
   const filterSelectorsAnalytics = useMonitoringAnalytics({
     fromMs: bounds?.fromMs,
     toMs: bounds?.toMs,
     nowMs,
     dataScopeKey: filterSelectorsDataScopeKey,
-    searchQuery: debouncedSearchQuery,
+    searchQuery: effectiveSearchQuery,
     include: filterSelectorsInclude,
     throttleMs: 0,
   });
@@ -345,16 +369,16 @@ export function useUsageAnalytics() {
             }
           : null,
         filters: analyticsFilters,
-        searchQuery: debouncedSearchQuery,
+        searchQuery: effectiveSearchQuery,
       }),
-    [analyticsFilters, debouncedSearchQuery, selectedHeatmapDate]
+    [analyticsFilters, effectiveSearchQuery, selectedHeatmapDate]
   );
   const heatmapDateAnalytics = useMonitoringAnalytics({
     fromMs: selectedHeatmapDate?.fromMs,
     toMs: selectedHeatmapDate?.toMs,
     nowMs,
     dataScopeKey: heatmapDateDataScopeKey,
-    searchQuery: debouncedSearchQuery,
+    searchQuery: effectiveSearchQuery,
     filters: analyticsFilters,
     include: heatmapDateInclude,
     throttleMs: 0,
@@ -445,9 +469,11 @@ export function useUsageAnalytics() {
   const selectedApiKeyTimelineFilters = useMemo(
     () =>
       selectedApiKeyFilterHash
-        ? buildUsageAnalyticsFilters({ ...filters, apiKeyHash: selectedApiKeyFilterHash })
+        ? applyIdentitySearchScope(
+            buildUsageAnalyticsFilters({ ...filters, apiKeyHash: selectedApiKeyFilterHash })
+          )
         : {},
-    [filters, selectedApiKeyFilterHash]
+    [applyIdentitySearchScope, filters, selectedApiKeyFilterHash]
   );
   const selectedApiKeyTimelineInclude = useMemo(
     () => ({
@@ -463,13 +489,13 @@ export function useUsageAnalytics() {
         bounds,
         filters: selectedApiKeyTimelineFilters,
         granularity: resolvedGranularity,
-        searchQuery: debouncedSearchQuery,
+        searchQuery: effectiveSearchQuery,
         selectedApiKeyHash: selectedApiKeyFilterHash,
       }),
     [
       activeTabState,
       bounds,
-      debouncedSearchQuery,
+      effectiveSearchQuery,
       resolvedGranularity,
       selectedApiKeyFilterHash,
       selectedApiKeyTimelineFilters,
@@ -480,7 +506,7 @@ export function useUsageAnalytics() {
     toMs: activeTabState === 'apiKeys' && selectedApiKeyFilterHash ? bounds?.toMs : undefined,
     nowMs,
     dataScopeKey: selectedApiKeyTimelineDataScopeKey,
-    searchQuery: debouncedSearchQuery,
+    searchQuery: effectiveSearchQuery,
     filters: selectedApiKeyTimelineFilters,
     include: selectedApiKeyTimelineInclude,
     throttleMs: 0,

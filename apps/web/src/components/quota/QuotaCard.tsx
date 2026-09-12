@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import type { ReactElement, ReactNode } from 'react';
 import type { TFunction } from 'i18next';
 import { Button } from '@/components/ui/Button';
+import { AccountIdentity } from '@/components/ui/AccountIdentity';
 import {
   DEFAULT_QUOTA_ACCOUNT_DISPLAY_MODE,
   type QuotaAccountDisplayMode,
@@ -182,9 +183,13 @@ export function QuotaCard<TState extends QuotaStatusState>({
         >
           {getTypeLabel(displayType)}
         </span>
-        <span className={styles.fileName} title={accountDisplay.title}>
-          {accountDisplay.primary}
-        </span>
+        <AccountIdentity
+          identity={accountDisplay.identity}
+          compact
+          showFallback
+          className={styles.quotaAccountIdentity}
+          testId={`quota-account-identity-${item.name}`}
+        />
       </div>
 
       <div className={styles.quotaSection}>

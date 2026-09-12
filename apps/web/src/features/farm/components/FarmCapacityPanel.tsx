@@ -1,8 +1,10 @@
+import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AsyncPanel } from '@/components/ui/AsyncPanel';
 import { Button } from '@/components/ui/Button';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { IconChartLine } from '@/components/ui/icons';
+import { AccountIdentity } from '@/components/ui/AccountIdentity';
 import { formatFileSize } from '@/utils/format';
 import {
   buildSupplyFunnel,
@@ -17,6 +19,10 @@ import type { StatusBadgeVariant } from '../utils/health';
 import { useFarmCapacity } from '../hooks/useFarmCapacity';
 import { useFarmAutoProvision } from '../hooks/useFarmAutoProvision';
 import { useFarmAutoEnroll } from '../hooks/useFarmAutoEnroll';
+import { useFarmAccounts } from '../hooks/useFarmAccounts';
+import { useFarmDeploymentEnv } from '../hooks/useFarmDeploymentEnv';
+import { resolveAccountIdentity } from '@/utils/accountIdentity';
+import { buildFarmAccountIdentityLookup } from '../utils/identity';
 import styles from './FarmCapacityPanel.module.scss';
 
 // 供给漏斗四段 → i18n label key + testid slug（顺序对齐 buildSupplyFunnel 输出）。
@@ -28,10 +34,7 @@ const FUNNEL_STAGE_LABEL: Record<FarmFunnelStage, string> = {
 };
 
 // 可执行 CTA → 标题 / 说明 i18n key（按 pending_reason 语义）。none 不渲染。
-const CTA_KEYS: Record<
-  Exclude<FarmAdmissionCta, 'none'>,
-  { title: string; hint: string }
-> = {
+const CTA_KEYS: Record<Exclude<FarmAdmissionCta, 'none'>, { title: string; hint: string }> = {
   configure_proxy: { title: 'ctaConfigureProxyTitle', hint: 'ctaConfigureProxyHint' },
   expand_capacity: { title: 'ctaExpandCapacityTitle', hint: 'ctaExpandCapacityHint' },
   await_next_round: {
@@ -58,6 +61,9 @@ const CTA_KEYS: Record<
 export function FarmCapacityPanel() {
   const { t } = useTranslation();
   const { capacity, loading, error, reload } = useFarmCapacity();
+  const { env, resolved } = useFarmDeploymentEnv();
+  const { accounts } = useFarmAccounts(env, resolved);
+  const accountIdentityLookup = useMemo(() => buildFarmAccountIdentityLookup(accounts), [accounts]);
   const autoProvisionEnabled = Boolean(capacity?.auto_provision_enabled);
   const { submitting: autoProvisionSubmitting, requestToggle: requestAutoProvisionToggle } =
     useFarmAutoProvision({ enabled: autoProvisionEnabled, reload });
@@ -145,7 +151,11 @@ export function FarmCapacityPanel() {
     ].filter((d) => d.count > 0);
 
   return (
-    <section className={styles.panel} data-testid="farm-capacity-panel" aria-label={t('farm.capacity.title')}>
+    <section
+      className={styles.panel}
+      data-testid="farm-capacity-panel"
+      aria-label={t('farm.capacity.title')}
+    >
       <div className={styles.header}>
         <div className={styles.titleWrap}>
           <IconChartLine size={16} aria-hidden="true" />
@@ -386,13 +396,22 @@ export function FarmCapacityPanel() {
               <ul className={styles.provisioningList} data-testid="farm-capacity-provisioning-list">
                 {provisioning.map((item) => {
                   const status = deriveProvisioningStatus(item);
+                  const accountIdentity =
+                    accountIdentityLookup.get(item.account_id.trim().toLowerCase()) ??
+                    resolveAccountIdentity({ email: item.account_id, fallback: item.account_id });
                   return (
                     <li
                       key={`${item.env}:${item.account_id}`}
                       className={styles.provisioningRow}
                       data-testid={`farm-capacity-provisioning-row-${item.account_id}`}
                     >
-                      <span className={styles.provisioningAccount}>{item.account_id}</span>
+                      <AccountIdentity
+                        identity={accountIdentity}
+                        compact
+                        showFallback
+                        className={styles.provisioningAccount}
+                        testId={`farm-capacity-account-${item.account_id}`}
+                      />
                       <span className={styles.provisioningEnv}>
                         {t(`farm.env.${item.env}`, { defaultValue: item.env })}
                       </span>

@@ -10,8 +10,10 @@ import {
 } from '@/components/ui/Table';
 import { Button } from '@/components/ui/Button';
 import { AsyncPanel } from '@/components/ui/AsyncPanel';
+import { AccountIdentity } from '@/components/ui/AccountIdentity';
 import { IconInfo } from '@/components/ui/icons';
 import { formatUsd } from '@/utils/usage';
+import { resolveAccountIdentity } from '@/utils/accountIdentity';
 import { useFarmUsage } from '../hooks/useFarmUsage';
 import { ResponsiveTable } from './ResponsiveTable';
 import {
@@ -246,6 +248,11 @@ export function FarmUsagePanel({ hideHeading = false }: { hideHeading?: boolean 
               // C6 备注展示：运营者只记备注/别名不记邮箱，主行优先展示 account_note，
               // 缺备注时回退旧口径（account_id + email）。
               const identity = deriveUsageAccountIdentity(item);
+              const accountIdentity = resolveAccountIdentity({
+                note: identity.note,
+                email: identity.email || identity.accountId,
+                fallback: identity.accountId,
+              });
               return (
               <TableRow
                 key={`${item.container_id}-${item.account_id}-${item.env}-${item.auth_index}`}
@@ -253,21 +260,12 @@ export function FarmUsagePanel({ hideHeading = false }: { hideHeading?: boolean 
               >
                 <TableCell data-label={t('farm.accounts.column_name')}>
                   <div className={styles.accountCell}>
-                    {identity.hasNote ? (
-                      <span
-                        className={styles.noteBadge}
-                        title={t('farm.usage.noteBadgeTitle', { defaultValue: '账号备注 / 别名' })}
-                        data-testid={`farm-usage-note-${item.container_id}-${item.account_id}`}
-                      >
-                        {identity.note}
-                      </span>
-                    ) : null}
-                    <span className={identity.hasNote ? styles.accountIdSub : undefined}>
-                      {identity.accountId}
-                    </span>
-                    {identity.email ? (
-                      <span className={styles.accountEmail}>{identity.email}</span>
-                    ) : null}
+                    <AccountIdentity
+                      identity={accountIdentity}
+                      compact
+                      showFallback
+                      testId={`farm-usage-identity-${item.container_id}-${item.account_id}`}
+                    />
                   </div>
                 </TableCell>
                 <TableCell data-label={t('farm.bind_modal.env_label')}>

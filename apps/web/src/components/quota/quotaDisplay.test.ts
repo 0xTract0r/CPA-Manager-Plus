@@ -2,15 +2,18 @@ import { describe, expect, it } from 'vitest';
 import { maskQuotaAccountText, resolveQuotaAccountDisplayText } from './quotaDisplay';
 
 describe('quotaDisplay', () => {
-  it('masks email-like credential names and title text in masked mode', () => {
+  it('uses note first, keeps a masked email visible, and exposes the full email for hover', () => {
     const display = resolveQuotaAccountDisplayText(
-      { name: 'very-long-account-name@example.com.json' },
+      {
+        name: 'very-long-account-name@example.com.json',
+        note: '生产主账号',
+      },
       'masked'
     );
 
-    expect(display.primary).toBe('ver***@example.com.json');
-    expect(display.title).toBe('ver***@example.com.json');
-    expect(display.title).not.toContain('very-long-account-name');
+    expect(display.primary).toBe('生产主账号');
+    expect(display.secondary).toBe('ve***@example.com');
+    expect(display.title).toBe('very-long-account-name@example.com');
   });
 
   it('shows full credential names when full display mode is selected', () => {
@@ -19,8 +22,8 @@ describe('quotaDisplay', () => {
       'full'
     );
 
-    expect(display.primary).toBe('very-long-account-name@example.com.json');
-    expect(display.title).toBe('very-long-account-name@example.com.json');
+    expect(display.primary).toBe('very-long-account-name@example.com');
+    expect(display.title).toBe('very-long-account-name@example.com');
   });
 
   it('masks key-like credential names before applying generic filename masking', () => {

@@ -121,7 +121,9 @@ export function AccountSummaryPrimary({
         />
         <span className={styles.accountButtonLabel}>{accountDisplay.primary}</span>
       </span>
-      {showSecondary && accountSecondaryText ? <small>{accountSecondaryText}</small> : null}
+      {showSecondary && accountSecondaryText ? (
+        <small title={accountDisplay.fullAccount}>{accountSecondaryText}</small>
+      ) : null}
     </button>
   );
 }
@@ -180,12 +182,7 @@ function AccountQuotaPanel({
         tabIndex={0}
         aria-label={t('codex_quota.tooltip_label', { label: windowLabel })}
       >
-        <IconInfo
-          size={14}
-          className={styles.quotaInfoIcon}
-          aria-hidden="true"
-          focusable={false}
-        />
+        <IconInfo size={14} className={styles.quotaInfoIcon} aria-hidden="true" focusable={false} />
         <span className={styles.quotaInfoTooltip} role="tooltip">
           {rows.map((row) => (
             <span key={row.key} className={styles.quotaInfoTooltipRow}>
@@ -890,7 +887,10 @@ export function AccountOverviewCard({
         </div>
         <div className={styles.accountMetaRow}>
           {secondaryText ? (
-            <span className={styles.accountOverviewCardTimestamp} title={secondaryText}>
+            <span
+              className={styles.accountOverviewCardTimestamp}
+              title={accountDisplay.fullAccount}
+            >
               {secondaryText}
             </span>
           ) : null}

@@ -4,6 +4,7 @@ import { Input } from '@/components/ui/Input';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { SelectionCheckbox } from '@/components/ui/SelectionCheckbox';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
+import { AccountIdentity } from '@/components/ui/AccountIdentity';
 import {
   IconBot,
   IconDownload,
@@ -25,6 +26,7 @@ import {
   statusBarDataFromRecentRequests,
 } from '@/utils/recentRequests';
 import { formatDateTime, formatFileSize, formatUnixTimestamp } from '@/utils/format';
+import { resolveAuthFileAccountIdentity } from '@/utils/accountIdentity';
 import {
   QUOTA_PROVIDER_TYPES,
   formatModified,
@@ -298,7 +300,7 @@ export function AuthFileCard(props: AuthFileCardProps) {
 
   const priorityValue = parsePriorityValue(file.priority ?? file['priority']);
   const projectIdValue = getProjectIdValue(file);
-  const noteValue = typeof file.note === 'string' ? file.note.trim() : '';
+  const accountIdentity = resolveAuthFileAccountIdentity(file);
   const subscription =
     isAntigravity && !isRuntimeOnly ? antigravitySubscription : undefined;
   const subscriptionData = subscription?.status === 'success' ? subscription.data : undefined;
@@ -449,6 +451,7 @@ export function AuthFileCard(props: AuthFileCardProps) {
   return (
     <div
       className={`${styles.fileCard} ${compact ? styles.fileCardCompact : ''} ${providerCardClass} ${selected ? styles.fileCardSelected : ''} ${file.disabled ? styles.fileCardDisabled : ''}`}
+      data-testid={`auth-file-card-${file.name}`}
     >
       <div className={styles.fileCardLayout}>
         <div className={styles.fileCardMain}>
@@ -604,15 +607,13 @@ export function AuthFileCard(props: AuthFileCardProps) {
                   </span>
                 )}
               </div>
-              <span className={styles.fileName} title={file.name}>
-                {file.name}
-              </span>
-              {!compact && noteValue && (
-                <div className={styles.noteText} title={noteValue}>
-                  <span className={styles.noteLabel}>{t('auth_files.note_display')}</span>
-                  <span className={styles.noteValue}>{noteValue}</span>
-                </div>
-              )}
+              <AccountIdentity
+                identity={accountIdentity}
+                compact={compact}
+                showFallback
+                className={styles.authFileIdentity}
+                testId={`auth-file-identity-${file.name}`}
+              />
             </div>
             {/* 头部操作区（点⑤）：把「账号设置」入口从卡片底部提到头部，一眼可点，
                 不用滚到底部动作区。 */}

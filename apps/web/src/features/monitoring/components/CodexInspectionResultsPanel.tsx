@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react';
 import type { TFunction } from 'i18next';
 import { Button } from '@/components/ui/Button';
+import { AccountIdentity } from '@/components/ui/AccountIdentity';
+import { resolveAccountIdentity, resolveAuthFileAccountIdentity } from '@/utils/accountIdentity';
 import { Select } from '@/components/ui/Select';
 import { IconRefreshCw, IconTrash2 } from '@/components/ui/icons';
 import {
@@ -225,12 +227,22 @@ export function CodexInspectionResultsPanel({
                     const errorText = item.errorDetail || item.error;
                     const errorSummary = summarizeInspectionError(item, t);
                     const operation = renderOperation?.(item);
+                    const rawIdentity = resolveAuthFileAccountIdentity(item.raw);
+                    const accountIdentity = resolveAccountIdentity({
+                      note: rawIdentity.note,
+                      email: rawIdentity.email || item.displayAccount,
+                      fallback: item.displayAccount || item.fileName,
+                    });
 
                     return (
                       <tr key={item.key}>
                         <td>
                           <div className={styles.primaryCell}>
-                            <span className={styles.primaryAccount}>{item.displayAccount}</span>
+                            <AccountIdentity
+                              identity={accountIdentity}
+                              compact
+                              testId={`codex-inspection-account-${item.key}`}
+                            />
                             <small className={styles.primaryFile}>
                               {item.fileName}
                               {item.authIndex ? (

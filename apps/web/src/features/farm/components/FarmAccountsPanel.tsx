@@ -13,6 +13,7 @@ import {
 import { Select } from '@/components/ui/Select';
 import { AsyncPanel } from '@/components/ui/AsyncPanel';
 import { AccountAuthBadge } from '@/components/ui/AccountAuthBadge';
+import { AccountEmailReveal } from '@/components/ui/AccountIdentity';
 import { ContainerRuntimeBadge } from '@/components/ui/ContainerRuntimeBadge';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/DropdownMenu';
 import {
@@ -73,6 +74,7 @@ import type { FarmDetailTab } from './FarmContainerDetailContent';
 import { formatDateTimeUtc8 } from '@/utils/datetime';
 import { formatDurationMs } from '@/utils/usage/latency';
 import { deriveFarmAccountTimeLabels, resolveFarmOnboardAtMs } from '../utils/accountTime';
+import { resolveFarmAccountIdentity } from '../utils/identity';
 import styles from './FarmAccountsPanel.module.scss';
 
 // 容器注册表快照「陈旧」的前端展示阈值：本列只用它给「容器运行态」徽标的
@@ -552,11 +554,10 @@ export function FarmAccountsPanel({
 
               // 主行显示 note（如 "AC04"），email/文件名降为副行小字；note 为空
               // 时回退显示 account（CPA 邮箱）或 name（auth 文件名）。
-              const trimmedNote = account.note?.trim();
-              const secondaryIdentity = account.account?.trim() || account.name;
-              const primaryDisplayName = trimmedNote || secondaryIdentity;
-              const showSecondaryIdentity =
-                Boolean(trimmedNote) && secondaryIdentity !== primaryDisplayName;
+              const accountIdentity = resolveFarmAccountIdentity(account);
+              const primaryDisplayName = accountIdentity.primary;
+              const secondaryIdentity = accountIdentity.secondary;
+              const showSecondaryIdentity = Boolean(secondaryIdentity);
 
               // 已绑定容器（用于两平面 join + cadence）。
               const joinedContainer =
@@ -979,9 +980,17 @@ export function FarmAccountsPanel({
                   <TableCell data-label={t('farm.accounts.column_name')}>
                     <div className={styles.nameCell}>
                       <div className={styles.nameCellPrimary}>
-                        <span data-testid={`farm-account-primary-name-${account.name}`}>
-                          {primaryDisplayName}
-                        </span>
+                        {accountIdentity.primaryIsEmail ? (
+                          <AccountEmailReveal
+                            email={accountIdentity.email}
+                            masked={primaryDisplayName}
+                            testId={`farm-account-primary-name-${account.name}`}
+                          />
+                        ) : (
+                          <span data-testid={`farm-account-primary-name-${account.name}`}>
+                            {primaryDisplayName}
+                          </span>
+                        )}
                         {showDisabledTag ? (
                           <span
                             className={`status-badge muted ${styles.disabledTag}`}
@@ -1008,12 +1017,21 @@ export function FarmAccountsPanel({
                         ) : null}
                       </div>
                       {showSecondaryIdentity ? (
-                        <span
-                          className={`${styles.mono} ${styles.nameCellSecondary}`}
-                          data-testid={`farm-account-secondary-identity-${account.name}`}
-                        >
-                          {secondaryIdentity}
-                        </span>
+                        accountIdentity.email ? (
+                          <AccountEmailReveal
+                            email={accountIdentity.email}
+                            masked={secondaryIdentity}
+                            className={`${styles.mono} ${styles.nameCellSecondary}`}
+                            testId={`farm-account-secondary-identity-${account.name}`}
+                          />
+                        ) : (
+                          <span
+                            className={`${styles.mono} ${styles.nameCellSecondary}`}
+                            data-testid={`farm-account-secondary-identity-${account.name}`}
+                          >
+                            {secondaryIdentity}
+                          </span>
+                        )
                       ) : null}
                     </div>
                   </TableCell>

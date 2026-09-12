@@ -32,7 +32,7 @@ func TestManagerConsumesHTTPUsageQueue(t *testing.T) {
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"files":[{"auth_index":"auth-1","account":"alice@example.com","label":"Alice","name":"alice.json","provider":"codex"}]}`))
+			_, _ = w.Write([]byte(`{"files":[{"auth_index":"auth-1","account":"alice@example.com","label":"Alice","note":"生产主账号","name":"alice.json","provider":"codex"}]}`))
 			return
 		}
 		if r.URL.Path != "/v0/management/usage-queue" {
@@ -92,8 +92,8 @@ func TestManagerConsumesHTTPUsageQueue(t *testing.T) {
 	if events[0].AccountSnapshot != "alice@example.com" {
 		t.Fatalf("account snapshot = %q", events[0].AccountSnapshot)
 	}
-	if events[0].AuthLabelSnapshot != "Alice" {
-		t.Fatalf("auth label snapshot = %q", events[0].AuthLabelSnapshot)
+	if events[0].AuthLabelSnapshot != "生产主账号" {
+		t.Fatalf("auth label snapshot = %q, want note-first label", events[0].AuthLabelSnapshot)
 	}
 }
 

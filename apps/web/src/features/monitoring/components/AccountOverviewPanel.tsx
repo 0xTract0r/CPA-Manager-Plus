@@ -7,8 +7,6 @@ import {
   IconChevronDown,
   IconChevronUp,
   IconCrosshair,
-  IconEye,
-  IconEyeOff,
   IconInfo,
   IconMoreVertical,
   IconRefreshCw,
@@ -123,13 +121,7 @@ const getAccountColumnInfo = (columnKey: string, t: TFunction) => {
   return '';
 };
 
-function AccountColumnLabel({
-  column,
-  t,
-}: {
-  column: AccountOverviewColumn;
-  t: TFunction;
-}) {
+function AccountColumnLabel({ column, t }: { column: AccountOverviewColumn; t: TFunction }) {
   const info = getAccountColumnInfo(column.key, t);
   const labelTitle = column.fullLabel ?? column.label;
 
@@ -147,7 +139,6 @@ function AccountColumnLabel({
 
 export function AccountOverviewPanelActions({
   mode,
-  accountDisplayMode,
   searchInput,
   accountSort,
   accountSortOptions,
@@ -157,17 +148,7 @@ export function AccountOverviewPanelActions({
   onRefreshAll,
   onAccountSortKeyChange,
   onModeChange,
-  onAccountDisplayModeChange,
 }: AccountOverviewPanelActionsProps) {
-  const nextAccountDisplayMode: AccountDisplayMode =
-    accountDisplayMode === 'masked' ? 'full' : 'masked';
-  const AccountDisplayIcon = accountDisplayMode === 'masked' ? IconEyeOff : IconEye;
-  const accountDisplayHint = t(
-    accountDisplayMode === 'masked'
-      ? 'monitoring.account_overview_show_full_accounts_hint'
-      : 'monitoring.account_overview_show_masked_accounts_hint'
-  );
-
   return (
     <div className={styles.accountOverviewHeaderActions}>
       <div className={styles.accountOverviewToolbarRow}>
@@ -192,27 +173,6 @@ export function AccountOverviewPanelActions({
             className={overallLoading ? styles.refreshIconSpinning : styles.refreshIcon}
           />
           <span>{t('common.refresh')}</span>
-        </button>
-        <button
-          type="button"
-          className={[
-            styles.accountOverviewToolButton,
-            accountDisplayMode === 'full' ? styles.accountDisplayModeButtonActive : '',
-          ]
-            .filter(Boolean)
-            .join(' ')}
-          onClick={() => onAccountDisplayModeChange(nextAccountDisplayMode)}
-          title={accountDisplayHint}
-          aria-label={accountDisplayHint}
-        >
-          <AccountDisplayIcon size={15} aria-hidden="true" />
-          <span>
-            {t(
-              accountDisplayMode === 'masked'
-                ? 'monitoring.account_overview_account_display_masked'
-                : 'monitoring.account_overview_account_display_full'
-            )}
-          </span>
         </button>
         <div className={styles.accountOverviewSortBar}>
           <Select

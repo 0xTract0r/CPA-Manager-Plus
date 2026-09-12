@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
+import { AccountIdentity } from '@/components/ui/AccountIdentity';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import {
@@ -12,6 +13,7 @@ import {
 import { oauthApi } from '@/services/api';
 import { useNotificationStore } from '@/stores';
 import { copyToClipboard } from '@/utils/clipboard';
+import { resolveAccountIdentity } from '@/utils/accountIdentity';
 import type { CodexReauthTarget } from './codexReauthModel';
 import styles from './CodexReauthDialog.module.scss';
 
@@ -59,9 +61,14 @@ export function CodexReauthDialog({
   const targetKey = useMemo(
     () =>
       target
-        ? [target.account, target.fileName ?? '', target.authIndex ?? '', target.accountId ?? ''].join(
-            '\u0000'
-          )
+        ? [
+            target.account,
+            target.note ?? '',
+            target.email ?? '',
+            target.fileName ?? '',
+            target.authIndex ?? '',
+            target.accountId ?? '',
+          ].join('\u0000')
         : '',
     [target]
   );
@@ -268,6 +275,12 @@ export function CodexReauthDialog({
     return null;
   })();
 
+  const targetIdentity = resolveAccountIdentity({
+    note: target?.note,
+    email: target?.email || target?.account,
+    fallback: target?.account,
+  });
+
   return (
     <Modal
       open={open}
@@ -287,7 +300,12 @@ export function CodexReauthDialog({
 
         <div className={styles.accountSummary}>
           <span className={styles.summaryLabel}>{t('codex_reauth.account_label')}</span>
-          <span className={styles.summaryValue}>{target?.account || '-'}</span>
+          <AccountIdentity
+            identity={targetIdentity}
+            compact
+            className={styles.summaryValue}
+            testId="codex-reauth-account-identity"
+          />
           <Button
             type="button"
             variant="ghost"

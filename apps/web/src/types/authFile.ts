@@ -236,6 +236,11 @@ export interface AuthFileAccountSettingsPatchRequest {
 
 export interface AuthFileItem {
   name: string;
+  id?: string;
+  label?: string;
+  email?: string;
+  account?: string;
+  auth_index?: string | number | null;
   type?: AuthFileType | string;
   provider?: string;
   size?: number;

@@ -16,7 +16,7 @@ import type {
   UsageServiceInfo,
   UsageServiceStatus,
 } from '@/services/api/usageService';
-import type { AuthFilesResponse } from '@/types/authFile';
+import type { AuthFileItem, AuthFilesResponse } from '@/types/authFile';
 import type { PluginListResponse, PluginStoreResponse } from '@/types/plugin';
 import type { ModelInfo } from '@/utils/models';
 import {
@@ -54,6 +54,59 @@ const demoRecentRequests = (
     success,
     failed,
   }));
+
+const demoScaleProviders = ['codex', 'claude', 'gemini', 'antigravity', 'openai'] as const;
+const demoScaleNotes = [
+  '亚太客户成功 · 夜间批处理',
+  '共享备注 · 蓝组',
+  '共享备注 · 蓝组',
+  '这是一个用于验证窄屏截断、悬浮全文与表格不溢出的超长生产形态备注',
+  'Platform / Release Canary',
+  '上海研发 #07',
+  '🚦 灰度观察账号',
+  '',
+] as const;
+
+const demoScaleAuthFiles: AuthFileItem[] = Array.from({ length: 34 }, (_, index) => {
+  const sequence = String(index + 1).padStart(2, '0');
+  const provider = demoScaleProviders[index % demoScaleProviders.length];
+  const note = demoScaleNotes[index % demoScaleNotes.length];
+  const email =
+    index === 1
+      ? 'Ops.Owner+Blue@Accounts.Example.Test'
+      : `${provider}.pool+${sequence}@accounts.example.test`;
+  return {
+    name: `${provider}-scaled-${sequence}.json`,
+    type: provider,
+    provider,
+    authIndex: `${provider}-scaled-${sequence}`,
+    email,
+    note,
+    disabled: index % 13 === 0,
+    status: index % 13 === 0 ? 'disabled' : index % 9 === 0 ? 'cooldown' : 'healthy',
+    statusMessage: index % 9 === 0 ? 'Synthetic quota cooldown for UI verification' : 'Ready',
+    size: 2800 + index * 73,
+    modified: now() - (index + 1) * 17 * minute,
+    account_snapshot: note || `Scaled account ${sequence}`,
+    success: 120 + index * 19,
+    failed: index % 9,
+    ...(provider === 'claude'
+      ? {
+          account_scheduling: {
+            subscription_tier: 'unknown',
+            tier_source: 'auto' as const,
+            rate_scale: 1,
+            anchor_candidates: {
+              last_activity_at: new Date(now() - (index + 2) * day).toISOString(),
+            },
+            sessions_total: index + 3,
+            sessions_active: index % 3,
+            sessions_closed: index + 3 - (index % 3),
+          },
+        }
+      : {}),
+  };
+});
 
 const startOfLocalDayIso = (input = now()) => {
   const date = new Date(input);
@@ -261,7 +314,7 @@ const initialRawConfig: Record<string, unknown> = {
 };
 
 const demoAuthFiles: AuthFilesResponse = {
-  total: 14,
+  total: 14 + demoScaleAuthFiles.length,
   files: [
     {
       name: 'codex-team-01.json',
@@ -289,6 +342,8 @@ const demoAuthFiles: AuthFilesResponse = {
       type: 'codex',
       provider: 'codex',
       authIndex: 'codex-fallback-02',
+      email: 'automation+fallback@example.com',
+      note: '自动化备用池',
       disabled: false,
       status: 'cooldown',
       statusMessage: 'Recovering from quota pressure',
@@ -340,6 +395,8 @@ const demoAuthFiles: AuthFilesResponse = {
       type: 'gemini',
       provider: 'gemini',
       authIndex: 'gemini-prod-01',
+      email: 'gemini.production@example.test',
+      note: 'Gemini 生产主账号',
       disabled: false,
       status: 'healthy',
       project_id: 'demo-gemini-prod',
@@ -353,6 +410,8 @@ const demoAuthFiles: AuthFilesResponse = {
       type: 'vertex',
       provider: 'vertex',
       authIndex: 'vertex-regional-01',
+      email: 'vertex.apac@example.test',
+      note: 'Vertex 亚太区域',
       disabled: false,
       status: 'healthy',
       projectId: 'demo-vertex-regional',
@@ -366,6 +425,8 @@ const demoAuthFiles: AuthFilesResponse = {
       type: 'antigravity',
       provider: 'antigravity',
       authIndex: 'antigravity-builder-01',
+      email: 'builder+antigravity@example.test',
+      note: '构建流水线 · Antigravity',
       disabled: false,
       status: 'healthy',
       project_id: 'demo-antigravity-project',
@@ -379,6 +440,8 @@ const demoAuthFiles: AuthFilesResponse = {
       type: 'kimi',
       provider: 'kimi',
       authIndex: 'kimi-coding-01',
+      email: 'kimi.coding@example.test',
+      note: 'Kimi 编码备用',
       disabled: true,
       status: 'disabled',
       statusMessage: 'Queued for review',
@@ -392,6 +455,8 @@ const demoAuthFiles: AuthFilesResponse = {
       type: 'xai',
       provider: 'xai',
       authIndex: 'xai-ops-01',
+      email: 'xai.ops@example.test',
+      note: '运维控制台 · xAI',
       disabled: false,
       status: 'healthy',
       size: 3180,
@@ -404,6 +469,8 @@ const demoAuthFiles: AuthFilesResponse = {
       type: 'openai',
       provider: 'openai',
       authIndex: 'openai-support-02',
+      email: 'support.desk@example.test',
+      note: '客户支持 · 二线',
       disabled: false,
       status: 'healthy',
       size: 3440,
@@ -417,6 +484,8 @@ const demoAuthFiles: AuthFilesResponse = {
       type: 'claude',
       provider: 'claude',
       authIndex: 'claude-research-02',
+      email: 'batch.research@example.test',
+      note: '批量研究 · 夜间',
       disabled: false,
       status: 'healthy',
       size: 4048,
@@ -450,6 +519,8 @@ const demoAuthFiles: AuthFilesResponse = {
       type: 'claude',
       provider: 'claude',
       authIndex: 'claude-pro-03',
+      email: 'solo.pro@example.test',
+      note: '个人 Pro · 低频',
       disabled: false,
       status: 'healthy',
       size: 3760,
@@ -484,6 +555,7 @@ const demoAuthFiles: AuthFilesResponse = {
       type: 'claude',
       provider: 'claude',
       authIndex: 'claude-default-04',
+      email: 'default.claude@example.test',
       disabled: false,
       status: 'healthy',
       size: 3610,
@@ -519,6 +591,8 @@ const demoAuthFiles: AuthFilesResponse = {
       type: 'gemini',
       provider: 'gemini',
       authIndex: 'gemini-batch-02',
+      email: 'gemini.batch@example.test',
+      note: 'Gemini 批处理',
       disabled: false,
       status: 'healthy',
       project_id: 'demo-gemini-batch',
@@ -533,6 +607,8 @@ const demoAuthFiles: AuthFilesResponse = {
       type: 'openai',
       provider: 'deepseek',
       authIndex: 'deepseek-ops-01',
+      email: 'edge.experiments@example.test',
+      note: '边缘实验 · DeepSeek',
       disabled: false,
       status: 'cooldown',
       statusMessage: 'Short retry backoff',
@@ -542,6 +618,7 @@ const demoAuthFiles: AuthFilesResponse = {
       success: 312,
       failed: 16,
     },
+    ...demoScaleAuthFiles,
   ],
 };
 

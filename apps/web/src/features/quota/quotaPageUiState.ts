@@ -1,12 +1,6 @@
 import type { QuotaSortMode } from '@/components/quota/quotaConfigs';
 
-export type QuotaSectionType =
-  | 'antigravity'
-  | 'claude'
-  | 'codex'
-  | 'gemini-cli'
-  | 'kimi'
-  | 'xai';
+export type QuotaSectionType = 'antigravity' | 'claude' | 'codex' | 'gemini-cli' | 'kimi' | 'xai';
 export type QuotaSectionViewMode = 'paged' | 'all';
 export type QuotaAccountDisplayMode = 'masked' | 'full';
 
@@ -18,7 +12,7 @@ export type QuotaPageUiState = {
 };
 
 export const QUOTA_PAGE_UI_STATE_STORAGE_KEY = 'quotaPage.uiState';
-export const DEFAULT_QUOTA_ACCOUNT_DISPLAY_MODE: QuotaAccountDisplayMode = 'full';
+export const DEFAULT_QUOTA_ACCOUNT_DISPLAY_MODE: QuotaAccountDisplayMode = 'masked';
 
 const QUOTA_SORT_MODE_SET = new Set<QuotaSortMode>([
   'default',
@@ -34,7 +28,6 @@ const QUOTA_SECTION_TYPE_SET = new Set<QuotaSectionType>([
   'kimi',
   'xai',
 ]);
-const QUOTA_ACCOUNT_DISPLAY_MODE_SET = new Set<QuotaAccountDisplayMode>(['masked', 'full']);
 
 export const getDefaultQuotaPageUiState = (): QuotaPageUiState => ({
   searchQuery: '',
@@ -52,10 +45,7 @@ export const normalizeQuotaSectionViewMode = (value: unknown): QuotaSectionViewM
   value === 'all' ? 'all' : 'paged';
 
 export const normalizeQuotaAccountDisplayMode = (value: unknown): QuotaAccountDisplayMode =>
-  typeof value === 'string' &&
-  QUOTA_ACCOUNT_DISPLAY_MODE_SET.has(value as QuotaAccountDisplayMode)
-    ? (value as QuotaAccountDisplayMode)
-    : DEFAULT_QUOTA_ACCOUNT_DISPLAY_MODE;
+  value === 'masked' ? 'masked' : DEFAULT_QUOTA_ACCOUNT_DISPLAY_MODE;
 
 export const normalizeQuotaSectionType = (value: unknown): QuotaSectionType | null =>
   typeof value === 'string' && QUOTA_SECTION_TYPE_SET.has(value as QuotaSectionType)

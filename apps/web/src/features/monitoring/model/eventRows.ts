@@ -165,7 +165,8 @@ export const buildEventRows = (
       // index，否则 prepend 新事件会让所有后续行 index 偏移、id 全变，导致 React 整表
       // 卸载重挂载（自动刷新时闪屏）。
       const stableId =
-        detail.__eventHash || `${detail.timestamp}-${detail.__modelName || '-'}-${sourceKey}-${authIndex}-${endpoint}`;
+        detail.__eventHash ||
+        `${detail.timestamp}-${detail.__modelName || '-'}-${sourceKey}-${authIndex}-${endpoint}`;
 
       return {
         id: stableId,
@@ -183,6 +184,7 @@ export const buildEventRows = (
         sourceMasked,
         account,
         accountMasked,
+        accountNote: authMeta?.note || '',
         authIndex,
         authIndexMasked: maskAuthIndex(authIndex),
         authLabel: authMeta?.label || snapshotLabel || sourceMasked,
