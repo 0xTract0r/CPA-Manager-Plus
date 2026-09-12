@@ -44,6 +44,7 @@ vi.mock('@/services/api', () => ({
   },
 }));
 
+import type { AuthFileAccountScheduling } from '@/types/authFile';
 import { buildPastedAuthJsonPayload, useAuthFilesData } from './useAuthFilesData';
 
 type UseAuthFilesDataHarness = {
@@ -515,6 +516,66 @@ describe('useAuthFilesData savePastedAuthJson', () => {
       'auth_files.paste_success:custom-auth.json',
       'success'
     );
+    hook.unmount();
+  });
+});
+
+describe('useAuthFilesData updateFileAccountScheduling', () => {
+  // 覆盖「保存后关掉再打开显示旧值（差一格）」bug 的根因修复：PATCH
+  // `/auth-files/account-scheduling` 是与账号列表 GET 完全独立的端点，回显的
+  // 最新投影必须就地写回 `files` 列表缓存（不是只更新当时打开的弹窗局部
+  // state），下次 openAccountSettingsEditor(file) 才能读到新值。
+  it('replaces only the matching file’s account_scheduling in place, preserving other fields and other files', async () => {
+    const hook = mountUseAuthFilesData();
+    const staleScheduling: AuthFileAccountScheduling = {
+      subscription_tier: 'max_5x',
+      tier_source: 'auto',
+      rate_scale: 2,
+    };
+    mocks.list.mockResolvedValueOnce({
+      files: [
+        { name: 'claude-acct.json', type: 'claude', note: 'keep-me', account_scheduling: staleScheduling },
+        { name: 'other-acct.json', type: 'claude', account_scheduling: staleScheduling },
+      ],
+    });
+    await act(async () => {
+      await hook.getCurrent().loadFiles();
+    });
+
+    const freshScheduling: AuthFileAccountScheduling = {
+      subscription_tier: 'max_5x',
+      tier_source: 'override',
+      rate_scale: 3,
+    };
+    act(() => {
+      hook.getCurrent().updateFileAccountScheduling('claude-acct.json', freshScheduling);
+    });
+
+    const target = hook.getCurrent().files.find((f) => f.name === 'claude-acct.json');
+    expect(target?.account_scheduling).toEqual(freshScheduling);
+    // 未改动的其它字段保持原样（不是整份被回显值覆盖）。
+    expect(target?.note).toBe('keep-me');
+    // 其它账号的条目不受影响。
+    const other = hook.getCurrent().files.find((f) => f.name === 'other-acct.json');
+    expect(other?.account_scheduling).toEqual(staleScheduling);
+    hook.unmount();
+  });
+
+  it('is a no-op when the name does not match any file in the current list', async () => {
+    const hook = mountUseAuthFilesData();
+    mocks.list.mockResolvedValueOnce({
+      files: [{ name: 'claude-acct.json', type: 'claude' }],
+    });
+    await act(async () => {
+      await hook.getCurrent().loadFiles();
+    });
+    const before = hook.getCurrent().files;
+
+    act(() => {
+      hook.getCurrent().updateFileAccountScheduling('missing-acct.json', { rate_scale: 5 });
+    });
+
+    expect(hook.getCurrent().files).toEqual(before);
     hook.unmount();
   });
 });

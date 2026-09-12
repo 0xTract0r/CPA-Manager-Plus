@@ -433,6 +433,18 @@ export interface AuthFileAccountWarmup {
   mature?: boolean;
   /** 账号年龄（天）；未锚定 first_production_at 时 core 下发 null。 */
   age_days?: number | null;
+  /**
+   * 当前养号阶段的 rpm 上限（core `AccountWarmupStatusFor` 计算，**未乘
+   * rate_scale 的原始值**，见 core auth_files_adaptive_scheduling.go
+   * buildAccountSchedulingView 顶部注释：warmup 块携带 PRE-scale 数字，
+   * `effective_limits` 才是乘完 rate_scale 的结果）。前端 rate_scale 输入框
+   * 下方的「实时预览」拿它当基准，客户端按当前输入值现算，不等保存。
+   */
+  rpm_limit?: number;
+  /** 同上，当前养号阶段的并发上限（PRE-scale）。 */
+  concurrency_limit?: number;
+  /** 同上，当前养号阶段的日预算（PRE-scale）；0 = 无限制（通常是已成熟号）。 */
+  daily_budget?: number;
   [key: string]: unknown;
 }
 
