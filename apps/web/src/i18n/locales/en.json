@@ -1122,6 +1122,7 @@
     "account_settings_scheduling_rate_scale_hint": "Rate-limit multiplier (applies in production): scales this account's rpm/burst/concurrency/warm-up daily budget ceilings. 1.0 = unchanged.",
     "account_settings_scheduling_rate_scale_reset": "Reset to default",
     "account_settings_scheduling_rate_scale_invalid": "Rate scale must be a number greater than 0, or empty to clear it.",
+    "account_settings_scheduling_rate_scale_preview": "Preview (unsaved): rpm {{rpm}} · burst {{burst}} · concurrency {{concurrency}} · daily budget {{dailyBudget}}",
     "account_settings_scheduling_effective_rate": "Effective rate scale: {{rate}}",
     "account_settings_scheduling_effective_limits_label": "Effective limits: rpm {{rpm}} · burst {{burst}} · concurrency {{concurrency}} · daily budget {{dailyBudget}} · token daily budget {{tokenDailyBudget}}",
     "account_settings_scheduling_effective_unlimited": "unlimited",

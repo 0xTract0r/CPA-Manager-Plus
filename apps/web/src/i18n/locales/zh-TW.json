@@ -1155,6 +1155,7 @@
     "account_settings_scheduling_rate_scale_hint": "速率上限乘數（生產生效）：按倍數縮放該號的 rpm/突發/並發/養號日預算上限，1.0 表示不變。",
     "account_settings_scheduling_rate_scale_reset": "回復預設",
     "account_settings_scheduling_rate_scale_invalid": "速率乘數必須是大於 0 的數字，留空則清除。",
+    "account_settings_scheduling_rate_scale_preview": "預覽（未儲存）：rpm {{rpm}} · 突發 {{burst}} · 並發 {{concurrency}} · 日預算 {{dailyBudget}}",
     "account_settings_scheduling_effective_rate": "目前生效速率乘數：{{rate}}",
     "account_settings_scheduling_effective_limits_label": "目前生效上限：rpm {{rpm}} · 突發 {{burst}} · 並發 {{concurrency}} · 日預算 {{dailyBudget}} · Token 日預算 {{tokenDailyBudget}}",
     "account_settings_scheduling_effective_unlimited": "無限制",

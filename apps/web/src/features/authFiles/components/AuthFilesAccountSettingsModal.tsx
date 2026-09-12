@@ -33,6 +33,7 @@ import type {
   AccountSettingsEditorState,
 } from '@/features/authFiles/hooks/useAuthFilesAccountSettings';
 import type {
+  AuthFileAccountScheduling,
   AuthFileClientVersionObservation,
   AuthFileHeaderMap,
   AuthFileManagedHeaderHistoryEntry,
@@ -119,6 +120,14 @@ export type AuthFilesAccountSettingsModalProps = {
   onChange: (field: AccountSettingsEditorField, value: AccountSettingsEditorFieldValue) => void;
   /** 代理输入框失焦（blur）时触发的内联实时校验（格式→查重→连通性探针 + 就地展示）。 */
   onProxyBlur?: () => void;
+  /**
+   * 调度旋钮（AccountSchedulingPanel）保存成功后回调，携带 core 回显的最新
+   * `account_scheduling` 投影。父页面据此就地更新账号列表缓存（而非依赖
+   * `editor.file` 那份打开弹窗时的快照），修复「关掉再打开显示旧值」——见
+   * useAccountSchedulingControls.ts / useAuthFilesData.ts updateFileAccountScheduling
+   * 顶部注释。未接线时静默跳过（不阻塞保存流程本身）。
+   */
+  onSchedulingApplied?: (name: string, scheduling: AuthFileAccountScheduling) => void;
 };
 
 type ManagedHeaderHistoryDiffRow = {
@@ -1257,6 +1266,7 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
     onSave,
     onChange,
     onProxyBlur,
+    onSchedulingApplied,
   } = props;
 
   // 原始 auth JSON 含明文 access_token，属敏感暴露面。native <details> 折叠时仍会把
@@ -1822,6 +1832,7 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
                       authIndex={editor.authIndex}
                       initialScheduling={editor.file?.account_scheduling}
                       disabled={disableControls || editor.saving}
+                      onApplied={(view) => onSchedulingApplied?.(editor.fileName, view)}
                     />
                   )}
                 </div>
