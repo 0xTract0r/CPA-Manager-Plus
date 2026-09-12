@@ -1,6 +1,7 @@
 import type { AxiosRequestConfig } from 'axios';
 import { requestCodexUsageRaw } from '@/services/api/codexQuota';
 import type { AuthFileItem, CodexRateLimitInfo } from '@/types';
+import { resolveAuthFileAccountIdentity } from '@/utils/accountIdentity';
 import {
   buildCodexQuotaWindowInfos,
   classifyCodexRateLimitWindows,
@@ -44,10 +45,7 @@ const readAuthFileName = (file: AuthFileItem) => {
 };
 
 const readDisplayAccount = (file: AuthFileItem) =>
-  readString(file.account) ||
-  readString(file.email) ||
-  readString(file.label) ||
-  readString(file.name) ||
+  resolveAuthFileAccountIdentity(file).primary ||
   readString(file.id) ||
   normalizeAuthIndex(file['auth_index'] ?? file.authIndex) ||
   '-';

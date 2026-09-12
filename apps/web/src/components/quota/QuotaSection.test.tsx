@@ -67,7 +67,7 @@ vi.mock('@/stores', () => ({
 }));
 
 const FULL_FILE_NAME = 'very-long-account-name@example.com.json';
-const MASKED_FILE_NAME = 'ver***@example.com.json';
+const MASKED_FILE_NAME = 've***@example.com';
 
 const testFile: AuthFileItem = {
   name: FULL_FILE_NAME,

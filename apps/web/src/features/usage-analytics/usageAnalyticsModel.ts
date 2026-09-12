@@ -26,6 +26,7 @@ import type { CredentialInfo } from '@/types/sourceInfo';
 import { formatInUtc8, getUtc8Parts } from '@/utils/datetime';
 import { buildSourceInfoMap } from '@/utils/sourceResolver';
 import { formatCompactNumber, formatUsd } from '@/utils/usage';
+import { maskAccountEmail, readEmailLike, resolveAccountIdentity } from '@/utils/accountIdentity';
 
 export type UsageAnalyticsTab =
   | 'performance'
@@ -136,6 +137,10 @@ export type UsageApiKeyContextRow = {
   id: string;
   provider?: string;
   account?: string;
+  accountLabel?: string;
+  accountEmail?: string;
+  accountMasked?: string;
+  accountNote?: string;
   authIndex?: string;
   source?: string;
   sourceHash?: string;
@@ -161,6 +166,9 @@ export type UsageRankRow = {
   source?: string;
   sourceHash?: string;
   account?: string;
+  accountEmail?: string;
+  accountMasked?: string;
+  accountNote?: string;
   projectId?: string;
   requestCount: number;
   successCount: number;
@@ -1283,12 +1291,19 @@ const resolveUsageCredentialDisplay = (
     ) || '-';
 
   if (!context) {
+    const account = firstReadableCredentialLabel(row.account_snapshot, row.auth_label_snapshot);
+    const email = readEmailLike(account);
     return {
       label: fallbackLabel,
-      account: firstReadableCredentialLabel(row.account_snapshot, row.auth_label_snapshot),
+      account,
+      accountEmail: email,
+      accountMasked: email ? maskAccountEmail(email) : '',
+      accountNote: '',
       provider: row.auth_provider_snapshot,
     };
   }
+
+  const authMeta = row.auth_index ? context.authMetaMap.get(row.auth_index) : undefined;
 
   const display = buildMonitoringSourceDisplay(
     {
@@ -1302,12 +1317,19 @@ const resolveUsageCredentialDisplay = (
     context
   );
 
-  const label =
-    firstReadableCredentialLabel(display.sourceLabel, display.primary, fallbackLabel) || '-';
+  const account = firstReadableCredentialLabel(display.account, row.account_snapshot);
+  const identity = resolveAccountIdentity({
+    note: authMeta?.note,
+    email: authMeta?.email || account,
+    fallback: firstReadableCredentialLabel(display.sourceLabel, display.primary, fallbackLabel),
+  });
 
   return {
-    label,
-    account: firstReadableCredentialLabel(display.account, row.account_snapshot, label),
+    label: identity.primary || '-',
+    account: identity.email || account || identity.primary,
+    accountEmail: identity.email,
+    accountMasked: identity.maskedEmail,
+    accountNote: identity.note,
     provider: firstReadableCredentialLabel(display.provider, row.auth_provider_snapshot),
   };
 };
@@ -1339,34 +1361,43 @@ const buildModelSpendRows = (
   }));
 
 const buildApiKeyContextRows = (
-  rows: NonNullable<MonitoringAnalyticsApiKeyStatRow['contexts']> | undefined
+  rows: NonNullable<MonitoringAnalyticsApiKeyStatRow['contexts']> | undefined,
+  credentialDisplayContext?: UsageCredentialDisplayContext
 ): UsageApiKeyContextRow[] =>
-  (rows ?? []).map((row) => ({
-    id: row.id || '-',
-    provider: row.auth_provider_snapshot,
-    account: row.account_snapshot || row.auth_label_snapshot,
-    authIndex: row.auth_index,
-    source: row.source,
-    sourceHash: row.source_hash,
-    requestCount: toNumber(row.calls),
-    successCount: toNumber(row.success_calls),
-    failureCount: toNumber(row.failure_calls),
-    successRate: toNumber(row.success_rate),
-    failureRate:
-      row.failure_rate === undefined
-        ? safeShare(toNumber(row.failure_calls), toNumber(row.calls))
-        : toNumber(row.failure_rate),
-    totalTokens: toNumber(row.total_tokens),
-    estimatedCost: toNumber(row.cost),
-    averageLatencyMs: row.average_latency_ms ?? null,
-    lastSeenMs: row.last_seen_ms,
-  }));
+  (rows ?? []).map((row) => {
+    const display = resolveUsageCredentialDisplay(row, credentialDisplayContext);
+    return {
+      id: row.id || '-',
+      provider: display.provider || row.auth_provider_snapshot,
+      account: display.account || row.account_snapshot || row.auth_label_snapshot,
+      accountLabel: display.label,
+      accountEmail: display.accountEmail,
+      accountMasked: display.accountMasked,
+      accountNote: display.accountNote,
+      authIndex: row.auth_index,
+      source: row.source,
+      sourceHash: row.source_hash,
+      requestCount: toNumber(row.calls),
+      successCount: toNumber(row.success_calls),
+      failureCount: toNumber(row.failure_calls),
+      successRate: toNumber(row.success_rate),
+      failureRate:
+        row.failure_rate === undefined
+          ? safeShare(toNumber(row.failure_calls), toNumber(row.calls))
+          : toNumber(row.failure_rate),
+      totalTokens: toNumber(row.total_tokens),
+      estimatedCost: toNumber(row.cost),
+      averageLatencyMs: row.average_latency_ms ?? null,
+      lastSeenMs: row.last_seen_ms,
+    };
+  });
 
 export const buildApiKeyRows = (
   rows: MonitoringAnalyticsApiKeyStatRow[] = [],
   summary?: UsageSummaryMetrics,
   keyword = '',
-  apiKeyDisplayMap?: UsageApiKeyDisplayMap
+  apiKeyDisplayMap?: UsageApiKeyDisplayMap,
+  credentialDisplayContext?: UsageCredentialDisplayContext
 ): UsageRankRow[] => {
   const normalizedKeyword = keyword.trim().toLowerCase();
   const totalCost = summary?.estimatedCost ?? rows.reduce((sum, row) => sum + rowTotalCost(row), 0);
@@ -1412,7 +1443,7 @@ export const buildApiKeyRows = (
             : totalTokens > 0
               ? toNumber(row.total_tokens) / totalTokens
               : 0,
-        contexts: buildApiKeyContextRows(row.contexts),
+        contexts: buildApiKeyContextRows(row.contexts, credentialDisplayContext),
         models: buildModelSpendRows(row.models),
       };
     })
@@ -1445,6 +1476,9 @@ export const buildCredentialRows = (
         source: row.source,
         sourceHash: row.source_hash,
         account: display.account || row.account_snapshot || row.auth_label_snapshot,
+        accountEmail: display.accountEmail,
+        accountMasked: display.accountMasked,
+        accountNote: display.accountNote,
         projectId: row.auth_project_id_snapshot,
         requestCount: toNumber(row.calls),
         successCount: toNumber(row.success_calls),
@@ -2271,7 +2305,13 @@ export const adaptUsageAnalyticsData = (
     credentialDisplayContext
   );
   const modelRows = buildModelRows(data?.model_stats ?? [], summary);
-  const apiKeyRows = buildApiKeyRows(data?.api_key_stats ?? [], summary, keyword, apiKeyDisplayMap);
+  const apiKeyRows = buildApiKeyRows(
+    data?.api_key_stats ?? [],
+    summary,
+    keyword,
+    apiKeyDisplayMap,
+    credentialDisplayContext
+  );
   const credentialRows = buildCredentialRows(
     data?.credential_stats ?? [],
     summary,

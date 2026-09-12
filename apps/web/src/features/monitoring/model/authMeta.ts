@@ -3,6 +3,7 @@ import { normalizeAuthIndex } from '@/utils/usage';
 import { buildLegacyAuthIndexAliases } from '../legacyAuthIndexAliases';
 import { extractHost, isRecord, parseBoolean, readString } from './base';
 import type { MonitoringAuthMeta, MonitoringChannelMeta } from './types';
+import { resolveAuthFileAccountIdentity } from '@/utils/accountIdentity';
 
 export const normalizeOpenAIChannel = (
   value: unknown,
@@ -61,11 +62,12 @@ const normalizeAuthMeta = (entry: AuthFileItem): MonitoringAuthMeta | null => {
   const authIndex = normalizeAuthIndex(entry['auth_index'] ?? entry.authIndex);
   if (!authIndex) return null;
 
+  const identity = resolveAuthFileAccountIdentity(entry);
   const label =
+    identity.note ||
     readString(entry.label) ||
     readString(entry.name) ||
-    readString(entry.email) ||
-    readString(entry.account) ||
+    identity.email ||
     authIndex;
 
   const planType = readString(
@@ -75,7 +77,9 @@ const normalizeAuthMeta = (entry: AuthFileItem): MonitoringAuthMeta | null => {
   return {
     authIndex,
     label,
-    account: readString(entry.account) || readString(entry.email) || label,
+    account: identity.email || readString(entry.account) || readString(entry.email) || label,
+    note: identity.note || undefined,
+    email: identity.email || undefined,
     provider: readString(entry.provider) || readString(entry.type) || '-',
     status: readString(entry.status) || 'unknown',
     disabled: parseBoolean(entry.disabled),

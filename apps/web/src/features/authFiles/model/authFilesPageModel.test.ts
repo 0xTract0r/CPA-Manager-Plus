@@ -726,6 +726,21 @@ describe('auth file Codex status helpers', () => {
     expect(normalizeAuthFilesCodexStatusFilter('disabled_with_reset')).toBe('disabled_with_reset');
     expect(normalizeAuthFilesCodexStatusFilter('unknown')).toBeNull();
   });
+
+  it('includes account notes and full emails in auth-file search values', () => {
+    const values = stringifySearchValue(
+      getAuthFileSearchValues(
+        codexFile({
+          note: '上海主力池',
+          email: 'Owner.Name+prod@example.test',
+        }),
+        t
+      )
+    );
+
+    expect(values).toContain('上海主力池');
+    expect(values).toContain('Owner.Name+prod@example.test');
+  });
 });
 
 describe('auth file Codex plan helpers', () => {

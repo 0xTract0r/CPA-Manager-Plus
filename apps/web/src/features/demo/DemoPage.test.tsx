@@ -170,6 +170,19 @@ describe('DemoPage', () => {
     );
   });
 
+  it('provides production-shaped but fully synthetic account identities for UI regression', () => {
+    const files = getDemoAuthFiles().files;
+    const notes = files.map((file) => String(file.note || '').trim());
+
+    expect(files.length).toBeGreaterThanOrEqual(48);
+    expect(notes.filter(Boolean).length).toBeGreaterThanOrEqual(40);
+    expect(notes.filter((note) => note === '共享备注 · 蓝组').length).toBeGreaterThanOrEqual(2);
+    expect(notes.some((note) => note.length > 30)).toBe(true);
+    expect(files.some((file) => !String(file.note || '').trim())).toBe(true);
+    expect(files.some((file) => String(file.email || '').includes('+'))).toBe(true);
+    expect(files.every((file) => !String(file.email || '').endsWith('@wisedata.co'))).toBe(true);
+  });
+
   it('keeps visible demo dates relative to the current day', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-06-29T10:00:00+08:00'));

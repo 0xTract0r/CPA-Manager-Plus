@@ -1056,6 +1056,11 @@
   line-height: 1.4;
 }
 
+.quotaAccountIdentity {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .pagination {
   display: flex;
   justify-content: center;

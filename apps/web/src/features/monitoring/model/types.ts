@@ -19,6 +19,8 @@ export type MonitoringAuthMeta = {
   authIndex: string;
   label: string;
   account: string;
+  note?: string;
+  email?: string;
   provider: string;
   status: string;
   disabled: boolean;
@@ -168,6 +170,7 @@ export type MonitoringEventRow = {
   sourceMasked: string;
   account: string;
   accountMasked: string;
+  accountNote?: string;
   authIndex: string;
   authIndexMasked: string;
   authLabel: string;

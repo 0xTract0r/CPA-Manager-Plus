@@ -2,9 +2,11 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AsyncPanel } from '@/components/ui/AsyncPanel';
 import { Button } from '@/components/ui/Button';
+import { AccountIdentity } from '@/components/ui/AccountIdentity';
 import { IconMoon } from '@/components/ui/icons';
 import { formatFileSize } from '@/utils/format';
 import { formatDateTimeUtc8 } from '@/utils/datetime';
+import { resolveAccountIdentity } from '@/utils/accountIdentity';
 import { useTimezone } from '@/hooks/useTimezone';
 import type { StatusBadgeVariant } from '../utils/health';
 import { useFarmStandbySummary } from '../hooks/useFarmStandbySummary';
@@ -47,8 +49,7 @@ export function FarmStandbySummaryPanel() {
   const retiredVolumeCount = retiredVolumes?.count ?? 0;
   const thresholdDays = disabled?.threshold_days ?? 0;
 
-  const fmtTime = (value?: string) =>
-    value ? formatDateTimeUtc8(value, i18n.language) : '—';
+  const fmtTime = (value?: string) => (value ? formatDateTimeUtc8(value, i18n.language) : '—');
 
   // F4：per-volume 占盘后端当前恒为 null（未接入），必须区分"未知/未接入"与"0B"——
   // null/undefined 显"未知/未接入"，有值才 formatFileSize，绝不把未知渲染成 0B 误导。
@@ -179,9 +180,16 @@ export function FarmStandbySummaryPanel() {
                       className={styles.row}
                       data-testid={`farm-standby-summary-disabled-item-${item.account_id}`}
                     >
-                      <span className={styles.rowPrimary} title={item.account_id}>
-                        {item.note || item.account_id}
-                      </span>
+                      <AccountIdentity
+                        identity={resolveAccountIdentity({
+                          note: item.note,
+                          email: item.account_id,
+                          fallback: item.account_id,
+                        })}
+                        compact
+                        className={styles.rowPrimary}
+                        testId={`farm-standby-disabled-account-${item.account_id}`}
+                      />
                       {/* F5：停用天数是"防遗忘"最有用的信号，作为主要计量前置展示。 */}
                       {typeof item.age_days === 'number' ? (
                         <span
@@ -228,9 +236,16 @@ export function FarmStandbySummaryPanel() {
                 <ul className={styles.list} data-testid="farm-standby-summary-standby-list">
                   {standby.items.map((item) => (
                     <li key={item.container_id} className={styles.row}>
-                      <span className={styles.rowPrimary} title={item.container_id}>
-                        {item.note || item.account_id || item.container_id}
-                      </span>
+                      <AccountIdentity
+                        identity={resolveAccountIdentity({
+                          note: item.note,
+                          email: item.account_id,
+                          fallback: item.account_id || item.container_id,
+                        })}
+                        compact
+                        className={styles.rowPrimary}
+                        testId={`farm-standby-container-account-${item.container_id}`}
+                      />
                       <span className={styles.rowMeta}>
                         {t('farm.standbySummary.standbySince', {
                           at: fmtTime(item.standby_since),

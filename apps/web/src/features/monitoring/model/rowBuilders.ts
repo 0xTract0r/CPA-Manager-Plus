@@ -15,6 +15,7 @@ import type {
   MonitoringSummary,
   MonitoringTimeRange,
 } from './types';
+import { readEmailLike } from '@/utils/accountIdentity';
 
 const UNKNOWN_API_KEY_GROUP_PREFIX = 'unknown-client-api-key';
 
@@ -23,16 +24,11 @@ const isEffectiveLabel = (value: string) => {
   return Boolean(trimmed) && trimmed !== '-';
 };
 
-const looksLikeMaskedUsageSource = (value: string) => {
-  const trimmed = value.trim();
-  return trimmed.startsWith('m:') || trimmed.startsWith('k:');
-};
-
 const resolveAccountDisplayName = (account: string, channels: Iterable<string>) => {
+  if (readEmailLike(account)) return account;
   const channelLabels = Array.from(new Set(Array.from(channels).filter(isEffectiveLabel)));
-  if (looksLikeMaskedUsageSource(account) && channelLabels.length === 1) {
-    return channelLabels[0];
-  }
+  const maskedSource = account.startsWith('m:') || account.startsWith('k:');
+  if (maskedSource && channelLabels.length === 1) return channelLabels[0];
   return account || channelLabels[0] || '-';
 };
 
@@ -294,6 +290,7 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
       id: string;
       account: string;
       accountMasked: string;
+      accountNotes: Set<string>;
       authLabels: Set<string>;
       authIndices: Set<string>;
       sourceKeys: Set<string>;
@@ -339,6 +336,7 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
       id: accountKey,
       account: row.account,
       accountMasked: row.accountMasked,
+      accountNotes: new Set<string>(),
       authLabels: new Set<string>(),
       authIndices: new Set<string>(),
       sourceKeys: new Set<string>(),
@@ -363,6 +361,7 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
 
     existing.rows.push(row);
     existing.authLabels.add(row.authLabel);
+    if (row.accountNote) existing.accountNotes.add(row.accountNote);
     existing.authIndices.add(row.authIndex);
     if (row.sourceKey) {
       existing.sourceKeys.add(row.sourceKey);
@@ -423,6 +422,10 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
       const authIndices = Array.from(item.authIndices).sort();
       const sourceKeys = Array.from(item.sourceKeys).sort();
       const apiKeyHashes = Array.from(item.apiKeyHashes).sort();
+      const authLabels = Array.from(item.authLabels).filter(Boolean).sort();
+      const accountLabel =
+        Array.from(item.accountNotes).find(Boolean) ||
+        resolveAccountDisplayName(item.account, channels);
       return {
         id: item.id,
         account: item.account,
@@ -432,9 +435,9 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
             authIndices,
             apiKeyHashes,
           }) || item.account,
-        displayAccount: resolveAccountDisplayName(item.account, channels),
+        displayAccount: accountLabel,
         accountMasked: item.accountMasked,
-        authLabels: Array.from(item.authLabels).sort(),
+        authLabels,
         authIndices,
         sourceKeys,
         channels,

@@ -40,7 +40,7 @@ Paste the full callback URL. Do not manually extract `code` or `state`; that can
 
 ## Vertex Credential Import
 
-Vertex usually requires a service-account file and a location. After import, check the returned project, email, location, and file name.
+Vertex usually requires a service-account file and a location. After import, check the project, masked email, location, and file name; hover or keyboard-focus the email when the full value is needed.
 
 If import succeeds but requests fail, check both [AI Providers](./ai-providers.md) for Vertex routing and Auth Files for project ID.
 
@@ -58,4 +58,3 @@ After reauth, do not immediately delete old files. Confirm the new file works fi
 ## Security Notes
 
 Authorization links, callback URLs, and auth files can contain sensitive data. Do not paste full values into public issues or chats. For troubleshooting, describe the stage and share sanitized errors.
-

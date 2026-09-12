@@ -2,6 +2,7 @@ import type { PerformanceGroup, PerformanceMetric } from './types';
 import type { AuthFileItem } from '@/types/authFile';
 import { normalizeAuthIndex } from '@/utils/usage';
 import { buildLegacyAuthIndexAliases } from '@/features/monitoring/legacyAuthIndexAliases';
+import { readAuthFileEmail, readAuthFileNote } from '@/utils/accountIdentity';
 export const THRESHOLD_KEY = 'cpamp.performance.thresholds.v1';
 export interface PerformanceThresholds {
   latencySeconds: number;
@@ -88,9 +89,9 @@ export function buildPerformanceAccountDirectory(
   for (const file of files) {
     const provider = accountText(file.provider || file.type).toLowerCase();
     const identity = {
-      email: accountEmail(file.email) || accountEmail(file.account),
+      email: readAuthFileEmail(file),
       name: accountText(file.label) || accountText(file.name),
-      note: accountText(file.note),
+      note: readAuthFileNote(file),
       provider,
     };
     const index = normalizeAuthIndex(file.auth_index ?? file.authIndex);

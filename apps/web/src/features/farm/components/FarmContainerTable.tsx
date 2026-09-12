@@ -13,11 +13,12 @@ import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import { AsyncPanel } from '@/components/ui/AsyncPanel';
 import { HealthPill } from '@/components/ui/HealthPill';
+import { AccountEmailReveal } from '@/components/ui/AccountIdentity';
 import type { FarmContainerView } from '@/types/farm';
 import { formatDateTimeUtc8, formatRelativeFromNow } from '@/utils/datetime';
 import { useInterval } from '@/hooks/useInterval';
 import { useFarmRetiredContainers } from '../hooks/useFarmRetiredContainers';
-import { resolveBindingIdentity } from '../utils/identity';
+import { resolveBindingIdentity, stripJsonSuffix } from '../utils/identity';
 import { ResponsiveTable } from './ResponsiveTable';
 import {
   deviceAlignmentToBadgeVariant,
@@ -487,13 +488,21 @@ export function FarmContainerTable({
                         <div className={styles.bindingPrimaryRow}>
                           {/* 主标识：备注名优先；无备注时回退脱敏邮箱。title 保留原始
                               邮箱供 operator 需要时悬浮查看。 */}
-                          <span
-                            className={styles.bindingAccount}
-                            title={container.binding.account}
-                            data-testid={`farm-container-binding-primary-${container.id}`}
-                          >
-                            {bindingIdentity.primary || t('farm.containers.no_binding')}
-                          </span>
+                          {bindingIdentity.hasNote ? (
+                            <span
+                              className={styles.bindingAccount}
+                              data-testid={`farm-container-binding-primary-${container.id}`}
+                            >
+                              {bindingIdentity.primary || t('farm.containers.no_binding')}
+                            </span>
+                          ) : (
+                            <AccountEmailReveal
+                              email={stripJsonSuffix(container.binding.account)}
+                              masked={bindingIdentity.primary}
+                              className={styles.bindingAccount}
+                              testId={`farm-container-binding-primary-${container.id}`}
+                            />
+                          )}
                           <span className={styles.chip}>
                             {t(`farm.env.${container.binding.env}`, {
                               defaultValue: container.binding.env,
@@ -502,26 +511,25 @@ export function FarmContainerTable({
                         </div>
                         {/* 次要标识：有备注名时才展示脱敏邮箱（无备注名时主标识已是脱敏邮箱）。 */}
                         {bindingIdentity.hasNote && bindingIdentity.secondary ? (
-                          <span
+                          <AccountEmailReveal
+                            email={stripJsonSuffix(container.binding.account)}
+                            masked={bindingIdentity.secondary}
                             className={styles.bindingSecondary}
-                            data-testid={`farm-container-binding-secondary-${container.id}`}
-                          >
-                            {bindingIdentity.secondary}
-                          </span>
+                            testId={`farm-container-binding-secondary-${container.id}`}
+                          />
                         ) : null}
                       </div>
                     ) : lastBoundIdentity ? (
                       <div className={styles.bindingCell}>
-                        <span
-                          className={styles.bindingSecondary}
-                          title={container.last_bound_account}
-                          data-testid={`farm-container-last-bound-${container.id}`}
-                        >
-                          {t('farm.containers.last_bound_unbound', {
+                        <AccountEmailReveal
+                          email={stripJsonSuffix(container.last_bound_account)}
+                          masked={t('farm.containers.last_bound_unbound', {
                             account: lastBoundIdentity.primary || container.last_bound_account,
                             defaultValue: '上次绑定：{{account}}（已解绑）',
                           })}
-                        </span>
+                          className={styles.bindingSecondary}
+                          testId={`farm-container-last-bound-${container.id}`}
+                        />
                       </div>
                     ) : (
                       <span className={styles.mono}>{t('farm.containers.no_binding')}</span>

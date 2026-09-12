@@ -14,12 +14,19 @@ Use [OAuth Login](./oauth.md) to add new OAuth accounts. This page is for mainte
 
 In multi-account setups, stable `auth_index` values are mandatory. Without them, history, quota, inspection, and actions are hard to connect to the right account.
 
+## Account Identity Across CPAMP
+
+- When a note exists, CPAMP uses it as the primary identity across Auth Files, Quota, Monitoring, Usage Analytics, inspection, account actions, and Farm views.
+- Email remains visible as a secondary identity, but is masked by default. Hover the email or focus it with the keyboard to reveal the full value.
+- Without a note, the masked email becomes primary. File name or an internal identifier is used only when email is unavailable.
+- Search fields match both notes and full emails. Duplicate notes may match several accounts, so confirm the masked email and `auth_index` before acting.
+
 ## Common Actions
 
 - Refresh auth files and account state.
 - Paste JSON or upload auth files.
 - Download, edit, disable, restore, or delete auth files.
-- Use search, sort, page size, and display mode to find accounts.
+- Search by note or full email, then use sort, page size, and view mode to narrow the list.
 - Filter by Codex status, plan type, or problem-only view.
 - Batch edit priority, notes, project ID, or enabled state.
 - View supported models to decide whether an account should handle a target model.
@@ -48,4 +55,3 @@ When pasting JSON, choose the format that matches the source. JSON formats diffe
 ## Security Notes
 
 Auth files contain sensitive credentials. Do not share full JSON, OAuth tokens, API keys, or management keys. For troubleshooting, share sanitized monitoring summaries, account-state screenshots, and log timestamps instead.
-

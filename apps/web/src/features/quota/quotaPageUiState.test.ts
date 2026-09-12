@@ -57,8 +57,8 @@ describe('quotaPageUiState', () => {
     expect(normalizeQuotaSortMode('unknown')).toBe('default');
     expect(normalizeQuotaSectionViewMode('all')).toBe('all');
     expect(normalizeQuotaSectionViewMode('bad')).toBe('paged');
-    expect(normalizeQuotaAccountDisplayMode('full')).toBe('full');
-    expect(normalizeQuotaAccountDisplayMode('visible')).toBe('full');
+    expect(normalizeQuotaAccountDisplayMode('full')).toBe('masked');
+    expect(normalizeQuotaAccountDisplayMode('visible')).toBe('masked');
     expect(normalizeQuotaSectionType('xai')).toBe('xai');
     expect(normalizeQuotaSectionType('bad')).toBeNull();
   });
@@ -88,8 +88,8 @@ describe('quotaPageUiState', () => {
         claude: 'paged',
       },
       accountDisplayModes: {
-        codex: 'full',
-        claude: 'full',
+        codex: 'masked',
+        claude: 'masked',
       },
     });
   });
@@ -103,7 +103,7 @@ describe('quotaPageUiState', () => {
         kimi: 'paged',
       },
       accountDisplayModes: {
-        codex: 'full',
+        codex: 'masked',
         kimi: 'masked',
       },
     });
@@ -116,7 +116,7 @@ describe('quotaPageUiState', () => {
         kimi: 'paged',
       },
       accountDisplayModes: {
-        codex: 'full',
+        codex: 'masked',
         kimi: 'masked',
       },
     });
@@ -128,7 +128,7 @@ describe('quotaPageUiState', () => {
         kimi: 'paged',
       },
       accountDisplayModes: {
-        codex: 'full',
+        codex: 'masked',
         kimi: 'masked',
       },
     });

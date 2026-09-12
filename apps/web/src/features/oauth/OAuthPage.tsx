@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
+import { AccountIdentity } from '@/components/ui/AccountIdentity';
 import { Input } from '@/components/ui/Input';
 import { useAuthStore, useNotificationStore, useThemeStore } from '@/stores';
 import {
@@ -17,6 +18,7 @@ import { authFilesApi } from '@/services/api/authFiles';
 import type { AuthFileItem } from '@/types/authFile';
 import { vertexApi, type VertexImportResponse } from '@/services/api/vertex';
 import { copyToClipboard } from '@/utils/clipboard';
+import { resolveAccountIdentity } from '@/utils/accountIdentity';
 import { findAccountsUsingProxy } from '@/utils/proxyPreflight';
 import {
   precheckProxyInlineFormat,
@@ -1316,20 +1318,21 @@ export function OAuthPage() {
                               t('auth_login.oauth_saved_auth_file_unknown', { defaultValue: '未知' })}
                           </span>
                         </div>
-                        {state.successResult.account && (
+                        {(state.successResult.account || state.successResult.note) && (
                           <div className={styles.keyValueItem}>
                             <span className={styles.keyValueKey}>
                               {t('auth_login.oauth_saved_account', { defaultValue: '账号' })}
                             </span>
-                            <span className={styles.keyValueValue}>{state.successResult.account}</span>
-                          </div>
-                        )}
-                        {state.successResult.note && (
-                          <div className={styles.keyValueItem}>
-                            <span className={styles.keyValueKey}>
-                              {t('auth_login.oauth_saved_note', { defaultValue: '备注' })}
-                            </span>
-                            <span className={styles.keyValueValue}>{state.successResult.note}</span>
+                            <AccountIdentity
+                              identity={resolveAccountIdentity({
+                                note: state.successResult.note,
+                                email: state.successResult.account,
+                                fallback: state.successResult.account,
+                              })}
+                              compact
+                              className={styles.keyValueValue}
+                              testId={`oauth-success-account-${provider.id}`}
+                            />
                           </div>
                         )}
                         {state.successResult.proxyUrl && (
@@ -1437,7 +1440,12 @@ export function OAuthPage() {
                   {vertexState.result.email && (
                     <div className={styles.keyValueItem}>
                       <span className={styles.keyValueKey}>{t('vertex_import.result_email')}</span>
-                      <span className={styles.keyValueValue}>{vertexState.result.email}</span>
+                      <AccountIdentity
+                        identity={resolveAccountIdentity({ email: vertexState.result.email })}
+                        compact
+                        className={styles.keyValueValue}
+                        testId="vertex-import-account-identity"
+                      />
                     </div>
                   )}
                   {vertexState.result.location && (

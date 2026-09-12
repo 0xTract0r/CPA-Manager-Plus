@@ -1,10 +1,12 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
+import { AccountEmailReveal, AccountIdentity } from '@/components/ui/AccountIdentity';
 import type { AuthFileItem } from '@/types/authFile';
 import { EChartsView } from '@/components/charts/EChartsView';
 import { useTimezone } from '@/hooks';
 import { formatInUtc8 } from '@/utils/datetime';
+import { maskAccountEmail, readEmailLike, resolveAccountIdentity } from '@/utils/accountIdentity';
 import type { PerformanceData, PerformanceGroup } from './types';
 import {
   coverage,
@@ -403,7 +405,6 @@ export function PerformancePanel({
             <thead>
               <tr>
                 <th>{text('account')}</th>
-                <th className={styles.accountNote}>{text('accountNote')}</th>
                 <th>{text('provider')}</th>
                 <th>{text('attempts')}</th>
                 <th>{text('latencyP95')}</th>
@@ -414,24 +415,37 @@ export function PerformancePanel({
             <tbody>
               {data.accounts.map((row) => {
                 const identity = resolvePerformanceAccount(row, accountDirectory);
+                const displayIdentity = resolveAccountIdentity({
+                  note: identity?.note,
+                  email: identity?.email,
+                  fallback: identity?.name || row.account_key,
+                });
+                const accountKeyEmail = readEmailLike(row.account_key);
                 return (
                   <tr key={`${row.provider}:${row.account_key}`}>
                     <td className={styles.accountIdentity}>
-                      <strong>
-                        {identity?.email || identity?.name || text('unidentifiedAccount')}
-                      </strong>
-                      {identity?.email && identity.name && identity.email !== identity.name ? (
-                        <small>{identity.name}</small>
-                      ) : null}
+                      <AccountIdentity
+                        identity={displayIdentity}
+                        compact
+                        showFallback
+                        testId={`performance-account-identity-${row.provider}-${row.account_key}`}
+                      />
                       {!identity ? <small>{text('accountMissingHint')}</small> : null}
                       {identity?.historical ? <small>{text('historicalAccount')}</small> : null}
                       <details>
                         <summary>{text('accountIdentifier')}</summary>
-                        <code>{row.account_key || '—'}</code>
+                        <code>
+                          {accountKeyEmail ? (
+                            <AccountEmailReveal
+                              email={accountKeyEmail}
+                              masked={maskAccountEmail(accountKeyEmail)}
+                              testId={`performance-account-key-${row.provider}-${row.account_key}`}
+                            />
+                          ) : (
+                            row.account_key || '—'
+                          )}
+                        </code>
                       </details>
-                    </td>
-                    <td className={styles.accountNote}>
-                      {identity?.note || text(identity?.historical ? 'noHistoricalNote' : 'noNote')}
                     </td>
                     <td>{row.provider || '—'}</td>
                     <td>{row.total_calls}</td>

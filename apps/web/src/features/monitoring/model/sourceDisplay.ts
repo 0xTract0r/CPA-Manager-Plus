@@ -155,6 +155,7 @@ export const buildMonitoringSourceDisplay = (
       [
         primary,
         meta,
+        account,
         sourceMasked,
         accountMasked,
         channelHost,
