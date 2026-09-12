@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { authFilesApi, type AuthFileFieldsPatch } from '@/services/api';
 import { apiClient } from '@/services/api/client';
 import { useNotificationStore } from '@/stores';
-import type { AuthFileItem, AuthFileStatusHistoryTrigger } from '@/types';
+import type { AuthFileAccountScheduling, AuthFileItem, AuthFileStatusHistoryTrigger } from '@/types';
 import { formatFileSize } from '@/utils/format';
 import { MAX_AUTH_FILE_SIZE } from '@/utils/constants';
 import { downloadBlob } from '@/utils/download';
@@ -93,6 +93,16 @@ export type UseAuthFilesDataResult = {
   handleDownload: (name: string) => Promise<void>;
   handleStatusToggle: (item: AuthFileItem, enabled: boolean) => Promise<void>;
   handleStatusRefresh: (item: AuthFileItem, options?: HandleStatusRefreshOptions) => Promise<void>;
+  /**
+   * 就地更新某个账号在列表缓存里的 `account_scheduling` 投影（不触发整份
+   * `loadFiles()` 重拉）。PATCH `/auth-files/account-scheduling`（P7 调度旋钮）
+   * 是与账号列表 GET 完全独立的端点，core 回显的最新投影只喂给了当时打开的
+   * 弹窗局部 state；`files` 本身不会跟着变——导致关掉设置弹窗再打开时，
+   * `openAccountSettingsEditor` 拿到的还是这份旧列表条目里的旧 `account_scheduling`
+   * （差一格）。同 `handleStatusToggle` 的就地 `setFiles` 惯例：这里写入的是
+   * core 已经归一化回显的最终投影（不是乐观提交值），直接覆盖即可。
+   */
+  updateFileAccountScheduling: (name: string, scheduling: AuthFileAccountScheduling) => void;
   toggleSelect: (key: string) => void;
   selectAllVisible: (visibleFiles: AuthFileItem[]) => void;
   invertVisibleSelection: (visibleFiles: AuthFileItem[]) => void;
@@ -728,6 +738,19 @@ export function useAuthFilesData(
     [onStatusHistoryChanged, showNotification, statusRefreshing, t]
   );
 
+  // P7 调度旋钮（AccountSchedulingPanel）保存成功后回调，就地把 core 回显的最新
+  // account_scheduling 投影写回列表缓存（同 handleStatusToggle 的 setFiles 就地
+  // 更新惯例），修复「关掉设置弹窗再打开显示旧值（差一格）」——见本函数类型定义
+  // 处的注释。找不到匹配 name 的条目时是 no-op（账号可能已被删除/改名）。
+  const updateFileAccountScheduling = useCallback(
+    (name: string, scheduling: AuthFileAccountScheduling) => {
+      setFiles((prev) =>
+        prev.map((file) => (file.name === name ? { ...file, account_scheduling: scheduling } : file))
+      );
+    },
+    []
+  );
+
   const batchSetStatus = useCallback(
     async (names: string[], enabled: boolean) => {
       if (batchStatusPendingRef.current) return;
@@ -991,6 +1014,7 @@ export function useAuthFilesData(
     handleDownload,
     handleStatusToggle,
     handleStatusRefresh,
+    updateFileAccountScheduling,
     toggleSelect,
     selectAllVisible,
     invertVisibleSelection,

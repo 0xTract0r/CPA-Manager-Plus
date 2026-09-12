@@ -1122,6 +1122,7 @@
     "account_settings_scheduling_rate_scale_hint": "速率上限乘子（生产生效）：按倍数缩放该号的 rpm/突发/并发/养号日预算上限，1.0 表示不变。",
     "account_settings_scheduling_rate_scale_reset": "恢复默认",
     "account_settings_scheduling_rate_scale_invalid": "速率乘子必须是大于 0 的数字，留空则清除。",
+    "account_settings_scheduling_rate_scale_preview": "预览（未保存）：rpm {{rpm}} · 突发 {{burst}} · 并发 {{concurrency}} · 日预算 {{dailyBudget}}",
     "account_settings_scheduling_effective_rate": "当前生效速率乘子：{{rate}}",
     "account_settings_scheduling_effective_limits_label": "当前生效上限：rpm {{rpm}} · 突发 {{burst}} · 并发 {{concurrency}} · 日预算 {{dailyBudget}} · Token 日预算 {{tokenDailyBudget}}",
     "account_settings_scheduling_effective_unlimited": "无限制",

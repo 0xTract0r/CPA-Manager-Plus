@@ -58,10 +58,26 @@ vi.mock('./AuthFilesStatusHistoryPanel', () => ({
 }));
 
 // AccountSchedulingPanel 自身的接线/请求参数已在 AccountSchedulingPanel.test.tsx
-// 独立覆盖；这里只需要一个可探测的占位，用来断言 provider gate。
+// 独立覆盖；这里只需要一个可探测的占位，用来断言 provider gate + onApplied 透传
+// 接线（差一格 bug 的回归覆盖：保存成功后，弹窗必须把 core 回显投影转发给
+// onSchedulingApplied，而不是吞掉）。
 vi.mock('./AccountSchedulingPanel', () => ({
-  AccountSchedulingPanel: (props: { fileName: string }) => (
-    <div data-testid="account-settings-scheduling-panel-stub">{props.fileName}</div>
+  AccountSchedulingPanel: (props: {
+    fileName: string;
+    onApplied?: (view: { subscription_tier: string; tier_source: string; rate_scale: number }) => void;
+  }) => (
+    <div data-testid="account-settings-scheduling-panel-stub">
+      {props.fileName}
+      <button
+        type="button"
+        data-testid="account-settings-scheduling-panel-stub-apply"
+        onClick={() =>
+          props.onApplied?.({ subscription_tier: 'max_20x', tier_source: 'override', rate_scale: 2 })
+        }
+      >
+        stub-apply
+      </button>
+    </div>
   ),
 }));
 
@@ -117,7 +133,10 @@ const makeEditor = (provider: string): AccountSettingsEditorState => ({
   originalSerializedRequest: '{}',
 });
 
-const mountModal = (editor: AccountSettingsEditorState): ReactTestRenderer => {
+const mountModal = (
+  editor: AccountSettingsEditorState,
+  onSchedulingApplied?: (name: string, scheduling: unknown) => void
+): ReactTestRenderer => {
   let renderer!: ReactTestRenderer;
   act(() => {
     renderer = create(
@@ -130,6 +149,7 @@ const mountModal = (editor: AccountSettingsEditorState): ReactTestRenderer => {
         onCopyText={() => {}}
         onSave={() => {}}
         onChange={() => {}}
+        onSchedulingApplied={onSchedulingApplied}
       />
     );
   });
@@ -151,6 +171,42 @@ describe('AuthFilesAccountSettingsModal scheduling-panel provider gate', () => {
     expect(countByTestId(renderer, 'account-settings-scheduling-panel-stub')).toBe(0);
     // codex 仍应看到自己的 fast 卡片（gate 是 provider 专属而非把整个 toggleGrid 隐藏）。
     expect(countByTestId(renderer, 'account-settings-fast-card')).toBe(1);
+    renderer.unmount();
+  });
+
+  // 差一格 bug 的接线层回归覆盖：AccountSchedulingPanel 保存成功后回显的投影，
+  // 必须经由弹窗转发给 onSchedulingApplied（携带 editor.fileName），供父页面
+  // 就地更新账号列表缓存——而不是被弹窗吞掉、只留在已关闭的局部 state 里。
+  it('forwards the scheduling panel’s onApplied projection to onSchedulingApplied with the account file name', () => {
+    const onSchedulingApplied = vi.fn();
+    const editor = makeEditor('claude');
+    const renderer = mountModal(editor, onSchedulingApplied);
+
+    const applyButton = renderer.root.findByProps({
+      'data-testid': 'account-settings-scheduling-panel-stub-apply',
+    });
+    act(() => {
+      (applyButton.props.onClick as () => void)();
+    });
+
+    expect(onSchedulingApplied).toHaveBeenCalledWith(editor.fileName, {
+      subscription_tier: 'max_20x',
+      tier_source: 'override',
+      rate_scale: 2,
+    });
+    renderer.unmount();
+  });
+
+  it('does not throw when onSchedulingApplied is not wired', () => {
+    const renderer = mountModal(makeEditor('claude'));
+    const applyButton = renderer.root.findByProps({
+      'data-testid': 'account-settings-scheduling-panel-stub-apply',
+    });
+    expect(() => {
+      act(() => {
+        (applyButton.props.onClick as () => void)();
+      });
+    }).not.toThrow();
     renderer.unmount();
   });
 });
