@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   DEFAULT_THRESHOLDS,
+  comparePerformanceValues,
   normalizeThresholds,
   performanceStatus,
   milliseconds,
@@ -161,5 +162,15 @@ describe('historical performance identities', () => {
     expect(
       resolvePerformanceAccount({ account_key: 'ambiguous', provider: 'codex' }, directory)
     ).toBeUndefined();
+  });
+});
+
+describe('performance table ordering', () => {
+  it('sorts raw numbers and keeps unknown values last in both directions', () => {
+    for (const descending of [false, true]) {
+      const result = [null, 100, 9, 20, undefined].sort((a, b) => comparePerformanceValues(a, b, descending));
+      expect(result.slice(0, 3)).toEqual(descending ? [100, 20, 9] : [9, 20, 100]);
+      expect(result.slice(3)).toEqual([null, undefined]);
+    }
   });
 });
