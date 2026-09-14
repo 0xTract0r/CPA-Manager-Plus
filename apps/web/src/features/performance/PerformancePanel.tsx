@@ -116,7 +116,7 @@ export function PerformancePanel({
   const accounts = accountRows
     .filter(
       (row) =>
-        (provider === 'all' || row.provider === provider) &&
+        (provider === 'all' || (row.provider || '') === provider) &&
         [
           row.identity?.email,
           row.identity?.name,
@@ -546,7 +546,7 @@ export function PerformancePanel({
               onChange={(event) => setProvider(event.target.value)}
             >
               <option value="all">{text('all')}</option>
-              {[...new Set(data.accounts.map((row) => row.provider))].sort().map((key) => (
+              {[...new Set(data.accounts.map((row) => row.provider || ''))].sort().map((key) => (
                 <option key={key} value={key}>
                   {key || text('unknown')}
                 </option>
