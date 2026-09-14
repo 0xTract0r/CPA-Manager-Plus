@@ -12,6 +12,7 @@ import {
   type InspectionLogEntry,
 } from '@/features/monitoring/model/codexInspectionPresentation';
 import styles from '../CodexInspectionPage.module.scss';
+import { maskAccountEmailsInText } from '@/utils/accountIdentity';
 
 type CodexInspectionLogsPanelProps = {
   logs: InspectionLogEntry[];
@@ -89,7 +90,7 @@ export function CodexInspectionLogsPanel({
             logs.map((entry) => (
               <div key={entry.id} className={`${styles.logRow} ${levelClassMap[entry.level]}`}>
                 <span className={styles.logTime}>{formatTimestamp(entry.timestamp, locale)}</span>
-                <span className={styles.logMessage}>{entry.message}</span>
+                <span className={styles.logMessage}>{maskAccountEmailsInText(entry.message)}</span>
               </div>
             ))
           ) : (

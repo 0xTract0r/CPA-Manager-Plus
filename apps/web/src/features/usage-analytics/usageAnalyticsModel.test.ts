@@ -554,6 +554,67 @@ describe('usage analytics adapters', () => {
     });
   });
 
+  it('uses the live account note as credential label while retaining masked/full email fields', () => {
+    const credentialDisplayContext = {
+      authMetaMap: new Map([
+        [
+          'auth-note',
+          {
+            authIndex: 'auth-note',
+            label: '生产主账号',
+            note: '生产主账号',
+            email: 'owner.long+prod@example.test',
+            account: 'owner.long+prod@example.test',
+            provider: 'codex',
+            status: 'active',
+            disabled: false,
+            unavailable: false,
+            runtimeOnly: false,
+            planType: 'pro',
+            updatedAt: '',
+          },
+        ],
+      ]),
+      authFileMap: new Map([['auth-note', { name: '生产主账号', type: 'codex' }]]),
+      sourceInfoMap: buildSourceInfoMap({}),
+      channelByAuthIndex: new Map(),
+    };
+
+    const [row] = buildCredentialRows(
+      [
+        {
+          id: 'credential-note',
+          auth_index: 'auth-note',
+          account_snapshot: 'owner.long+prod@example.test',
+          auth_label_snapshot: 'legacy-file.json',
+          auth_provider_snapshot: 'codex',
+          calls: 3,
+          success_calls: 3,
+          failure_calls: 0,
+          success_rate: 1,
+          input_tokens: 100,
+          output_tokens: 20,
+          cached_tokens: 0,
+          cache_read_tokens: 0,
+          cache_creation_tokens: 0,
+          total_tokens: 120,
+          cost: 0.12,
+          average_latency_ms: null,
+          last_seen_ms: NOW_MS,
+        },
+      ],
+      undefined,
+      credentialDisplayContext
+    );
+
+    expect(row).toMatchObject({
+      label: '生产主账号',
+      accountNote: '生产主账号',
+      accountEmail: 'owner.long+prod@example.test',
+      accountMasked: 'ow***@example.test',
+    });
+  });
+
   it('does not estimate selected credential trend when backend timeline is missing', () => {
     const row: UsageRankRow = {
       id: 'credential-a',

@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ApiKeyAlias } from '@/services/api/usageService';
+import type { ApiKeyAlias, MonitoringAnalyticsFilters } from '@/services/api/usageService';
 import type { ModelPrice } from '@/utils/usage';
 import type { MonitoringTimeRange } from './useMonitoringData';
 
@@ -17,6 +17,8 @@ interface CapturedParams {
   nowMs?: number;
   fromMs?: number | null;
   toMs?: number | null;
+  searchQuery?: string;
+  filters?: MonitoringAnalyticsFilters;
 }
 
 let latestOverviewParams: CapturedParams = {};
@@ -37,7 +39,14 @@ const STABLE_ANALYTICS_RESULT = {
 
 vi.mock('../services/monitoringMetaService', () => ({
   loadMonitoringMetaPayload: vi.fn(async () => ({
-    authFiles: [],
+    authFiles: [
+      {
+        name: 'prod-account.json',
+        authIndex: 'auth-note',
+        account: 'owner@example.test',
+        note: '生产主账号',
+      },
+    ],
     channels: [],
     error: '',
   })),
@@ -48,12 +57,16 @@ vi.mock('./useMonitoringAnalytics', () => ({
     nowMs?: number;
     fromMs?: number | null;
     toMs?: number | null;
+    searchQuery?: string;
+    filters?: MonitoringAnalyticsFilters;
     include?: { events_page?: unknown };
   }) => {
     const captured: CapturedParams = {
       nowMs: params.nowMs,
       fromMs: params.fromMs,
       toMs: params.toMs,
+      searchQuery: params.searchQuery,
+      filters: params.filters,
     };
     if (params.include?.events_page) {
       latestEventsParams = captured;
@@ -159,6 +172,22 @@ describe('useMonitoringData overview aggregation refresh decoupling', () => {
     await backgroundTick(BASE_MS + 30_000);
     expect(latestEventsParams.nowMs).toBe(BASE_MS + 30_000);
     expect(latestOverviewParams.nowMs).toBe(BASE_MS + 30_000);
+  });
+
+  it('keeps full-text search and adds note matches as an OR identity scope', async () => {
+    await act(async () => {
+      renderer = create(<Harness searchQuery="生产" />);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    expect(latestOverviewParams.searchQuery).toBe('生产');
+    expect(latestOverviewParams.filters).toMatchObject({
+      search_auth_indices: ['auth-note'],
+    });
+    expect(latestEventsParams.searchQuery).toBe('生产');
+    expect(latestEventsParams.filters).toMatchObject({
+      search_auth_indices: ['auth-note'],
+    });
   });
 
   it('advances the overview clock immediately on a forced (manual) refresh even within the interval', async () => {

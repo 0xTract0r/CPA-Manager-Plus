@@ -100,7 +100,7 @@ describe('accountOverviewState', () => {
   it('defaults invalid account display modes to masked', () => {
     expect(normalizeAccountDisplayMode(undefined)).toBe('masked');
     expect(normalizeAccountDisplayMode('visible')).toBe('masked');
-    expect(normalizeAccountDisplayMode('full')).toBe('full');
+    expect(normalizeAccountDisplayMode('full')).toBe('masked');
   });
 
   it('normalizes persisted overview ui state', () => {
@@ -113,7 +113,7 @@ describe('accountOverviewState', () => {
       })
     ).toEqual({
       mode: 'card',
-      accountDisplayMode: 'full',
+      accountDisplayMode: 'masked',
       sort: { key: 'totalCost', direction: 'asc' },
       cardPagination: { page: 3, pageSize: 18 },
     });

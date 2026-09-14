@@ -48,23 +48,25 @@ type AnalyticsFilter struct {
 	ToMS             int64
 	SearchQuery      string
 	SearchAPIKeyHash string
-	Models           []string
-	Providers        []string
-	Accounts         []string
-	AuthFiles        []string
-	AuthIndices      []string
-	APIKeyHashes     []string
-	SourceHashes     []string
-	ProjectIDs       []string
-	RequestTypes     []string
-	IncludeFailed    bool
-	FailedOnly       bool
-	MinLatencyMS     int64
-	CacheStatus      string
-	HeaderErrorKinds []string
-	HeaderErrorCodes []string
-	HeaderQuotaPlans []string
-	HeaderTraceIDs   []string
+	// SearchAuthIndices 只扩展 SearchQuery 的 OR 分支；AuthIndices 仍是独立的范围筛选。
+	SearchAuthIndices []string
+	Models            []string
+	Providers         []string
+	Accounts          []string
+	AuthFiles         []string
+	AuthIndices       []string
+	APIKeyHashes      []string
+	SourceHashes      []string
+	ProjectIDs        []string
+	RequestTypes      []string
+	IncludeFailed     bool
+	FailedOnly        bool
+	MinLatencyMS      int64
+	CacheStatus       string
+	HeaderErrorKinds  []string
+	HeaderErrorCodes  []string
+	HeaderQuotaPlans  []string
+	HeaderTraceIDs    []string
 	// MaxCacheHitRate筛选"低命中率"事件(命中率 < 阈值)。用指针而非 float64
 	// 表达"未启用"与"阈值恰好为 0"的区别(0 是合法阈值,理论上排除所有命中率>=0的行)。
 	// nil = 不筛选;非 nil = 只保留命中率严格小于该阈值的行(命中率不可计算的行始终排除,
@@ -2009,6 +2011,14 @@ func analyticsWhere(filter AnalyticsFilter) (string, []any) {
 		if hash != "" {
 			searchConditions = append(searchConditions, "lower(coalesce(api_key_hash, '')) = ?")
 			args = append(args, hash)
+		}
+		searchAuthIndices := normalizeFilterValues(filter.SearchAuthIndices)
+		if len(searchAuthIndices) > 0 {
+			placeholders := strings.TrimRight(strings.Repeat("?,", len(searchAuthIndices)), ",")
+			searchConditions = append(searchConditions, fmt.Sprintf("coalesce(auth_index, '') in (%s)", placeholders))
+			for _, value := range searchAuthIndices {
+				args = append(args, value)
+			}
 		}
 		conditions = append(conditions, "("+strings.Join(searchConditions, " or ")+")")
 	} else if hash != "" {

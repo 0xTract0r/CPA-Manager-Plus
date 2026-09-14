@@ -8,6 +8,7 @@ import { useFarmAccounts } from '../hooks/useFarmAccounts';
 import { useFarmDeploymentEnv } from '../hooks/useFarmDeploymentEnv';
 import type { FarmContainerView, FarmCreateBindingRequest, FarmEnv } from '@/types/farm';
 import { FARM_ENVS } from '@/types/farm';
+import { resolveFarmAccountIdentity } from '../utils/identity';
 import styles from './FarmBindModal.module.scss';
 
 interface FarmBindModalProps {
@@ -82,10 +83,13 @@ export function FarmBindModal({
     label: `${c.id} (${c.device_id_masked})`,
   }));
   const envOptions = FARM_ENVS.map((value) => ({ value, label: t(`farm.env.${value}`) }));
-  const accountOptions = availableAccounts.map((a) => ({
-    value: a.name,
-    label: a.status ? `${a.name} · ${a.status}` : a.name,
-  }));
+  const accountOptions = availableAccounts.map((account) => {
+    const identity = resolveFarmAccountIdentity(account);
+    return {
+      value: account.name,
+      label: [identity.primary, identity.secondary, account.status].filter(Boolean).join(' · '),
+    };
+  });
 
   // resolved 前禁用确认：env 尚未从部署 info 解析出来时提交会用回退值 'test' 打错环境。
   const canSubmit = Boolean(containerId && env && accountId) && !submitting && resolved;

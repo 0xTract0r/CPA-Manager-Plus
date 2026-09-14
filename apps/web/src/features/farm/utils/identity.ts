@@ -4,24 +4,15 @@
  * 备注名（note）优先作为主标识，邮箱脱敏后作为次要标识。
  */
 
-/**
- * 邮箱脱敏：保留本地部分前 2 位 + 域名，中间用 `***` 掩盖，避免明文暴露完整邮箱
- * （降特征）。非邮箱字符串（无 `@`）按「首字符 + *** + 尾字符」掩盖；过短串原样
- * 返回。空串返回空串。
- */
-export function maskAccountEmail(value?: string): string {
-  const trimmed = value?.trim();
-  if (!trimmed) return '';
-  const at = trimmed.indexOf('@');
-  if (at <= 0) {
-    if (trimmed.length <= 2) return trimmed;
-    return `${trimmed[0]}***${trimmed[trimmed.length - 1]}`;
-  }
-  const local = trimmed.slice(0, at);
-  const domain = trimmed.slice(at); // 含前导 '@'
-  const maskedLocal = local.length <= 2 ? `${local[0] ?? ''}*` : `${local.slice(0, 2)}***`;
-  return `${maskedLocal}${domain}`;
-}
+import {
+  maskAccountEmail,
+  resolveAccountIdentity,
+  stripAccountFileSuffix,
+  type AccountIdentityView,
+} from '@/utils/accountIdentity';
+import type { FarmAccountEntry } from '@/types/farm';
+
+export { maskAccountEmail } from '@/utils/accountIdentity';
 
 /**
  * 剥掉账号标识尾部的 `.json` 后缀（#52 尾项）。农场绑定账号在无备注名时会回退到
@@ -29,8 +20,7 @@ export function maskAccountEmail(value?: string): string {
  * `.json` 属于文件名工件、不是账号本体，展示前统一剥掉。大小写不敏感，顺带 trim。
  */
 export function stripJsonSuffix(value?: string): string {
-  const trimmed = value?.trim() ?? '';
-  return trimmed.replace(/\.json$/i, '');
+  return stripAccountFileSuffix(value);
 }
 
 export interface BindingIdentityLabels {
@@ -51,15 +41,41 @@ export function resolveBindingIdentity(
   note: string | undefined,
   account: string | undefined
 ): BindingIdentityLabels {
-  const trimmedNote = note?.trim();
-  // 先剥掉尾部 `.json`（auth 文件名工件），再脱敏，避免显示成 `cl***@gmail.com.json`。
-  const normalizedAccount = stripJsonSuffix(account);
+  const trimmedNote = note?.trim() ?? '';
+  const normalizedAccount = stripAccountFileSuffix(account);
   const maskedAccount = maskAccountEmail(normalizedAccount);
   if (trimmedNote) {
     return { primary: trimmedNote, secondary: maskedAccount, hasNote: true };
   }
-  return { primary: maskedAccount || normalizedAccount, secondary: '', hasNote: false };
+  return {
+    primary: maskedAccount || normalizedAccount,
+    secondary: '',
+    hasNote: false,
+  };
 }
+
+export const resolveFarmAccountIdentity = (
+  account: Pick<FarmAccountEntry, 'name' | 'account' | 'note'>
+): AccountIdentityView =>
+  resolveAccountIdentity({
+    note: account.note,
+    email: account.account,
+    fallback: account.name,
+  });
+
+export const buildFarmAccountIdentityLookup = (
+  accounts: readonly Pick<FarmAccountEntry, 'name' | 'account' | 'note'>[]
+): Map<string, AccountIdentityView> => {
+  const lookup = new Map<string, AccountIdentityView>();
+  accounts.forEach((account) => {
+    const identity = resolveFarmAccountIdentity(account);
+    [account.name, account.account].forEach((value) => {
+      const key = value?.trim().toLowerCase();
+      if (key && !lookup.has(key)) lookup.set(key, identity);
+    });
+  });
+  return lookup;
+};
 
 /**
  * 遥测指纹字段脱敏口径（TP-1/TP-2「每容器遥测内容抓取」，与上方账号邮箱脱敏是

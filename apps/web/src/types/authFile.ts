@@ -236,6 +236,11 @@ export interface AuthFileAccountSettingsPatchRequest {
 
 export interface AuthFileItem {
   name: string;
+  id?: string;
+  label?: string;
+  email?: string;
+  account?: string;
+  auth_index?: string | number | null;
   type?: AuthFileType | string;
   provider?: string;
   size?: number;
@@ -338,10 +343,16 @@ export interface AuthFileAccountScheduling {
   tier_source?: 'auto' | 'override';
   /**
    * 该账号有效的速率乘子（core §8.3，AccountRateScale）：作用于派生出的速率
-   * 上限（rpm/burst/concurrency/daily budget），不影响调度权重；缺省时 core
-   * 恒回退 1.0（无效果）。本期只加类型，不接入 UI 渲染。
+   * 上限（rpm/burst/concurrency/daily budget），在生产**无条件生效**（不是
+   * 仅供测试）；缺省时 core 恒回退 1.0（无效果）。
    */
   rate_scale?: number;
+  /**
+   * rate_scale 已经应用后的实际生效上限（core 计算好直接下发，前端不重算，
+   * 避免公式漂移）。additive、只读；跨版本部署可能整体缺失（老 core 未投影
+   * 该字段），前端据此优雅降级——整块不渲染，不展示空/0 误导用户。
+   */
+  effective_limits?: AuthFileAccountSchedulingEffectiveLimits | null;
   /**
    * 账号养号（warm-up）状态投影（core
    * internal/api/handlers/management/auth_files_adaptive_scheduling.go，取自
@@ -389,6 +400,32 @@ export interface AuthFileAccountScheduling {
 }
 
 /**
+ * account_scheduling.effective_limits 子投影：把 rate_scale 已经应用后的实际
+ * 生效上限摆出来，让用户不用自己心算「乘子 × 基础上限」就能照使用情况调
+ * rate_scale。core 计算好直接下发，前端只负责展示，不重算（避免公式漂移）。
+ * additive、只读；跨版本部署可能整体缺失（老 core 未投影），消费方必须整块
+ * 优雅降级，不展示空/0 误导用户。
+ */
+export interface AuthFileAccountSchedulingEffectiveLimits {
+  /** 生效 rpm 上限（已含 rate_scale）。 */
+  rpm?: number;
+  /** 生效突发（burst）上限。 */
+  burst?: number;
+  /** 生效并发上限。 */
+  concurrency?: number;
+  /** 生效养号日预算（请求数）；0 = 无限制（通常是已成熟的号）。 */
+  daily_budget?: number;
+  /** 生效 token 日预算；0 = 无限制。 */
+  token_daily_budget?: number;
+  /**
+   * true = 养号中的号，实际 rpm 可能被动态压速（pacing）进一步降低，这里的
+   * rpm 只是上限不是实际值；false = 已成熟，不受动态压速影响。
+   */
+  pacing_applies?: boolean;
+  [key: string]: unknown;
+}
+
+/**
  * account_scheduling.warmup 子投影（core auth_files_adaptive_scheduling.go
  * warmupView）。additive、只读；跨版本部署可能整体缺失（老 core 未投影 warmup），
  * 消费方必须把缺失/非布尔的 `mature` 当作「不可判定」（不展示养号标注），只有
@@ -401,6 +438,18 @@ export interface AuthFileAccountWarmup {
   mature?: boolean;
   /** 账号年龄（天）；未锚定 first_production_at 时 core 下发 null。 */
   age_days?: number | null;
+  /**
+   * 当前养号阶段的 rpm 上限（core `AccountWarmupStatusFor` 计算，**未乘
+   * rate_scale 的原始值**，见 core auth_files_adaptive_scheduling.go
+   * buildAccountSchedulingView 顶部注释：warmup 块携带 PRE-scale 数字，
+   * `effective_limits` 才是乘完 rate_scale 的结果）。前端 rate_scale 输入框
+   * 下方的「实时预览」拿它当基准，客户端按当前输入值现算，不等保存。
+   */
+  rpm_limit?: number;
+  /** 同上，当前养号阶段的并发上限（PRE-scale）。 */
+  concurrency_limit?: number;
+  /** 同上，当前养号阶段的日预算（PRE-scale）；0 = 无限制（通常是已成熟号）。 */
+  daily_budget?: number;
   [key: string]: unknown;
 }
 

@@ -6,7 +6,7 @@ The Model performance tab aggregates the full filtered event range: latency and 
 
 No setup is required: reference defaults are 60 seconds for most requests, 10 token/s for slower output, and 30 valid samples before evaluation. Edit the optional alert section and Apply, or Restore defaults. These controls do not change model speed or request timeouts.
 
-The main view uses plain-language labels: typical is the middle value, most durations cover about 95% of requests, and about 10% of requests are slower than the slower-speed value. Detailed percentiles are expandable. Account rows show email/name and note from matching current credentials; missing identities are explicitly indicated and internal identifiers are tucked into an expandable section.
+The main view uses plain-language labels: typical is the middle value, most durations cover about 95% of requests, and about 10% of requests are slower than the slower-speed value. Detailed percentiles are expandable. Matched account rows show the note first and a masked email second; hover or keyboard-focus the email to reveal it. Missing identities are explicitly indicated, and internal identifiers are tucked into an expandable section.
 
 When an old ID no longer matches a current credential, a recorded historical email is shown with a source label. A current note is reused only for a unique email/provider match; missing historical notes are not inferred, and current identities take precedence.
 

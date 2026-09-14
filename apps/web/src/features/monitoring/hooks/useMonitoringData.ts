@@ -5,6 +5,11 @@ import type { AuthFileItem } from '@/types/authFile';
 import type { CredentialInfo } from '@/types/sourceInfo';
 import { buildSourceInfoMap } from '@/utils/sourceResolver';
 import { collectUsageDetailsWithEndpoint, normalizeAuthIndex } from '@/utils/usage';
+import {
+  findAuthIndicesMatchingIdentityQuery,
+  resolveAuthFileAccountIdentity,
+  withIdentitySearchAuthIndices,
+} from '@/utils/accountIdentity';
 import { readString } from '../model/base';
 import { buildApiKeyDisplayMap } from '../model/apiKeys';
 import { buildMonitoringAuthMetaMap } from '../model/authMeta';
@@ -362,10 +367,7 @@ export function useMonitoringData({
   }, [overviewClock.nowMs, customTimeRange, timeRange]);
 
   const refreshMeta = useCallback(
-    async (
-      showLoading: boolean = true,
-      options: { forceOverview?: boolean } = {}
-    ) => {
+    async (showLoading: boolean = true, options: { forceOverview?: boolean } = {}) => {
       const { forceOverview = true } = options;
       if (showLoading) {
         setLoading(true);
@@ -426,12 +428,7 @@ export function useMonitoringData({
       const authIndex = normalizeAuthIndex(entry['auth_index'] ?? entry.authIndex);
       if (!authIndex) return;
       map.set(authIndex, {
-        name:
-          readString(entry.label) ||
-          readString(entry.name) ||
-          readString(entry.email) ||
-          readString(entry.account) ||
-          authIndex,
+        name: resolveAuthFileAccountIdentity(entry).primary || authIndex,
         type: readString(entry.provider) || readString(entry.type),
       });
     });
@@ -464,10 +461,14 @@ export function useMonitoringData({
     return buildApiKeyDisplayMap(config?.apiKeys || [], apiKeyAliases || []);
   }, [apiKeyAliases, config?.apiKeys]);
 
-  const analyticsFilters = useMemo(
-    () => buildAnalyticsFilters(scopeFilters, authMetaMap, channels),
-    [authMetaMap, channels, scopeFilters]
+  const identitySearchAuthIndices = useMemo(
+    () => findAuthIndicesMatchingIdentityQuery(authFiles, searchQuery),
+    [authFiles, searchQuery]
   );
+  const analyticsFilters = useMemo(() => {
+    const base = buildAnalyticsFilters(scopeFilters, authMetaMap, channels);
+    return withIdentitySearchAuthIndices(base, identitySearchAuthIndices);
+  }, [authMetaMap, channels, identitySearchAuthIndices, scopeFilters]);
 
   const analyticsGranularity = useMemo(
     () => (shouldUseHourlyTimeline(timeRange, customTimeRange) ? 'hour' : 'day'),

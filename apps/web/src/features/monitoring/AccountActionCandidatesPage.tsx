@@ -3,17 +3,26 @@ import { useTranslation } from 'react-i18next';
 import { useTimezone } from '@/hooks/useTimezone';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
+import { AccountIdentity } from '@/components/ui/AccountIdentity';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { IconCheck, IconEye, IconRefreshCw, IconSearch, IconTrash2 } from '@/components/ui/icons';
 import { usePanelFeatureAvailability } from '@/hooks/usePanelFeatureAvailability';
+import { authFilesApi } from '@/services/api';
 import {
   usageServiceApi,
   type AccountActionCandidate,
   type AccountActionStatus,
 } from '@/services/api/usageService';
+import type { AuthFileItem } from '@/types';
 import { useAuthStore, useNotificationStore } from '@/stores';
 import { formatDateTime, maskSensitiveText } from '@/utils/format';
+import {
+  findAuthFileForIdentity,
+  maskAccountEmailsInText,
+  resolveAccountIdentity,
+  resolveAuthFileAccountIdentity,
+} from '@/utils/accountIdentity';
 import styles from './AccountActionCandidatesPage.module.scss';
 
 type StatusFilter = 'pending' | 'all' | 'ignored' | 'resolved' | 'deleted';
@@ -32,9 +41,9 @@ const formatMs = (value?: number) => {
 const stringifyEvidence = (candidate: AccountActionCandidate | null) => {
   if (!candidate?.evidence) return '';
   try {
-    return maskSensitiveText(JSON.stringify(candidate.evidence, null, 2));
+    return maskAccountEmailsInText(maskSensitiveText(JSON.stringify(candidate.evidence, null, 2)));
   } catch {
-    return maskSensitiveText(String(candidate.evidence));
+    return maskAccountEmailsInText(maskSensitiveText(String(candidate.evidence)));
   }
 };
 
@@ -56,6 +65,25 @@ const getHeaderEvidence = (candidate: AccountActionCandidate) => ({
   traceId: readEvidenceString(candidate, 'headerTraceId'),
 });
 
+const resolveCandidateAccountIdentity = (
+  candidate: AccountActionCandidate,
+  authFiles: readonly AuthFileItem[]
+) => {
+  const authFile = findAuthFileForIdentity(authFiles, {
+    authIndex: candidate.authIndex,
+    fileName: candidate.authFileName,
+    email: candidate.accountSnapshot,
+    accountId: candidate.accountIdSnapshot,
+    provider: candidate.provider,
+  });
+  const current = authFile ? resolveAuthFileAccountIdentity(authFile) : null;
+  return resolveAccountIdentity({
+    note: current?.note,
+    email: current?.email || candidate.accountSnapshot || candidate.authLabel,
+    fallback: current?.fallback || candidate.authLabel || candidate.authFileName,
+  });
+};
+
 export function AccountActionCandidatesPage() {
   const { t } = useTranslation();
   // 订阅全局时区：切换时区时候选项的时间戳随之重渲染，无需刷新。
@@ -64,6 +92,7 @@ export function AccountActionCandidatesPage() {
   const { showNotification, showConfirmation } = useNotificationStore();
   const featureAvailability = usePanelFeatureAvailability();
   const [items, setItems] = useState<AccountActionCandidate[]>([]);
+  const [authFiles, setAuthFiles] = useState<AuthFileItem[]>([]);
   const [pendingCount, setPendingCount] = useState(0);
   const [filter, setFilter] = useState<StatusFilter>('pending');
   const [search, setSearch] = useState('');
@@ -79,14 +108,18 @@ export function AccountActionCandidatesPage() {
     setLoading(true);
     setError('');
     try {
-      const response = await usageServiceApi.listAccountActionCandidates(
-        managerBase,
-        managementKey,
-        filter === 'all' ? '' : filter,
-        200
-      );
+      const [response, authFilesResponse] = await Promise.all([
+        usageServiceApi.listAccountActionCandidates(
+          managerBase,
+          managementKey,
+          filter === 'all' ? '' : filter,
+          200
+        ),
+        authFilesApi.list().catch(() => ({ files: [] as AuthFileItem[] })),
+      ]);
       setItems(response.items);
       setPendingCount(response.pendingCount);
+      setAuthFiles(authFilesResponse.files ?? []);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err || 'request failed');
       setError(message);
@@ -115,7 +148,11 @@ export function AccountActionCandidatesPage() {
     if (!term) return items;
     return items.filter((item) => {
       const header = getHeaderEvidence(item);
+      const identity = resolveCandidateAccountIdentity(item, authFiles);
       return [
+        identity.note,
+        identity.email,
+        identity.maskedEmail,
         item.accountSnapshot,
         item.authLabel,
         item.accountIdSnapshot,
@@ -133,7 +170,7 @@ export function AccountActionCandidatesPage() {
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(term));
     });
-  }, [items, search]);
+  }, [authFiles, items, search]);
 
   const runAction = useCallback(
     async (candidate: AccountActionCandidate, action: CandidateAction) => {
@@ -142,15 +179,27 @@ export function AccountActionCandidatesPage() {
       try {
         switch (action) {
           case 'ignore':
-            await usageServiceApi.ignoreAccountActionCandidate(managerBase, managementKey, candidate.id);
+            await usageServiceApi.ignoreAccountActionCandidate(
+              managerBase,
+              managementKey,
+              candidate.id
+            );
             showNotification(t('account_actions.ignore_success'), 'success');
             break;
           case 'resolve':
-            await usageServiceApi.resolveAccountActionCandidate(managerBase, managementKey, candidate.id);
+            await usageServiceApi.resolveAccountActionCandidate(
+              managerBase,
+              managementKey,
+              candidate.id
+            );
             showNotification(t('account_actions.resolve_success'), 'success');
             break;
           case 'enable':
-            await usageServiceApi.enableAccountActionCandidate(managerBase, managementKey, candidate.id);
+            await usageServiceApi.enableAccountActionCandidate(
+              managerBase,
+              managementKey,
+              candidate.id
+            );
             showNotification(t('account_actions.enable_success'), 'success');
             break;
           case 'delete':
@@ -248,7 +297,9 @@ export function AccountActionCandidatesPage() {
               onClick={() => setFilter(key)}
             >
               {t(`account_actions.filter_${key}`)}
-              {key !== 'all' && typeof statusCounts[key] === 'number' ? ` · ${statusCounts[key]}` : ''}
+              {key !== 'all' && typeof statusCounts[key] === 'number'
+                ? ` · ${statusCounts[key]}`
+                : ''}
             </button>
           ))}
         </div>
@@ -301,13 +352,20 @@ export function AccountActionCandidatesPage() {
                 {visibleItems.map((candidate) => {
                   const busy = actingId === candidate.id;
                   const header = getHeaderEvidence(candidate);
+                  const accountIdentity = resolveCandidateAccountIdentity(candidate, authFiles);
                   return (
                     <tr key={candidate.id}>
                       <td>
                         <div className={styles.accountCell}>
-                          <strong>{candidate.accountSnapshot || candidate.authLabel || '-'}</strong>
+                          <AccountIdentity
+                            identity={accountIdentity}
+                            compact
+                            testId={`account-action-identity-${candidate.id}`}
+                          />
                           <span>{candidate.provider || '-'}</span>
-                          {candidate.accountIdSnapshot ? <small>{candidate.accountIdSnapshot}</small> : null}
+                          {candidate.accountIdSnapshot ? (
+                            <small>{candidate.accountIdSnapshot}</small>
+                          ) : null}
                         </div>
                       </td>
                       <td>
@@ -341,7 +399,11 @@ export function AccountActionCandidatesPage() {
                             </small>
                           ) : null}
                           {header.traceId ? <small>{`Trace: ${header.traceId}`}</small> : null}
-                          <small>{t('account_actions.last_updated', { time: formatMs(candidate.updatedAtMs) })}</small>
+                          <small>
+                            {t('account_actions.last_updated', {
+                              time: formatMs(candidate.updatedAtMs),
+                            })}
+                          </small>
                         </div>
                       </td>
                       <td>

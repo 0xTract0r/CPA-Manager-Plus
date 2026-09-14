@@ -26,7 +26,8 @@ Different providers return different data. Unknown means CPAMP did not get enoug
 
 ## Page Actions
 
-- Search by file name, account, note, or index.
+- Search by note, full email, file name, or index.
+- Account cards use the note as the primary line and a masked email as the secondary line. Hover or keyboard-focus the email to reveal it; full emails are not shown persistently.
 - Sort by plan, quota state, or name.
 - Refresh auth files and quota to reload accounts and queryable quota.
 - Follow cooldown, reauth, or health hints into Auth Files, OAuth, or inspection pages.
@@ -54,4 +55,3 @@ If an account looks usable but requests fail:
 3. Check Auth Files for manual disabled state or cooldown.
 4. Check whether the account action queue has pending candidates.
 5. If the page has no quota data, confirm whether that provider supports active quota lookup or only passive header observation.
-

@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Table,
@@ -10,8 +11,13 @@ import {
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { AsyncPanel } from '@/components/ui/AsyncPanel';
+import { AccountIdentity } from '@/components/ui/AccountIdentity';
 import { formatFileSize } from '@/utils/format';
 import { useFarmResources } from '../hooks/useFarmResources';
+import { useFarmAccounts } from '../hooks/useFarmAccounts';
+import { useFarmDeploymentEnv } from '../hooks/useFarmDeploymentEnv';
+import { resolveAccountIdentity } from '@/utils/accountIdentity';
+import { buildFarmAccountIdentityLookup } from '../utils/identity';
 import { pctToFarmHealthBadgeVariant } from '../utils/health';
 import styles from './FarmResourcePanel.module.scss';
 
@@ -63,6 +69,9 @@ function ResourceBar({
 export function FarmResourcePanel({ hideHeading = false }: { hideHeading?: boolean } = {}) {
   const { t } = useTranslation();
   const { containers, host, loading, error, reload } = useFarmResources();
+  const { env, resolved } = useFarmDeploymentEnv();
+  const { accounts } = useFarmAccounts(env, resolved);
+  const accountIdentityLookup = useMemo(() => buildFarmAccountIdentityLookup(accounts), [accounts]);
 
   return (
     <div className={styles.panel} data-testid="farm-resource-panel">
@@ -108,7 +117,9 @@ export function FarmResourcePanel({ hideHeading = false }: { hideHeading?: boole
           {containers.length === 0 ? (
             <div data-testid="farm-resource-empty">
               <EmptyState
-                title={t('farm.resources.empty', { defaultValue: 'No container resource data yet' })}
+                title={t('farm.resources.empty', {
+                  defaultValue: 'No container resource data yet',
+                })}
               />
             </div>
           ) : (
@@ -126,8 +137,16 @@ export function FarmResourcePanel({ hideHeading = false }: { hideHeading?: boole
               <TableBody>
                 {containers.map((item) => {
                   const memLimited = hasRealLimit(item.mem_limit_bytes, host?.mem_total_bytes);
-                  const memVariant = memLimited ? pctToFarmHealthBadgeVariant(item.mem_pct) : 'muted';
+                  const memVariant = memLimited
+                    ? pctToFarmHealthBadgeVariant(item.mem_pct)
+                    : 'muted';
                   const cpuVariant = pctToFarmHealthBadgeVariant(item.cpu_pct);
+                  const accountIdentity =
+                    accountIdentityLookup.get(item.account_id.trim().toLowerCase()) ??
+                    resolveAccountIdentity({
+                      email: item.account_id,
+                      fallback: item.account_id,
+                    });
                   return (
                     <TableRow
                       key={item.container_id}
@@ -137,7 +156,12 @@ export function FarmResourcePanel({ hideHeading = false }: { hideHeading?: boole
                         <span className={styles.mono}>{item.container_id}</span>
                       </TableCell>
                       <TableCell data-label={t('farm.accounts.column_name')}>
-                        {item.account_id}
+                        <AccountIdentity
+                          identity={accountIdentity}
+                          compact
+                          showFallback
+                          testId={`farm-resource-account-${item.container_id}`}
+                        />
                       </TableCell>
                       <TableCell
                         data-label={`${t('farm.resources.mem')} / ${t('farm.resources.limit')}`}

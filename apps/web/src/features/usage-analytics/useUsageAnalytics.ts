@@ -8,11 +8,17 @@ import { readString } from '@/features/monitoring/model/base';
 import type { MonitoringChannelMeta } from '@/features/monitoring/model/types';
 import { loadMonitoringMetaPayload } from '@/features/monitoring/services/monitoringMetaService';
 import { useTimezone } from '@/hooks';
+import type { MonitoringAnalyticsFilters } from '@/services/api/usageService';
 import { useConfigStore } from '@/stores';
 import type { AuthFileItem } from '@/types/authFile';
 import type { CredentialInfo } from '@/types/sourceInfo';
 import { buildSourceInfoMap } from '@/utils/sourceResolver';
 import { normalizeAuthIndex } from '@/utils/usage';
+import {
+  findAuthIndicesMatchingIdentityQuery,
+  resolveAuthFileAccountIdentity,
+  withIdentitySearchAuthIndices,
+} from '@/utils/accountIdentity';
 import {
   adaptUsageAnalyticsData,
   analyzeUsageBucket,
@@ -158,12 +164,7 @@ export function useUsageAnalytics() {
       const authIndex = normalizeAuthIndex(entry['auth_index'] ?? entry.authIndex);
       if (!authIndex) return;
       map.set(authIndex, {
-        name:
-          readString(entry.label) ||
-          readString(entry.name) ||
-          readString(entry.email) ||
-          readString(entry.account) ||
-          authIndex,
+        name: resolveAuthFileAccountIdentity(entry).primary || authIndex,
         type: readString(entry.provider) || readString(entry.type),
       });
     });
@@ -206,6 +207,19 @@ export function useUsageAnalytics() {
     filters.searchQuery.trim(),
     USAGE_SEARCH_DEBOUNCE_MS
   );
+  const identitySearchAuthIndices = useMemo(
+    () => findAuthIndicesMatchingIdentityQuery(monitoringMeta.authFiles, debouncedSearchQuery),
+    [debouncedSearchQuery, monitoringMeta.authFiles]
+  );
+  const applyIdentitySearchScope = useCallback(
+    (base: MonitoringAnalyticsFilters): MonitoringAnalyticsFilters =>
+      withIdentitySearchAuthIndices(base, identitySearchAuthIndices),
+    [identitySearchAuthIndices]
+  );
+  const identitySearchFilters = useMemo(
+    () => withIdentitySearchAuthIndices({}, identitySearchAuthIndices),
+    [identitySearchAuthIndices]
+  );
 
   const bounds = useMemo(() => getUsageRangeBounds(filters, nowMs), [filters, nowMs]);
   const heatmapRangeContext = useMemo(
@@ -232,11 +246,13 @@ export function useUsageAnalytics() {
   );
   const analyticsFilters = useMemo(
     () =>
-      buildUsageAnalyticsFilters({
-        ...filters,
-        apiKeyHash: getSelectableApiKeyHash(filters.apiKeyHash) || 'all',
-      }),
-    [filters]
+      applyIdentitySearchScope(
+        buildUsageAnalyticsFilters({
+          ...filters,
+          apiKeyHash: getSelectableApiKeyHash(filters.apiKeyHash) || 'all',
+        })
+      ),
+    [applyIdentitySearchScope, filters]
   );
 
   useEffect(() => {
@@ -313,9 +329,10 @@ export function useUsageAnalytics() {
     () =>
       JSON.stringify({
         bounds,
+        filters: identitySearchFilters,
         searchQuery: debouncedSearchQuery,
       }),
-    [bounds, debouncedSearchQuery]
+    [bounds, debouncedSearchQuery, identitySearchFilters]
   );
   const filterSelectorsAnalytics = useMonitoringAnalytics({
     fromMs: bounds?.fromMs,
@@ -323,6 +340,7 @@ export function useUsageAnalytics() {
     nowMs,
     dataScopeKey: filterSelectorsDataScopeKey,
     searchQuery: debouncedSearchQuery,
+    filters: identitySearchFilters,
     include: filterSelectorsInclude,
     throttleMs: 0,
   });
@@ -445,9 +463,11 @@ export function useUsageAnalytics() {
   const selectedApiKeyTimelineFilters = useMemo(
     () =>
       selectedApiKeyFilterHash
-        ? buildUsageAnalyticsFilters({ ...filters, apiKeyHash: selectedApiKeyFilterHash })
+        ? applyIdentitySearchScope(
+            buildUsageAnalyticsFilters({ ...filters, apiKeyHash: selectedApiKeyFilterHash })
+          )
         : {},
-    [filters, selectedApiKeyFilterHash]
+    [applyIdentitySearchScope, filters, selectedApiKeyFilterHash]
   );
   const selectedApiKeyTimelineInclude = useMemo(
     () => ({

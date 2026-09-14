@@ -33,7 +33,7 @@ Failure summaries are sanitized. Raw failure bodies stay in local SQLite and are
 
 - **Status**: split successful, failed, and unusual status codes.
 - **Provider and model**: find upstream or model-alias mistakes.
-- **Account and auth file**: inspect one account over time with `auth_index`.
+- **Account and auth file**: search by note or full email; results show the note first and masked email second, with `auth_index` for history.
 - **API Key**: find the caller behind traffic or cost spikes.
 - **Project, request type, and Trace ID**: reconstruct one business request.
 - **Latency and cache state**: inspect slow requests, cache misses, or streaming behavior.

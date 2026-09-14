@@ -149,6 +149,7 @@ func (r *authSnapshotResolver) fetch(ctx context.Context, baseURL string, manage
 			readAuthFileString(file, "email"),
 		)
 		label := firstNonEmpty(
+			readAuthFileNote(file),
 			readAuthFileString(file, "label"),
 			readAuthFileString(file, "name"),
 			readAuthFileString(file, "email"),
@@ -208,6 +209,22 @@ func readAuthFileString(file map[string]any, keys ...string) string {
 		text := strings.TrimSpace(toString(value))
 		if text != "" {
 			return text
+		}
+	}
+	return ""
+}
+
+func readAuthFileNote(file map[string]any) string {
+	if note := readAuthFileString(file, "note", "account_note", "remark", "remarks"); note != "" {
+		return note
+	}
+	for _, key := range []string{"account_settings", "accountSettings"} {
+		settings, ok := file[key].(map[string]any)
+		if !ok {
+			continue
+		}
+		if note := readAuthFileString(settings, "note"); note != "" {
+			return note
 		}
 	}
 	return ""

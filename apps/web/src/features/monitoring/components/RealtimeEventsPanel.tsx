@@ -18,8 +18,6 @@ import {
   IconChevronDown,
   IconCopy,
   IconDownload,
-  IconEye,
-  IconEyeOff,
   IconFileText,
   IconFilter,
   IconInfo,
@@ -1525,14 +1523,12 @@ export function RealtimeEventsPanelActions({
   failedOnlyActive,
   lowCacheHitRateOnly,
   lowCacheHitRateThreshold,
-  accountDisplayMode,
   exportRows,
   hasPrices,
   t,
   onToggleFailedOnly,
   onToggleLowCacheHitRateOnly,
   onLowCacheHitRateThresholdChange,
-  onAccountDisplayModeChange,
 }: RealtimeEventsPanelActionsProps) {
   // 客户端导出「当前已加载/筛选的事件行」：纯前端生成 CSV/JSON Blob 后触发下载，不打服务端。
   // 说明：failedOnly 等筛选走服务端已落进 exportRows；实时表内「仅显示低命中率」是页内当前页视觉
@@ -1549,9 +1545,6 @@ export function RealtimeEventsPanelActions({
     });
   };
   const exportDisabled = exportRows.length === 0;
-  const nextAccountDisplayMode: AccountDisplayMode =
-    accountDisplayMode === 'masked' ? 'full' : 'masked';
-  const AccountDisplayIcon = accountDisplayMode === 'masked' ? IconEyeOff : IconEye;
   const logRowsLabel = shortLabel(t, 'monitoring.log_rows_short', 'monitoring.log_rows');
   const recentFailuresLabel = shortLabel(
     t,
@@ -1563,11 +1556,6 @@ export function RealtimeEventsPanelActions({
     'monitoring.filter_status_failed_short',
     'monitoring.filter_status_failed'
   );
-  const accountDisplayHint = t(
-    accountDisplayMode === 'masked'
-      ? 'monitoring.account_overview_show_full_accounts_hint'
-      : 'monitoring.account_overview_show_masked_accounts_hint'
-  );
 
   return (
     <div className={`${styles.inlineMetrics} ${styles.realtimeHeaderActions}`}>
@@ -1575,27 +1563,6 @@ export function RealtimeEventsPanelActions({
       <span title={t('monitoring.recent_failures')}>
         {`${recentFailuresLabel}: ${scopedFailureCount}`}
       </span>
-      <button
-        type="button"
-        className={[
-          styles.accountOverviewToolButton,
-          accountDisplayMode === 'full' ? styles.accountDisplayModeButtonActive : '',
-        ]
-          .filter(Boolean)
-          .join(' ')}
-        onClick={() => onAccountDisplayModeChange(nextAccountDisplayMode)}
-        title={accountDisplayHint}
-        aria-label={accountDisplayHint}
-      >
-        <AccountDisplayIcon size={15} aria-hidden="true" />
-        <span>
-          {t(
-            accountDisplayMode === 'masked'
-              ? 'monitoring.account_overview_account_display_masked'
-              : 'monitoring.account_overview_account_display_full'
-          )}
-        </span>
-      </button>
       <button
         type="button"
         className={[

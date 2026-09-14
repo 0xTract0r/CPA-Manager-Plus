@@ -2,6 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
+import { authFilesApi } from '@/services/api';
+import type { AuthFileItem } from '@/types';
+import {
+  findAuthFileForIdentity,
+  maskAccountEmailsInText,
+  resolveAuthFileAccountIdentity,
+} from '@/utils/accountIdentity';
 import {
   IconChartLine,
   IconCheck,
@@ -20,7 +27,10 @@ import { CodexInspectionResultsPanel } from '@/features/monitoring/components/Co
 import { InspectionConfigDrawer } from '@/features/monitoring/components/InspectionConfigDrawer';
 import { InspectionConfigFields } from '@/features/monitoring/components/InspectionConfigFields';
 import { CodexReauthDialog } from '@/features/oauth/CodexReauthDialog';
-import type { CodexReauthTarget } from '@/features/oauth/codexReauthModel';
+import {
+  createCodexReauthTargetFromAuthFile,
+  type CodexReauthTarget,
+} from '@/features/oauth/codexReauthModel';
 import { formatPercent } from '@/features/monitoring/components/accountOverviewPresentation';
 import {
   type CodexInspectionAction,
@@ -600,7 +610,8 @@ function toServerResultItem(
   item: CodexInspectionResult,
   t: ReturnType<typeof useTranslation>['t'],
   snapshot: UsageHeaderSnapshot | undefined,
-  locale: string
+  locale: string,
+  authFile?: AuthFileItem
 ): CodexInspectionResultItem {
   const actionStatusLabel = formatServerActionStatusLabel(item, t);
   const reasonParts = [item.actionReason, actionStatusLabel].filter(Boolean);
@@ -615,7 +626,7 @@ function toServerResultItem(
     disabled: item.disabled,
     status: item.status ?? '',
     state: item.state ?? '',
-    raw: item as unknown as CodexInspectionResultItem['raw'],
+    raw: authFile ?? (item as unknown as CodexInspectionResultItem['raw']),
     action: normalizeServerResultAction(item.action),
     actionReason: reasonParts.join(' · '),
     statusCode: item.statusCode ?? null,
@@ -694,6 +705,7 @@ export function ServerCodexInspectionPage() {
   const [runs, setRuns] = useState<CodexInspectionRun[]>([]);
   const [detail, setDetail] = useState<CodexInspectionRunDetail | null>(null);
   const [headerSnapshots, setHeaderSnapshots] = useState<UsageHeaderSnapshot[]>([]);
+  const [authFiles, setAuthFiles] = useState<AuthFileItem[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -742,15 +754,15 @@ export function ServerCodexInspectionPage() {
       setManagerConfig(responseConfig);
       setDraft(toDraft(responseConfig.codexInspection));
 
-      const runsResponse = await usageServiceApi.listCodexInspectionRuns(
-        resolvedBase,
-        managementKey,
-        RUNS_LIMIT
-      );
-      const snapshotsResponse = await monitoringAnalyticsApi
-        .getHeaderSnapshots(resolvedBase, managementKey, { days: 30, limit: 1000 })
-        .catch(() => ({ items: [] as UsageHeaderSnapshot[] }));
+      const [runsResponse, snapshotsResponse, authFilesResponse] = await Promise.all([
+        usageServiceApi.listCodexInspectionRuns(resolvedBase, managementKey, RUNS_LIMIT),
+        monitoringAnalyticsApi
+          .getHeaderSnapshots(resolvedBase, managementKey, { days: 30, limit: 1000 })
+          .catch(() => ({ items: [] as UsageHeaderSnapshot[] })),
+        authFilesApi.list().catch(() => ({ files: [] as AuthFileItem[] })),
+      ]);
       setHeaderSnapshots(snapshotsResponse.items ?? []);
+      setAuthFiles(authFilesResponse.files ?? []);
       setRuns(runsResponse.items);
       const nextSelectedId = runsResponse.items[0]?.id;
       if (nextSelectedId) {
@@ -764,6 +776,7 @@ export function ServerCodexInspectionPage() {
       setRuns([]);
       setDetail(null);
       setHeaderSnapshots([]);
+      setAuthFiles([]);
       setSelectedRunId(null);
     } finally {
       setLoading(false);
@@ -841,10 +854,17 @@ export function ServerCodexInspectionPage() {
             authIndex: item.authIndex,
             account: item.accountId || item.displayAccount,
           }),
-          i18n.language
+          i18n.language,
+          findAuthFileForIdentity(authFiles, {
+            authIndex: item.authIndex,
+            fileName: item.fileName,
+            email: item.displayAccount,
+            accountId: item.accountId,
+            provider: item.provider,
+          })
         )
       ),
-    [headerSnapshotLookup, i18n.language, resultRows, t]
+    [authFiles, headerSnapshotLookup, i18n.language, resultRows, t]
   );
   const resultByKey = useMemo(() => {
     const map = new Map<string, CodexInspectionResult>();
@@ -1140,6 +1160,16 @@ export function ServerCodexInspectionPage() {
       const counts = countServerResultActions(targets);
       const hasDelete = targets.some((item) => item.action === 'delete');
       const first = targets[0];
+      const firstAuthFile = findAuthFileForIdentity(authFiles, {
+        authIndex: first.authIndex,
+        fileName: first.fileName,
+        email: first.displayAccount,
+        accountId: first.accountId,
+        provider: first.provider,
+      });
+      const firstAccountLabel = firstAuthFile
+        ? resolveAuthFileAccountIdentity(firstAuthFile).primary
+        : maskAccountEmailsInText(first.displayAccount);
       showConfirmation({
         title:
           scope === 'bulk'
@@ -1154,7 +1184,7 @@ export function ServerCodexInspectionPage() {
                 enable: counts.enable,
               })
             : t('monitoring.server_codex_inspection_execute_single_body', {
-                account: first.displayAccount,
+                account: firstAccountLabel,
                 action: resolveActionLabel(first.action, t),
               }),
         confirmText:
@@ -1166,17 +1196,29 @@ export function ServerCodexInspectionPage() {
         onConfirm: () => executeServerActions(targets, scope),
       });
     },
-    [executeServerActions, showConfirmation, t]
+    [authFiles, executeServerActions, showConfirmation, t]
   );
 
-  const handleOpenCodexReauth = useCallback((item: CodexInspectionResult) => {
-    setCodexReauthTarget({
-      account: item.displayAccount || item.accountId || item.fileName,
-      fileName: item.fileName,
-      authIndex: item.authIndex ?? null,
-      accountId: item.accountId ?? null,
-    });
-  }, []);
+  const handleOpenCodexReauth = useCallback(
+    (item: CodexInspectionResult) => {
+      const authFile = findAuthFileForIdentity(authFiles, {
+        authIndex: item.authIndex,
+        fileName: item.fileName,
+        email: item.displayAccount,
+        accountId: item.accountId,
+        provider: item.provider,
+      });
+      const identityTarget = authFile ? createCodexReauthTargetFromAuthFile(authFile) : null;
+      setCodexReauthTarget({
+        ...identityTarget,
+        account: identityTarget?.account || item.displayAccount || item.accountId || item.fileName,
+        fileName: item.fileName,
+        authIndex: item.authIndex ?? null,
+        accountId: item.accountId ?? null,
+      });
+    },
+    [authFiles]
+  );
 
   const handleCodexReauthSuccess = useCallback(async () => {
     await refreshRuns({ silent: true });
@@ -1796,7 +1838,7 @@ export function ServerCodexInspectionPage() {
         const detail = entry.detail
           ? ` ${typeof entry.detail === 'string' ? entry.detail : JSON.stringify(entry.detail)}`
           : '';
-        return `[${ts}] [${entry.level}] ${entry.message}${detail}`;
+        return maskAccountEmailsInText(`[${ts}] [${entry.level}] ${entry.message}${detail}`);
       });
       try {
         await navigator.clipboard.writeText(lines.join('\n'));
@@ -1905,12 +1947,12 @@ export function ServerCodexInspectionPage() {
                     {formatTimestamp(entry.createdAtMs, i18n.language)}
                   </span>
                   <span className={styles.logMessage}>
-                    {entry.message}
+                    {maskAccountEmailsInText(entry.message)}
                     {entry.detail ? (
                       <small className={styles.serverLogDetail}>
                         {typeof entry.detail === 'string'
-                          ? entry.detail
-                          : JSON.stringify(entry.detail)}
+                          ? maskAccountEmailsInText(entry.detail)
+                          : maskAccountEmailsInText(JSON.stringify(entry.detail))}
                       </small>
                     ) : null}
                   </span>

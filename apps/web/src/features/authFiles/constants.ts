@@ -14,6 +14,7 @@ import type { AuthFileItem } from '@/types';
 import type { ProxyOwnerAccount } from '@/utils/proxyPreflight';
 import { parseTimestamp } from '@/utils/timestamp';
 import { formatInUtc8 } from '@/utils/format';
+import { resolveAuthFileAccountIdentity } from '@/utils/accountIdentity';
 
 export type ThemeColors = { bg: string; text: string; border?: string };
 export type TypeColorSet = { light: ThemeColors; dark?: ThemeColors };
@@ -346,12 +347,7 @@ export const getAuthFileProxyUrl = (file: AuthFileItem): string => {
 
 /** 账号展示名：备注优先（account_settings.note → 顶层 note），回退文件名。用于查重冲突提示。 */
 export const getAuthFileAccountLabel = (file: AuthFileItem): string => {
-  const settings = file.account_settings || file.accountSettings || null;
-  const note = (
-    (typeof settings?.note === 'string' ? settings.note : '') ||
-    (typeof file.note === 'string' ? file.note : '')
-  ).trim();
-  return note || file.name;
+  return resolveAuthFileAccountIdentity(file).primary || file.name;
 };
 
 /** AuthFileItem → 代理查重最小视图（name 作排除自身依据，label 作冲突提示名）。 */

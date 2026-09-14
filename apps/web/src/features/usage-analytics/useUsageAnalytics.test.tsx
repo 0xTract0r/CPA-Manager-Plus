@@ -18,8 +18,12 @@ vi.mock('@/features/monitoring/hooks/useUsageData', () => ({
   useUsageData: () => ({ apiKeyAliases: [], loadApiKeyAliases: vi.fn() }),
 }));
 
+const monitoringMetaMock = vi.hoisted(() => ({
+  payload: { authFiles: [] as Array<Record<string, unknown>>, channels: [] },
+}));
+
 vi.mock('@/features/monitoring/services/monitoringMetaService', () => ({
-  loadMonitoringMetaPayload: () => Promise.resolve({ authFiles: [], channels: [] }),
+  loadMonitoringMetaPayload: () => Promise.resolve(monitoringMetaMock.payload),
 }));
 
 vi.mock('@/stores', () => ({
@@ -120,6 +124,7 @@ describe('useUsageAnalytics request orchestration', () => {
     mainRefresh.mockReset();
     selectorRefresh.mockReset();
     auxiliaryRefresh.mockReset();
+    monitoringMetaMock.payload = { authFiles: [], channels: [] };
     useMonitoringAnalyticsMock.mockReset();
     useMonitoringAnalyticsMock.mockImplementation(resultFor);
   });
@@ -129,16 +134,43 @@ describe('useUsageAnalytics request orchestration', () => {
     renderer = null;
   });
 
-  const renderHook = async () => {
+  const renderHook = async (initialEntry = '/usage-analytics') => {
     await act(async () => {
       renderer = create(
-        <MemoryRouter initialEntries={['/usage-analytics']}>
+        <MemoryRouter initialEntries={[initialEntry]}>
           <Harness />
         </MemoryRouter>
       );
       await Promise.resolve();
     });
   };
+
+  it('keeps full-text search and adds note matches as an OR identity scope', async () => {
+    monitoringMetaMock.payload = {
+      authFiles: [
+        {
+          name: 'account.json',
+          authIndex: 'auth-note',
+          account: 'owner@example.test',
+          note: '生产主账号',
+        },
+      ],
+      channels: [],
+    };
+
+    await renderHook('/usage-analytics?search=生产');
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const overview = lastParams((params) => Boolean(params.include?.summary));
+    const selectors = lastParams((params) => Boolean(params.include?.filter_selectors));
+    expect(overview?.searchQuery).toBe('生产');
+    expect(overview?.filters).toMatchObject({ search_auth_indices: ['auth-note'] });
+    expect(selectors?.searchQuery).toBe('生产');
+    expect(selectors?.filters).toEqual({ search_auth_indices: ['auth-note'] });
+  });
 
   it('uses a tab-scoped main request and a tab-independent selector request', async () => {
     await renderHook();

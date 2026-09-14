@@ -61,6 +61,79 @@ const anchoredScheduling: AuthFileAccountScheduling = {
   warmup: { stage: 'mature', mature: true, age_days: 240 },
 };
 
+// effective_limits：mature 号不受养号压速影响，日预算 / token 日预算都是 0（无限制）。
+const matureEffectiveLimitsScheduling: AuthFileAccountScheduling = {
+  subscription_tier: 'max_5x',
+  tier_source: 'auto',
+  rate_scale: 1,
+  effective_limits: {
+    rpm: 180,
+    burst: 40,
+    concurrency: 16,
+    daily_budget: 0,
+    token_daily_budget: 0,
+    pacing_applies: false,
+  },
+};
+
+// effective_limits：养号号有非 0 日预算，且 pacing_applies=true（rpm 只是上限，
+// 实际 rpm 可能被动态压速进一步降低）。
+const warmingEffectiveLimitsScheduling: AuthFileAccountScheduling = {
+  subscription_tier: 'max_5x',
+  tier_source: 'auto',
+  rate_scale: 0.5,
+  effective_limits: {
+    rpm: 60,
+    burst: 10,
+    concurrency: 4,
+    daily_budget: 500,
+    token_daily_budget: 200000,
+    pacing_applies: true,
+  },
+};
+
+// rate_scale 实时预览：mature 号，warmup 携带 PRE-scale 基准（rpm_limit=90 /
+// concurrency_limit=8 / daily_budget=0），已保存 rate_scale=1（故 baseBurst =
+// effective_limits.burst / 1 = 30，反推无损）。
+const matureRatePreviewScheduling: AuthFileAccountScheduling = {
+  subscription_tier: 'max_5x',
+  tier_source: 'auto',
+  rate_scale: 1,
+  warmup: { stage: 'mature', mature: true, age_days: 300, rpm_limit: 90, concurrency_limit: 8, daily_budget: 0 },
+  effective_limits: {
+    rpm: 90,
+    burst: 30,
+    concurrency: 8,
+    daily_budget: 0,
+    token_daily_budget: 0,
+    pacing_applies: false,
+  },
+};
+
+// rate_scale 实时预览：养号号，已保存 rate_scale=0.5（baseBurst = 10 / 0.5 = 20），
+// daily_budget 基准非 0（1000），覆盖「非无限」日预算展示分支。
+const warmingRatePreviewScheduling: AuthFileAccountScheduling = {
+  subscription_tier: 'max_5x',
+  tier_source: 'auto',
+  rate_scale: 0.5,
+  warmup: {
+    stage: 'ramp-2',
+    mature: false,
+    age_days: 10,
+    rpm_limit: 120,
+    concurrency_limit: 8,
+    daily_budget: 1000,
+  },
+  effective_limits: {
+    rpm: 60,
+    burst: 10,
+    concurrency: 4,
+    daily_budget: 500,
+    token_daily_budget: 200000,
+    pacing_applies: true,
+  },
+};
+
 type Harness = {
   renderer: ReactTestRenderer;
   getSelect: () => ReturnType<ReactTestRenderer['root']['findByType']>;
@@ -74,6 +147,7 @@ type Harness = {
   getCandidateNow: () => ReturnType<ReactTestRenderer['root']['findByType']> | undefined;
   getApplyButton: () => ReturnType<ReactTestRenderer['root']['findByType']> | undefined;
   getText: () => string;
+  getRatePreviewNodes: () => ReturnType<ReactTestRenderer['root']['findAll']>;
 };
 
 // 把 RFC3339 派生成组件写入输入框的 datetime-local 值（分钟精度、本地 wall-clock），
@@ -169,6 +243,10 @@ const mountPanel = (overrides: Partial<AccountSchedulingPanelProps> = {}): Harne
       .findAllByType(Button)
       .find((node) => node.props['data-testid'] === 'account-settings-scheduling-apply');
   const getText = () => JSON.stringify(renderer.toJSON());
+  const getRatePreviewNodes = () =>
+    renderer.root.findAll(
+      (node) => node.props?.['data-testid'] === 'account-settings-scheduling-rate-scale-preview'
+    );
 
   return {
     renderer,
@@ -183,6 +261,7 @@ const mountPanel = (overrides: Partial<AccountSchedulingPanelProps> = {}): Harne
     getCandidateNow,
     getApplyButton,
     getText,
+    getRatePreviewNodes,
   };
 };
 
@@ -651,5 +730,130 @@ describe('AccountSchedulingPanel', () => {
     expect(panel.getFirstProductionSetNow()).toBeDefined();
     expect(panel.getFirstProductionClear()).toBeDefined();
     panel.renderer.unmount();
+  });
+
+  it('[生效上限] renders the effective-limits line for a mature account, with budgets shown as "unlimited" not 0', () => {
+    const panel = mountPanel({ initialScheduling: matureEffectiveLimitsScheduling });
+    expect(panel.getText()).toContain(
+      'Effective limits: rpm 180 · burst 40 · concurrency 16 · daily budget unlimited · token daily budget unlimited'
+    );
+    // mature 号（pacing_applies=false）不显示养号压速提示。
+    const pacingNote = panel.renderer.root.findAll(
+      (node) =>
+        node.props?.['data-testid'] === 'account-settings-scheduling-effective-limits-pacing-note'
+    );
+    expect(pacingNote.length).toBe(0);
+    panel.renderer.unmount();
+  });
+
+  it('[生效上限·养号] renders non-zero budgets as numbers and shows the dynamic-pacing note when pacing_applies is true', () => {
+    const panel = mountPanel({ initialScheduling: warmingEffectiveLimitsScheduling });
+    expect(panel.getText()).toContain(
+      'Effective limits: rpm 60 · burst 10 · concurrency 4 · daily budget 500 · token daily budget 200,000'
+    );
+    expect(panel.getText()).toContain(
+      'Warm-up account: actual rpm may be further reduced by dynamic pacing.'
+    );
+    panel.renderer.unmount();
+  });
+
+  it('[生效上限·降级] omits the effective-limits block entirely when the projection is absent (older core)', () => {
+    // autoScheduling 没有 effective_limits 字段（老后端未投影的降级形态）。
+    const panel = mountPanel();
+    expect(panel.getText()).not.toContain('Effective limits:');
+    const limitsNode = panel.renderer.root.findAll(
+      (node) => node.props?.['data-testid'] === 'account-settings-scheduling-effective-limits'
+    );
+    expect(limitsNode.length).toBe(0);
+    const pacingNote = panel.renderer.root.findAll(
+      (node) =>
+        node.props?.['data-testid'] === 'account-settings-scheduling-effective-limits-pacing-note'
+    );
+    expect(pacingNote.length).toBe(0);
+    panel.renderer.unmount();
+  });
+
+  // 实时预览：rate_scale 输入框正下方，随输入现算「这个乘子会带来的生效上限」，
+  // 不用保存/不发请求就能看到（客户端估算，与 footer 的已保存 effective_limits 并存）。
+  describe('[实时预览] rate_scale live preview', () => {
+    it('computes rpm/burst/concurrency from the warmup base × input for a mature account, unlimited daily budget for a 0 base (input=2)', () => {
+      const panel = mountPanel({ initialScheduling: matureRatePreviewScheduling });
+      act(() =>
+        panel
+          .getRateScaleInput()
+          .props.onChange({ target: { value: '2' } } as ChangeEvent<HTMLInputElement>)
+      );
+      // base: rpm_limit=90 concurrency_limit=8 daily_budget=0；baseBurst = 30/已保存
+      // rate_scale(1) = 30。× 2 → rpm 180 / burst 60 / concurrency 16 / 日预算无限制。
+      expect(panel.getText()).toContain(
+        'Preview (unsaved): rpm 180 · burst 60 · concurrency 16 · daily budget unlimited'
+      );
+      panel.renderer.unmount();
+    });
+
+    it('recomputes the same base × input for a different multiplier (input=3)', () => {
+      const panel = mountPanel({ initialScheduling: matureRatePreviewScheduling });
+      act(() =>
+        panel
+          .getRateScaleInput()
+          .props.onChange({ target: { value: '3' } } as ChangeEvent<HTMLInputElement>)
+      );
+      expect(panel.getText()).toContain(
+        'Preview (unsaved): rpm 270 · burst 90 · concurrency 24 · daily budget unlimited'
+      );
+      panel.renderer.unmount();
+    });
+
+    it('shows a non-zero daily budget and reverse-derives burst from a non-1 saved rate_scale for a warming account', () => {
+      const panel = mountPanel({ initialScheduling: warmingRatePreviewScheduling });
+      act(() =>
+        panel
+          .getRateScaleInput()
+          .props.onChange({ target: { value: '1' } } as ChangeEvent<HTMLInputElement>)
+      );
+      // base: rpm_limit=120 concurrency_limit=8 daily_budget=1000；已保存 rate_scale=0.5，
+      // effective burst=10 → baseBurst = 10/0.5 = 20。× 1 → 原样透传基准值。
+      expect(panel.getText()).toContain(
+        'Preview (unsaved): rpm 120 · burst 20 · concurrency 8 · daily budget 1,000'
+      );
+      panel.renderer.unmount();
+    });
+
+    it('renders no preview row for empty / non-positive / non-finite input (invalid input hides the row, no error thrown)', () => {
+      const panel = mountPanel({ initialScheduling: matureRatePreviewScheduling });
+
+      // 空（Reset to default 等价态）。
+      act(() => panel.getResetButton()?.props.onClick());
+      expect(panel.getRatePreviewNodes().length).toBe(0);
+
+      // 非正数。
+      act(() =>
+        panel
+          .getRateScaleInput()
+          .props.onChange({ target: { value: '-1' } } as ChangeEvent<HTMLInputElement>)
+      );
+      expect(panel.getRatePreviewNodes().length).toBe(0);
+
+      // 非有限（非数字文本）。
+      act(() =>
+        panel
+          .getRateScaleInput()
+          .props.onChange({ target: { value: 'abc' } } as ChangeEvent<HTMLInputElement>)
+      );
+      expect(panel.getRatePreviewNodes().length).toBe(0);
+      panel.renderer.unmount();
+    });
+
+    it('renders no preview row when the warmup projection is absent (older core degrades gracefully)', () => {
+      // autoScheduling 没有 warmup 字段（老后端未投影的降级形态）。
+      const panel = mountPanel({ initialScheduling: autoScheduling });
+      act(() =>
+        panel
+          .getRateScaleInput()
+          .props.onChange({ target: { value: '2' } } as ChangeEvent<HTMLInputElement>)
+      );
+      expect(panel.getRatePreviewNodes().length).toBe(0);
+      panel.renderer.unmount();
+    });
   });
 });

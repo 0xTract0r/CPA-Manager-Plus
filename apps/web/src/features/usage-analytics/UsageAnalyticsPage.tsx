@@ -15,6 +15,7 @@ import type { BarSeriesOption, HeatmapSeriesOption, LineSeriesOption } from 'ech
 import type { ComposeOption, ECElementEvent } from 'echarts/core';
 import { EChartsView } from '@/components/charts/EChartsView';
 import { Button } from '@/components/ui/Button';
+import { AccountIdentity } from '@/components/ui/AccountIdentity';
 import { Select, type SelectOption } from '@/components/ui/Select';
 import { SegmentedTabs, type SegmentedTabItem } from '@/components/ui/SegmentedTabs';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -35,6 +36,7 @@ import {
   IconX,
 } from '@/components/ui/icons';
 import { useThemeStore } from '@/stores';
+import { resolveAccountIdentity } from '@/utils/accountIdentity';
 import {
   buildUsageHeatmapChartData,
   buildModelKeyDistribution,
@@ -117,6 +119,19 @@ const heatmapScaleOptions: Array<{ value: UsageHeatmapScaleMode; labelKey: strin
     value: mode,
     labelKey: `usage_analytics.heatmap_scale_${mode}`,
   }));
+
+const resolveUsageAccountIdentity = (row: {
+  account?: string;
+  accountEmail?: string;
+  accountNote?: string;
+  accountLabel?: string;
+  label?: string;
+}) =>
+  resolveAccountIdentity({
+    note: row.accountNote,
+    email: row.accountEmail || row.account,
+    fallback: row.accountLabel || row.label || row.account,
+  });
 
 const chartHeight = 360;
 const compactChartHeight = 220;
@@ -2091,7 +2106,13 @@ function KeyAnomalyTable({
           ) : (
             rows.slice(0, 8).map((row) => (
               <tr key={row.id}>
-                <td>{type === 'credential' ? row.label : getApiKeyRowDisplayLabel(row.row)}</td>
+                <td>
+                  {type === 'credential' ? (
+                    <AccountIdentity identity={resolveUsageAccountIdentity(row.row)} compact />
+                  ) : (
+                    getApiKeyRowDisplayLabel(row.row)
+                  )}
+                </td>
                 <td>{t(row.reasonKey)}</td>
                 <td>
                   <span className={`${styles.severityBadge} ${styles[`severity${row.severity}`]}`}>
@@ -2157,7 +2178,13 @@ function ApiKeyContextTable({ locale, rows }: { locale: string; rows: UsageApiKe
               {rows.slice(0, 8).map((row) => (
                 <tr key={row.id}>
                   <td>{row.provider || '-'}</td>
-                  <td title={row.account || '-'}>{row.account || '-'}</td>
+                  <td>
+                    <AccountIdentity
+                      identity={resolveUsageAccountIdentity(row)}
+                      compact
+                      testId={`usage-api-key-context-account-${row.id}`}
+                    />
+                  </td>
                   <td>{row.authIndex || '-'}</td>
                   <td title={row.source || '-'}>{row.source || '-'}</td>
                   <td className={styles.monoCell} title={row.sourceHash || '-'}>
@@ -3729,7 +3756,17 @@ function RankTable({
                     ) : (
                       <IconModelCluster size={16} />
                     )}
-                    {type === 'apiKey' ? getApiKeyRowDisplayLabel(row) : row.label}
+                    {type === 'apiKey' ? (
+                      getApiKeyRowDisplayLabel(row)
+                    ) : type === 'credential' ? (
+                      <AccountIdentity
+                        identity={resolveUsageAccountIdentity(row)}
+                        compact
+                        testId={`usage-credential-identity-${row.id}`}
+                      />
+                    ) : (
+                      row.label
+                    )}
                     {type === 'apiKey' && selectable ? <IconCopy size={13} /> : null}
                   </span>
                 </td>
@@ -3789,6 +3826,7 @@ function DetailPanel({
       : type === 'apiKey'
         ? t('usage_analytics.api_key_detail_title', { key: row.label })
         : t('usage_analytics.credential_detail_title', { credential: row.label });
+  const accountIdentity = resolveUsageAccountIdentity(row);
   return (
     <div className={`${styles.detailPanel} ${className}`}>
       <div className={styles.panelHeader}>
@@ -3836,9 +3874,16 @@ function DetailPanel({
       ) : (
         <>
           <div className={styles.entityIdentityGrid}>
+            <div>
+              <span>{t('usage_analytics.credential_identity_account')}</span>
+              <AccountIdentity
+                identity={accountIdentity}
+                compact
+                testId={`usage-credential-detail-account-${row.id}`}
+              />
+            </div>
             {[
               ['credential_identity_provider', row.provider],
-              ['credential_identity_account', row.account],
               ['credential_identity_auth_file', row.authFile],
               ['credential_identity_auth_index', row.authIndex],
               ['credential_identity_project_id', row.projectId],

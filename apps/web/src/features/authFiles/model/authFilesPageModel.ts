@@ -25,6 +25,7 @@ import {
 } from '@/features/authFiles/constants';
 import { formatInUtc8 } from '@/utils/format';
 import { parseTimestampMs } from '@/utils/timestamp';
+import { getAuthFileIdentitySearchValues, readAuthFileNote } from '@/utils/accountIdentity';
 
 export const easePower3Out = (progress: number) => 1 - (1 - progress) ** 4;
 export const easePower2In = (progress: number) => progress ** 3;
@@ -658,9 +659,7 @@ const getAuthFileCodexStatusSearchValues = (
   ]) ?? [];
 
 const getAuthFileNoteValue = (file: AuthFileItem): string => {
-  const raw = file.note ?? file['note'];
-  if (raw === undefined || raw === null) return '';
-  return String(raw).trim();
+  return readAuthFileNote(file);
 };
 
 export const compareAuthFileNote = (
@@ -876,6 +875,7 @@ export const getAuthFileSearchValues = (
   const headerRecoverAtMS = getHeaderSnapshotRecoverAtMs(headerSnapshot);
 
   return [
+    getAuthFileIdentitySearchValues(file),
     file.name,
     file.type,
     file.provider,

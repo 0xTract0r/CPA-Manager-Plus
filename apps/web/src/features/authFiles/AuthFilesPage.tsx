@@ -324,6 +324,7 @@ export function AuthFilesPage() {
     handleDownload,
     handleStatusToggle,
     handleStatusRefresh,
+    updateFileAccountScheduling,
     toggleSelect,
     selectAllVisible,
     invertVisibleSelection,
@@ -2138,6 +2139,7 @@ export function AuthFilesPage() {
         onSave={() => void handleAccountSettingsSaveWithAuditReload()}
         onChange={handleAccountSettingsChange}
         onProxyBlur={() => void handleAccountSettingsProxyBlur()}
+        onSchedulingApplied={updateFileAccountScheduling}
       />
 
       <TestMessageModal

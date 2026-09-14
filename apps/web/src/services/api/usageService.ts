@@ -643,6 +643,8 @@ export interface MonitoringAnalyticsFilters {
   accounts?: string[];
   auth_files?: string[];
   auth_indices?: string[];
+  /** 与 search_query 取 OR，用于把实时备注/完整邮箱匹配扩展到历史 auth_index 事件。 */
+  search_auth_indices?: string[];
   api_key_hashes?: string[];
   source_hashes?: string[];
   project_ids?: string[];

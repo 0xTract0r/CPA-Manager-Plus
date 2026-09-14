@@ -1,6 +1,7 @@
 import type { QuotaAccountDisplayMode } from '@/features/quota/quotaPageUiState';
 import type { AuthFileItem } from '@/types';
 import { maskSensitiveText } from '@/utils/format';
+import { resolveAuthFileAccountIdentity, type AccountIdentityView } from '@/utils/accountIdentity';
 
 const EMAIL_TOKEN_REGEX = /[^\s/\\()[\]{}<>:;"',]+@[^\s/\\()[\]{}<>:;"',]+/g;
 
@@ -47,15 +48,28 @@ export const maskQuotaAccountText = (value: string) => {
 };
 
 export const resolveQuotaAccountDisplayText = (
-  item: Pick<AuthFileItem, 'name'>,
+  item: AuthFileItem,
   displayMode: QuotaAccountDisplayMode
 ) => {
-  const full = String(item.name || '').trim();
-  const primary = displayMode === 'full' ? full : maskQuotaAccountText(full);
+  const resolved = resolveAuthFileAccountIdentity(item);
+  const fallback = String(item.name || '').trim();
+  const visibleEmail = displayMode === 'full' ? resolved.email : resolved.maskedEmail;
+  const primary = resolved.hasNote
+    ? resolved.note
+    : visibleEmail || (displayMode === 'full' ? fallback : maskQuotaAccountText(fallback));
+  const secondary = resolved.hasNote ? visibleEmail : '';
+  const identity: AccountIdentityView = {
+    ...resolved,
+    primary: primary || resolved.primary,
+    secondary,
+    maskedEmail: visibleEmail || resolved.maskedEmail,
+  };
 
   return {
-    primary: primary || full || '-',
-    full: full || '-',
-    title: displayMode === 'full' ? full || primary || '-' : primary || '-',
+    identity,
+    primary: identity.primary || fallback || '-',
+    secondary: identity.secondary,
+    full: resolved.email || fallback || '-',
+    title: resolved.email || resolved.title || fallback || '-',
   };
 };

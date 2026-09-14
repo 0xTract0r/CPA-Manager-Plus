@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildFarmAccountIdentityLookup,
   maskAccountEmail,
   maskTelemetryFingerprint,
   resolveBindingIdentity,
+  resolveFarmAccountIdentity,
   stripJsonSuffix,
 } from './identity';
 
@@ -89,13 +91,30 @@ describe('resolveBindingIdentity', () => {
   });
 });
 
+describe('farm account identity lookup', () => {
+  it('indexes both auth-file name and email while keeping the note primary', () => {
+    const account = {
+      name: 'claude-owner.json',
+      account: 'owner.long@example.test',
+      note: '农场主力账号',
+    };
+    const identity = resolveFarmAccountIdentity(account);
+    const lookup = buildFarmAccountIdentityLookup([account]);
+
+    expect(identity).toMatchObject({
+      primary: '农场主力账号',
+      secondary: 'ow***@example.test',
+    });
+    expect(lookup.get('claude-owner.json')).toEqual(identity);
+    expect(lookup.get('owner.long@example.test')).toEqual(identity);
+  });
+});
+
 // TP-1/TP-2：device_id/session_id 这类高熵指纹字段的展示脱敏（前 12 + 后 4）。
 describe('maskTelemetryFingerprint', () => {
   it('64 位 sha256 十六进制串：保留前 12 + 后 4，中间折叠', () => {
     expect(
-      maskTelemetryFingerprint(
-        'e6b4c2aa114af4db9d2568e2810eb312d61bdfea0a1f219053e5191ed683ca48'
-      )
+      maskTelemetryFingerprint('e6b4c2aa114af4db9d2568e2810eb312d61bdfea0a1f219053e5191ed683ca48')
     ).toBe('e6b4c2aa114a…ca48');
   });
 
@@ -117,8 +136,12 @@ describe('maskTelemetryFingerprint', () => {
   });
 
   it('掩码后的字符串不应被当作相等性判据（示例：不同尾段的两个值掩码结果不同）', () => {
-    const a = maskTelemetryFingerprint('e6b4c2aa114af4db9d2568e2810eb312d61bdfea0a1f219053e5191ed683ca48');
-    const b = maskTelemetryFingerprint('e6b4c2aa114af4db9d2568e2810eb312d61bdfea0a1f219053e5191ed683cxyz');
+    const a = maskTelemetryFingerprint(
+      'e6b4c2aa114af4db9d2568e2810eb312d61bdfea0a1f219053e5191ed683ca48'
+    );
+    const b = maskTelemetryFingerprint(
+      'e6b4c2aa114af4db9d2568e2810eb312d61bdfea0a1f219053e5191ed683cxyz'
+    );
     expect(a).not.toBe(b);
   });
 });
