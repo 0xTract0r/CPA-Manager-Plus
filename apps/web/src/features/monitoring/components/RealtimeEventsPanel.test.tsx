@@ -6,7 +6,11 @@ import type { MonitoringEventRow } from '@/features/monitoring/hooks/useMonitori
 import { formatInUtc8 } from '@/utils/datetime';
 import styles from '../MonitoringCenterPage.module.scss';
 import { hasOverflowingContent } from './contentTooltip';
-import { RealtimeEventsPanel, RealtimeEventsPanelActions } from './RealtimeEventsPanel';
+import {
+  REALTIME_CONTENT_TOOLTIP_OPEN_DELAY_MS,
+  RealtimeEventsPanel,
+  RealtimeEventsPanelActions,
+} from './RealtimeEventsPanel';
 
 const t = ((key: string, options?: Record<string, unknown>) => {
   const messages: Record<string, string> = {
@@ -227,6 +231,10 @@ const renderActions = (
   );
 
 describe('RealtimeEventsPanel', () => {
+  it('uses a deliberate hover delay for content expansion tooltips', () => {
+    expect(REALTIME_CONTENT_TOOLTIP_OPEN_DELAY_MS).toBe(500);
+  });
+
   // 组件已迁到全局时区 + 标准格式渲染（date=YYYY-MM-DD via dateStyle:'medium'，
   // time=HH:mm:ss via timeStyle:'medium'）；预期值走与组件同款的 formatInUtc8 选项，
   // 标准数字格式与 locale/机器本地时区无关，避免断言写死某地区格式。
@@ -409,8 +417,8 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).toContain('API Key: Team A');
     expect(markup).not.toContain('#12345678');
 
-    // API Key 值行改走意图延迟浮层展示完整补充信息（掩码值/哈希/执行器类型），不再依赖浏览器
-    // 原生 title=（同 RealtimeModelCell 的 portal 手法，见下方模型名测试）。
+    // API Key 值行只在真实截断时走意图延迟浮层展示完整补充信息（掩码值/哈希/执行器类型），
+    // 未截断时保持非 focusable，不再依赖浏览器原生 title=。
     expect(markup).not.toContain('title="API Key: Team A');
     const tooltipMatch = markup.match(
       /<span id="([^"]*-apikey-tooltip-[^"]*)" role="tooltip"[^>]*realtimeModelTooltip[^>]*>/
@@ -419,6 +427,7 @@ describe('RealtimeEventsPanel', () => {
     const tooltipId = tooltipMatch?.[1] ?? '';
     expect(tooltipId).toContain('apikey-tooltip');
     expect(markup).toContain('data-overflow-tooltip="api-key"');
+    expect(markup).toMatch(/data-overflow-tooltip="api-key"[^>]*tabindex="-1"/);
     expect(markup).toMatch(/realtimeModelTooltipPrimary[^>]*>API Key: Team A<\/span>/);
     expect(markup).toMatch(/realtimeModelTooltipSecondary[^>]*>Masked key: sk-\.\.\.cdef<\/span>/);
     expect(markup).toMatch(
