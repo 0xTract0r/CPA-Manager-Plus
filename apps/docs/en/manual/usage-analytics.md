@@ -55,3 +55,5 @@ If the model name is an alias or internal name, add the matching entry in [Model
 - If model names are rewritten by clients, providers, or route aliases, maintain the corresponding name in Model Prices.
 - Missing token fields can make cost incomplete.
 - Requests lost while Manager Server was stopped or queue data expired cannot be reconstructed.
+
+Model tables support name search and alert-status filters. Account tables search email, note, name or ID and filter providers. Click headers for ascending/descending sorting; missing values stay last. Reset table clears local filters and restores event-count descending order. Table filters do not change summary cards or trends. TPS is end-to-end output tokens per second, including waiting time; short outputs can have low TPS without slow generation.

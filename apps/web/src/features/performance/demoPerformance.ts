@@ -11,7 +11,7 @@ export function withDemoTelemetry(
 ): MonitoringAnalyticsEventRow {
   if (index % 7 === 6) return event;
   // 较旧失败尝试与前一条较新成功事件关联，演示换尝试后的成功。
-  if (index % 12 === 2)
+  if (index % 173 === 2)
     event = {
       ...event,
       request_id: `demo-request-${String(index).padStart(3, '0')}`,
@@ -19,8 +19,9 @@ export function withDemoTelemetry(
       fail_status_code: 429,
       fail_summary: 'Mock retry before successful attempt',
     };
-  const stalled = index % 5 === 2;
-  const duration = stalled ? 18000 : Math.max(event.latency_ms || 1000, 1000);
+  const stalled = index % 5 === 2 && !event.model.includes('haiku');
+  const duration = Math.max(event.latency_ms || 1000, stalled ? 18000 : 1000);
+  const firstBody = event.ttft_ms || Math.min(170, duration / 2);
   return {
     ...event,
     latency_ms: duration,
@@ -35,9 +36,9 @@ export function withDemoTelemetry(
       observed_stages: ['response_headers', 'first_body', 'content'],
       connect_ms: 40,
       tls_ms: 70,
-      response_headers_ms: 150,
-      first_body_ms: 170,
-      first_content_ms: 200,
+      response_headers_ms: Math.max(0, firstBody - 20),
+      first_body_ms: firstBody,
+      first_content_ms: Math.min(firstBody + 30, duration - 10),
       last_content_ms: duration - 10,
       content_chunks: 45,
       max_content_gap_ms: stalled ? 8000 : 120,
