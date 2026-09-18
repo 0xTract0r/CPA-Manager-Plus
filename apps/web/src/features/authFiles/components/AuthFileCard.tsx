@@ -28,9 +28,9 @@ import {
 } from '@/utils/recentRequests';
 import { formatDateTime, formatFileSize, formatUnixTimestamp } from '@/utils/format';
 import {
-  compactAuthFileNameForDisplay,
   maskAccountEmailsInText,
   resolveAuthFileAccountIdentity,
+  resolveAuthFileNameDisplayValue,
 } from '@/utils/accountIdentity';
 import {
   QUOTA_PROVIDER_TYPES,
@@ -310,7 +310,11 @@ export function AuthFileCard(props: AuthFileCardProps) {
   const visibleAuthFileName = maskAccountEmails
     ? `${maskAccountEmailsInText(authFileStem)}${authFileSuffix}`
     : file.name;
-  const compactAuthFileName = compactAuthFileNameForDisplay(file.name, accountIdentity.email);
+  const compactAuthFileName = resolveAuthFileNameDisplayValue(
+    file.name,
+    accountIdentity.email,
+    maskAccountEmails
+  );
   const modifiedLabel = formatModified(file);
   const compactModifiedLabel = formatModifiedCompact(file);
   const subscription = isAntigravity && !isRuntimeOnly ? antigravitySubscription : undefined;

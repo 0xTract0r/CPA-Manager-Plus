@@ -8,6 +8,7 @@ import {
   maskAccountEmailsInText,
   resolveAccountIdentity,
   resolveAuthFileAccountIdentity,
+  resolveAuthFileNameDisplayValue,
   withIdentitySearchAuthIndices,
 } from './accountIdentity';
 
@@ -91,6 +92,33 @@ describe('accountIdentity', () => {
     expect(compactAuthFileNameForDisplay('custom-credential.json', 'owner@example.test')).toBe(
       'custom-credential.json'
     );
+  });
+
+  it('masks every remaining filename email when privacy mode is enabled', () => {
+    expect(
+      resolveAuthFileNameDisplayValue(
+        'legacy-other.owner@example.test.json',
+        'current.owner@example.test',
+        false
+      )
+    ).toBe('legacy-other.owner@example.test.json');
+    expect(
+      resolveAuthFileNameDisplayValue(
+        'legacy-other.owner@example.test.json',
+        'current.owner@example.test',
+        true
+      )
+    ).toBe('le***@example.test.json');
+    expect(resolveAuthFileNameDisplayValue('file.only@example.test.json', '', true)).toBe(
+      'fi***@example.test.json'
+    );
+    expect(
+      resolveAuthFileNameDisplayValue(
+        'claude-current.owner@example.test.json',
+        'current.owner@example.test',
+        true
+      )
+    ).toBe('claude-….json');
   });
 
   it('never exposes an embedded email through a non-email fallback label', () => {

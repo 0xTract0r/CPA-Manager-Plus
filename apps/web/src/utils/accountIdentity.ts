@@ -49,6 +49,22 @@ export const compactAuthFileNameForDisplay = (fileName: unknown, email: unknown)
   return `${normalizedFileName.slice(0, index)}…${normalizedFileName.slice(index + normalizedEmail.length)}`;
 };
 
+/**
+ * 卡片文件名的最终可见值：先折叠与账号重复的邮箱，再按全局隐私状态脱敏仍残留的
+ * 其它邮箱。后一步不能省略——文件名可能含另一个邮箱，或账号身份根本未识别。
+ */
+export const resolveAuthFileNameDisplayValue = (
+  fileName: unknown,
+  email: unknown,
+  maskEmails: boolean
+): string => {
+  const compact = compactAuthFileNameForDisplay(fileName, email);
+  if (!maskEmails) return compact;
+  const suffix = /\.json$/i.test(compact) ? '.json' : '';
+  const stem = suffix ? compact.slice(0, -suffix.length) : compact;
+  return `${maskAccountEmailsInText(stem)}${suffix}`;
+};
+
 export type AccountIdentityInput = {
   note?: unknown;
   email?: unknown;
