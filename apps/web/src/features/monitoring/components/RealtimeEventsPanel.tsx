@@ -123,8 +123,9 @@ const FAILURE_TOOLTIP_OFFSET = 8;
 const FAILURE_TOOLTIP_MAX_WIDTH = 420;
 const FAILURE_TOOLTIP_MAX_HEIGHT = 240;
 const FAILURE_TOOLTIP_CLOSE_DELAY_MS = 120;
-const CONTENT_TOOLTIP_OPEN_DELAY_MS = 140;
+export const REALTIME_CONTENT_TOOLTIP_OPEN_DELAY_MS = 500;
 const CONTENT_TOOLTIP_CLOSE_DELAY_MS = 220;
+const REALTIME_CONTENT_TOOLTIP_OPEN_EVENT = 'cpamp:realtime-content-tooltip-open';
 // "强度/等级"列缺值时的中性占位：只用一个 em dash 字符，不落成裸的 "-"（在等宽字体/
 // 部分渲染环境下容易被读成叉号），也不是任何需要按语言翻译的文案。effort 与 tier
 // 皆缺失时，整格只显这一个占位（第 2 行不渲染）。
@@ -465,14 +466,15 @@ type ContentTooltipOptions = {
 };
 
 // 内容型浮层共享状态机：时间/模型/来源仅在真实 overflow 或 line-clamp 后开放；鼠标使用
-// 很短的 intent delay，避免扫表时闪烁，键盘聚焦仍立即打开。浮层与 trigger 之间保留关闭
+// 与账号全文展开一致的 500ms intent delay，避免扫表时误触遮挡，键盘聚焦仍立即打开。浮层与 trigger 之间保留关闭
 // 缓冲，并在鼠标进入 portal 浮层后取消关闭，使长邮箱/模型名可以滚动、选中和复制。
-// API Key 传 requireOverflow=false：它还承载掩码、哈希、executor 等单元格外补充信息。
+// 四类内容浮层统一只在真实溢出时开放，并通过窗口级事件保持互斥，避免多个浮层叠加遮挡。
 function useContentTooltip<T extends HTMLElement>({
   requireOverflow = true,
   contentKey = '',
 }: ContentTooltipOptions = {}) {
   const triggerRef = useRef<T | null>(null);
+  const ownerId = useId();
   const openTimerRef = useRef<number | null>(null);
   const closeTimerRef = useRef<number | null>(null);
   const rafRef = useRef<number | null>(null);
@@ -532,8 +534,13 @@ function useContentTooltip<T extends HTMLElement>({
       return;
     }
     updatePosition();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent<string>(REALTIME_CONTENT_TOOLTIP_OPEN_EVENT, { detail: ownerId })
+      );
+    }
     setOpen(true);
-  }, [clearCloseTimer, clearOpenTimer, refreshAvailability, updatePosition]);
+  }, [clearCloseTimer, clearOpenTimer, ownerId, refreshAvailability, updatePosition]);
 
   const show = useCallback(() => {
     clearOpenTimer();
@@ -549,7 +556,7 @@ function useContentTooltip<T extends HTMLElement>({
     openTimerRef.current = window.setTimeout(() => {
       openTimerRef.current = null;
       showImmediately();
-    }, CONTENT_TOOLTIP_OPEN_DELAY_MS);
+    }, REALTIME_CONTENT_TOOLTIP_OPEN_DELAY_MS);
   }, [clearCloseTimer, clearOpenTimer, refreshAvailability, showImmediately]);
 
   const requestHide = useCallback(() => {
@@ -613,6 +620,19 @@ function useContentTooltip<T extends HTMLElement>({
     },
     [clearCloseTimer, clearOpenTimer]
   );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const handleOtherTooltipOpen = (event: Event) => {
+      if ((event as CustomEvent<string>).detail === ownerId) return;
+      tooltipHoveredRef.current = false;
+      hideNow();
+    };
+    window.addEventListener(REALTIME_CONTENT_TOOLTIP_OPEN_EVENT, handleOtherTooltipOpen);
+    return () => {
+      window.removeEventListener(REALTIME_CONTENT_TOOLTIP_OPEN_EVENT, handleOtherTooltipOpen);
+    };
+  }, [hideNow, ownerId]);
 
   useEffect(() => {
     if (!open || typeof window === 'undefined') return undefined;
@@ -1191,9 +1211,8 @@ type RealtimeApiKeyValueCellProps = {
   tooltipId: string;
 };
 
-// API Key 值补充信息浮层：原先把掩码值/哈希/执行器类型塞进这一行自带的原生 title=，这里改用
-// 同款意图延迟 portal 浮层展示同等信息，不再依赖浏览器原生 tooltip 的不可控延迟；首行是
-// 可见文案本身（未截断），其余行是原来 title= 里的补充信息。显式 title="" 覆盖祖先
+// API Key 值补充信息浮层：仅在可见值真实截断时，使用同款意图延迟 portal 浮层展示完整值与
+// 掩码/哈希/executor 补充信息；未截断时不制造重复浮层。显式 title="" 覆盖祖先
 // .primaryCell 上的原生 title，理由同 RealtimeSourceNameCell。
 function RealtimeApiKeyValueCell({ text, tooltipLines, tooltipId }: RealtimeApiKeyValueCellProps) {
   const {
@@ -1210,7 +1229,6 @@ function RealtimeApiKeyValueCell({ text, tooltipLines, tooltipId }: RealtimeApiK
     handleTooltipMouseDown,
     initialTabIndex,
   } = useContentTooltip<HTMLElement>({
-    requireOverflow: false,
     contentKey: `${text}\u0000${tooltipLines.join('\u0000')}`,
   });
   const isBrowser = typeof document !== 'undefined';
