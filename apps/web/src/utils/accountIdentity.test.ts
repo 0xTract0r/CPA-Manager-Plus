@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  compactAuthFileNameForDisplay,
   findAuthFileForIdentity,
   findAuthIndicesMatchingIdentityQuery,
   getAuthFileIdentitySearchValues,
@@ -7,6 +8,7 @@ import {
   maskAccountEmailsInText,
   resolveAccountIdentity,
   resolveAuthFileAccountIdentity,
+  resolveAuthFileNameDisplayValue,
   withIdentitySearchAuthIndices,
 } from './accountIdentity';
 
@@ -20,17 +22,17 @@ describe('accountIdentity', () => {
       })
     ).toMatchObject({
       primary: '上海研发 · 主力池',
-      secondary: 'Ow***@accounts.example.test',
+      secondary: 'Owner.Name+prod@accounts.example.test',
       email: 'Owner.Name+prod@accounts.example.test',
       hasNote: true,
       primaryIsEmail: false,
     });
   });
 
-  it('uses the masked email as primary when the note is empty', () => {
+  it('uses the full account email as primary when the note is empty', () => {
     expect(resolveAccountIdentity({ note: '  ', email: 'qa+fallback@example.test' })).toMatchObject(
       {
-        primary: 'qa***@example.test',
+        primary: 'qa+fallback@example.test',
         secondary: '',
         hasNote: false,
         primaryIsEmail: true,
@@ -38,7 +40,7 @@ describe('accountIdentity', () => {
     );
   });
 
-  it('extracts note/email from account settings and strips a JSON email suffix', () => {
+  it('does not infer an account email from an email-like file name', () => {
     expect(
       resolveAuthFileAccountIdentity({
         name: 'operator.long+tag@example.test.json',
@@ -46,8 +48,8 @@ describe('accountIdentity', () => {
       })
     ).toMatchObject({
       primary: '夜间批处理',
-      email: 'operator.long+tag@example.test',
-      maskedEmail: 'op***@example.test',
+      email: '',
+      fallback: 'operator.long+tag@example.test',
     });
   });
 
@@ -74,13 +76,59 @@ describe('accountIdentity', () => {
     ).toBe('ow***@example.test failed; qa***@lab.example.test retry');
   });
 
-  it('never exposes an embedded email through a non-email fallback label', () => {
+  it('collapses a duplicated account email inside an auth filename without losing suffixes', () => {
     expect(
-      resolveAccountIdentity({ fallback: 'archive-owner@example.test-backup' })
-    ).toMatchObject({
-      primary: 'ar***@example.test-backup',
-      fallback: 'archive-owner@example.test-backup',
-    });
+      compactAuthFileNameForDisplay(
+        'claude-owner.primary@example.test.json',
+        'owner.primary@example.test'
+      )
+    ).toBe('claude-….json');
+    expect(
+      compactAuthFileNameForDisplay(
+        'codex-owner.plus@example.test-pro.json',
+        'owner.plus@example.test'
+      )
+    ).toBe('codex-…-pro.json');
+    expect(compactAuthFileNameForDisplay('custom-credential.json', 'owner@example.test')).toBe(
+      'custom-credential.json'
+    );
+  });
+
+  it('masks every remaining filename email when privacy mode is enabled', () => {
+    expect(
+      resolveAuthFileNameDisplayValue(
+        'legacy-other.owner@example.test.json',
+        'current.owner@example.test',
+        false
+      )
+    ).toBe('legacy-other.owner@example.test.json');
+    expect(
+      resolveAuthFileNameDisplayValue(
+        'legacy-other.owner@example.test.json',
+        'current.owner@example.test',
+        true
+      )
+    ).toBe('le***@example.test.json');
+    expect(resolveAuthFileNameDisplayValue('file.only@example.test.json', '', true)).toBe(
+      'fi***@example.test.json'
+    );
+    expect(
+      resolveAuthFileNameDisplayValue(
+        'claude-current.owner@example.test.json',
+        'current.owner@example.test',
+        true
+      )
+    ).toBe('claude-….json');
+  });
+
+  it('never exposes an embedded email through a non-email fallback label', () => {
+    expect(resolveAccountIdentity({ fallback: 'archive-owner@example.test-backup' })).toMatchObject(
+      {
+        primary: 'archive-owner@example.test-backup',
+        fallback: 'archive-owner@example.test-backup',
+        maskedFallback: 'ar***@example.test-backup',
+      }
+    );
   });
 
   it('finds current files by strong identity keys without relying on duplicate notes', () => {

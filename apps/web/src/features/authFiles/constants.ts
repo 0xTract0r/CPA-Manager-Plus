@@ -14,6 +14,7 @@ import type { AuthFileItem } from '@/types';
 import type { ProxyOwnerAccount } from '@/utils/proxyPreflight';
 import { parseTimestamp } from '@/utils/timestamp';
 import { formatInUtc8 } from '@/utils/format';
+import { getUtc8Parts } from '@/utils/datetime';
 import { resolveAuthFileAccountIdentity } from '@/utils/accountIdentity';
 
 export type ThemeColors = { bg: string; text: string; border?: string };
@@ -480,23 +481,35 @@ export function isRuntimeOnlyAuthFile(file: AuthFileItem): boolean {
   return false;
 }
 
-export const formatModified = (item: AuthFileItem): string => {
+const resolveModifiedDate = (item: AuthFileItem): Date | null => {
   const raw = item['modtime'] ?? item.modified;
-  if (!raw) return '-';
+  if (!raw) return null;
   const asNumber = Number(raw);
   const date =
     Number.isFinite(asNumber) && !Number.isNaN(asNumber)
       ? new Date(asNumber < 1e12 ? asNumber * 1000 : asNumber)
       : (parseTimestamp(raw) ?? new Date(String(raw)));
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+export const formatModified = (item: AuthFileItem): string => {
+  const date = resolveModifiedDate(item);
   // 与旧版一致：强制 UTC+8（Asia/Shanghai）展示，不跟随浏览器本地时区。
-  return Number.isNaN(date.getTime())
-    ? '-'
-    : formatInUtc8(
+  return date
+    ? formatInUtc8(
         date,
         { dateStyle: 'medium', timeStyle: 'medium', withZoneLabel: true },
         undefined,
         '-'
-      );
+      )
+    : '-';
+};
+
+/** 窄卡片只显示 `MM/DD HH:mm`；完整时间仍由 `formatModified` 放进 title。 */
+export const formatModifiedCompact = (item: AuthFileItem): string => {
+  const date = resolveModifiedDate(item);
+  const parts = date ? getUtc8Parts(date) : null;
+  return parts ? `${parts.month}/${parts.day} ${parts.hour}:${parts.minute}` : '-';
 };
 
 // 检查模型是否被 OAuth 排除

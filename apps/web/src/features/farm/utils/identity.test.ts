@@ -103,7 +103,7 @@ describe('farm account identity lookup', () => {
 
     expect(identity).toMatchObject({
       primary: '农场主力账号',
-      secondary: 'ow***@example.test',
+      secondary: 'owner.long@example.test',
     });
     expect(lookup.get('claude-owner.json')).toEqual(identity);
     expect(lookup.get('owner.long@example.test')).toEqual(identity);

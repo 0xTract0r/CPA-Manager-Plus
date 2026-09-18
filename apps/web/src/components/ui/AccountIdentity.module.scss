@@ -22,18 +22,53 @@
   white-space: nowrap;
 }
 
+.primaryRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.identityLabel {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  min-height: 18px;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--primary-color) 18%, var(--border-color));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--primary-color) 8%, var(--surface-subtle));
+  color: var(--primary-color);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.secondaryIdentityLabel {
+  justify-content: center;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-weight: 500;
+  box-sizing: border-box;
+}
+
 .primary {
   color: var(--text-primary);
   font-size: 14px;
-  font-weight: 750;
+  font-weight: 600;
   letter-spacing: -0.01em;
 }
 
 .secondary {
   color: var(--text-secondary);
-  font-family: $font-mono;
+  font-family: inherit;
   font-size: 12px;
-  font-weight: 550;
+  font-weight: 400;
 }
 
 .fallback {
@@ -52,10 +87,45 @@
   .fallback {
     font-size: 11px;
   }
+
+  .identityLabel {
+    min-height: 16px;
+    padding: 0 5px;
+    font-size: 9px;
+  }
+
+  .secondaryIdentityLabel {
+    padding: 0;
+  }
+}
+
+// 带“备注 / 邮箱”标签时使用内容列对齐：标签宽度由文案自然决定，备注值和
+// 第二行邮箱共享同一列，避免邮箱落到标签正下方。display: contents 只展开
+// primaryRow 的布局盒，不改变原有 DOM/可访问性结构。
+.labeled {
+  display: inline-grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  justify-items: start;
+  column-gap: 6px;
+  row-gap: 3px;
+
+  .primaryRow {
+    display: contents;
+  }
+
+  > .secondary,
+  > .fallback {
+    grid-column: 2;
+  }
+}
+
+.labeled.compact {
+  row-gap: 1px;
 }
 
 .email {
-  cursor: help;
+  cursor: pointer;
   border-radius: 4px;
   text-decoration: underline;
   text-decoration-color: color-mix(in srgb, currentColor 32%, transparent);
@@ -68,10 +138,23 @@
   }
 }
 
+.fullEmail {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: text;
+  user-select: text;
+}
+
 .tooltip {
   position: fixed;
   z-index: 2140;
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: max-content;
   padding: 8px 10px;
   border: 1px solid var(--border-color);
@@ -84,5 +167,39 @@
   font-weight: 600;
   line-height: 1.35;
   overflow-wrap: anywhere;
-  pointer-events: none;
+  pointer-events: auto;
+  user-select: text;
+}
+
+.tooltipText {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: inherit;
+  font: inherit;
+  user-select: text;
+}
+
+.copyButton {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+  }
 }

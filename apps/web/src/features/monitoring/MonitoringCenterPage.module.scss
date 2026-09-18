@@ -1653,15 +1653,15 @@
   table-layout: fixed;
 }
 
-// 时间列前移到最左第 1 位（原第 10 位），下方 nth-child 映射与 RealtimeEventsPanel 的
-// <colgroup>/<thead>/<tbody> 列序保持同步：1 时间 -> 2 来源 -> 3 模型 -> 4 强度/等级 ->
+// 来源/账号作为扫描主锚点放第 1 列，较窄的时间列放第 2 列。下方 nth-child 映射与
+// RealtimeEventsPanel 的 <colgroup>/<thead>/<tbody> 列序保持同步：1 来源 -> 2 时间 -> 3 模型 -> 4 强度/等级 ->
 // 5 近况 -> 6 请求状态 -> 7 成功率 -> 8 调用 -> 9 TPS -> 10 首字｜耗时 -> 11 本次用量 ->
 // 12 缓存命中率 -> 13 花费。
 .realtimeTable col:nth-child(1) {
-  width: var(--realtime-col-time);
+  width: var(--realtime-col-source);
 }
 .realtimeTable col:nth-child(2) {
-  width: var(--realtime-col-source);
+  width: var(--realtime-col-time);
 }
 .realtimeTable col:nth-child(3) {
   width: var(--realtime-col-model);
@@ -1871,8 +1871,54 @@
   display: block;
   max-width: 100%;
   color: var(--monitor-muted);
-  font-size: 12px;
-  font-weight: 500;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+// 备注/来源沿用监控表的系统字体，不继承页面默认的 16px 正文字号；信息层级主要靠顺序
+// 和颜色区分，不用额外加粗。内层 span 是 RealtimeSourceNameCell 的浮层触发文本。
+.realtimeSourcePrimary {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--monitor-ink);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.realtimeTable .realtimeAccountEmail {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--monitor-muted);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+// 来源列比其它 primaryCell 多承载账号身份和两个排障入口，使用 3px 纵向节奏；各项仍是
+// 独立网格行，不把语义不同的操作或字段挤到同一行。
+.realtimeTable .realtimeSourceCell {
+  gap: 3px;
+}
+
+// API Key 始终独占整行。通用 `.primaryCell small` 允许明细换行且选择器优先级较高，
+// 此处显式恢复单行省略，保证 Key 不会与邮箱抢宽、也不会折成多行抬高表格。
+.realtimeTable .primaryCell .realtimeApiKeyLine {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  word-break: normal;
 }
 
 // 「查看原始请求」行内触发按钮：贴合 source 单元格内的堆叠 <small> 元数据样式，
@@ -1893,9 +1939,9 @@
   overflow: hidden;
   background: none;
   color: var(--monitor-accent);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.3;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.35;
   cursor: pointer;
 
   &:hover {
@@ -2552,12 +2598,14 @@
     grid-template-columns: 1fr;
   }
 
+  .actionGroup,
   .actionBarMeta,
   .statusBar,
   .statusMeta {
-    justify-content: flex-start;
+    justify-content: center;
   }
 
+  .actionGroup,
   .actionBarMeta {
     width: 100%;
   }
@@ -2986,10 +3034,6 @@
     padding: 0 12px;
   }
 
-  .actionButton {
-    flex-basis: 100%;
-  }
-
   .autoRefreshField {
     flex-direction: column;
     align-items: stretch;
@@ -3021,6 +3065,18 @@
 // 视口宽度与容器宽度会不一致，混用触发点错位就是"窄屏漂移"的另一处根因。这里统一
 // 换成同一套容器查询体系，直接复用 monitoring-page 容器，不再引入 viewport 断点。
 @container monitoring-page (max-width: 640px) {
+  .actionGroup,
+  .actionBarMeta,
+  .statusBar,
+  .statusMeta {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .actionButton {
+    flex-basis: 100%;
+  }
+
   .statusMeta > span {
     width: 100%;
     justify-content: center;

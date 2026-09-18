@@ -4,7 +4,7 @@ import { Input } from '@/components/ui/Input';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { SelectionCheckbox } from '@/components/ui/SelectionCheckbox';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
-import { AccountIdentity } from '@/components/ui/AccountIdentity';
+import { AccountEmailReveal, AccountIdentity } from '@/components/ui/AccountIdentity';
 import {
   IconBot,
   IconDownload,
@@ -17,6 +17,7 @@ import {
   IconTrash2,
 } from '@/components/ui/icons';
 import { ProviderStatusBar } from '@/components/providers/ProviderStatusBar';
+import { useAccountPrivacyStore } from '@/stores/useAccountPrivacyStore';
 import type { AuthFileItem, ClaudeQuotaState, CodexQuotaState } from '@/types';
 import { resolveAuthProvider } from '@/utils/quota';
 import {
@@ -26,10 +27,15 @@ import {
   statusBarDataFromRecentRequests,
 } from '@/utils/recentRequests';
 import { formatDateTime, formatFileSize, formatUnixTimestamp } from '@/utils/format';
-import { resolveAuthFileAccountIdentity } from '@/utils/accountIdentity';
+import {
+  maskAccountEmailsInText,
+  resolveAuthFileAccountIdentity,
+  resolveAuthFileNameDisplayValue,
+} from '@/utils/accountIdentity';
 import {
   QUOTA_PROVIDER_TYPES,
   formatModified,
+  formatModifiedCompact,
   getAuthFileAutoQuarantined,
   getAuthFileQuarantineReason,
   getAuthFileQuarantinedAt,
@@ -135,6 +141,7 @@ const getProjectIdValue = (file: AuthFileItem): string => {
 
 export function AuthFileCard(props: AuthFileCardProps) {
   const { t } = useTranslation();
+  const maskAccountEmails = useAccountPrivacyStore((state) => state.maskEmails);
   const {
     file,
     compact,
@@ -235,9 +242,6 @@ export function AuthFileCard(props: AuthFileCardProps) {
           'Auto-quarantined: {{reason}} · {{at}}. Please re-authenticate to restore this account.',
       })
     : '';
-  // 无健康数据（成功/失败均为 0）时不占整块 HEALTH 面板，改成一行紧凑占位。
-  const hasStatusData = statusData.totalSuccess + statusData.totalFailure > 0;
-
   // 近期请求成/败原本有一个独立 ✓/✗ pill，但它与卡片中部「成功/失败」累计计数重复
   // （二者都是成败计数，只是时间口径不同、卡面未标注差异），已移除。近期请求趋势改由
   // 下方「健康状态」色块条 + 成功率% 单独承载；「成功/失败」保留为累计总量。
@@ -268,7 +272,8 @@ export function AuthFileCard(props: AuthFileCardProps) {
   // 迁移自旧版：逐账号「刷新状态」「测试消息」按钮的可用性判定。
   // 两者都只对非虚拟且已启用的账号开放；刷新状态额外要求当前处于告警态才展示，
   // 避免对健康账号也铺满操作按钮。
-  const canRefreshStatus = !isRuntimeOnly && hasStatusWarning && !file.disabled && Boolean(onRefreshStatus);
+  const canRefreshStatus =
+    !isRuntimeOnly && hasStatusWarning && !file.disabled && Boolean(onRefreshStatus);
   const canTestMessage = !isRuntimeOnly && !file.disabled && Boolean(onTestMessage);
   const isStatusRefreshing = statusRefreshing[file.name] === true;
   const isMessageTesting = messageTesting[file.name] === true;
@@ -282,8 +287,7 @@ export function AuthFileCard(props: AuthFileCardProps) {
     oauthReauthProvider !== 'codex' &&
     !isRuntimeOnly &&
     Boolean(onReauthenticate);
-  const reauthInProgress =
-    reauthState?.status === 'starting' || reauthState?.status === 'polling';
+  const reauthInProgress = reauthState?.status === 'starting' || reauthState?.status === 'polling';
   const supportsReauthCallback =
     reauthState?.status === 'polling' && supportsAuthFileReauthCallback(reauthState.provider);
   const reauthButtonTitle = reauthInProgress
@@ -301,8 +305,19 @@ export function AuthFileCard(props: AuthFileCardProps) {
   const priorityValue = parsePriorityValue(file.priority ?? file['priority']);
   const projectIdValue = getProjectIdValue(file);
   const accountIdentity = resolveAuthFileAccountIdentity(file);
-  const subscription =
-    isAntigravity && !isRuntimeOnly ? antigravitySubscription : undefined;
+  const authFileSuffix = /\.json$/i.test(file.name) ? '.json' : '';
+  const authFileStem = authFileSuffix ? file.name.slice(0, -authFileSuffix.length) : file.name;
+  const visibleAuthFileName = maskAccountEmails
+    ? `${maskAccountEmailsInText(authFileStem)}${authFileSuffix}`
+    : file.name;
+  const compactAuthFileName = resolveAuthFileNameDisplayValue(
+    file.name,
+    accountIdentity.email,
+    maskAccountEmails
+  );
+  const modifiedLabel = formatModified(file);
+  const compactModifiedLabel = formatModifiedCompact(file);
+  const subscription = isAntigravity && !isRuntimeOnly ? antigravitySubscription : undefined;
   const subscriptionData = subscription?.status === 'success' ? subscription.data : undefined;
   const isSubscriptionLoading = subscription?.status === 'loading';
   const subscriptionPlanLabel =
@@ -319,10 +334,9 @@ export function AuthFileCard(props: AuthFileCardProps) {
                 subscriptionData.tierId ||
                 t('antigravity_subscription.plan_unknown')
               : '';
-  const subscriptionBadgeLabel =
-    isSubscriptionLoading
-      ? t('antigravity_subscription.loading_short')
-      : subscription?.status === 'error'
+  const subscriptionBadgeLabel = isSubscriptionLoading
+    ? t('antigravity_subscription.loading_short')
+    : subscription?.status === 'error'
       ? t('antigravity_subscription.error_badge')
       : subscriptionData
         ? t('antigravity_subscription.plan_badge', {
@@ -335,10 +349,9 @@ export function AuthFileCard(props: AuthFileCardProps) {
       : subscriptionData?.tierName && subscriptionData.tierId
         ? `${subscriptionData.tierName} (${subscriptionData.tierId})`
         : subscriptionData?.tierName || subscriptionData?.tierId || subscriptionBadgeLabel;
-  const subscriptionBadgeClass =
-    isSubscriptionLoading
-      ? styles.subscriptionBadgeLoading
-      : subscription?.status === 'error'
+  const subscriptionBadgeClass = isSubscriptionLoading
+    ? styles.subscriptionBadgeLoading
+    : subscription?.status === 'error'
       ? styles.subscriptionBadgeError
       : subscriptionData?.plan === 'free'
         ? styles.subscriptionBadgeFree
@@ -346,9 +359,7 @@ export function AuthFileCard(props: AuthFileCardProps) {
           ? styles.subscriptionBadgeUnknown
           : styles.subscriptionBadgePaid;
   const subscriptionErrorMessage =
-    subscription?.status === 'error'
-      ? subscription.error || t('common.unknown_error')
-      : '';
+    subscription?.status === 'error' ? subscription.error || t('common.unknown_error') : '';
   const showSubscriptionRefreshButton =
     isAntigravity &&
     !isRuntimeOnly &&
@@ -437,8 +448,7 @@ export function AuthFileCard(props: AuthFileCardProps) {
     : null;
   // 套餐区仅对非虚拟的 claude 账号、且 account_scheduling 投影存在（subscriptionTierBadge
   // 非 null）时渲染；投影缺失（老 core）时不展示，与会话摘要的 unavailable 语义一致。
-  const showClaudeTierRow =
-    isClaudeProvider && !isRuntimeOnly && Boolean(subscriptionTierBadge);
+  const showClaudeTierRow = isClaudeProvider && !isRuntimeOnly && Boolean(subscriptionTierBadge);
   // 会话计数区块收敛为 claude-only：只有非虚拟的 claude 账号展示会话摘要，非
   // claude（codex/gemini/grok 等）不再展示会话数（与订阅档/养号/调度面板一起
   // 构成 claude-only 的账号调度控件集）。空态由组件内部呈现，不需要卡片层预先
@@ -607,13 +617,33 @@ export function AuthFileCard(props: AuthFileCardProps) {
                   </span>
                 )}
               </div>
-              <AccountIdentity
-                identity={accountIdentity}
-                compact={compact}
-                showFallback
-                className={styles.authFileIdentity}
-                testId={`auth-file-identity-${file.name}`}
-              />
+              {accountIdentity.hasNote || accountIdentity.email ? (
+                <AccountIdentity
+                  identity={accountIdentity}
+                  compact={compact}
+                  className={styles.authFileIdentity}
+                  noteLabel={
+                    accountIdentity.hasNote
+                      ? t('auth_files.note_display', { defaultValue: 'Note' })
+                      : undefined
+                  }
+                  primaryEmailLabel={
+                    !accountIdentity.hasNote && accountIdentity.email
+                      ? t('auth_files.account_email_display', { defaultValue: 'Email' })
+                      : undefined
+                  }
+                  secondaryEmailLabel={
+                    accountIdentity.hasNote && accountIdentity.email
+                      ? t('auth_files.account_email_display', { defaultValue: 'Email' })
+                      : undefined
+                  }
+                  testId={`auth-file-identity-${file.name}`}
+                />
+              ) : (
+                <span className={styles.missingAccountIdentity}>
+                  {t('auth_files.account_identity_unavailable')}
+                </span>
+              )}
             </div>
             {/* 头部操作区（点⑤）：把「账号设置」入口从卡片底部提到头部，一眼可点，
                 不用滚到底部动作区。 */}
@@ -640,28 +670,55 @@ export function AuthFileCard(props: AuthFileCardProps) {
           </div>
 
           <div className={`${styles.cardMeta} ${compact ? styles.cardMetaCompact : ''}`}>
-            <div className={styles.metaItem}>
-              <span className={styles.metaLabel}>{t('auth_files.file_size')}</span>
-              <span className={styles.metaValue}>
-                {file.size ? formatFileSize(file.size) : '-'}
-              </span>
+            <div
+              className={`${styles.metaItem} ${styles.metaFileItem}`}
+              data-testid={`auth-file-meta-name-${file.name}`}
+            >
+              <span className={styles.metaLabel}>{t('auth_files.paste_file_name_label')}</span>
+              <AccountEmailReveal
+                email={visibleAuthFileName}
+                masked={visibleAuthFileName}
+                displayMode="full"
+                displayValue={compactAuthFileName}
+                className={`${styles.metaValue} ${styles.metaFileName}`}
+                testId={`auth-file-name-${file.name}`}
+              />
             </div>
-            <div className={styles.metaItem}>
-              <span className={styles.metaLabel}>{t('auth_files.file_modified')}</span>
-              <span className={styles.metaValue}>{formatModified(file)}</span>
-            </div>
-            {priorityValue !== undefined && (
-              <div className={`${styles.metaItem} ${styles.priorityBadge}`}>
-                <span className={styles.metaLabel}>{t('auth_files.priority_display')}</span>
-                <span className={`${styles.metaValue} ${styles.priorityValue}`}>
-                  {priorityValue}
+            <div className={styles.metaFacts}>
+              <div className={styles.metaItem} data-testid={`auth-file-meta-size-${file.name}`}>
+                <span className={styles.metaLabel}>{t('auth_files.file_size')}</span>
+                <span className={styles.metaValue}>
+                  {file.size ? formatFileSize(file.size) : '-'}
                 </span>
               </div>
-            )}
-            {projectIdValue && (
-              <div className={styles.metaItem} title={projectIdValue}>
-                <span className={styles.metaLabel}>{t('auth_files.project_id_display')}</span>
-                <span className={styles.metaValue}>{projectIdValue}</span>
+              <div
+                className={`${styles.metaItem} ${styles.metaModifiedItem}`}
+                data-testid={`auth-file-meta-modified-${file.name}`}
+                title={modifiedLabel === '-' ? undefined : modifiedLabel}
+              >
+                <span className={styles.metaLabel}>{t('auth_files.file_modified')}</span>
+                <span className={`${styles.metaValue} ${styles.metaModifiedValue}`}>
+                  <span className={styles.metaModifiedFull}>{modifiedLabel}</span>
+                  <span className={styles.metaModifiedCompact}>{compactModifiedLabel}</span>
+                </span>
+              </div>
+            </div>
+            {(priorityValue !== undefined || projectIdValue) && (
+              <div className={styles.metaExtraFacts}>
+                {priorityValue !== undefined && (
+                  <div className={`${styles.metaItem} ${styles.priorityBadge}`}>
+                    <span className={styles.metaLabel}>{t('auth_files.priority_display')}</span>
+                    <span className={`${styles.metaValue} ${styles.priorityValue}`}>
+                      {priorityValue}
+                    </span>
+                  </div>
+                )}
+                {projectIdValue && (
+                  <div className={styles.metaItem} title={projectIdValue}>
+                    <span className={styles.metaLabel}>{t('auth_files.project_id_display')}</span>
+                    <span className={styles.metaValue}>{projectIdValue}</span>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -810,21 +867,12 @@ export function AuthFileCard(props: AuthFileCardProps) {
               </div>
             </div>
 
-            {hasStatusData ? (
-              <div className={`${styles.statusPanel} ${compact ? styles.statusPanelCompact : ''}`}>
-                <div className={styles.statusPanelLabel}>
-                  <span>{t('auth_files.health_status_label')}</span>
-                </div>
-                <ProviderStatusBar statusData={statusData} styles={styles} />
+            <div className={`${styles.statusPanel} ${compact ? styles.statusPanelCompact : ''}`}>
+              <div className={styles.statusPanelLabel}>
+                <span>{t('auth_files.health_status_label')}</span>
               </div>
-            ) : (
-              <div className={styles.statusPanelEmpty}>
-                <span className={styles.statusPanelLabel}>
-                  {t('auth_files.health_status_label')}
-                </span>
-                <span className={styles.statusPanelEmptyValue}>--</span>
-              </div>
-            )}
+              <ProviderStatusBar statusData={statusData} styles={styles} />
+            </div>
 
             {showClaudeTierRow && subscriptionTierBadge && (
               <div
@@ -1056,7 +1104,6 @@ export function AuthFileCard(props: AuthFileCardProps) {
               </div>
             )}
           </div>
-
         </div>
       </div>
     </div>

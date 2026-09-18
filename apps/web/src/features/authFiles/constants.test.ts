@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { AuthFileItem } from '@/types';
 import {
+  formatModified,
+  formatModifiedCompact,
   hasAuthFileStatusWarning,
   isAuthFileReauthRequired,
   isHealthyAuthFile,
@@ -15,6 +17,25 @@ const baseFile: AuthFileItem = {
   type: 'qwen',
   disabled: false,
 };
+
+describe('auth file modified time formats', () => {
+  it('keeps a full timestamp for detail and a stable compact timestamp for narrow cards', () => {
+    const file = {
+      ...baseFile,
+      modtime: '2026-09-17T21:52:53.405879667+08:00',
+    };
+
+    expect(formatModified(file)).toBe('2026-09-17 21:52:53 UTC+8');
+    expect(formatModifiedCompact(file)).toBe('09/17 21:52');
+  });
+
+  it('uses the same placeholder for missing or invalid timestamps', () => {
+    expect(formatModified(baseFile)).toBe('-');
+    expect(formatModifiedCompact(baseFile)).toBe('-');
+    expect(formatModified({ ...baseFile, modtime: 'not-a-date' })).toBe('-');
+    expect(formatModifiedCompact({ ...baseFile, modtime: 'not-a-date' })).toBe('-');
+  });
+});
 
 describe('hasAuthFileStatusWarning priority', () => {
   it('returns false for a fully healthy account', () => {

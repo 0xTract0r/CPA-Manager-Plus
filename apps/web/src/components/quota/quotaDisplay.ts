@@ -52,7 +52,7 @@ export const resolveQuotaAccountDisplayText = (
   displayMode: QuotaAccountDisplayMode
 ) => {
   const resolved = resolveAuthFileAccountIdentity(item);
-  const fallback = String(item.name || '').trim();
+  const fallback = resolved.fallback || String(item.name || '').trim();
   const visibleEmail = displayMode === 'full' ? resolved.email : resolved.maskedEmail;
   const primary = resolved.hasNote
     ? resolved.note
@@ -62,7 +62,7 @@ export const resolveQuotaAccountDisplayText = (
     ...resolved,
     primary: primary || resolved.primary,
     secondary,
-    maskedEmail: visibleEmail || resolved.maskedEmail,
+    maskedEmail: resolved.maskedEmail,
   };
 
   return {

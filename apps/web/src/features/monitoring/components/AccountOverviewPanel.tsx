@@ -7,6 +7,8 @@ import {
   IconChevronDown,
   IconChevronUp,
   IconCrosshair,
+  IconEye,
+  IconEyeOff,
   IconInfo,
   IconMoreVertical,
   IconRefreshCw,
@@ -139,6 +141,7 @@ function AccountColumnLabel({ column, t }: { column: AccountOverviewColumn; t: T
 
 export function AccountOverviewPanelActions({
   mode,
+  accountDisplayMode,
   searchInput,
   accountSort,
   accountSortOptions,
@@ -148,7 +151,17 @@ export function AccountOverviewPanelActions({
   onRefreshAll,
   onAccountSortKeyChange,
   onModeChange,
+  onAccountDisplayModeChange,
 }: AccountOverviewPanelActionsProps) {
+  const nextAccountDisplayMode: AccountDisplayMode =
+    accountDisplayMode === 'masked' ? 'full' : 'masked';
+  const AccountDisplayIcon = accountDisplayMode === 'masked' ? IconEyeOff : IconEye;
+  const accountDisplayHint = t(
+    accountDisplayMode === 'masked'
+      ? 'monitoring.account_overview_show_full_accounts_hint'
+      : 'monitoring.account_overview_show_masked_accounts_hint'
+  );
+
   return (
     <div className={styles.accountOverviewHeaderActions}>
       <div className={styles.accountOverviewToolbarRow}>
@@ -173,6 +186,29 @@ export function AccountOverviewPanelActions({
             className={overallLoading ? styles.refreshIconSpinning : styles.refreshIcon}
           />
           <span>{t('common.refresh')}</span>
+        </button>
+        <button
+          type="button"
+          className={[
+            styles.accountOverviewToolButton,
+            accountDisplayMode === 'masked' ? styles.accountDisplayModeButtonActive : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
+          onClick={() => onAccountDisplayModeChange(nextAccountDisplayMode)}
+          title={accountDisplayHint}
+          aria-label={accountDisplayHint}
+          aria-pressed={accountDisplayMode === 'masked'}
+          data-testid="monitoring-account-privacy-toggle"
+        >
+          <AccountDisplayIcon size={15} aria-hidden="true" />
+          <span>
+            {t(
+              accountDisplayMode === 'masked'
+                ? 'monitoring.account_overview_account_display_masked'
+                : 'monitoring.account_overview_account_display_full'
+            )}
+          </span>
         </button>
         <div className={styles.accountOverviewSortBar}>
           <Select

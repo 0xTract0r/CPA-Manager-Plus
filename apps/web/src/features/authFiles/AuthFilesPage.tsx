@@ -74,10 +74,7 @@ import {
   getHighConfidenceUsageHeaderSnapshotForAuthFile,
   isUsageHeaderQuotaSnapshotExpired,
 } from '@/utils/usageHeaderSnapshots';
-import {
-  quotaSnapshotsApi,
-  type CoreQuotaSnapshotEntry,
-} from '@/services/api/quotaSnapshots';
+import { quotaSnapshotsApi, type CoreQuotaSnapshotEntry } from '@/services/api/quotaSnapshots';
 import {
   buildCoreQuotaSnapshotLookup,
   buildObservedClaudeQuotaStateFromCoreSnapshot,
@@ -121,6 +118,7 @@ import {
   getAuthFileNameFromSelectionKey,
   getFreshAuthFileCodexStatusSources,
   hasPartialSharedAuthFileSelection,
+  matchesAuthFileSearchText,
   normalizeAuthFilesCodexPlanFilter,
   normalizeAuthFilesCodexStatusFilter,
   stringifySearchValue,
@@ -1367,8 +1365,6 @@ export function AuthFilesPage() {
   const wildcardSearch = useMemo(() => buildWildcardSearch(normalizedSearch), [normalizedSearch]);
 
   const filtered = useMemo(() => {
-    const normalizedTerm = normalizedSearch.toLowerCase();
-
     return filesMatchingStatusFilters.filter((item) => {
       const type = normalizeProviderKey(String(item.type ?? item.provider ?? ''));
       const matchType = normalizedFilter === 'all' || type === normalizedFilter;
@@ -1393,7 +1389,7 @@ export function AuthFilesPage() {
           const content = value.toString();
           return wildcardSearch
             ? wildcardSearch.test(content)
-            : content.toLowerCase().includes(normalizedTerm);
+            : matchesAuthFileSearchText(content, normalizedSearch);
         });
       return matchType && matchSearch;
     });

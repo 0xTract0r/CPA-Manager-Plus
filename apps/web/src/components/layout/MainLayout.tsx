@@ -17,6 +17,8 @@ import {
   IconBot,
   IconChartLine,
   IconGithub,
+  IconEye,
+  IconEyeOff,
   IconModelCluster,
   IconSidebarAuthFiles,
   IconSidebarConfig,
@@ -41,6 +43,7 @@ import {
   useThemeStore,
   useVisualEffectsStore,
 } from '@/stores';
+import { useAccountPrivacyStore } from '@/stores/useAccountPrivacyStore';
 import { pluginsApi } from '@/services/api';
 import {
   collectPluginResourceEntries,
@@ -263,6 +266,8 @@ export function MainLayout({ routeBase = '', demoMode = false }: MainLayoutProps
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const apiBase = useAuthStore((state) => state.apiBase);
   const supportsPlugin = useAuthStore((state) => state.supportsPlugin);
+  const maskAccountEmails = useAccountPrivacyStore((state) => state.maskEmails);
+  const toggleMaskAccountEmails = useAccountPrivacyStore((state) => state.toggleMaskEmails);
 
   const config = useConfigStore((state) => state.config);
   const fetchConfig = useConfigStore((state) => state.fetchConfig);
@@ -533,7 +538,8 @@ export function MainLayout({ routeBase = '', demoMode = false }: MainLayoutProps
     return label === shortKey ? fallback : label;
   };
   const dashboardNavItem: NavItem = {
-    path: '/', label: t('nav.dashboard'),
+    path: '/',
+    label: t('nav.dashboard'),
     shortLabel: navShortLabel('nav.dashboard', t('nav.dashboard')),
     icon: sidebarIcons.dashboard,
   };
@@ -849,6 +855,22 @@ export function MainLayout({ routeBase = '', demoMode = false }: MainLayoutProps
           </div>
 
           <div className="navbar-right">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={toggleMaskAccountEmails}
+              title={t(
+                maskAccountEmails ? 'header.show_account_emails' : 'header.mask_account_emails'
+              )}
+              aria-label={t(
+                maskAccountEmails ? 'header.show_account_emails' : 'header.mask_account_emails'
+              )}
+              aria-pressed={maskAccountEmails}
+              data-testid="account-email-privacy-toggle"
+            >
+              {maskAccountEmails ? <IconEye size={16} /> : <IconEyeOff size={16} />}
+            </Button>
+
             <Button
               variant="ghost"
               size="sm"

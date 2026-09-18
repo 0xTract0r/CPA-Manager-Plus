@@ -80,6 +80,7 @@ const t = ((key: string, options?: Record<string, unknown>) => {
     'monitoring.this_call_cost': 'Cost',
     'monitoring.this_call_usage': 'Usage',
     'monitoring.ttft_short': 'TTFT',
+    'performance.traceTitle': 'Request trace and streaming',
     'usage_stats.export_csv': 'Export CSV',
     'usage_stats.export_json': 'Export JSON',
   };
@@ -200,7 +201,13 @@ const renderPanel = (row: PanelRow, overrides: PanelOverrides = {}) =>
     />
   );
 
-const renderActions = (overrides: { exportRows?: PanelRow[]; hasPrices?: boolean } = {}) =>
+const renderActions = (
+  overrides: {
+    exportRows?: PanelRow[];
+    hasPrices?: boolean;
+    accountDisplayMode?: AccountDisplayMode;
+  } = {}
+) =>
   renderToStaticMarkup(
     <RealtimeEventsPanelActions
       rowCount={1}
@@ -208,7 +215,7 @@ const renderActions = (overrides: { exportRows?: PanelRow[]; hasPrices?: boolean
       failedOnlyActive={false}
       lowCacheHitRateOnly={false}
       lowCacheHitRateThreshold={0.3}
-      accountDisplayMode="masked"
+      accountDisplayMode={overrides.accountDisplayMode ?? 'masked'}
       exportRows={overrides.exportRows ?? [baseRow()]}
       hasPrices={overrides.hasPrices ?? false}
       t={t}
@@ -239,6 +246,19 @@ describe('RealtimeEventsPanel', () => {
     expect(hasOverflowingContent(trigger([target(96, 96, 34, 34)]))).toBe(false);
     expect(hasOverflowingContent(trigger([target(96, 140, 18, 18)]))).toBe(true);
     expect(hasOverflowingContent(trigger([target(120, 120, 36, 54)]))).toBe(true);
+  });
+
+  it('keeps an explicit monitoring privacy control for both account display modes', () => {
+    const maskedMarkup = renderActions({ accountDisplayMode: 'masked' });
+    const fullMarkup = renderActions({ accountDisplayMode: 'full' });
+
+    expect(maskedMarkup).toContain('data-testid="monitoring-account-privacy-toggle"');
+    expect(maskedMarkup).toContain('aria-pressed="true"');
+    expect(maskedMarkup).toContain('<span>Masked</span>');
+    expect(maskedMarkup).toContain('aria-label="Show full accounts"');
+    expect(fullMarkup).toContain('aria-pressed="false"');
+    expect(fullMarkup).toContain('<span>Full</span>');
+    expect(fullMarkup).toContain('aria-label="Show masked accounts"');
   });
 
   it('renders CPA v7.1.18 usage details for failed rows', () => {
@@ -407,6 +427,45 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).toMatch(/realtimeModelTooltipSecondary[^>]*>Executor: codex<\/span>/);
   });
 
+  it('keeps note, account email, and API key in stable source-cell slots', () => {
+    const row = baseRow({
+      accountNote: '生产主账号',
+      source: '生产主账号',
+      sourceMasked: '生产主账号',
+      account: 'operator.long@example.com',
+      accountMasked: 'op***@example.com',
+      authLabel: '生产主账号',
+      apiKeyHash: '1234567890abcdef',
+      apiKeyLabel: 'Team A',
+      apiKeyMasked: 'sk-...cdef',
+      provider: 'codex',
+      channel: 'codex',
+      requestId: 'req-stable-slots',
+    });
+    const maskedMarkup = renderPanel(row, { accountDisplayMode: 'masked' });
+    const fullMarkup = renderPanel(row, { accountDisplayMode: 'full' });
+
+    expect(maskedMarkup).toContain('>生产主账号</span>');
+    expect(maskedMarkup).toContain('>op***@example.com</span>');
+    expect(maskedMarkup).toContain('API Key: Team A');
+    expect(fullMarkup).toContain('>operator.long@example.com</span>');
+    expect(fullMarkup).toContain(styles.realtimeSourcePrimary);
+    expect(fullMarkup).toContain(styles.realtimeSourceCell);
+    expect(fullMarkup).toContain(styles.realtimeAccountEmail);
+    expect(fullMarkup).toContain(styles.realtimeApiKeyLine);
+
+    const noteIndex = fullMarkup.indexOf('生产主账号');
+    const emailIndex = fullMarkup.indexOf('operator.long@example.com');
+    const apiKeyIndex = fullMarkup.indexOf('API Key: Team A');
+    const traceIndex = fullMarkup.indexOf('Request trace and streaming');
+    const rawRequestIndex = fullMarkup.indexOf('View raw request');
+    expect(noteIndex).toBeGreaterThan(-1);
+    expect(noteIndex).toBeLessThan(emailIndex);
+    expect(emailIndex).toBeLessThan(apiKeyIndex);
+    expect(apiKeyIndex).toBeLessThan(traceIndex);
+    expect(traceIndex).toBeLessThan(rawRequestIndex);
+  });
+
   it('keeps a long realtime source name constrained and exposes the full name via an overflow tooltip', () => {
     const longSource =
       'very-long-channel-identifier-for-realtime-monitoring-source-column-overflow-check';
@@ -498,19 +557,19 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).toContain('title="Effort: medium · Tier: —"');
   });
 
-  it('moves the time column to the first (leftmost) position and right-aligns the numeric columns', () => {
+  it('keeps source first, moves time to the second column, and right-aligns numeric columns', () => {
     const markup = renderPanel(baseRow());
 
-    // 时间列前移到最左第 1 位：表头 "Time" 出现在 "Source / API Key" 之前。
+    // 来源/账号是首列扫描锚点，时间作为辅助上下文放在较窄的第 2 列。
     const timeHeaderIdx = markup.indexOf('<th>Time</th>');
     const sourceHeaderIdx = markup.indexOf('<th>Source / API Key</th>');
-    expect(timeHeaderIdx).toBeGreaterThanOrEqual(0);
-    expect(sourceHeaderIdx).toBeGreaterThan(timeHeaderIdx);
-    // 数据行同步前移：realtimeTimeCell 容器出现在 logTypeCell(来源列)容器之前。
+    expect(sourceHeaderIdx).toBeGreaterThanOrEqual(0);
+    expect(timeHeaderIdx).toBeGreaterThan(sourceHeaderIdx);
+    // 数据行保持同序：来源容器在时间容器之前。
     const timeCellIdx = markup.indexOf(styles.realtimeTimeCell);
     const sourceCellIdx = markup.indexOf(styles.logTypeCell);
-    expect(timeCellIdx).toBeGreaterThanOrEqual(0);
-    expect(sourceCellIdx).toBeGreaterThan(timeCellIdx);
+    expect(sourceCellIdx).toBeGreaterThanOrEqual(0);
+    expect(timeCellIdx).toBeGreaterThan(sourceCellIdx);
     // 列总数不变(仍是 13 列)。
     expect(markup.match(/<col\b/g)).toHaveLength(13);
     // 成功率/调用/TPS/缓存命中率/花费 5 个数字列统一右对齐：单行渲染下表头 + 数据格

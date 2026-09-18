@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { CodexQuotaState } from '@/types';
-import { getSortedCodexResetCreditExpiries, resolveQuotaDisplayState } from './quotaConfigs';
+import {
+  CLAUDE_CONFIG,
+  getSortedCodexResetCreditExpiries,
+  resolveQuotaDisplayState,
+} from './quotaConfigs';
 
 type TestQuotaState = {
   status: 'idle' | 'loading' | 'success' | 'error';
@@ -48,6 +52,19 @@ describe('getSortedCodexResetCreditExpiries', () => {
       new Date('2026-07-18T08:31:33Z').getTime(),
       new Date('2026-07-19T00:42:09Z').getTime(),
     ]);
+  });
+});
+
+describe('CLAUDE_CONFIG', () => {
+  it('marks a successful upstream refresh as direct and records its refresh time', () => {
+    const before = Date.now();
+    const state = CLAUDE_CONFIG.buildSuccessState({ windows: [], planType: null });
+    const after = Date.now();
+
+    expect(state.source).toBe('direct');
+    expect(state.nextRefreshAt).toBeNull();
+    expect(Date.parse(state.lastRefreshedAt || '')).toBeGreaterThanOrEqual(before);
+    expect(Date.parse(state.lastRefreshedAt || '')).toBeLessThanOrEqual(after);
   });
 });
 
@@ -312,10 +329,7 @@ describe('resolveQuotaDisplayState', () => {
     expect(result.observedFromUsageHeaders).toBe(true);
     expect(result.rateLimitResetCreditsAvailableCount).toBe(2);
     expect(result.rateLimitResetCredits).toHaveLength(1);
-    expect(result.windows.map((window) => window.id)).toEqual([
-      'five-hour',
-      'spark-five-hour-0',
-    ]);
+    expect(result.windows.map((window) => window.id)).toEqual(['five-hour', 'spark-five-hour-0']);
     expect(result.windows[0]).toMatchObject({
       id: 'five-hour',
       usedPercent: 80,

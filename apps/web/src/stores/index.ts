@@ -14,3 +14,4 @@ export { useQuotaStore } from './useQuotaStore';
 export { useOpenAIEditDraftStore } from './useOpenAIEditDraftStore';
 export { useClaudeEditDraftStore } from './useClaudeEditDraftStore';
 export { useFarmStore } from './useFarmStore';
+export { useAccountPrivacyStore } from './useAccountPrivacyStore';

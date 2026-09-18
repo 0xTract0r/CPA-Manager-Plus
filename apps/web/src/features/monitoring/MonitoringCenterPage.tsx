@@ -125,6 +125,7 @@ import { useInterval } from '@/hooks/useInterval';
 import { useRequestMonitoringAvailability } from '@/hooks/useRequestMonitoringAvailability';
 import { isFileLogsAvailable } from '@/features/logs/logFeatureAvailability';
 import { useAuthStore, useConfigStore, useNotificationStore } from '@/stores';
+import { useAccountPrivacyStore } from '@/stores/useAccountPrivacyStore';
 import { formatFileSize } from '@/utils/format';
 import type { StatusBarData } from '@/utils/recentRequests';
 import { downloadBlob } from '@/utils/download';
@@ -282,8 +283,12 @@ export function MonitoringCenterPage() {
   const [accountOverviewMode, setAccountOverviewMode] = useState<MonitoringAccountOverviewMode>(
     initialAccountOverviewUiState.current.mode
   );
-  const [accountDisplayMode, setAccountDisplayMode] = useState<AccountDisplayMode>(
-    initialAccountOverviewUiState.current.accountDisplayMode
+  const maskAccountEmails = useAccountPrivacyStore((state) => state.maskEmails);
+  const setMaskAccountEmails = useAccountPrivacyStore((state) => state.setMaskEmails);
+  const accountDisplayMode: AccountDisplayMode = maskAccountEmails ? 'masked' : 'full';
+  const setAccountDisplayMode = useCallback(
+    (mode: AccountDisplayMode) => setMaskAccountEmails(mode === 'masked'),
+    [setMaskAccountEmails]
   );
   const [accountSort, setAccountSort] = useState<AccountSortState>(
     initialAccountOverviewUiState.current.sort
@@ -1370,6 +1375,7 @@ export function MonitoringCenterPage() {
     refreshAll,
     scopedFailureCount,
     searchInput,
+    setAccountDisplayMode,
     t,
     toggleFailedOnly,
     toggleRealtimeLowCacheHitRateOnly,

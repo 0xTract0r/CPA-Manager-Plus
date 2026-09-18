@@ -348,6 +348,9 @@ export interface ClaudeQuotaState {
   windows: ClaudeQuotaWindow[];
   extraUsage?: ClaudeExtraUsage | null;
   planType?: string | null;
+  source?: 'core_snapshot' | 'direct';
+  lastRefreshedAt?: string | null;
+  nextRefreshAt?: string | null;
   error?: string;
   errorStatus?: number;
 }

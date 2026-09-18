@@ -94,7 +94,11 @@ describe('buildObservedCodexQuotaStateFromCoreSnapshot', () => {
       },
     };
 
-    const state = buildObservedCodexQuotaStateFromCoreSnapshot(authFile({ name: 'codex.json' }), entry, t);
+    const state = buildObservedCodexQuotaStateFromCoreSnapshot(
+      authFile({ name: 'codex.json' }),
+      entry,
+      t
+    );
 
     expect(state).toMatchObject({
       status: 'success',
@@ -120,9 +124,7 @@ describe('buildObservedCodexQuotaStateFromCoreSnapshot', () => {
   });
 
   it('returns undefined when the entry itself is undefined', () => {
-    expect(
-      buildObservedCodexQuotaStateFromCoreSnapshot(authFile(), undefined, t)
-    ).toBeUndefined();
+    expect(buildObservedCodexQuotaStateFromCoreSnapshot(authFile(), undefined, t)).toBeUndefined();
   });
 
   it('returns undefined for an unsupported/legacy status without a usable snapshot', () => {
@@ -257,6 +259,8 @@ describe('buildObservedClaudeQuotaStateFromCoreSnapshot', () => {
       provider: 'claude',
       status: 'ok',
       plan_type: 'max',
+      last_refreshed_at: '2026-01-01T00:00:00Z',
+      next_refresh_at: '2026-01-01T00:05:00Z',
       snapshot: {
         usage: {
           five_hour: { utilization: 55, resets_at: '2026-01-02T00:00:00Z' },
@@ -280,6 +284,9 @@ describe('buildObservedClaudeQuotaStateFromCoreSnapshot', () => {
     );
 
     expect(state?.status).toBe('success');
+    expect(state?.source).toBe('core_snapshot');
+    expect(state?.lastRefreshedAt).toBe('2026-01-01T00:00:00Z');
+    expect(state?.nextRefreshAt).toBe('2026-01-01T00:05:00Z');
     expect(state?.planType).toBe('plan_max');
     expect(state?.extraUsage).toMatchObject({ is_enabled: true, used_credits: 1200 });
     expect(state?.windows).toHaveLength(1);
@@ -318,9 +325,7 @@ describe('buildObservedClaudeQuotaStateFromCoreSnapshot', () => {
   });
 
   it('returns undefined when the entry itself is undefined', () => {
-    expect(
-      buildObservedClaudeQuotaStateFromCoreSnapshot(authFile(), undefined, t)
-    ).toBeUndefined();
+    expect(buildObservedClaudeQuotaStateFromCoreSnapshot(authFile(), undefined, t)).toBeUndefined();
   });
 
   it('surfaces reauth_required as an error state with 401 when surfaceReauthAndError is on', () => {

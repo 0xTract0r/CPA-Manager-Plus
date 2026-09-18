@@ -13,7 +13,15 @@
  */
 
 import type { TFunction } from 'i18next';
-import type { AuthFileItem, ClaudeExtraUsage, ClaudeQuotaState, ClaudeQuotaWindow, ClaudeUsagePayload, CodexQuotaState, CodexUsagePayload } from '@/types';
+import type {
+  AuthFileItem,
+  ClaudeExtraUsage,
+  ClaudeQuotaState,
+  ClaudeQuotaWindow,
+  ClaudeUsagePayload,
+  CodexQuotaState,
+  CodexUsagePayload,
+} from '@/types';
 import type { CoreQuotaSnapshotEntry } from '@/services/api/quotaSnapshots';
 import { normalizeAuthIndex } from '@/utils/authIndex';
 import {
@@ -161,8 +169,7 @@ export const getCoreQuotaSnapshotMatchForAuthFile = (
 export const getCoreQuotaSnapshotForAuthFile = (
   lookup: CoreQuotaSnapshotLookup | undefined,
   file: AuthFileItem
-): CoreQuotaSnapshotEntry | undefined =>
-  getCoreQuotaSnapshotMatchForAuthFile(lookup, file).entry;
+): CoreQuotaSnapshotEntry | undefined => getCoreQuotaSnapshotMatchForAuthFile(lookup, file).entry;
 
 export const getHighConfidenceCoreQuotaSnapshotForAuthFile = (
   lookup: CoreQuotaSnapshotLookup | undefined,
@@ -229,8 +236,7 @@ export const buildObservedCodexQuotaStateFromCoreSnapshot = (
   // 额度构建（同 option-off，保证「进页面就显示额度」）。
   const reauthOrError = readCoreQuotaReauthOrError(entry);
   if (options.surfaceReauthAndError && reauthOrError) {
-    const lastGoodUsage =
-      reauthOrError.kind === 'error' ? readCodexUsagePayload(entry) : null;
+    const lastGoodUsage = reauthOrError.kind === 'error' ? readCodexUsagePayload(entry) : null;
     if (reauthOrError.kind === 'reauth_required' || !lastGoodUsage) {
       return {
         status: 'error',
@@ -246,7 +252,9 @@ export const buildObservedCodexQuotaStateFromCoreSnapshot = (
   const usage = readCodexUsagePayload(entry);
   if (!usage) return undefined;
 
-  const planTypeFromSnapshot = normalizePlanType(entry.plan_type ?? usage.plan_type ?? usage.planType);
+  const planTypeFromSnapshot = normalizePlanType(
+    entry.plan_type ?? usage.plan_type ?? usage.planType
+  );
   const planType = resolveCodexPlanType(file) ?? planTypeFromSnapshot ?? null;
   const windows = buildCodexQuotaWindows(usage, t, planType);
   const observedAtMs = parseCoreQuotaTimestamp(entry.last_refreshed_at)?.getTime();
@@ -328,7 +336,10 @@ const normalizeClaudePlanTypeFromSnapshot = (
   const organizationType = normalizeStringValue(organization?.organization_type)?.toLowerCase();
   const subscriptionStatus = normalizeStringValue(organization?.subscription_status)?.toLowerCase();
   if (organizationType === 'claude_team' && subscriptionStatus === 'active') return 'plan_team';
-  if (readBooleanFlag(account?.has_claude_max) === false && readBooleanFlag(account?.has_claude_pro) === false) {
+  if (
+    readBooleanFlag(account?.has_claude_max) === false &&
+    readBooleanFlag(account?.has_claude_pro) === false
+  ) {
     return 'plan_free';
   }
   return null;
@@ -353,8 +364,7 @@ export const buildObservedClaudeQuotaStateFromCoreSnapshot = (
   // 就显示额度」）。
   const reauthOrError = readCoreQuotaReauthOrError(entry);
   if (options.surfaceReauthAndError && reauthOrError) {
-    const lastGoodUsage =
-      reauthOrError.kind === 'error' ? readClaudeUsagePayload(entry) : null;
+    const lastGoodUsage = reauthOrError.kind === 'error' ? readClaudeUsagePayload(entry) : null;
     if (reauthOrError.kind === 'reauth_required' || !lastGoodUsage) {
       return {
         status: 'error',
@@ -379,5 +389,8 @@ export const buildObservedClaudeQuotaStateFromCoreSnapshot = (
     windows: buildClaudeQuotaWindowsFromSnapshot(usage, t),
     extraUsage: readClaudeExtraUsage(usage),
     planType: normalizeClaudePlanTypeFromSnapshot(entry, profile),
+    source: 'core_snapshot',
+    lastRefreshedAt: entry.last_refreshed_at ?? null,
+    nextRefreshAt: entry.next_refresh_at ?? null,
   };
 };

@@ -329,7 +329,7 @@ describe('usage analytics app wiring', () => {
   });
 
   it('places Usage Analytics in the top-level sidebar between dashboard and monitoring when monitoring is available', () => {
-    const dashboardIndex = layoutSource.indexOf("path: '/', label: t('nav.dashboard')");
+    const dashboardIndex = layoutSource.indexOf('dashboardNavItem,');
     const usageIndex = layoutSource.indexOf(
       '...(usageAnalyticsNavItem ? [usageAnalyticsNavItem] : [])'
     );
@@ -342,6 +342,8 @@ describe('usage analytics app wiring', () => {
     );
     expect(layoutSource).toContain("path: '/usage-analytics'");
     expect(layoutSource).toContain("label: t('nav.usage_analytics')");
+    expect(layoutSource).toContain("path: '/'");
+    expect(layoutSource).toContain("label: t('nav.dashboard')");
     expect(dashboardIndex).toBeGreaterThanOrEqual(0);
     expect(usageIndex).toBeGreaterThan(dashboardIndex);
     expect(monitoringIndex).toBeGreaterThan(usageIndex);

@@ -18,6 +18,8 @@ import {
   getAuthFileSelectionKey,
   getFreshAuthFileCodexStatusSources,
   hasPartialSharedAuthFileSelection,
+  matchesAuthFileSearchText,
+  normalizeAuthFileLooseSearchText,
   normalizeAuthFilesCodexStatusFilter,
   stringifySearchValue,
   type AuthFileCodexInspectionSnapshot,
@@ -514,12 +516,7 @@ describe('auth file Codex status helpers', () => {
     };
 
     const sources = getFreshAuthFileCodexStatusSources(file, quota, inspection, headerSnapshot);
-    const status = getAuthFileCodexStatus(
-      file,
-      quota,
-      sources.inspection,
-      sources.headerSnapshot
-    );
+    const status = getAuthFileCodexStatus(file, quota, sources.inspection, sources.headerSnapshot);
 
     expect(sources.inspection).toBeUndefined();
     expect(sources.headerSnapshot).toBeUndefined();
@@ -551,12 +548,7 @@ describe('auth file Codex status helpers', () => {
     };
 
     const sources = getFreshAuthFileCodexStatusSources(file, quota, inspection, headerSnapshot);
-    const status = getAuthFileCodexStatus(
-      file,
-      quota,
-      sources.inspection,
-      sources.headerSnapshot
-    );
+    const status = getAuthFileCodexStatus(file, quota, sources.inspection, sources.headerSnapshot);
 
     expect(sources.inspection).toBe(inspection);
     expect(sources.headerSnapshot).toBe(headerSnapshot);
@@ -581,12 +573,7 @@ describe('auth file Codex status helpers', () => {
       header_trace_id: 'trace-new',
     };
 
-    const sources = getFreshAuthFileCodexStatusSources(
-      file,
-      undefined,
-      inspection,
-      headerSnapshot
-    );
+    const sources = getFreshAuthFileCodexStatusSources(file, undefined, inspection, headerSnapshot);
     const status = getAuthFileCodexStatus(
       file,
       undefined,
@@ -617,12 +604,7 @@ describe('auth file Codex status helpers', () => {
       header_error_code: 'invalid_api_key',
     };
 
-    const sources = getFreshAuthFileCodexStatusSources(
-      file,
-      undefined,
-      inspection,
-      headerSnapshot
-    );
+    const sources = getFreshAuthFileCodexStatusSources(file, undefined, inspection, headerSnapshot);
     const status = getAuthFileCodexStatus(
       file,
       undefined,
@@ -743,6 +725,25 @@ describe('auth file Codex status helpers', () => {
   });
 });
 
+describe('auth file loose text search', () => {
+  it('matches human account codes while ignoring common separators', () => {
+    expect(matchesAuthFileSearchText('AC-16', 'AC16')).toBe(true);
+    expect(matchesAuthFileSearchText('AC_16', 'ac 16')).toBe(true);
+    expect(matchesAuthFileSearchText('APUS-01-CLAUDE', 'apus01')).toBe(true);
+  });
+
+  it('preserves exact text matching without using edit distance', () => {
+    expect(matchesAuthFileSearchText('上海主力池', '主力')).toBe(true);
+    expect(matchesAuthFileSearchText('AC-16', 'AC17')).toBe(false);
+    expect(matchesAuthFileSearchText('owner.name@example.test', 'owner.name')).toBe(true);
+  });
+
+  it('normalizes full-width characters and separators deterministically', () => {
+    expect(normalizeAuthFileLooseSearchText('ＡＣ－１６')).toBe('ac16');
+    expect(normalizeAuthFileLooseSearchText(' AC_16 ')).toBe('ac16');
+  });
+});
+
 describe('auth file Codex plan helpers', () => {
   it('matches Codex files by plan from file metadata or quota fallback', () => {
     expect(
@@ -849,9 +850,7 @@ describe('auth file time-based sorting helpers', () => {
   });
 
   it('reads created time from created_at and falls back to modtime when created_at is missing', () => {
-    expect(getAuthFileCreatedMs(plainFile({ created_at: 1_700_000_500 }))).toBe(
-      1_700_000_500_000
-    );
+    expect(getAuthFileCreatedMs(plainFile({ created_at: 1_700_000_500 }))).toBe(1_700_000_500_000);
     // created_at 缺失（core omitempty）时回退到修改时间，仍给出稳定排序键。
     expect(getAuthFileCreatedMs(plainFile({ modtime: 1_700_000_000 }))).toBe(1_700_000_000_000);
   });

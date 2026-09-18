@@ -6,14 +6,15 @@ describe('quotaDisplay', () => {
     const display = resolveQuotaAccountDisplayText(
       {
         name: 'very-long-account-name@example.com.json',
+        email: 'actual-account@example.com',
         note: '生产主账号',
       },
       'masked'
     );
 
     expect(display.primary).toBe('生产主账号');
-    expect(display.secondary).toBe('ve***@example.com');
-    expect(display.title).toBe('very-long-account-name@example.com');
+    expect(display.secondary).toBe('ac***@example.com');
+    expect(display.title).toBe('actual-account@example.com');
   });
 
   it('shows full credential names when full display mode is selected', () => {
