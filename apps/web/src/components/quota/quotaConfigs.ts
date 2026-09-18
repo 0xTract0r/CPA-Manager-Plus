@@ -27,7 +27,10 @@ import type {
   XaiQuotaState,
 } from '@/types';
 import type { UsageHeaderSnapshot } from '@/services/api/usageService';
-import type { CoreQuotaSnapshotEntry } from '@/services/api/quotaSnapshots';
+import {
+  parseCoreQuotaTimestamp,
+  type CoreQuotaSnapshotEntry,
+} from '@/services/api/quotaSnapshots';
 import type { AntigravityQuotaData, CodexQuotaData } from '@/utils/quota';
 import {
   buildObservedClaudeQuotaStateFromCoreSnapshot,
@@ -920,13 +923,7 @@ const renderCodexItems = (
       const windowLabel = window.labelKey
         ? t(window.labelKey, window.labelParams as Record<string, string | number>)
         : window.label;
-      const infoIcon = renderCodexWindowInfo(
-        quota,
-        window,
-        windowLabel,
-        t,
-        styleMap
-      );
+      const infoIcon = renderCodexWindowInfo(quota, window, windowLabel, t, styleMap);
 
       return h(
         'div',
@@ -969,6 +966,46 @@ const renderClaudeItems = (
   const windows = quota.windows ?? [];
   const extraUsage = quota.extraUsage ?? null;
   const nodes: ReactNode[] = [];
+  const lastRefreshedAt = parseCoreQuotaTimestamp(quota.lastRefreshedAt);
+  const nextRefreshAt = parseCoreQuotaTimestamp(quota.nextRefreshAt);
+  const lastRefreshedLabel = lastRefreshedAt
+    ? formatInUtc8(lastRefreshedAt, { dateStyle: 'medium', timeStyle: 'short' })
+    : '';
+  const nextRefreshLabel = nextRefreshAt
+    ? formatInUtc8(nextRefreshAt, { dateStyle: 'medium', timeStyle: 'short' })
+    : '';
+
+  const refreshMetaNode = quota.source
+    ? (() => {
+        const refreshParts = [
+          lastRefreshedLabel
+            ? t('quota_management.snapshot_refreshed_at', { time: lastRefreshedLabel })
+            : '',
+          nextRefreshLabel
+            ? t('quota_management.snapshot_next_refresh', { time: nextRefreshLabel })
+            : '',
+        ].filter(Boolean);
+
+        return h(
+          'div',
+          { key: 'refresh-meta', className: styleMap.quotaFootnote },
+          h(
+            'span',
+            { className: styleMap.quotaFootnoteLabel },
+            t(
+              quota.source === 'core_snapshot'
+                ? 'quota_management.snapshot_label'
+                : 'quota_management.live_refresh_label'
+            )
+          ),
+          h(
+            'span',
+            { className: styleMap.quotaFootnoteValue },
+            refreshParts.join(' / ') || t('quota_management.snapshot_time_unknown')
+          )
+        );
+      })()
+    : null;
 
   // 账号页重排（Q8）：Claude 配额卡不再渲染 `quota.planType` 的「套餐」行——该行取自
   // claude usage 的 plan_type，与调度用的 account_scheduling.subscription_tier 口径不一致
@@ -991,6 +1028,7 @@ const renderClaudeItems = (
     nodes.push(
       h('div', { key: 'empty', className: styleMap.quotaMessage }, t('claude_quota.empty_windows'))
     );
+    if (refreshMetaNode) nodes.push(refreshMetaNode);
     return h(Fragment, null, ...nodes);
   }
 
@@ -1025,6 +1063,8 @@ const renderClaudeItems = (
     })
   );
 
+  if (refreshMetaNode) nodes.push(refreshMetaNode);
+
   return h(Fragment, null, ...nodes);
 };
 
@@ -1045,6 +1085,9 @@ export const CLAUDE_CONFIG: QuotaConfig<
     windows: data.windows,
     extraUsage: data.extraUsage,
     planType: data.planType,
+    source: 'direct',
+    lastRefreshedAt: new Date().toISOString(),
+    nextRefreshAt: null,
   }),
   buildErrorState: (message, status) => ({
     status: 'error',

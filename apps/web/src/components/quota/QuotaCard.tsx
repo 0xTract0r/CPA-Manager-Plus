@@ -186,7 +186,6 @@ export function QuotaCard<TState extends QuotaStatusState>({
         <AccountIdentity
           identity={accountDisplay.identity}
           compact
-          showFallback
           className={styles.quotaAccountIdentity}
           testId={`quota-account-identity-${item.name}`}
         />

@@ -14,10 +14,13 @@ import {
 import { createPortal } from 'react-dom';
 import type { TFunction } from 'i18next';
 import { Button } from '@/components/ui/Button';
+import { AccountEmailReveal } from '@/components/ui/AccountIdentity';
 import {
   IconChevronDown,
   IconCopy,
   IconDownload,
+  IconEye,
+  IconEyeOff,
   IconFileText,
   IconFilter,
   IconInfo,
@@ -1163,6 +1166,7 @@ function RealtimeSourceNameCell({ text, tooltipId }: RealtimeSourceNameCellProps
   return (
     <span
       ref={triggerRef}
+      className={styles.realtimeSourcePrimary}
       title=""
       data-overflow-tooltip="source"
       data-overflow-content="true"
@@ -1523,12 +1527,14 @@ export function RealtimeEventsPanelActions({
   failedOnlyActive,
   lowCacheHitRateOnly,
   lowCacheHitRateThreshold,
+  accountDisplayMode,
   exportRows,
   hasPrices,
   t,
   onToggleFailedOnly,
   onToggleLowCacheHitRateOnly,
   onLowCacheHitRateThresholdChange,
+  onAccountDisplayModeChange,
 }: RealtimeEventsPanelActionsProps) {
   // 客户端导出「当前已加载/筛选的事件行」：纯前端生成 CSV/JSON Blob 后触发下载，不打服务端。
   // 说明：failedOnly 等筛选走服务端已落进 exportRows；实时表内「仅显示低命中率」是页内当前页视觉
@@ -1545,6 +1551,9 @@ export function RealtimeEventsPanelActions({
     });
   };
   const exportDisabled = exportRows.length === 0;
+  const nextAccountDisplayMode: AccountDisplayMode =
+    accountDisplayMode === 'masked' ? 'full' : 'masked';
+  const AccountDisplayIcon = accountDisplayMode === 'masked' ? IconEyeOff : IconEye;
   const logRowsLabel = shortLabel(t, 'monitoring.log_rows_short', 'monitoring.log_rows');
   const recentFailuresLabel = shortLabel(
     t,
@@ -1556,6 +1565,11 @@ export function RealtimeEventsPanelActions({
     'monitoring.filter_status_failed_short',
     'monitoring.filter_status_failed'
   );
+  const accountDisplayHint = t(
+    accountDisplayMode === 'masked'
+      ? 'monitoring.account_overview_show_full_accounts_hint'
+      : 'monitoring.account_overview_show_masked_accounts_hint'
+  );
 
   return (
     <div className={`${styles.inlineMetrics} ${styles.realtimeHeaderActions}`}>
@@ -1563,6 +1577,29 @@ export function RealtimeEventsPanelActions({
       <span title={t('monitoring.recent_failures')}>
         {`${recentFailuresLabel}: ${scopedFailureCount}`}
       </span>
+      <button
+        type="button"
+        className={[
+          styles.accountOverviewToolButton,
+          accountDisplayMode === 'masked' ? styles.accountDisplayModeButtonActive : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
+        onClick={() => onAccountDisplayModeChange(nextAccountDisplayMode)}
+        title={accountDisplayHint}
+        aria-label={accountDisplayHint}
+        aria-pressed={accountDisplayMode === 'masked'}
+        data-testid="monitoring-account-privacy-toggle"
+      >
+        <AccountDisplayIcon size={15} aria-hidden="true" />
+        <span>
+          {t(
+            accountDisplayMode === 'masked'
+              ? 'monitoring.account_overview_account_display_masked'
+              : 'monitoring.account_overview_account_display_full'
+          )}
+        </span>
+      </button>
       <button
         type="button"
         className={[
@@ -1749,10 +1786,10 @@ export function RealtimeEventsPanel({
           </colgroup>
           <thead>
             <tr>
-              {/* 时间列前移到最左第 1 位（原第 10 位），列宽映射见
-                  MonitoringCenterPage.module.scss 的 .realtimeTable col:nth-child(n)。 */}
-              <th>{t('monitoring.column_time')}</th>
               <th>{sourceApiKeyLabel}</th>
+              {/* 来源/账号作为扫描主锚点放第 1 列；时间保留前置但退到较窄的第 2 列。
+                  列宽映射见 MonitoringCenterPage.module.scss 的 nth-child 规则。 */}
+              <th>{t('monitoring.column_time')}</th>
               <th>{t('monitoring.column_model')}</th>
               <th>
                 <TableHeaderInfo
@@ -1803,6 +1840,24 @@ export function RealtimeEventsPanel({
             {displayedRows.map((row) => {
               const sourceDisplay = buildRealtimeSourceDisplay(row, t, accountDisplayMode);
               const apiKeyDisplay = buildRealtimeApiKeyDisplay(row, t);
+              const accountMeta = sourceDisplay.accountEmail ? (
+                <AccountEmailReveal
+                  email={sourceDisplay.accountEmail}
+                  masked={sourceDisplay.accountEmailMasked}
+                  displayMode={accountDisplayMode}
+                  className={styles.realtimeAccountEmail}
+                  testId={`${tooltipIdPrefix}-account-email-${row.id}`}
+                />
+              ) : sourceDisplay.meta ? (
+                <small>{sourceDisplay.meta}</small>
+              ) : null;
+              const apiKeyMeta = apiKeyDisplay ? (
+                <RealtimeApiKeyValueCell
+                  text={`${t('monitoring.realtime_api_key_label')}: ${apiKeyDisplay.display}`}
+                  tooltipLines={apiKeyDisplay.titleParts}
+                  tooltipId={`${tooltipIdPrefix}-apikey-tooltip-${row.id}`}
+                />
+              ) : null;
               const showResolvedModel =
                 row.resolvedModel &&
                 row.resolvedModel.trim() &&
@@ -1821,36 +1876,24 @@ export function RealtimeEventsPanel({
               const cacheHitRateToneClass = getRealtimeCacheHitRateToneClass(cacheHitRate);
               return (
                 <tr key={row.id} className={row.failed ? styles.logRowFailed : undefined}>
-                  {/* 时间列前移到最左第 1 位（原第 10 位，紧跟在"首字｜耗时"列之后）。列窄时
-                      date/time 各自省略号截断，hover/focus 用溢出感知浮层看完整时间戳
-                      （见 RealtimeTimeCell，同 RealtimeModelCell 的 portal 手法）。 */}
-                  <td>
-                    <RealtimeTimeCell
-                      dateText={timeParts.date}
-                      timeText={timeParts.time}
-                      tooltipId={`${tooltipIdPrefix}-time-tooltip-${row.id}`}
-                    />
-                  </td>
                   <td>
                     <div className={styles.logTypeCell}>
-                      <div className={styles.primaryCell} title={sourceDisplay.title}>
+                      <div
+                        className={`${styles.primaryCell} ${styles.realtimeSourceCell}`}
+                        title={sourceDisplay.title}
+                      >
                         <RealtimeSourceNameCell
                           text={sourceDisplay.primary}
                           tooltipId={`${tooltipIdPrefix}-source-tooltip-${row.id}`}
                         />
-                        {sourceDisplay.meta ? <small>{sourceDisplay.meta}</small> : null}
-                        {apiKeyDisplay ? (
-                          <RealtimeApiKeyValueCell
-                            text={`${t('monitoring.realtime_api_key_label')}: ${apiKeyDisplay.display}`}
-                            tooltipLines={apiKeyDisplay.titleParts}
-                            tooltipId={`${tooltipIdPrefix}-apikey-tooltip-${row.id}`}
-                          />
-                        ) : null}
+                        {accountMeta}
+                        {apiKeyMeta}
                         <button
                           type="button"
                           className={styles.realtimeRequestLogTrigger}
                           onClick={() => setTraceRow(row)}
                           title={t('performance.traceTitle')}
+                          data-testid={`${tooltipIdPrefix}-request-trace-${row.id}`}
                         >
                           <span>{t('performance.traceTitle')}</span>
                         </button>
@@ -1862,6 +1905,7 @@ export function RealtimeEventsPanel({
                             title={t('monitoring.realtime_request_log_action_hint', {
                               id: row.requestId,
                             })}
+                            data-testid={`${tooltipIdPrefix}-request-raw-${row.id}`}
                           >
                             <IconFileText size={12} aria-hidden="true" />
                             <span>{t('monitoring.realtime_request_log_action')}</span>
@@ -1876,6 +1920,15 @@ export function RealtimeEventsPanel({
                         )}
                       </div>
                     </div>
+                  </td>
+                  {/* 时间作为辅助上下文放第 2 列。列窄时 date/time 各自省略号截断，
+                      hover/focus 用溢出感知浮层展示完整时间戳。 */}
+                  <td>
+                    <RealtimeTimeCell
+                      dateText={timeParts.date}
+                      timeText={timeParts.time}
+                      tooltipId={`${tooltipIdPrefix}-time-tooltip-${row.id}`}
+                    />
                   </td>
                   <td>
                     {/* 模型名较长时被 .realtimeModelText 的 12% 列宽 nowrap 省略号截断；

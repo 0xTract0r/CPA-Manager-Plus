@@ -42,6 +42,27 @@ export const buildWildcardSearch = (value: string): RegExp | null => {
   return new RegExp(pattern, 'i');
 };
 
+/**
+ * 账号备注常用 `AC-16` / `AC_16` / `AC 16` 这类人工编号。普通搜索在保留原始
+ * includes 语义之外，再忽略空格、短横线和下划线，方便输入 `AC16` 命中这些写法；
+ * 不使用编辑距离，避免相近账号被误命中。
+ */
+export const normalizeAuthFileLooseSearchText = (value: unknown): string =>
+  String(value ?? '')
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[\s_-]+/g, '');
+
+export const matchesAuthFileSearchText = (value: unknown, query: string): boolean => {
+  const content = String(value ?? '');
+  const normalizedQuery = query.trim().normalize('NFKC').toLowerCase();
+  if (!normalizedQuery) return true;
+  if (content.normalize('NFKC').toLowerCase().includes(normalizedQuery)) return true;
+
+  const looseQuery = normalizeAuthFileLooseSearchText(normalizedQuery);
+  return Boolean(looseQuery) && normalizeAuthFileLooseSearchText(content).includes(looseQuery);
+};
+
 const PREMIUM_CODEX_PLAN_TYPES = new Set(['pro', 'prolite', 'pro-lite', 'pro_lite']);
 const CODEX_FIVE_HOUR_WINDOW_SECONDS = 18_000;
 const CODEX_WEEKLY_WINDOW_SECONDS = 604_800;
@@ -434,9 +455,7 @@ export const getAuthFileCodexStatus = (
     isObservedQuotaLimitError(observedErrorKind, observedErrorCode);
   const observedLimitWindowKind =
     observedReachedWindowKind ??
-    (observedUsedPercent !== null && observedUsedPercent >= 100
-      ? observedSummaryWindowKind
-      : null);
+    (observedUsedPercent !== null && observedUsedPercent >= 100 ? observedSummaryWindowKind : null);
   const getObservedWindowUsedPercent = (windowKind: 'five_hour' | 'weekly' | 'monthly') =>
     getHeaderSnapshotWindowUsedPercent(headerSnapshot, windowKind) ??
     (observedLimitWindowKind === windowKind ? observedUsedPercent : null);
@@ -497,10 +516,7 @@ export const getAuthFileCodexStatus = (
   const isFiveHourLimited =
     (fiveHourUsedPercent !== null && fiveHourUsedPercent >= 100) || observedFiveHourLimited;
   const isUnknownQuotaLimited =
-    observedQuotaLimitedStatus &&
-    !isFiveHourLimited &&
-    !isWeeklyLimited &&
-    !isMonthlyLimited;
+    observedQuotaLimitedStatus && !isFiveHourLimited && !isWeeklyLimited && !isMonthlyLimited;
   const isQuotaLimited =
     isFiveHourLimited || isWeeklyLimited || isMonthlyLimited || isUnknownQuotaLimited;
   const recoveryResetLabel =

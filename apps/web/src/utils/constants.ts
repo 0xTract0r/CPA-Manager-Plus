@@ -49,6 +49,7 @@ export const MAX_AUTH_FILE_SIZE = 10 * 1024 * 1024;
 export const STORAGE_KEY_AUTH = 'cli-proxy-auth';
 export const STORAGE_KEY_THEME = 'cli-proxy-theme';
 export const STORAGE_KEY_VISUAL_EFFECTS = 'cli-proxy-visual-effects';
+export const STORAGE_KEY_ACCOUNT_PRIVACY = 'cli-proxy-account-privacy';
 export const STORAGE_KEY_LANGUAGE = 'cli-proxy-language';
 export const STORAGE_KEY_SIDEBAR = 'cli-proxy-sidebar-collapsed';
 export const STORAGE_KEY_AUTH_FILES_PAGE_SIZE = 'cli-proxy-auth-files-page-size';
@@ -60,7 +61,7 @@ export const LANGUAGE_LABEL_KEYS: Record<Language, string> = {
   'zh-CN': 'language.chinese',
   'zh-TW': 'language.chinese_tw',
   en: 'language.english',
-  ru: 'language.russian'
+  ru: 'language.russian',
 };
 export const SUPPORTED_LANGUAGES = LANGUAGE_ORDER;
 
@@ -73,14 +74,14 @@ export const OAUTH_CARD_IDS = [
   'anthropic-oauth-card',
   'antigravity-oauth-card',
   'kimi-oauth-card',
-  'xai-oauth-card'
+  'xai-oauth-card',
 ];
 export const OAUTH_PROVIDERS = {
   CODEX: 'codex',
   ANTHROPIC: 'anthropic',
   ANTIGRAVITY: 'antigravity',
   KIMI: 'kimi',
-  XAI: 'xai'
+  XAI: 'xai',
 } as const;
 
 // API 端点
@@ -91,5 +92,5 @@ export const API_ENDPOINTS = {
   PROVIDERS: '/providers',
   AUTH_FILES: '/auth-files',
   OAUTH: '/oauth',
-  LOGS: '/logs'
+  LOGS: '/logs',
 } as const;

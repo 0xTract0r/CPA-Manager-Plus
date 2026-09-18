@@ -30,7 +30,9 @@ const { mocks } = vi.hoisted(() => {
   quotaStoreState.setCodexQuota = vi.fn((updater: unknown) => {
     const current = quotaStoreState.codexQuota as Record<string, unknown>;
     quotaStoreState.codexQuota =
-      typeof updater === 'function' ? (updater as (prev: typeof current) => typeof current)(current) : updater;
+      typeof updater === 'function'
+        ? (updater as (prev: typeof current) => typeof current)(current)
+        : updater;
   });
 
   return {
@@ -67,7 +69,7 @@ vi.mock('@/stores', () => ({
 }));
 
 const FULL_FILE_NAME = 'very-long-account-name@example.com.json';
-const MASKED_FILE_NAME = 've***@example.com';
+const MASKED_FILE_NAME = 'ver***@example.com';
 
 const testFile: AuthFileItem = {
   name: FULL_FILE_NAME,

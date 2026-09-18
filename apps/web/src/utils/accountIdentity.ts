@@ -35,6 +35,20 @@ export const maskAccountEmail = (value: unknown): string => {
 export const maskAccountEmailsInText = (value: unknown): string =>
   readText(value).replace(EMAIL_IN_TEXT_PATTERN, (email) => maskAccountEmail(email));
 
+/**
+ * 认证文件名经常只是 `provider-<email>-suffix.json`。卡片同时展示邮箱时，把文件名中
+ * 已重复的完整邮箱折叠成省略号；完整文件名仍通过弹层提供，不丢失运维识别能力。
+ */
+export const compactAuthFileNameForDisplay = (fileName: unknown, email: unknown): string => {
+  const normalizedFileName = readText(fileName);
+  const normalizedEmail = readEmailLike(email);
+  if (!normalizedFileName || !normalizedEmail) return normalizedFileName;
+
+  const index = normalizedFileName.toLowerCase().indexOf(normalizedEmail.toLowerCase());
+  if (index < 0) return normalizedFileName;
+  return `${normalizedFileName.slice(0, index)}…${normalizedFileName.slice(index + normalizedEmail.length)}`;
+};
+
 export type AccountIdentityInput = {
   note?: unknown;
   email?: unknown;
@@ -61,15 +75,13 @@ export const resolveAccountIdentity = ({
 }: AccountIdentityInput): AccountIdentityView => {
   const normalizedNote = readText(note);
   const normalizedFallback = stripAccountFileSuffix(fallback);
-  const normalizedEmail = readEmailLike(email) || readEmailLike(normalizedFallback);
+  // fallback 是文件名/内部标识，不再猜测成账号邮箱，避免同一卡片出现两个“邮箱”。
+  const normalizedEmail = readEmailLike(email);
   const maskedEmail = normalizedEmail ? maskAccountEmail(normalizedEmail) : '';
   const maskedFallback = maskAccountEmailsInText(normalizedFallback);
   const hasNote = Boolean(normalizedNote);
-  const primary = hasNote ? normalizedNote : maskedEmail || maskedFallback || '-';
-  const secondary = hasNote
-    ? maskedEmail ||
-      (normalizedFallback && normalizedFallback !== primary ? maskedFallback : '')
-    : '';
+  const primary = hasNote ? normalizedNote : normalizedEmail || normalizedFallback || '-';
+  const secondary = hasNote ? normalizedEmail : '';
   const title = Array.from(
     new Set([normalizedNote, normalizedEmail, normalizedFallback].filter(Boolean))
   ).join(' · ');
@@ -106,8 +118,6 @@ export const readAuthFileEmail = (file: AuthFileItem): string => {
     file['user_email'],
     file['account_snapshot'],
     file['auth_label_snapshot'],
-    file.label,
-    file.name,
   ]) {
     const email = readEmailLike(value);
     if (email) return email;

@@ -313,26 +313,17 @@ describe('MonitoringCenterPage account card', () => {
       ).meta
     ).toBe('Provider: openai');
 
-    expect(
-      buildRealtimeSourceDisplay(
-        {
-          ...baseRow,
-          provider: '-',
-        },
-        t,
-        'full'
-      ).meta
-    ).toBe('alice@example.com');
-    expect(
-      buildRealtimeSourceDisplay(
-        {
-          ...baseRow,
-          provider: '-',
-        },
-        t,
-        'masked'
-      ).meta
-    ).toBe('ali***@example.com');
+    const accountDisplay = buildRealtimeSourceDisplay(
+      {
+        ...baseRow,
+        provider: '-',
+      },
+      t,
+      'full'
+    );
+    expect(accountDisplay.meta).toBe('Source: Team Key');
+    expect(accountDisplay.accountEmail).toBe('alice@example.com');
+    expect(accountDisplay.accountEmailMasked).toBe('al***@example.com');
   });
 
   it('prefers resolved hosts over generic provider labels', () => {
