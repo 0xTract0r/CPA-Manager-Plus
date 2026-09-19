@@ -38,23 +38,26 @@ func New(store *store.Store) *Service {
 }
 
 type Request struct {
-	FromMS           int64   `json:"from_ms"`
-	ToMS             int64   `json:"to_ms"`
-	NowMS            int64   `json:"now_ms"`
-	TimeZone         string  `json:"time_zone"`
-	SearchQuery      string  `json:"search_query"`
-	SearchAPIKeyHash string  `json:"search_api_key_hash"`
-	Filters          Filters `json:"filters"`
-	Include          Include `json:"include"`
+	FastImpactOptions usage.FastImpactOptions `json:"fast_impact_options"`
+	FromMS            int64                   `json:"from_ms"`
+	ToMS              int64                   `json:"to_ms"`
+	NowMS             int64                   `json:"now_ms"`
+	TimeZone          string                  `json:"time_zone"`
+	SearchQuery       string                  `json:"search_query"`
+	SearchAPIKeyHash  string                  `json:"search_api_key_hash"`
+	Filters           Filters                 `json:"filters"`
+	Include           Include                 `json:"include"`
 }
 
 type Filters struct {
-	RequestIDs  []string `json:"request_ids"`
-	Models      []string `json:"models"`
-	Providers   []string `json:"providers"`
-	Accounts    []string `json:"accounts"`
-	AuthFiles   []string `json:"auth_files"`
-	AuthIndices []string `json:"auth_indices"`
+	UnresolvedModels []string `json:"unresolved_models"`
+	ResolvedModels   []string `json:"resolved_models"`
+	RequestIDs       []string `json:"request_ids"`
+	Models           []string `json:"models"`
+	Providers        []string `json:"providers"`
+	Accounts         []string `json:"accounts"`
+	AuthFiles        []string `json:"auth_files"`
+	AuthIndices      []string `json:"auth_indices"`
 	// SearchAuthIndices 与顶层 search_query 取 OR，不替代 AuthIndices 等显式筛选。
 	SearchAuthIndices []string `json:"search_auth_indices"`
 	APIKeyHashes      []string `json:"api_key_hashes"`
@@ -76,6 +79,7 @@ type Filters struct {
 }
 
 type Include struct {
+	FastImpact         bool              `json:"fast_impact"`
 	Performance        bool              `json:"performance"`
 	Summary            bool              `json:"summary"`
 	SummaryComparison  bool              `json:"summary_comparison"`
@@ -113,6 +117,7 @@ type DrilldownPreview struct {
 }
 
 type Response struct {
+	FastImpact         *usage.FastImpact         `json:"fast_impact,omitempty"`
 	Performance        *store.Performance        `json:"performance,omitempty"`
 	GeneratedAtMS      int64                     `json:"generated_at_ms"`
 	Granularity        string                    `json:"granularity"`
@@ -707,6 +712,20 @@ func (s *Service) Analytics(ctx context.Context, req Request) (Response, error) 
 		filterOptionsOut  *FilterOptions
 	)
 
+	if req.Include.FastImpact {
+		group.Go(func() error {
+			fastFilter := filter
+			fastFilter.ToMS = min(fastFilter.ToMS, nowMS)
+			if fastFilter.ToMS <= fastFilter.FromMS {
+				return errors.New("fast impact time range starts after the observation time")
+			}
+			p, err := s.store.FastImpactWithFilter(groupCtx, fastFilter, req.FastImpactOptions)
+			if err == nil {
+				response.FastImpact = &p
+			}
+			return err
+		})
+	}
 	if req.Include.Performance {
 		group.Go(func() error {
 			p, err := s.store.PerformanceWithFilter(groupCtx, filter, granularity, location, func(e store.PerformanceEvent) float64 {
@@ -1156,6 +1175,8 @@ func buildFilter(req Request) store.AnalyticsFilter {
 		SearchQuery:       req.SearchQuery,
 		SearchAPIKeyHash:  req.SearchAPIKeyHash,
 		Models:            req.Filters.Models,
+		ResolvedModels:    req.Filters.ResolvedModels,
+		UnresolvedModels:  req.Filters.UnresolvedModels,
 		Providers:         req.Filters.Providers,
 		Accounts:          req.Filters.Accounts,
 		AuthFiles:         req.Filters.AuthFiles,

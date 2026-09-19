@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { StrictMode, useEffect } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -122,6 +122,30 @@ describe('useMonitoringAnalytics', () => {
     }, [result]);
     return null;
   }
+
+  it('restarts an aborted request after StrictMode effect cleanup', async () => {
+    const requests = installDeferredAnalyticsMock();
+    await act(async () => {
+      renderer = create(
+        <StrictMode>
+          <Harness include={{ fast_impact: true }} />
+        </StrictMode>
+      );
+    });
+    expect(getAnalyticsMock).toHaveBeenCalledTimes(2);
+    expect((getAnalyticsMock.mock.calls[0][3] as AbortSignal).aborted).toBe(true);
+    expect((getAnalyticsMock.mock.calls[1][3] as AbortSignal).aborted).toBe(false);
+    await act(async () => {
+      requests[1].resolve(createResponse(200));
+      await flushPromises();
+    });
+    expect(latestResult?.data?.generated_at_ms).toBe(200);
+    await act(async () => {
+      requests[0].resolve(createResponse(100));
+      await flushPromises();
+    });
+    expect(latestResult?.data?.generated_at_ms).toBe(200);
+  });
 
   it('does not supersede an in-flight refresh for the same data scope', async () => {
     const requests = installDeferredAnalyticsMock();

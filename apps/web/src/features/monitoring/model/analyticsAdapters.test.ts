@@ -682,3 +682,14 @@ describe('analytics failure source display', () => {
     expect(rows[0].label).not.toBe('source-hash');
   });
 });
+
+it('preserves exact auth, resolved model and request identity when drilling down', () => {
+  const filters = buildAnalyticsFilters(
+    { authIndex: 'account-a', resolvedModel: 'gpt-6-astra', requestId: 'req-a' },
+    new Map(),
+    []
+  );
+  expect(filters.auth_indices).toEqual(['account-a']);
+  expect(filters.resolved_models).toEqual(['gpt-6-astra']);
+  expect(filters.request_ids).toEqual(['req-a']);
+});

@@ -49,6 +49,10 @@ export type UsageAnalyticsCustomRange = {
 };
 
 export type UsageAnalyticsFiltersState = {
+  authIndex?: string;
+  performanceView?: 'overview' | 'fast';
+  fastMetric?: 'visible_tps' | 'end_to_end_tps';
+  fastMode?: 'tier' | 'transition';
   timeRange: UsageAnalyticsTimeRange;
   customRange: UsageAnalyticsCustomRange | null;
   granularity: UsageAnalyticsGranularity;
@@ -665,17 +669,27 @@ export const buildUsageAnalyticsFilters = (
   filters: Partial<
     Pick<
       UsageAnalyticsFiltersState,
-      'model' | 'apiKeyHash' | 'provider' | 'authFile' | 'status' | 'minLatencyMs' | 'cacheStatus'
+      | 'performanceView'
+      | 'authIndex'
+      | 'model'
+      | 'apiKeyHash'
+      | 'provider'
+      | 'authFile'
+      | 'status'
+      | 'minLatencyMs'
+      | 'cacheStatus'
     >
   >
 ): MonitoringAnalyticsFilters => {
   const payload: MonitoringAnalyticsFilters = {};
+  if (filters.authIndex && filters.authIndex !== 'all') payload.auth_indices = [filters.authIndex];
   const model = filters.model ?? 'all';
   const apiKeyHash = getSelectableApiKeyHash(filters.apiKeyHash);
   const provider = filters.provider ?? 'all';
   const authFile = filters.authFile ?? 'all';
   if (isActiveSelectValue(model)) {
-    payload.models = [model.trim()];
+    if (filters.performanceView === 'fast' && model.startsWith('unresolved:')) payload.unresolved_models = [model.slice('unresolved:'.length)];
+    else payload.models = [model.trim()];
   }
   if (apiKeyHash) {
     payload.api_key_hashes = [apiKeyHash];
@@ -2522,6 +2536,7 @@ export const buildMonitoringDetailUrl = (
   filters: Partial<
     Pick<
       UsageAnalyticsFiltersState,
+      | 'authIndex'
       | 'model'
       | 'apiKeyHash'
       | 'provider'
@@ -2537,6 +2552,7 @@ export const buildMonitoringDetailUrl = (
   }
 ) => {
   const params = new URLSearchParams();
+  if (filters.authIndex && filters.authIndex !== 'all') params.set('auth_index', filters.authIndex);
   params.set('from_ms', String(point.bucketMs));
   params.set('to_ms', String(point.bucketEndMs));
   const model = filters.model ?? 'all';

@@ -43,6 +43,8 @@ var (
 )
 
 type AnalyticsFilter struct {
+	UnresolvedModels []string
+	ResolvedModels   []string
 	RequestIDs       []string
 	FromMS           int64
 	ToMS             int64
@@ -2038,6 +2040,8 @@ func analyticsWhere(filter AnalyticsFilter) (string, []any) {
 	}
 	addInCondition("request_id", filter.RequestIDs)
 	addInCondition("model", filter.Models)
+	addInCondition("resolved_model", filter.ResolvedModels)
+	addInCondition("case when nullif(resolved_model,'') is null then model else null end", filter.UnresolvedModels)
 	addProviderCondition(filter.Providers, &conditions, &args)
 	addAccountCondition(filter.Accounts, &conditions, &args)
 	addInCondition("auth_file_snapshot", filter.AuthFiles)

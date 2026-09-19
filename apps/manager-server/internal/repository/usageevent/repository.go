@@ -11,6 +11,7 @@ import (
 )
 
 type Repository interface {
+	FastImpactWithFilter(context.Context, AnalyticsFilter, usage.FastImpactOptions) (usage.FastImpact, error)
 	PerformanceWithFilter(ctx context.Context, filter AnalyticsFilter, granularity string, location *time.Location, cost func(PerformanceEvent) float64) (Performance, error)
 	InsertBatch(ctx context.Context, events []model.UsageEvent) (model.InsertResult, error)
 	ListRecent(ctx context.Context, limit int) ([]model.UsageEvent, error)
@@ -159,6 +160,13 @@ func (r *repository) InsertBatch(ctx context.Context, events []model.UsageEvent)
 			result.InsertedEventHashes = append(result.InsertedEventHashes, event.EventHash)
 		} else {
 			result.Skipped++
+			// 回补只升级观测字段，不再次计入 rollup/fanout；贫字段不得覆盖新采集。
+			if event.Telemetry != nil {
+				_, err = tx.ExecContext(ctx, `update usage_events set telemetry_json = json_patch(coalesce(nullif(telemetry_json,''),'{}'), ?), reasoning_effort = coalesce(nullif(reasoning_effort,''),?), service_tier = coalesce(nullif(service_tier,''),?), ttft_ms = coalesce(ttft_ms,?) where event_hash = ? and coalesce(json_extract(nullif(telemetry_json,''),'$.version'),0) <= ? and (coalesce(telemetry_json,'') = '' or coalesce(json_extract(telemetry_json,'$.version'),0) < ? or (json_extract(telemetry_json,'$.fast_context') is null and ? is not null))`, usage.TelemetryJSON(event.Telemetry), nullString(event.ReasoningEffort), nullString(event.ServiceTier), nullInt(event.TTFTMS), event.EventHash, event.Telemetry.Version, event.Telemetry.Version, fastContextJSON(event.Telemetry))
+				if err != nil {
+					return model.InsertResult{}, err
+				}
+			}
 		}
 	}
 	if err := tx.Commit(); err != nil {

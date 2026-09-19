@@ -69,9 +69,24 @@ export async function handleDemoApiRequest<T = unknown>(
   const { pathname, params } = normalizeDemoUrl(url, config);
   const rawConfig = getDemoRawConfig();
 
+  if (pathname === '/auth-files/account-settings') {
+    const name = params.get('name') || '';
+    return {
+      account_settings: {
+        name,
+        note: name.startsWith('production-') ? '生产留存样本（脱敏）' : '合成验收样本（非生产）',
+        proxy_url: null,
+        disabled: false,
+        fast: false,
+        refresh_enabled: true,
+        extra_headers: {},
+      },
+    } as T;
+  }
   if (pathname === '/config') return rawConfig as T;
   if (pathname === '/latest-version') return getDemoLatestVersion() as T;
-  if (pathname === '/config.yaml') return (typeof data === 'string' ? ok : getDemoConfigYaml()) as T;
+  if (pathname === '/config.yaml')
+    return (typeof data === 'string' ? ok : getDemoConfigYaml()) as T;
 
   const providerKey = providerEndpointKeys[pathname];
   if (providerKey) {
@@ -143,10 +158,10 @@ export async function handleDemoApiRequest<T = unknown>(
   if (/^\/plugin-store\/[^/]+\/install$/.test(pathname)) {
     const requestedVersion =
       params.get('version') ||
-      ((data && typeof data === 'object' && 'version' in data
+      (data && typeof data === 'object' && 'version' in data
         ? String((data as { version?: unknown }).version ?? '')
         : ''
-      ).trim());
+      ).trim();
     return {
       status: 'installed',
       source_id: params.get('source') || 'official',

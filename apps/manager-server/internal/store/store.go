@@ -495,3 +495,7 @@ func (s *Store) ZeroTokenModelsWithFilter(ctx context.Context, filter AnalyticsF
 func (s *Store) PerformanceWithFilter(ctx context.Context, filter AnalyticsFilter, granularity string, location *time.Location, cost func(PerformanceEvent) float64) (Performance, error) {
 	return s.UsageEvents.PerformanceWithFilter(ctx, filter, granularity, location, cost)
 }
+
+func (s *Store) FastImpactWithFilter(ctx context.Context, filter AnalyticsFilter, options usage.FastImpactOptions) (usage.FastImpact, error) {
+	return s.UsageEvents.FastImpactWithFilter(ctx, filter, options)
+}

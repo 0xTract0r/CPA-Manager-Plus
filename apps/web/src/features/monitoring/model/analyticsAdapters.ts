@@ -393,6 +393,15 @@ export const buildAnalyticsFilters = (
       authIndices.size > 0 ? Array.from(authIndices).sort() : ['__no_matching_auth_index__'];
   }
 
+  if (scopeFilters.authIndex) {
+    filters.auth_indices =
+      !filters.auth_indices || filters.auth_indices.includes(scopeFilters.authIndex)
+        ? [scopeFilters.authIndex]
+        : ['__no_matching_auth_index__'];
+  }
+  if (scopeFilters.requestId) filters.request_ids = [scopeFilters.requestId];
+  if (scopeFilters.resolvedModel) filters.resolved_models = [scopeFilters.resolvedModel];
+  if (scopeFilters.unresolvedModel) filters.unresolved_models = [scopeFilters.unresolvedModel];
   return filters;
 };
 

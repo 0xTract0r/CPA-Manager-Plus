@@ -221,3 +221,29 @@ describe('usageAnalyticsUiState', () => {
     expect(params.get('api_key_keyword')).toBe('key');
   });
 });
+
+describe('fast impact deep links', () => {
+  it('overrides conflicting saved account/model filters and round-trips all comparison fields', () => {
+    const state = buildUsageAnalyticsUiStateFromSearchParams(
+      new URLSearchParams(
+        'tab=performance&view=fast&auth_index=account-a&model=gpt-6-astra&from_ms=1000&to_ms=9000&fast_metric=end_to_end_tps&fast_mode=transition'
+      ),
+      {
+        activeTab: 'overview',
+        filters: {
+          ...USAGE_ANALYTICS_DEFAULT_FILTERS,
+          authFile: 'old.json',
+          provider: 'claude',
+          model: 'old-model',
+        },
+      }
+    );
+    expect(state.filters.authIndex).toBe('account-a');
+    expect(state.filters.authFile).toBe('all');
+    expect(state.filters.provider).toBe('all');
+    expect(state.filters.model).toBe('gpt-6-astra');
+    expect(
+      buildUsageAnalyticsUiStateFromSearchParams(buildUsageAnalyticsSearchParams(state))
+    ).toEqual(state);
+  });
+});

@@ -476,11 +476,7 @@ describe('monitoringCenterPageModel account quota', () => {
 
     expect(merged).toMatchObject({
       planType: 'plus',
-      metaLabels: [
-        'Codex Quota',
-        'Plan: Plus',
-        'Observed from latest usage response headers',
-      ],
+      metaLabels: ['Codex Quota', 'Plan: Plus', 'Observed from latest usage response headers'],
       windows: [
         {
           id: 'monthly',
@@ -1253,4 +1249,15 @@ describe('buildSecondarySummaryCards', () => {
     // 缓存 token 绝不应超过总 token。
     expect(summary.cachedTokens).toBeLessThan(summary.totalTokens);
   });
+});
+
+it('preserves sub-minute boundaries when initializing a request drilldown', () => {
+  const from = 1789741617856,
+    to = 1789743906579;
+  const state = buildMonitoringInitialStateFromQuery(
+    `?from_ms=${from}&to_ms=${to}&auth_index=a`,
+    {} as Parameters<typeof buildMonitoringInitialStateFromQuery>[1]
+  );
+  expect(new Date(state.customStartInput).getTime()).toBe(from);
+  expect(new Date(state.customEndInput).getTime()).toBe(to);
 });

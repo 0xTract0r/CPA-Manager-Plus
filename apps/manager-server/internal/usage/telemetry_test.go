@@ -39,7 +39,7 @@ func TestTelemetryAllowlistAndAttemptIdentity(t *testing.T) {
 	if buildEventHash(e) != buildEventHash(otherDisplay) {
 		t.Fatal("same attempt changed hash by alias")
 	}
-	if TelemetryFromJSON(`{"version":2,"attempt_id":"x"}`) != nil || TelemetryFromJSON(`broken`) != nil {
+	if TelemetryFromJSON(`{"version":3,"attempt_id":"x"}`) != nil || TelemetryFromJSON(`broken`) != nil {
 		t.Fatal("invalid version accepted")
 	}
 }

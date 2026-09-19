@@ -1,3 +1,4 @@
+import type { FastImpact, FastImpactOptions } from '@/features/fast-impact/types';
 import type { PerformanceData, RequestTelemetry } from '@/features/performance/types';
 import axios from 'axios';
 import type { UsagePayload } from '@/features/monitoring/hooks/useUsageData';
@@ -637,6 +638,8 @@ export interface DashboardSummaryParams {
 }
 
 export interface MonitoringAnalyticsFilters {
+ unresolved_models?: string[];
+  resolved_models?: string[];
   request_ids?: string[];
   models?: string[];
   providers?: string[];
@@ -675,6 +678,7 @@ export interface MonitoringAnalyticsDrilldownPreviewRequest {
 }
 
 export interface MonitoringAnalyticsInclude {
+  fast_impact?: boolean;
   performance?: boolean;
   summary?: boolean;
   summary_comparison?: boolean;
@@ -700,6 +704,7 @@ export interface MonitoringAnalyticsInclude {
 }
 
 export interface MonitoringAnalyticsRequest {
+  fast_impact_options?: FastImpactOptions;
   from_ms: number;
   to_ms: number;
   now_ms?: number;
@@ -1241,6 +1246,7 @@ export interface MonitoringAnalyticsEventsResponse {
 }
 
 export interface MonitoringAnalyticsResponse {
+  fast_impact?: FastImpact;
   performance?: PerformanceData;
   generated_at_ms: number;
   granularity: 'hour' | 'day' | string;
@@ -2193,6 +2199,25 @@ export const monitoringAnalyticsApi = {
     timeoutMs: number = USAGE_SERVICE_TIMEOUT_MS
   ): Promise<MonitoringAnalyticsResponse> => {
     if (__DEMO_SITE__ && isDemoMode()) {
+      // 仅开发模式的本地脱敏预览调用真实聚合器，正式包没有此入口。
+      const preview = import.meta.env.DEV ? import.meta.env.VITE_FAST_IMPACT_PREVIEW_URL : '';
+      if (
+        preview &&
+        (request.include?.fast_impact ||
+          request.filters?.auth_indices?.some((id) => id.startsWith('preview-')))
+      ) {
+        const target = new URL(preview);
+        if (!['127.0.0.1', 'localhost'].includes(target.hostname))
+          throw new Error('Preview must use loopback');
+        const result = await fetch(`${preview}/analytics`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(request),
+          signal,
+        });
+        if (!result.ok) throw new Error(await result.text());
+        return result.json();
+      }
       return getDemoMonitoringAnalytics(request);
     }
 

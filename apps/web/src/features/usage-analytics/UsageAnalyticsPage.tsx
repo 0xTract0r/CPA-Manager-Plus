@@ -1,5 +1,6 @@
+import { FastImpactPanel } from '@/features/fast-impact/FastImpactPanel';
 import { PerformancePanel } from '@/features/performance/PerformancePanel';
-import { isDemoMode } from '@/features/demo/demoMode';
+import { isDemoMode, prefixRouteBase } from '@/features/demo/demoMode';
 import { useCallback, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -2484,8 +2485,24 @@ function UsageAnalyticsPageInner() {
 
   const modelOptions = useMemo<SelectOption[]>(
     () =>
-      buildStableSelectOptions(allModelOptionLabel, displayOptionCache.models, usage.filters.model),
-    [allModelOptionLabel, displayOptionCache.models, usage.filters.model]
+      buildStableSelectOptions(
+        allModelOptionLabel,
+        usage.filters.performanceView === 'fast'
+          ? [
+              ...new Set([
+                ...(usage.fastImpact?.models.map((m) => m.model) || []),
+              ]),
+            ]
+          : displayOptionCache.models,
+        usage.filters.model
+      ),
+    [
+      allModelOptionLabel,
+      displayOptionCache.models,
+      usage.filters.model,
+      usage.filters.performanceView,
+      usage.fastImpact,
+    ]
   );
   const apiKeyOptions = useMemo<SelectOption[]>(
     () => [
@@ -2543,7 +2560,11 @@ function UsageAnalyticsPageInner() {
     { value: 'hit', label: t('usage_analytics.cache_status_hit') },
     { value: 'miss', label: t('usage_analytics.cache_status_miss') },
   ];
-  const noData = !usage.loading && !usage.error && !hasUsageData(usage.summary, usage.timeline);
+  const noData =
+    !(usage.activeTab === 'performance' && usage.filters.performanceView === 'fast') &&
+    !usage.loading &&
+    !usage.error &&
+    !hasUsageData(usage.summary, usage.timeline);
   const rankRowLimit = 8;
   const credentialRankRowLimit = 10;
   const visibleModelRows = showAllModels ? usage.modelRows : usage.modelRows.slice(0, rankRowLimit);
@@ -2794,6 +2815,7 @@ function UsageAnalyticsPageInner() {
           </div>
 
           <div className={styles.filterBar}>
+            {usage.filters.authIndex && usage.filters.authIndex !== 'all' && usage.filters.performanceView !== 'fast' && <span>{t('fast_impact.account')}: {usage.performanceAuthFiles.find(a => String(a.auth_index ?? a.authIndex) === usage.filters.authIndex)?.note || usage.filters.authIndex}</span>}
             <div className={styles.scopeSearchBar}>
               <IconSearch size={16} />
               <input
@@ -2981,12 +3003,71 @@ function UsageAnalyticsPageInner() {
       ) : null}
 
       {usage.activeTab === 'performance' ? (
-        <PerformancePanel data={usage.performance} mock={isDemoMode()} authFiles={usage.performanceAuthFiles} accountSnapshots={usage.performanceAccountSnapshots}
-          onModel={(model) => updateFilters({model})}
-          onRequests={(model) => navigate(usage.bounds ? buildMonitoringDetailUrl({bucketMs:usage.bounds.fromMs,bucketEndMs:usage.bounds.toMs}, {...usage.filters, model}) : `/monitoring?model=${encodeURIComponent(model)}`)} />
-      ) : null}
+          <>
+            <div className={styles.performanceViews} aria-label={t('fast_impact.views')}>
+              <Button
+                variant={usage.filters.performanceView !== 'fast' ? 'primary' : 'secondary'}
+                onClick={() => updateFilters({ performanceView: 'overview' })}
+              >
+                {t('fast_impact.overview')}
+              </Button>
+              <Button
+                variant={usage.filters.performanceView === 'fast' ? 'primary' : 'secondary'}
+                onClick={() => updateFilters({ performanceView: 'fast' })}
+              >
+                {t('fast_impact.title')}
+              </Button>
+            </div>
+            {usage.filters.performanceView === 'fast' ? (
+              <FastImpactPanel
+                data={usage.fastImpact}
+                filters={usage.filters}
+                accounts={usage.performanceAuthFiles}
+                mock={isDemoMode()}
+                busy={usage.loading || usage.isUpdating}
+                error={usage.error}
+                onFilters={updateFilters}
+                onRequests={(row, requestId) => {
+                  const model = row.query_model || row.model;
+                  const path = usage.bounds
+                    ? buildMonitoringDetailUrl(
+                        { bucketMs: usage.bounds.fromMs, bucketEndMs: usage.bounds.toMs },
+                        { ...usage.filters, model }
+                      )
+                    : `/monitoring?model=${encodeURIComponent(model)}`;
+                  const target = new URL(path, 'http://local');
+                  target.searchParams.delete('model');
+                  target.searchParams.set(row.model_resolution === 'unresolved' ? 'unresolved_model' : 'resolved_model', model);
+                  target.searchParams.set('status', 'all');
+                  if (requestId) target.searchParams.set('request_id', requestId);
+                  navigate(
+                    `${isDemoMode() ? prefixRouteBase(target.pathname) : target.pathname}${target.search}`
+                  );
+                }}
+              />
+            ) : (
+              <PerformancePanel
+                data={usage.performance}
+                mock={isDemoMode()}
+                authFiles={usage.performanceAuthFiles}
+                accountSnapshots={usage.performanceAccountSnapshots}
+                onModel={(model) => updateFilters({ model })}
+                onRequests={(model) =>
+                  navigate(
+                    usage.bounds
+                      ? buildMonitoringDetailUrl(
+                          { bucketMs: usage.bounds.fromMs, bucketEndMs: usage.bounds.toMs },
+                          { ...usage.filters, model }
+                        )
+                      : `/monitoring?model=${encodeURIComponent(model)}`
+                  )
+                }
+              />
+            )}
+          </>
+        ) : null}
 
-      {usage.activeTab === 'trends' ? (
+        {usage.activeTab === 'trends' ? (
         <>
           <UsageSummarySection cards={trendSummaryCards} />
 

@@ -1521,3 +1521,8 @@ describe('usage anomaly drilldown', () => {
     );
   });
 });
+
+it('uses an exact unresolved-model scope for legacy fast groups', () => {
+ expect(buildUsageAnalyticsFilters({performanceView:'fast',model:'unresolved:legacy-alias',authIndex:'a'})).toEqual({auth_indices:['a'],unresolved_models:['legacy-alias']});
+ expect(buildUsageAnalyticsFilters({model:'unresolved:regular-alias'})).toEqual({models:['unresolved:regular-alias']});
+});

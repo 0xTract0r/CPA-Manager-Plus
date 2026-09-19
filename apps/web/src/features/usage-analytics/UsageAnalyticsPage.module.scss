@@ -2687,3 +2687,10 @@
     min-width: 560px;
   }
 }
+
+.performanceViews {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
