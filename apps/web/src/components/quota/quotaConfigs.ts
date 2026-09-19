@@ -735,7 +735,7 @@ const renderCodexResetCreditExpiryInfo = (
   const creditExpiries = getSortedCodexResetCreditExpiries(quota.rateLimitResetCredits);
   if (creditExpiries.length === 0) return null;
 
-  const { createElement: h, Fragment } = React;
+  const { createElement: h } = React;
   const earliestExpiryLabel = formatCodexResetCreditExpiryTime(creditExpiries[0].expiresAt);
   const rows = creditExpiries.map((credit, index) => ({
     key: `${credit.id}-${credit.expiresAt}`,
@@ -744,37 +744,42 @@ const renderCodexResetCreditExpiryInfo = (
   }));
 
   return h(
-    Fragment,
-    null,
+    'div',
+    { className: styleMap.codexResetCreditExpiry },
     h(
       'span',
-      { key: 'reset-expiry-summary', className: styleMap.codexResetCreditExpiry },
-      t('codex_quota.reset_credits_earliest_expiry', { time: earliestExpiryLabel })
+      { key: 'reset-expiry-label' },
+      t('codex_quota.reset_credits_earliest_expiry', { time: '' }).trim()
     ),
     h(
       'span',
-      {
-        key: 'reset-expiry-info',
-        className: styleMap.quotaInfoTrigger,
-        tabIndex: 0,
-        'aria-label': t('codex_quota.reset_credits_expiry_label'),
-      },
-      h(IconInfo, {
-        key: 'icon',
-        size: 14,
-        className: styleMap.quotaInfoIcon,
-        'aria-hidden': true,
-        focusable: false,
-      }),
+      { className: styleMap.codexResetCreditExpiryValue },
+      h('time', { dateTime: creditExpiries[0].expiresAt }, earliestExpiryLabel),
       h(
         'span',
-        { key: 'tooltip', className: styleMap.quotaInfoTooltip, role: 'tooltip' },
-        ...rows.map((row) =>
-          h(
-            'span',
-            { key: row.key, className: styleMap.quotaInfoTooltipRow },
-            h('span', { className: styleMap.quotaInfoTooltipLabel }, row.label),
-            h('span', { className: styleMap.quotaInfoTooltipValue }, row.value)
+        {
+          key: 'reset-expiry-info',
+          className: styleMap.quotaInfoTrigger,
+          tabIndex: 0,
+          'aria-label': t('codex_quota.reset_credits_expiry_label'),
+        },
+        h(IconInfo, {
+          key: 'icon',
+          size: 14,
+          className: styleMap.quotaInfoIcon,
+          'aria-hidden': true,
+          focusable: false,
+        }),
+        h(
+          'span',
+          { key: 'tooltip', className: styleMap.quotaInfoTooltip, role: 'tooltip' },
+          ...rows.map((row) =>
+            h(
+              'span',
+              { key: row.key, className: styleMap.quotaInfoTooltipRow },
+              h('span', { className: styleMap.quotaInfoTooltipLabel }, row.label),
+              h('span', { className: styleMap.quotaInfoTooltipValue }, row.value)
+            )
           )
         )
       )
@@ -874,37 +879,40 @@ const renderCodexItems = (
       planNodes.push(
         h(
           'span',
-          { key: 'plan-label', className: styleMap.codexPlanLabel },
-          t('codex_quota.plan_label')
-        ),
-        h('span', { key: 'plan-value', className: valueClass }, planLabel)
+          { key: 'plan', className: styleMap.codexPlanItem },
+          h('span', { className: styleMap.codexPlanLabel }, t('codex_quota.plan_label')),
+          h('span', { className: valueClass }, planLabel)
+        )
       );
     }
 
     if (hasResetCreditsAvailableCount || quota.observedResetCreditsUnknown) {
-      if (planNodes.length > 0) {
-        planNodes.push(
-          h('span', { key: 'reset-separator', className: styleMap.codexPlanLabel }, '|')
-        );
-      }
       planNodes.push(
         h(
           'span',
-          { key: 'reset-label', className: styleMap.codexPlanLabel },
-          t('codex_quota.reset_credits_label')
-        ),
-        h(
-          'span',
-          { key: 'reset-value', className: styleMap.codexPlanValue },
-          hasResetCreditsAvailableCount
-            ? String(resetCreditsAvailableCount)
-            : t('codex_quota.reset_credits_unknown')
-        ),
-        renderCodexResetCreditExpiryInfo(quota, t, styleMap)
+          { key: 'reset', className: styleMap.codexPlanItem },
+          h('span', { className: styleMap.codexPlanLabel }, t('codex_quota.reset_credits_label')),
+          h(
+            'span',
+            { className: styleMap.codexPlanValue },
+            hasResetCreditsAvailableCount
+              ? String(resetCreditsAvailableCount)
+              : t('codex_quota.reset_credits_unknown')
+          )
+        )
       );
     }
 
-    nodes.push(h('div', { key: 'plan', className: styleMap.codexPlan }, ...planNodes));
+    nodes.push(
+      h(
+        'div',
+        { key: 'plan', className: styleMap.codexPlanSummary, 'data-testid': 'codex-plan-summary' },
+        h('div', { className: styleMap.codexPlan }, ...planNodes),
+        hasResetCreditsAvailableCount || quota.observedResetCreditsUnknown
+          ? renderCodexResetCreditExpiryInfo(quota, t, styleMap)
+          : null
+      )
+    );
   }
 
   if (windows.length === 0) {

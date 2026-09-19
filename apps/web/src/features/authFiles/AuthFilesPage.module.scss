@@ -851,6 +851,54 @@
   text-transform: none;
 }
 
+// 套餐与重置次数按语义分组换行，避免窄卡把标签或套餐徽标挤成竖排。
+.codexPlanSummary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+
+  > .codexPlan {
+    flex-wrap: wrap;
+    gap: 6px 14px;
+  }
+}
+
+.codexPlanItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+
+  .codexPlanLabel,
+  .premiumPlanValue {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  .codexPlanValue {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+}
+
+.codexResetCreditExpiry {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 3px 6px;
+  color: var(--text-tertiary);
+}
+
+.codexResetCreditExpiryValue {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
 .premiumPlanValue {
   display: inline-flex;
   align-items: center;
