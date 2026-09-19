@@ -43,6 +43,7 @@ var (
 )
 
 type AnalyticsFilter struct {
+	ResolvedModels   []string
 	RequestIDs       []string
 	FromMS           int64
 	ToMS             int64
@@ -2038,6 +2039,7 @@ func analyticsWhere(filter AnalyticsFilter) (string, []any) {
 	}
 	addInCondition("request_id", filter.RequestIDs)
 	addInCondition("model", filter.Models)
+	addInCondition("coalesce(nullif(resolved_model,''),model)", filter.ResolvedModels)
 	addProviderCondition(filter.Providers, &conditions, &args)
 	addAccountCondition(filter.Accounts, &conditions, &args)
 	addInCondition("auth_file_snapshot", filter.AuthFiles)

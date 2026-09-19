@@ -414,10 +414,18 @@ export function PageTransition({
               <PageTransitionLayerContext.Provider
                 value={{
                   ...PAGE_TRANSITION_LAYER_CONTEXT_VALUES[layer.status],
+                  // 导航已开始但离场动画尚未建层时，旧页也不能回写新 URL。
+                  isCurrentLayer:
+                    layer.status === 'current' && layer.location.pathname === location.pathname,
                   isAnimating,
                 }}
               >
-                {render(layer.location)}
+                {/* 同路径查询变化不触发过场，但必须更新 useRoutes 的 location；离场层保留快照。 */}
+                {render(
+                  layer.status === 'current' && layer.location.pathname === location.pathname
+                    ? location
+                    : layer.location
+                )}
               </PageTransitionLayerContext.Provider>
             </div>
           );

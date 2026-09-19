@@ -97,7 +97,9 @@ function formatObservationSeenAt(value: string | undefined): string {
  * 返回 `undefined` 表示解析失败（理论上不会发生，防御式兜底）——调用方按
  * fail-closed 处理：宁可多问一次换代理确认，也不要因为解析异常静默漏掉。
  */
-function parseOriginalProxyUrl(originalSerializedRequest: string | undefined): string | null | undefined {
+function parseOriginalProxyUrl(
+  originalSerializedRequest: string | undefined
+): string | null | undefined {
   if (!originalSerializedRequest) return undefined;
   try {
     const parsed = JSON.parse(originalSerializedRequest) as { proxy_url?: unknown };
@@ -178,9 +180,7 @@ type IdentityAuditClass = 'significant' | 'routine';
  * 审计分类：A 类/运行时指纹快照有 diff、或 changed_fields 含非版本字段的，
  * 视为「身份模型变更」突出展示；纯 UA/版本高水位刷新归为例行流水折叠。
  */
-function classifyIdentityAuditEntry(
-  entry: AuthFileManagedHeaderHistoryEntry
-): IdentityAuditClass {
+function classifyIdentityAuditEntry(entry: AuthFileManagedHeaderHistoryEntry): IdentityAuditClass {
   if (headerMapsDiffer(entry.previous_stable_identity, entry.next_stable_identity)) {
     return 'significant';
   }
@@ -196,9 +196,7 @@ function classifyIdentityAuditEntry(
       : 'significant';
   }
   // 没有字段级 diff 时按 reason 兜底：已知例行刷新归例行，未知原因突出展示。
-  return ROUTINE_REASONS.has((entry.reason || '').trim().toLowerCase())
-    ? 'routine'
-    : 'significant';
+  return ROUTINE_REASONS.has((entry.reason || '').trim().toLowerCase()) ? 'routine' : 'significant';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -301,7 +299,10 @@ function ManagedHeadersPanel({ entries, t }: { entries: [string, string][]; t: T
           defaultValue: 'Core-managed request headers',
         })}
       </label>
-      <div className={styles.managedHeaderPanel} data-testid="account-settings-managed-headers-panel">
+      <div
+        className={styles.managedHeaderPanel}
+        data-testid="account-settings-managed-headers-panel"
+      >
         <div className={styles.managedHeaderPlainHeader}>
           <span>
             {t('auth_files.account_settings_managed_headers_runtime_title', {
@@ -379,7 +380,10 @@ function ClaudeHeaderStrategyPanel({ t }: { t: TranslateFn }) {
       'X-Stainless-Runtime-Version',
       'auth_files.account_settings_claude_header_strategy_client_runtime',
     ],
-    ['X-Stainless-Os / X-Stainless-Arch', 'auth_files.account_settings_claude_header_strategy_platform'],
+    [
+      'X-Stainless-Os / X-Stainless-Arch',
+      'auth_files.account_settings_claude_header_strategy_platform',
+    ],
     ['X-App', 'auth_files.account_settings_claude_header_strategy_stable'],
   ] as const;
 
@@ -390,7 +394,10 @@ function ClaudeHeaderStrategyPanel({ t }: { t: TranslateFn }) {
           defaultValue: 'Claude request header strategy',
         })}
       </label>
-      <div className={styles.managedHeaderPanel} data-testid="account-settings-claude-header-strategy-panel">
+      <div
+        className={styles.managedHeaderPanel}
+        data-testid="account-settings-claude-header-strategy-panel"
+      >
         <div className={styles.managedHeaderPlainHeader}>
           <span>
             {t('auth_files.account_settings_claude_header_strategy_runtime_title', {
@@ -490,14 +497,18 @@ function ClaudeOutboundFingerprintPanel({
     defaultValue: 'Not surfaced (PATCH account settings metadata to expose)',
   });
   const rows: { name: string; value: string; missingPlaceholder: string; isRuntime: boolean }[] = [
-    ...['User-Agent', 'X-App', 'X-Stainless-Package-Version', 'X-Stainless-Runtime-Version', 'X-Stainless-Timeout'].map(
-      (name) => ({
-        name,
-        value: resolveHeaderLiteral(headerMaps, name),
-        missingPlaceholder: '-',
-        isRuntime: false,
-      })
-    ),
+    ...[
+      'User-Agent',
+      'X-App',
+      'X-Stainless-Package-Version',
+      'X-Stainless-Runtime-Version',
+      'X-Stainless-Timeout',
+    ].map((name) => ({
+      name,
+      value: resolveHeaderLiteral(headerMaps, name),
+      missingPlaceholder: '-',
+      isRuntime: false,
+    })),
     ...['X-Stainless-Os', 'X-Stainless-Arch'].map((name) => ({
       name,
       value: resolveHeaderLiteral([runtimeFingerprint], name),
@@ -559,9 +570,7 @@ function ClaudeOutboundFingerprintPanel({
                     <span
                       className={styles.outboundFingerprintMissing}
                       data-testid={
-                        row.isRuntime
-                          ? 'account-settings-outbound-fingerprint-missing'
-                          : undefined
+                        row.isRuntime ? 'account-settings-outbound-fingerprint-missing' : undefined
                       }
                     >
                       {row.missingPlaceholder}
@@ -899,8 +908,8 @@ function RuntimeTlsSummary({
         {isCodex && (
           <p>
             Codex default TLS is <strong>codex_rustls_native_v1</strong>: a uTLS profile replicating
-            the real codex-rs rustls ClientHello (target JA3 e4d448cd), with core-managed headers and
-            account-isolated transport.
+            the real codex-rs rustls ClientHello (target JA3 e4d448cd), with core-managed headers
+            and account-isolated transport.
           </p>
         )}
         <p>{tlsStatus}</p>
@@ -923,10 +932,7 @@ function formatHistoryValue(value: unknown): string {
   }
 }
 
-function getHistoryMapValue(
-  map: Record<string, unknown> | undefined,
-  field: string
-): unknown {
+function getHistoryMapValue(map: Record<string, unknown> | undefined, field: string): unknown {
   if (!map) return undefined;
 
   const fieldVariants = [
@@ -1098,7 +1104,10 @@ function IdentityAuditEntry({
   const sourceUrl = (entry.next_source_url || entry.source_url || '').trim();
 
   return (
-    <div className={entryClassName} data-testid={`account-settings-identity-audit-entry-${variant}`}>
+    <div
+      className={entryClassName}
+      data-testid={`account-settings-identity-audit-entry-${variant}`}
+    >
       <div className={styles.managedHeaderHistorySummary}>
         <div className={styles.managedHeaderHistoryMeta}>
           <strong>{formatAuditRecordedAt(entry.recorded_at)}</strong>
@@ -1331,7 +1340,9 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
   const isFarmRotateGated = isClaudeProvider && farmBound === true;
   // 本次编辑是否真的改了 proxy_url（不是 note/disabled 等其它字段单独改动）。
   // 解析失败（parseOriginalProxyUrl 返回 undefined）按已改动处理，fail-closed。
-  const originalProxyUrl = editor ? parseOriginalProxyUrl(editor.originalSerializedRequest) : undefined;
+  const originalProxyUrl = editor
+    ? parseOriginalProxyUrl(editor.originalSerializedRequest)
+    : undefined;
   const normalizedProxyUrl = editor ? editor.proxyUrl.trim() || null : null;
   const proxyUrlChanged =
     Boolean(editor) && (originalProxyUrl === undefined || normalizedProxyUrl !== originalProxyUrl);
@@ -1491,9 +1502,7 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
       auditClass: classifyIdentityAuditEntry(entry),
     }))
     .reverse();
-  const significantHistory = classifiedHistory.filter(
-    (item) => item.auditClass === 'significant'
-  );
+  const significantHistory = classifiedHistory.filter((item) => item.auditClass === 'significant');
   const routineHistory = classifiedHistory.filter((item) => item.auditClass === 'routine');
   const formatFieldList = (fields: string[]) =>
     fields.length > 0
@@ -1755,13 +1764,10 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
                         <div className="hint">
                           {t('auth_files.account_settings_fast_hint', {
                             defaultValue:
-                              'Codex fast mode (service_tier=priority) trades roughly 2.2x weekly quota consumption for roughly 1.5x faster generation and quicker first-token response. Leave off unless this account can afford the higher burn.',
+                              'Priority requests may consume more quota. Speed gains depend on the model and workload; review the per-model comparison.',
                           })}
                         </div>
                       </div>
-                      {/* Phase 3：fast vs default 前后对比 + 配额 runway + TTFT 切换点
-                          sparkline。就摆在决策点（fast 开关）旁；仅 codex、弹窗打开且
-                          非加载态时挂载并一次性拉取数据。 */}
                       <AccountFastImpactPanel
                         accountName={editor.fileName}
                         authIndex={editor.authIndex}
@@ -1865,9 +1871,7 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
                           : undefined
                   }
                   disabled={
-                    disableControls ||
-                    editor.saving ||
-                    editor.proxyInline?.phase === 'checking'
+                    disableControls || editor.saving || editor.proxyInline?.phase === 'checking'
                   }
                   data-testid="account-settings-proxy-url-input"
                   onChange={(e) => onChange('proxyUrl', e.target.value)}
@@ -1916,7 +1920,9 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
                   </span>
                   <span
                     className={`${styles.proxyStatusPill} ${
-                      proxyStatus === 'healthy' ? styles.proxyStatusHealthy : styles.proxyStatusWarning
+                      proxyStatus === 'healthy'
+                        ? styles.proxyStatusHealthy
+                        : styles.proxyStatusWarning
                     }`}
                     data-testid="account-settings-proxy-status-pill"
                     data-proxy-status={proxyStatus}
@@ -1952,7 +1958,9 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
                       onChange={(e) => onChange('prefix', e.target.value)}
                     />
                     <Input
-                      label={t('auth_files.priority_label', { defaultValue: 'Priority (priority)' })}
+                      label={t('auth_files.priority_label', {
+                        defaultValue: 'Priority (priority)',
+                      })}
                       value={editor.priority}
                       placeholder={t('auth_files.priority_placeholder', {
                         defaultValue: 'e.g. 10 or -1',
@@ -2088,10 +2096,7 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
               </section>
 
               {/* 第 2 区：只读身份模型（device_id、A/B 投影、header 策略、运行时身份） */}
-              <section
-                className={styles.section}
-                data-testid="account-settings-section-identity"
-              >
+              <section className={styles.section} data-testid="account-settings-section-identity">
                 <header className={styles.sectionHeader}>
                   <div>
                     <strong>
@@ -2134,7 +2139,10 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
                           </span>
                           {editor.syntheticDeviceId ? (
                             <strong>
-                              <code className={styles.managedHeaderValue} title={editor.syntheticDeviceId}>
+                              <code
+                                className={styles.managedHeaderValue}
+                                title={editor.syntheticDeviceId}
+                              >
                                 {editor.syntheticDeviceId}
                               </code>{' '}
                               {isFarmContainerSynced ? (
@@ -2143,15 +2151,21 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
                                   className="status-badge success"
                                   data-testid="account-settings-device-id-container-synced-badge"
                                 >
-                                  {t('auth_files.account_settings_device_id_source_container_synced', {
-                                    defaultValue: 'Container-synced',
-                                  })}
+                                  {t(
+                                    'auth_files.account_settings_device_id_source_container_synced',
+                                    {
+                                      defaultValue: 'Container-synced',
+                                    }
+                                  )}
                                 </span>
                               ) : (
                                 <span className={styles.managedHeaderChip}>
-                                  {t('auth_files.account_settings_synthetic_device_id_synthetic_badge', {
-                                    defaultValue: 'Synthetic pseudonym',
-                                  })}
+                                  {t(
+                                    'auth_files.account_settings_synthetic_device_id_synthetic_badge',
+                                    {
+                                      defaultValue: 'Synthetic pseudonym',
+                                    }
+                                  )}
                                 </span>
                               )}
                             </strong>
@@ -2437,10 +2451,7 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
               </section>
 
               {/* 第 3 区：身份变更审计（managed_header_state.history，按变更类型分类） */}
-              <section
-                className={styles.section}
-                data-testid="account-settings-section-audit"
-              >
+              <section className={styles.section} data-testid="account-settings-section-audit">
                 <header className={styles.sectionHeader}>
                   <div>
                     <strong>
@@ -2584,10 +2595,7 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
 
               {/* 保存摘要：仅在 dirty 时展示「本次将保存」轻量预览，靠近底部 Save 区。 */}
               {dirty && (
-                <div
-                  className={styles.savePreview}
-                  data-testid="account-settings-save-summary"
-                >
+                <div className={styles.savePreview} data-testid="account-settings-save-summary">
                   <div className={styles.savePreviewHeader}>
                     <strong>
                       {t('auth_files.account_settings_save_summary_label', {
@@ -2626,89 +2634,89 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
                   })}
                 </summary>
                 {rawJsonExpanded && (
-                <div className={styles.advancedBody}>
-                  {editor.rawJsonAvailable ? (
-                    <div className={styles.jsonWrapper}>
-                      <label className={styles.fieldLabel}>
-                        {t('auth_files.account_settings_raw_json_editable_label', {
-                          defaultValue: 'Raw auth JSON (editable)',
-                        })}
-                      </label>
-                      <div
-                        className={styles.rawJsonDangerNote}
-                        data-testid="account-settings-raw-json-danger-note"
-                        role="note"
-                      >
-                        {t('auth_files.account_settings_raw_json_danger_note', {
-                          defaultValue:
-                            'Danger: editing the raw auth JSON overwrites the entire auth file and can break this account. Saving requires an extra confirmation.',
-                        })}
-                      </div>
-                      <EditableJsonCodeField
-                        value={editor.rawJsonText}
-                        placeholder={`{\n  "type": "claude",\n  "proxy_url": "socks5://…"\n}`}
-                        invalid={Boolean(editor.rawJsonError)}
-                        disabled={disableControls || editor.saving}
-                        testId="account-settings-raw-json-editor"
-                        theme={resolvedTheme}
-                        onChange={(value) => onChange('rawJsonText', value)}
-                      />
-                      {editor.rawJsonError && (
-                        <div className="error-box" data-testid="account-settings-raw-json-error">
-                          {editor.rawJsonError}
+                  <div className={styles.advancedBody}>
+                    {editor.rawJsonAvailable ? (
+                      <div className={styles.jsonWrapper}>
+                        <label className={styles.fieldLabel}>
+                          {t('auth_files.account_settings_raw_json_editable_label', {
+                            defaultValue: 'Raw auth JSON (editable)',
+                          })}
+                        </label>
+                        <div
+                          className={styles.rawJsonDangerNote}
+                          data-testid="account-settings-raw-json-danger-note"
+                          role="note"
+                        >
+                          {t('auth_files.account_settings_raw_json_danger_note', {
+                            defaultValue:
+                              'Danger: editing the raw auth JSON overwrites the entire auth file and can break this account. Saving requires an extra confirmation.',
+                          })}
                         </div>
-                      )}
-                      <div className="hint">
-                        {t('auth_files.account_settings_raw_json_editable_hint', {
-                          defaultValue:
-                            'Full auth file JSON. Most changes should use the structured fields above; edit here only when you must. Invalid JSON cannot be saved.',
-                        })}
+                        <EditableJsonCodeField
+                          value={editor.rawJsonText}
+                          placeholder={`{\n  "type": "claude",\n  "proxy_url": "socks5://…"\n}`}
+                          invalid={Boolean(editor.rawJsonError)}
+                          disabled={disableControls || editor.saving}
+                          testId="account-settings-raw-json-editor"
+                          theme={resolvedTheme}
+                          onChange={(value) => onChange('rawJsonText', value)}
+                        />
+                        {editor.rawJsonError && (
+                          <div className="error-box" data-testid="account-settings-raw-json-error">
+                            {editor.rawJsonError}
+                          </div>
+                        )}
+                        <div className="hint">
+                          {t('auth_files.account_settings_raw_json_editable_hint', {
+                            defaultValue:
+                              'Full auth file JSON. Most changes should use the structured fields above; edit here only when you must. Invalid JSON cannot be saved.',
+                          })}
+                        </div>
                       </div>
-                    </div>
-                  ) : (
+                    ) : (
+                      <div className={styles.jsonWrapper}>
+                        <label className={styles.fieldLabel}>
+                          {t('auth_files.prefix_proxy_info_label', {
+                            defaultValue: 'Auth file summary',
+                          })}
+                        </label>
+                        <ReadOnlyCodeViewer
+                          value={editor.fileInfoText}
+                          minRows={6}
+                          testId="account-settings-auth-file-info-viewer"
+                          label={readonlyBadge}
+                          onCopyText={onCopyText}
+                        />
+                        <div className="hint">
+                          {t('auth_files.account_settings_raw_json_unavailable_hint', {
+                            defaultValue:
+                              'Raw auth JSON could not be loaded for structured editing; showing a read-only metadata snapshot instead.',
+                          })}
+                        </div>
+                      </div>
+                    )}
+
                     <div className={styles.jsonWrapper}>
                       <label className={styles.fieldLabel}>
-                        {t('auth_files.prefix_proxy_info_label', {
-                          defaultValue: 'Auth file summary',
+                        {t('auth_files.prefix_proxy_source_label', {
+                          defaultValue: 'Save payload preview',
                         })}
                       </label>
                       <ReadOnlyCodeViewer
-                        value={editor.fileInfoText}
-                        minRows={6}
-                        testId="account-settings-auth-file-info-viewer"
+                        value={updatedText}
+                        minRows={8}
+                        testId="account-settings-save-payload-preview"
                         label={readonlyBadge}
                         onCopyText={onCopyText}
                       />
                       <div className="hint">
-                        {t('auth_files.account_settings_raw_json_unavailable_hint', {
+                        {t('auth_files.prefix_proxy_source_hint', {
                           defaultValue:
-                            'Raw auth JSON could not be loaded for structured editing; showing a read-only metadata snapshot instead.',
+                            'Read-only preview of the account-settings payload that Save will send. Editable fields are labeled above.',
                         })}
                       </div>
                     </div>
-                  )}
-
-                  <div className={styles.jsonWrapper}>
-                    <label className={styles.fieldLabel}>
-                      {t('auth_files.prefix_proxy_source_label', {
-                        defaultValue: 'Save payload preview',
-                      })}
-                    </label>
-                    <ReadOnlyCodeViewer
-                      value={updatedText}
-                      minRows={8}
-                      testId="account-settings-save-payload-preview"
-                      label={readonlyBadge}
-                      onCopyText={onCopyText}
-                    />
-                    <div className="hint">
-                      {t('auth_files.prefix_proxy_source_hint', {
-                        defaultValue:
-                          'Read-only preview of the account-settings payload that Save will send. Editable fields are labeled above.',
-                      })}
-                    </div>
                   </div>
-                </div>
                 )}
               </details>
             </>

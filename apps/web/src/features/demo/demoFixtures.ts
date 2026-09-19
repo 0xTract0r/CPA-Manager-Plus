@@ -47,7 +47,7 @@ const day = 24 * hour;
 // Demo：生成「近期请求」10 分钟色块序列（喂卡片「健康状态」色块条 + 成功率%）。
 // 每个元素 = [成功数, 失败数]，代表一个 10 分钟窗口；time 仅作展示、不参与排布。
 const demoRecentRequests = (
-  pattern: ReadonlyArray<readonly [number, number]>,
+  pattern: ReadonlyArray<readonly [number, number]>
 ): { time: string; success: number; failed: number }[] =>
   pattern.map(([success, failed], index) => ({
     time: new Date(now() - (pattern.length - index) * 10 * minute).toISOString(),
@@ -77,8 +77,7 @@ const demoScaleAuthFiles: AuthFileItem[] = Array.from({ length: 34 }, (_, index)
       : `${provider}.pool+${sequence}@accounts.example.test`;
   return {
     // 生产导入中可能遇到“邮箱式文件名与账号邮箱不同”的旧数据；保留一条专门验证双邮箱都脱敏。
-    name:
-      index === 33 ? 'archive.owner@example.test.json' : `${provider}-scaled-${sequence}.json`,
+    name: index === 33 ? 'archive.owner@example.test.json' : `${provider}-scaled-${sequence}.json`,
     type: provider,
     provider,
     authIndex: `${provider}-scaled-${sequence}`,
@@ -335,8 +334,22 @@ const demoAuthFiles: AuthFilesResponse = {
       success: 1842,
       failed: 18,
       recent_requests: demoRecentRequests([
-        [7, 0], [10, 0], [5, 0], [12, 1], [8, 0], [0, 0], [9, 0], [11, 0],
-        [6, 0], [13, 0], [7, 1], [9, 0], [10, 0], [8, 0], [12, 0], [6, 0],
+        [7, 0],
+        [10, 0],
+        [5, 0],
+        [12, 1],
+        [8, 0],
+        [0, 0],
+        [9, 0],
+        [11, 0],
+        [6, 0],
+        [13, 0],
+        [7, 1],
+        [9, 0],
+        [10, 0],
+        [8, 0],
+        [12, 0],
+        [6, 0],
       ]),
     },
     {
@@ -371,8 +384,22 @@ const demoAuthFiles: AuthFilesResponse = {
       success: 1520,
       failed: 9,
       recent_requests: demoRecentRequests([
-        [5, 0], [8, 0], [11, 0], [6, 0], [9, 1], [7, 0], [0, 0], [10, 0],
-        [12, 0], [5, 0], [8, 0], [9, 0], [6, 1], [11, 0], [7, 0], [10, 0],
+        [5, 0],
+        [8, 0],
+        [11, 0],
+        [6, 0],
+        [9, 1],
+        [7, 0],
+        [0, 0],
+        [10, 0],
+        [12, 0],
+        [5, 0],
+        [8, 0],
+        [9, 0],
+        [6, 1],
+        [11, 0],
+        [7, 0],
+        [10, 0],
       ]),
       // Demo 账号 A：Max 20x + 已成熟（warmup.mature=true → 不渲染养号徽标）+ 会话数。
       account_scheduling: {
@@ -496,8 +523,22 @@ const demoAuthFiles: AuthFilesResponse = {
       success: 934,
       failed: 18,
       recent_requests: demoRecentRequests([
-        [3, 0], [4, 1], [2, 0], [5, 0], [0, 0], [3, 0], [4, 0], [1, 1],
-        [3, 0], [2, 0], [4, 0], [3, 0], [0, 0], [2, 0], [3, 0], [4, 0],
+        [3, 0],
+        [4, 1],
+        [2, 0],
+        [5, 0],
+        [0, 0],
+        [3, 0],
+        [4, 0],
+        [1, 1],
+        [3, 0],
+        [2, 0],
+        [4, 0],
+        [3, 0],
+        [0, 0],
+        [2, 0],
+        [3, 0],
+        [4, 0],
       ]),
       // Demo 账号 B：Max 5x + 养号中（warmup.mature=false → 渲染「养号中」徽标）+ 会话数。
       account_scheduling: {
@@ -531,8 +572,22 @@ const demoAuthFiles: AuthFilesResponse = {
       success: 412,
       failed: 3,
       recent_requests: demoRecentRequests([
-        [2, 0], [3, 0], [0, 0], [4, 0], [1, 0], [3, 0], [2, 0], [0, 0],
-        [3, 0], [2, 0], [4, 0], [1, 0], [0, 0], [3, 0], [2, 0], [3, 0],
+        [2, 0],
+        [3, 0],
+        [0, 0],
+        [4, 0],
+        [1, 0],
+        [3, 0],
+        [2, 0],
+        [0, 0],
+        [3, 0],
+        [2, 0],
+        [4, 0],
+        [1, 0],
+        [0, 0],
+        [3, 0],
+        [2, 0],
+        [3, 0],
       ]),
       // Demo 账号 C：Pro + 已成熟（warmup.mature=true → 不渲染养号徽标）+ 会话数。
       account_scheduling: {
@@ -566,8 +621,22 @@ const demoAuthFiles: AuthFilesResponse = {
       success: 128,
       failed: 2,
       recent_requests: demoRecentRequests([
-        [0, 0], [0, 0], [1, 0], [2, 0], [0, 0], [1, 0], [3, 0], [0, 0],
-        [2, 0], [1, 1], [0, 0], [2, 0], [1, 0], [0, 0], [2, 0], [1, 0],
+        [0, 0],
+        [0, 0],
+        [1, 0],
+        [2, 0],
+        [0, 0],
+        [1, 0],
+        [3, 0],
+        [0, 0],
+        [2, 0],
+        [1, 1],
+        [0, 0],
+        [2, 0],
+        [1, 0],
+        [0, 0],
+        [2, 0],
+        [1, 0],
       ]),
       // Demo 账号 D：读不出档（subscription_tier 非已知枚举 → 前端归一为 unknown，
       // claude 账号仍渲染「套餐: 未知」而非留白）+ 养号中（mature=false）+ 会话数。
@@ -2212,16 +2281,22 @@ const buildMonitoringAnalytics = (
     const shortTask = profile.model.includes('haiku');
     const outputTokens = failed
       ? 0
-      : shortTask ? 35 + (index % 80) : index % 4 === 0
-        ? 12 + (index % 25)
-        : 210 + ((index * 71) % 6000);
+      : shortTask
+        ? 35 + (index % 80)
+        : index % 4 === 0
+          ? 12 + (index % 25)
+          : 210 + ((index * 71) % 6000);
     const cachedTokens = index % 3 === 0 ? 180 + ((index * 17) % 520) : 0;
     const reasoningTokens = index % 4 === 0 ? 80 + ((index * 13) % 360) : 0;
     const totalTokens = inputTokens + outputTokens + cachedTokens + reasoningTokens;
     const timestampMs = analyticsNow - (index * 0.37 + (index % 4) * 0.01) * minute;
     const responseMs = shortTask ? 500 + (index % 900) : 1200 + ((index * 19) % 7500);
-    const generationTps = shortTask ? 65 : profile.provider === 'codex' ? 25 + (index % 20) : 50 + (index % 40);
-    const durationMs = responseMs + Math.round(outputTokens * 1000 / generationTps);
+    const generationTps = shortTask
+      ? 65
+      : profile.provider === 'codex'
+        ? 25 + (index % 20)
+        : 50 + (index % 40);
+    const durationMs = responseMs + Math.round((outputTokens * 1000) / generationTps);
     return {
       request_id: `demo-request-${String(index + 1).padStart(3, '0')}`,
       event_hash: `demo-event-${String(index + 1).padStart(3, '0')}`,
@@ -2668,7 +2743,14 @@ const buildMonitoringAnalytics = (
     ],
     recent_failures: recentFailures,
     performance: request?.include?.performance ? demoPerformance(events, request) : undefined,
-    events: request?.filters?.request_ids?.length ? {...eventsPage, items: eventsPage.items.filter(event => request.filters!.request_ids!.includes(event.request_id || ""))} : eventsPage,
+    events: request?.filters?.request_ids?.length
+      ? {
+          ...eventsPage,
+          items: eventsPage.items.filter((event) =>
+            request.filters!.request_ids!.includes(event.request_id || '')
+          ),
+        }
+      : eventsPage,
     drilldown_preview: drilldownPreview,
   };
 };
@@ -2798,7 +2880,35 @@ const demoAccountCandidates: AccountActionCandidate[] = [
 
 export const getDemoRawConfig = () => clone(initialRawConfig);
 export const getDemoProviderModels = () => clone(demoProviderModels);
-export const getDemoAuthFiles = () => clone(demoAuthFiles);
+export const getDemoAuthFiles = () => {
+  const response = clone(demoAuthFiles);
+  if (import.meta.env.DEV && import.meta.env.VITE_FAST_IMPACT_PREVIEW_URL) {
+    response.files.unshift(
+      ...[
+        {
+          name: 'production-samples.json',
+          note: '生产留存样本（脱敏）',
+          authIndex: 'preview-production',
+          auth_index: 'preview-production',
+          provider: 'codex',
+          type: 'codex',
+          status: 'healthy',
+        },
+        {
+          name: 'synthetic-samples.json',
+          note: '合成验收样本（非生产）',
+          authIndex: 'preview-synthetic',
+          auth_index: 'preview-synthetic',
+          provider: 'codex',
+          type: 'codex',
+          status: 'healthy',
+        },
+      ]
+    );
+    response.total = response.files.length;
+  }
+  return response;
+};
 export const getDemoPlugins = () => clone(demoPlugins);
 export const getDemoPluginStore = () => clone(demoPluginStore);
 export const getDemoManagerConfig = () => clone(demoManagerConfig);

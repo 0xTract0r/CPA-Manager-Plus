@@ -358,6 +358,9 @@ export type MonitoringMetadata = {
 };
 
 export interface MonitoringScopeFilters {
+  authIndex?: string;
+  requestId?: string;
+  resolvedModel?: string;
   account?: string;
   provider?: string;
   authFile?: string;

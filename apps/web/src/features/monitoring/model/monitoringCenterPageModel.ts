@@ -156,6 +156,15 @@ const parseQueryTimestamp = (params: URLSearchParams, key: string) => {
   return Number.isFinite(value) && value > 0 ? value : null;
 };
 
+// 深链的毫秒边界必须原样送回 API；手工输入仍沿用分钟默认。
+const formatDrilldownDateTime = (ms: number) => {
+  const date = new Date(ms);
+  const base = formatDateTimeLocalValue(date);
+  return date.getSeconds() || date.getMilliseconds()
+    ? `${base}:${padDateUnit(date.getSeconds())}.${String(date.getMilliseconds()).padStart(3, '0')}`
+    : base;
+};
+
 export const buildMonitoringInitialStateFromQuery = (
   search: string,
   state: MonitoringCenterUiState
@@ -176,6 +185,9 @@ export const buildMonitoringInitialStateFromQuery = (
   const headerTraceId = params.get('header_trace_id')?.trim();
   const hasRange = fromMs !== null && toMs !== null && fromMs < toMs;
   const hasStructuredScopeFilter = Boolean(
+    params.get('auth_index') ||
+    params.get('request_id') ||
+    params.get('resolved_model') ||
     authFile ||
     projectId ||
     requestType ||
@@ -187,19 +199,20 @@ export const buildMonitoringInitialStateFromQuery = (
   return {
     ...state,
     timeRange: hasRange ? 'custom' : state.timeRange,
-    customStartInput: hasRange
-      ? formatDateTimeLocalValue(new Date(fromMs))
-      : state.customStartInput,
-    customEndInput: hasRange ? formatDateTimeLocalValue(new Date(toMs)) : state.customEndInput,
-    selectedModel: model || state.selectedModel,
+    customStartInput: hasRange ? formatDrilldownDateTime(fromMs) : state.customStartInput,
+    customEndInput: hasRange ? formatDrilldownDateTime(toMs) : state.customEndInput,
+    selectedAccount: params.has('auth_index') ? 'all' : state.selectedAccount,
+    selectedChannel: params.has('auth_index') ? 'all' : state.selectedChannel,
+    selectedModel: params.has('resolved_model') ? 'all' : model || state.selectedModel,
     selectedProvider: provider || state.selectedProvider,
-    selectedApiKeyHash: apiKeyHash || state.selectedApiKeyHash,
-    selectedHeaderTraceId: headerTraceId || state.selectedHeaderTraceId,
+    selectedApiKeyHash: apiKeyHash || (params.has('auth_index') ? 'all' : state.selectedApiKeyHash),
+    selectedHeaderTraceId:
+      headerTraceId || (params.has('auth_index') ? 'all' : state.selectedHeaderTraceId),
     selectedStatus:
       status === 'success' || status === 'failed' || status === 'all'
         ? status
         : state.selectedStatus,
-    searchInput: searchQuery || state.searchInput,
+    searchInput: searchQuery || (params.has('auth_index') ? '' : state.searchInput),
     activeDataTab:
       hasRange ||
       model ||
@@ -666,8 +679,7 @@ export const computeCacheHitRate = (tokens: {
   cacheCreationTokens: number;
   model?: string | null;
 }): number | null => {
-  const cacheHitTokens =
-    tokens.cacheReadTokens > 0 ? tokens.cacheReadTokens : tokens.cachedTokens;
+  const cacheHitTokens = tokens.cacheReadTokens > 0 ? tokens.cacheReadTokens : tokens.cachedTokens;
 
   const inputSideTokens = isAnthropicModelSlug(tokens.model)
     ? tokens.inputTokens + tokens.cacheReadTokens + tokens.cacheCreationTokens
@@ -1018,7 +1030,10 @@ export const mergeObservedAccountQuotaState = (
   observedEntries.forEach((observedEntry) => {
     if (!targetKeys.has(observedEntry.key) || activeKeys.has(observedEntry.key)) return;
 
-    if (state.status === 'error' && !isObservedAccountQuotaNewerThanFailure(state.failedAtMs, observedEntry)) {
+    if (
+      state.status === 'error' &&
+      !isObservedAccountQuotaNewerThanFailure(state.failedAtMs, observedEntry)
+    ) {
       if (!state.error) return;
       entries.push({ ...observedEntry, error: state.error, failedAtMs: state.failedAtMs });
     } else {
@@ -1120,7 +1135,9 @@ const buildXaiAccountQuotaWindows = (
   const windows: AccountQuotaWindow[] = [];
   const hasWeeklyData =
     billing.periodType === 'weekly' &&
-    (billing.usagePercent !== null || Boolean(billing.periodEnd) || billing.productUsage.length > 0);
+    (billing.usagePercent !== null ||
+      Boolean(billing.periodEnd) ||
+      billing.productUsage.length > 0);
   const hasMonthlyData =
     billing.monthlyLimitCents !== null ||
     billing.usedCents !== null ||
@@ -1516,7 +1533,9 @@ export const formatMonitoringSummaryScopeText = (
       range: formatMonitoringCustomRangeLabel(customDescriptor, locale ?? 'zh-CN', t),
     });
   }
-  return t('monitoring.summary_scope_current', { range: t(MONITORING_SUMMARY_RANGE_LABEL_KEYS[timeRange]) });
+  return t('monitoring.summary_scope_current', {
+    range: t(MONITORING_SUMMARY_RANGE_LABEL_KEYS[timeRange]),
+  });
 };
 
 export interface MonitoringKpiLoadingState {

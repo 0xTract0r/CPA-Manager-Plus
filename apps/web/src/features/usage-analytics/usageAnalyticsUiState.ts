@@ -72,8 +72,7 @@ const normalizeSelectValue = (value: unknown): string => {
   return normalized || 'all';
 };
 
-const normalizeInputValue = (value: unknown): string =>
-  typeof value === 'string' ? value : '';
+const normalizeInputValue = (value: unknown): string => (typeof value === 'string' ? value : '');
 
 const normalizeCustomRange = (value: unknown): UsageAnalyticsCustomRange | null => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -111,6 +110,12 @@ export const normalizeUsageAnalyticsFilters = (value: unknown): UsageAnalyticsFi
     timeRange: timeRange === 'custom' && !customRange ? defaults.timeRange : timeRange,
     customRange,
     granularity: normalizeGranularity(record.granularity),
+    ...(typeof record.authIndex === 'string' && record.authIndex !== 'all'
+      ? { authIndex: record.authIndex }
+      : {}),
+    ...(record.performanceView === 'fast' ? { performanceView: 'fast' as const } : {}),
+    ...(record.fastMetric === 'end_to_end_tps' ? { fastMetric: 'end_to_end_tps' as const } : {}),
+    ...(record.fastMode === 'transition' ? { fastMode: 'transition' as const } : {}),
     model: normalizeSelectValue(record.model),
     apiKeyHash: normalizeSelectValue(record.apiKeyHash),
     provider: normalizeSelectValue(record.provider),
@@ -158,6 +163,10 @@ const parseQueryTimestamp = (params: URLSearchParams, key: string) => {
 
 const queryHasAnyFilter = (params: URLSearchParams) =>
   [
+    'auth_index',
+    'view',
+    'fast_metric',
+    'fast_mode',
     'time_range',
     'from_ms',
     'to_ms',
@@ -186,6 +195,17 @@ export const buildUsageAnalyticsUiStateFromSearchParams = (
   }
 
   const record: Record<string, unknown> = { ...fallback.filters };
+  if (params.has('auth_index') || params.has('view'))
+    Object.assign(record, USAGE_ANALYTICS_DEFAULT_FILTERS, {
+      authIndex: undefined,
+      performanceView: undefined,
+      fastMetric: undefined,
+      fastMode: undefined,
+    });
+  if (params.has('auth_index')) record.authIndex = params.get('auth_index');
+  if (params.has('view')) record.performanceView = params.get('view');
+  if (params.has('fast_metric')) record.fastMetric = params.get('fast_metric');
+  if (params.has('fast_mode')) record.fastMode = params.get('fast_mode');
   const timeRangeParam = params.get('time_range');
   const fromMs = parseQueryTimestamp(params, 'from_ms');
   const toMs = parseQueryTimestamp(params, 'to_ms');
@@ -237,6 +257,10 @@ export const buildUsageAnalyticsSearchParams = (state: UsageAnalyticsUiState) =>
   const params = new URLSearchParams();
 
   if (activeTab !== 'overview') params.set('tab', activeTab);
+  if (filters.authIndex && filters.authIndex !== 'all') params.set('auth_index', filters.authIndex);
+  if (filters.performanceView === 'fast') params.set('view', 'fast');
+  if (filters.fastMetric === 'end_to_end_tps') params.set('fast_metric', filters.fastMetric);
+  if (filters.fastMode === 'transition') params.set('fast_mode', filters.fastMode);
   if (filters.timeRange !== defaults.timeRange || filters.timeRange === 'custom') {
     params.set('time_range', filters.timeRange);
   }
@@ -259,12 +283,7 @@ export const buildUsageAnalyticsSearchParams = (state: UsageAnalyticsUiState) =>
   if (filters.cacheStatus !== defaults.cacheStatus) {
     params.set('cache_status', filters.cacheStatus);
   }
-  setNonDefaultParam(
-    params,
-    'api_key_keyword',
-    filters.apiKeyKeyword,
-    defaults.apiKeyKeyword
-  );
+  setNonDefaultParam(params, 'api_key_keyword', filters.apiKeyKeyword, defaults.apiKeyKeyword);
 
   return params;
 };
@@ -278,10 +297,7 @@ export const writeUsageAnalyticsUiState = (state: UsageAnalyticsUiStatePatch) =>
       activeTab: state.activeTab ?? current.activeTab,
       filters: state.filters ? { ...current.filters, ...state.filters } : current.filters,
     });
-    window.localStorage.setItem(
-      USAGE_ANALYTICS_UI_STATE_STORAGE_KEY,
-      JSON.stringify(next)
-    );
+    window.localStorage.setItem(USAGE_ANALYTICS_UI_STATE_STORAGE_KEY, JSON.stringify(next));
   } catch {
     // Ignore storage failures and keep the runtime state in memory only.
   }

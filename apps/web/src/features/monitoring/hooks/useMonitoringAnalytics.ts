@@ -16,6 +16,7 @@ import { useAuthStore } from '@/stores';
 const DEFAULT_REFRESH_THROTTLE_MS = 5_000;
 
 export interface UseMonitoringAnalyticsParams {
+  fastImpactOptions?: MonitoringAnalyticsRequest['fast_impact_options'];
   fromMs?: number | null;
   toMs?: number | null;
   nowMs?: number;
@@ -81,6 +82,7 @@ const buildInFlightRequestIdentityKey = (
 };
 
 export function useMonitoringAnalytics({
+  fastImpactOptions,
   fromMs,
   toMs,
   nowMs,
@@ -111,6 +113,7 @@ export function useMonitoringAnalytics({
   const includeKey = useMemo(() => stableJson(include), [include]);
   const eventsPageKey = useMemo(() => JSON.stringify(eventsPage ?? null), [eventsPage]);
 
+  const fastOptionsKey = JSON.stringify(fastImpactOptions);
   const request = useMemo<MonitoringAnalyticsRequest | null>(() => {
     if (!isFiniteTimestamp(fromMs) || !isFiniteTimestamp(toMs) || fromMs <= 0 || fromMs >= toMs) {
       return null;
@@ -124,6 +127,7 @@ export function useMonitoringAnalytics({
     }
 
     const payload: MonitoringAnalyticsRequest = {
+      ...(fastOptionsKey ? { fast_impact_options: JSON.parse(fastOptionsKey) } : {}),
       from_ms: fromMs,
       to_ms: toMs,
     };
@@ -152,7 +156,17 @@ export function useMonitoringAnalytics({
       payload.include = nextInclude;
     }
     return payload;
-  }, [eventsPageKey, filtersKey, fromMs, includeKey, nowMs, searchApiKeyHash, searchQuery, toMs]);
+  }, [
+    fastOptionsKey,
+    eventsPageKey,
+    filtersKey,
+    fromMs,
+    includeKey,
+    nowMs,
+    searchApiKeyHash,
+    searchQuery,
+    toMs,
+  ]);
 
   const requestKey = useMemo(() => (request ? stableJson(request) : ''), [request]);
   const inFlightRequestIdentityKey = useMemo(
@@ -257,6 +271,10 @@ export function useMonitoringAnalytics({
     () => () => {
       abortControllerRef.current?.abort();
       abortControllerRef.current = null;
+      // StrictMode remount must be allowed to start a replacement request.
+      requestIdRef.current += 1;
+      inFlightRequestIdentityKeyRef.current = '';
+      inFlightRequestIdRef.current = 0;
     },
     []
   );

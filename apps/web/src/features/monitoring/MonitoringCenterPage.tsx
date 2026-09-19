@@ -183,6 +183,9 @@ export function MonitoringCenterPage() {
       const params = new URLSearchParams(location.search);
       const minLatencyMs = Number(params.get('min_latency_ms'));
       return {
+        authIndex: params.get('auth_index')?.trim() || '',
+        requestId: params.get('request_id')?.trim() || '',
+        resolvedModel: params.get('resolved_model')?.trim() || '',
         authFile: params.get('auth_file')?.trim() || '',
         projectId: params.get('project_id')?.trim() || '',
         requestType: params.get('request_type')?.trim() || '',
@@ -237,6 +240,11 @@ export function MonitoringCenterPage() {
   const [selectedStatus, setSelectedStatus] = useState<StatusFilter>(
     () => initialMonitoringCenterUiState.current.selectedStatus
   );
+  const [preciseDrilldown, setPreciseDrilldown] = useState(() => ({
+    authIndex: initialMonitoringDrilldownFilters.current.authIndex,
+    requestId: initialMonitoringDrilldownFilters.current.requestId,
+    resolvedModel: initialMonitoringDrilldownFilters.current.resolvedModel,
+  }));
   const [drilldownAuthFile, setDrilldownAuthFile] = useState(
     () => initialMonitoringDrilldownFilters.current.authFile
   );
@@ -388,6 +396,7 @@ export function MonitoringCenterPage() {
 
   const monitoringScopeFilters = useMemo(
     () => ({
+      ...preciseDrilldown,
       account: selectedAccount,
       provider: selectedProvider,
       authFile: drilldownAuthFile || undefined,
@@ -405,6 +414,7 @@ export function MonitoringCenterPage() {
       maxCacheHitRate: realtimeLowCacheHitRateOnly ? realtimeLowCacheHitRateThreshold : undefined,
     }),
     [
+      preciseDrilldown,
       drilldownAuthFile,
       drilldownCacheStatus,
       drilldownMinLatencyMs,
@@ -853,6 +863,9 @@ export function MonitoringCenterPage() {
     selectedApiKeyHash !== 'all' ||
     selectedHeaderTraceId !== 'all' ||
     selectedStatus !== 'all' ||
+    Boolean(
+      preciseDrilldown.authIndex || preciseDrilldown.requestId || preciseDrilldown.resolvedModel
+    ) ||
     Boolean(drilldownAuthFile) ||
     Boolean(drilldownProjectId) ||
     Boolean(drilldownRequestType) ||
@@ -976,6 +989,7 @@ export function MonitoringCenterPage() {
     setSelectedApiKeyHash('all');
     setSelectedHeaderTraceId('all');
     setSelectedStatus('all');
+    setPreciseDrilldown({ authIndex: '', requestId: '', resolvedModel: '' });
     setDrilldownAuthFile('');
     setDrilldownProjectId('');
     setDrilldownRequestType('');

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { usePageTransitionLayer } from '@/components/common/PageTransitionLayer';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useMonitoringAnalytics } from '@/features/monitoring/hooks/useMonitoringAnalytics';
 import { useUsageData } from '@/features/monitoring/hooks/useUsageData';
@@ -90,6 +91,8 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 }
 
 export function useUsageAnalytics() {
+  const transitionLayer = usePageTransitionLayer();
+  const isCurrentLayer = transitionLayer?.isCurrentLayer !== false;
   const config = useConfigStore((state) => state.config);
   const { apiKeyAliases, loadApiKeyAliases } = useUsageData({ loadUsageEvents: false });
   const [monitoringMeta, setMonitoringMeta] = useState<UsageAnalyticsMonitoringMeta>(
@@ -255,14 +258,33 @@ export function useUsageAnalytics() {
     [applyIdentitySearchScope, filters]
   );
 
+  const lastSearch = useRef(searchParams.toString());
+  const pendingSearch = useRef<string | null>(null);
   useEffect(() => {
+    if (!isCurrentLayer) return;
+    if (searchParams.toString() !== lastSearch.current) {
+      lastSearch.current = searchParams.toString();
+      if (pendingSearch.current === lastSearch.current) {
+        pendingSearch.current = null;
+        return;
+      }
+      pendingSearch.current = null;
+      const incoming = buildUsageAnalyticsUiStateFromSearchParams(searchParams);
+      setActiveTabState(incoming.activeTab);
+      setFiltersState(incoming.filters);
+      return;
+    }
     const nextState = { activeTab: activeTabState, filters };
     writeUsageAnalyticsUiState(nextState);
     const nextParams = buildUsageAnalyticsSearchParams(nextState);
-    if (nextParams.toString() !== searchParams.toString()) {
+    if (
+      nextParams.toString() !== searchParams.toString() &&
+      nextParams.toString() !== pendingSearch.current
+    ) {
+      pendingSearch.current = nextParams.toString();
       setSearchParams(nextParams, { replace: true });
     }
-  }, [activeTabState, filters, searchParams, setSearchParams]);
+  }, [activeTabState, filters, searchParams, setSearchParams, isCurrentLayer]);
   const drilldownPreview = useMemo(() => {
     if (selectedBucketMs === null) return null;
     return {
@@ -273,12 +295,30 @@ export function useUsageAnalytics() {
     };
   }, [resolvedGranularity, selectedBucketMs]);
   const include = useMemo(
-    () => buildUsageAnalyticsInclude(activeTabState, resolvedGranularity, drilldownPreview),
-    [activeTabState, drilldownPreview, resolvedGranularity]
+    () =>
+      activeTabState === 'performance' && filters.performanceView === 'fast'
+        ? {
+            fast_impact: Boolean(filters.authIndex && filters.authIndex !== 'all'),
+            granularity: resolvedGranularity,
+          }
+        : buildUsageAnalyticsInclude(activeTabState, resolvedGranularity, drilldownPreview),
+    [
+      activeTabState,
+      drilldownPreview,
+      resolvedGranularity,
+      filters.performanceView,
+      filters.authIndex,
+    ]
+  );
+  const fastImpactOptions = useMemo(
+    () => ({ mode: filters.fastMode || 'tier', metric: filters.fastMetric || 'visible_tps' }),
+    [filters.fastMode, filters.fastMetric]
   );
   const dataScopeKey = useMemo(
     () =>
       JSON.stringify({
+        fastView: filters.performanceView,
+        fastImpactOptions,
         activeTab: activeTabState,
         bounds,
         drilldownPreview,
@@ -288,6 +328,8 @@ export function useUsageAnalytics() {
       }),
     [
       activeTabState,
+      filters.performanceView,
+      fastImpactOptions,
       analyticsFilters,
       bounds,
       debouncedSearchQuery,
@@ -301,6 +343,7 @@ export function useUsageAnalytics() {
     toMs: bounds?.toMs,
     nowMs,
     dataScopeKey,
+    fastImpactOptions: include.fast_impact ? fastImpactOptions : undefined,
     searchQuery: debouncedSearchQuery,
     filters: analyticsFilters,
     include,
@@ -668,6 +711,7 @@ export function useUsageAnalytics() {
     unavailableReason: analytics.unavailableReason,
     lastRefreshedAt: analytics.lastRefreshedAt,
     refresh,
+    fastImpact: analyticsData?.fast_impact,
     performance: analyticsData?.performance,
     performanceAuthFiles: monitoringMeta.authFiles,
     performanceAccountSnapshots: analyticsData?.account_stats,
