@@ -262,17 +262,23 @@ export function useUsageAnalytics() {
   const pendingSearch = useRef<string | null>(null);
   useEffect(() => {
     if (!isCurrentLayer) return;
-    if (searchParams.toString() !== lastSearch.current) {
-      lastSearch.current = searchParams.toString();
-      if (pendingSearch.current === lastSearch.current) {
+    const incomingSearch = searchParams.toString();
+    if (incomingSearch !== lastSearch.current) {
+      if (pendingSearch.current === incomingSearch) {
+        lastSearch.current = incomingSearch;
         pendingSearch.current = null;
         return;
       }
-      pendingSearch.current = null;
       const incoming = buildUsageAnalyticsUiStateFromSearchParams(searchParams);
-      setActiveTabState(incoming.activeTab);
-      setFiltersState(incoming.filters);
-      return;
+      let cancelled = false;
+      queueMicrotask(() => {
+        if (cancelled) return;
+        lastSearch.current = incomingSearch;
+        pendingSearch.current = null;
+        setActiveTabState(incoming.activeTab);
+        setFiltersState(incoming.filters);
+      });
+      return () => { cancelled = true; };
     }
     const nextState = { activeTab: activeTabState, filters };
     writeUsageAnalyticsUiState(nextState);

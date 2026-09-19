@@ -401,6 +401,7 @@ export const buildAnalyticsFilters = (
   }
   if (scopeFilters.requestId) filters.request_ids = [scopeFilters.requestId];
   if (scopeFilters.resolvedModel) filters.resolved_models = [scopeFilters.resolvedModel];
+  if (scopeFilters.unresolvedModel) filters.unresolved_models = [scopeFilters.unresolvedModel];
   return filters;
 };
 

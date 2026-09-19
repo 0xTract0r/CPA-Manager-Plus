@@ -188,6 +188,7 @@ export const buildMonitoringInitialStateFromQuery = (
     params.get('auth_index') ||
     params.get('request_id') ||
     params.get('resolved_model') ||
+    params.get('unresolved_model') ||
     authFile ||
     projectId ||
     requestType ||
@@ -203,7 +204,7 @@ export const buildMonitoringInitialStateFromQuery = (
     customEndInput: hasRange ? formatDrilldownDateTime(toMs) : state.customEndInput,
     selectedAccount: params.has('auth_index') ? 'all' : state.selectedAccount,
     selectedChannel: params.has('auth_index') ? 'all' : state.selectedChannel,
-    selectedModel: params.has('resolved_model') ? 'all' : model || state.selectedModel,
+    selectedModel: (params.has('resolved_model') || params.has('unresolved_model')) ? 'all' : model || state.selectedModel,
     selectedProvider: provider || state.selectedProvider,
     selectedApiKeyHash: apiKeyHash || (params.has('auth_index') ? 'all' : state.selectedApiKeyHash),
     selectedHeaderTraceId:

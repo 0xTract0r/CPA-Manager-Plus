@@ -41,7 +41,7 @@ func (r *repository) FastImpactWithFilter(ctx context.Context, filter AnalyticsF
 	filter.Models = nil
 	where, args := analyticsWhere(filter)
 	if len(models) > 0 {
-		where += " and coalesce(nullif(resolved_model,''),model) in (" + strings.TrimRight(strings.Repeat("?,", len(models)), ",") + ")"
+		where += " and resolved_model in (" + strings.TrimRight(strings.Repeat("?,", len(models)), ",") + ")"
 		for _, m := range models {
 			args = append(args, m)
 		}

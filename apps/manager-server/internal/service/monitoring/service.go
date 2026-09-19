@@ -50,13 +50,14 @@ type Request struct {
 }
 
 type Filters struct {
-	ResolvedModels []string `json:"resolved_models"`
-	RequestIDs     []string `json:"request_ids"`
-	Models         []string `json:"models"`
-	Providers      []string `json:"providers"`
-	Accounts       []string `json:"accounts"`
-	AuthFiles      []string `json:"auth_files"`
-	AuthIndices    []string `json:"auth_indices"`
+	UnresolvedModels []string `json:"unresolved_models"`
+	ResolvedModels   []string `json:"resolved_models"`
+	RequestIDs       []string `json:"request_ids"`
+	Models           []string `json:"models"`
+	Providers        []string `json:"providers"`
+	Accounts         []string `json:"accounts"`
+	AuthFiles        []string `json:"auth_files"`
+	AuthIndices      []string `json:"auth_indices"`
 	// SearchAuthIndices 与顶层 search_query 取 OR，不替代 AuthIndices 等显式筛选。
 	SearchAuthIndices []string `json:"search_auth_indices"`
 	APIKeyHashes      []string `json:"api_key_hashes"`
@@ -1175,6 +1176,7 @@ func buildFilter(req Request) store.AnalyticsFilter {
 		SearchAPIKeyHash:  req.SearchAPIKeyHash,
 		Models:            req.Filters.Models,
 		ResolvedModels:    req.Filters.ResolvedModels,
+		UnresolvedModels:  req.Filters.UnresolvedModels,
 		Providers:         req.Filters.Providers,
 		Accounts:          req.Filters.Accounts,
 		AuthFiles:         req.Filters.AuthFiles,

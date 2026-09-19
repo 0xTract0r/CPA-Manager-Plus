@@ -83,3 +83,33 @@ func TestFastImpactResolvedRequestDrilldown(t *testing.T) {
 		t.Fatalf("exact drilldown=%+v %v", r.Events, err)
 	}
 }
+
+func TestFastImpactUnresolvedModelIdentityAndExactDrilldown(t *testing.T) {
+	db := newMonitoringTestStore(t)
+	ctx := context.Background()
+	from := int64(1778000000000)
+	lat := int64(1000)
+	legacy := monitoringEvent("legacy-model", from+1, "gpt-test", "account", "source", false, 100, 200, 0, 0, 300, &lat)
+	legacy.Provider = "codex"
+	legacy.AuthIndex = "a"
+	known := legacy
+	known.EventHash = "known-model"
+	known.ResolvedModel = "gpt-test"
+	if _, err := db.InsertEvents(ctx, []usage.Event{legacy, known}); err != nil {
+		t.Fatal(err)
+	}
+	req := Request{FromMS: from, ToMS: from + 10000, Filters: Filters{AuthIndices: []string{"a"}, UnresolvedModels: []string{"gpt-test"}}, Include: Include{FastImpact: true, EventsPage: &EventsPage{Limit: 10}}}
+	r, err := New(db).Analytics(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.FastImpact.Scanned != 1 || len(r.Events.Items) != 1 || r.FastImpact.Models[0].QueryModel != "gpt-test" || r.FastImpact.Models[0].ModelResolution != "unresolved" {
+		t.Fatalf("legacy scope=%+v", r)
+	}
+	req.Filters.UnresolvedModels = nil
+	req.Filters.ResolvedModels = []string{"gpt-test"}
+	r, err = New(db).Analytics(ctx, req)
+	if err != nil || r.FastImpact.Scanned != 1 || len(r.Events.Items) != 1 || r.FastImpact.Models[0].ModelResolution != "resolved" {
+		t.Fatalf("resolved scope=%+v %v", r, err)
+	}
+}

@@ -2490,7 +2490,6 @@ function UsageAnalyticsPageInner() {
         usage.filters.performanceView === 'fast'
           ? [
               ...new Set([
-                ...displayOptionCache.models,
                 ...(usage.fastImpact?.models.map((m) => m.model) || []),
               ]),
             ]
@@ -3028,7 +3027,8 @@ function UsageAnalyticsPageInner() {
                 busy={usage.loading || usage.isUpdating}
                 error={usage.error}
                 onFilters={updateFilters}
-                onRequests={(model, requestId) => {
+                onRequests={(row, requestId) => {
+                  const model = row.query_model || row.model;
                   const path = usage.bounds
                     ? buildMonitoringDetailUrl(
                         { bucketMs: usage.bounds.fromMs, bucketEndMs: usage.bounds.toMs },
@@ -3037,7 +3037,7 @@ function UsageAnalyticsPageInner() {
                     : `/monitoring?model=${encodeURIComponent(model)}`;
                   const target = new URL(path, 'http://local');
                   target.searchParams.delete('model');
-                  target.searchParams.set('resolved_model', model);
+                  target.searchParams.set(row.model_resolution === 'unresolved' ? 'unresolved_model' : 'resolved_model', model);
                   target.searchParams.set('status', 'all');
                   if (requestId) target.searchParams.set('request_id', requestId);
                   navigate(

@@ -186,6 +186,7 @@ export function MonitoringCenterPage() {
         authIndex: params.get('auth_index')?.trim() || '',
         requestId: params.get('request_id')?.trim() || '',
         resolvedModel: params.get('resolved_model')?.trim() || '',
+        unresolvedModel: params.get('unresolved_model')?.trim() || '',
         authFile: params.get('auth_file')?.trim() || '',
         projectId: params.get('project_id')?.trim() || '',
         requestType: params.get('request_type')?.trim() || '',
@@ -244,6 +245,7 @@ export function MonitoringCenterPage() {
     authIndex: initialMonitoringDrilldownFilters.current.authIndex,
     requestId: initialMonitoringDrilldownFilters.current.requestId,
     resolvedModel: initialMonitoringDrilldownFilters.current.resolvedModel,
+    unresolvedModel: initialMonitoringDrilldownFilters.current.unresolvedModel,
   }));
   const [drilldownAuthFile, setDrilldownAuthFile] = useState(
     () => initialMonitoringDrilldownFilters.current.authFile
@@ -864,7 +866,7 @@ export function MonitoringCenterPage() {
     selectedHeaderTraceId !== 'all' ||
     selectedStatus !== 'all' ||
     Boolean(
-      preciseDrilldown.authIndex || preciseDrilldown.requestId || preciseDrilldown.resolvedModel
+      preciseDrilldown.authIndex || preciseDrilldown.requestId || preciseDrilldown.resolvedModel || preciseDrilldown.unresolvedModel
     ) ||
     Boolean(drilldownAuthFile) ||
     Boolean(drilldownProjectId) ||
@@ -989,7 +991,7 @@ export function MonitoringCenterPage() {
     setSelectedApiKeyHash('all');
     setSelectedHeaderTraceId('all');
     setSelectedStatus('all');
-    setPreciseDrilldown({ authIndex: '', requestId: '', resolvedModel: '' });
+    setPreciseDrilldown({ authIndex: '', requestId: '', resolvedModel: '', unresolvedModel: '' });
     setDrilldownAuthFile('');
     setDrilldownProjectId('');
     setDrilldownRequestType('');

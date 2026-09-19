@@ -36,7 +36,7 @@ export function FastImpactPanel({
   filters: UsageAnalyticsFiltersState;
   accounts: AuthFileItem[];
   onFilters: (patch: Partial<UsageAnalyticsFiltersState>) => void;
-  onRequests: (model: string, requestId?: string) => void;
+  onRequests: (model: FastModel, requestId?: string) => void;
   busy?: boolean;
   error?: string;
   mock?: boolean;
@@ -270,7 +270,7 @@ export function FastImpactPanel({
         title={detail?.model}
         width={780}
         footer={
-          <Button onClick={() => detail && onRequests(detail.model)}>{text('requests')}</Button>
+          <Button onClick={() => detail && onRequests(detail)}>{text('requests')}</Button>
         }
       >
         {detail && detailPair && (
@@ -347,7 +347,7 @@ export function FastImpactPanel({
                   {o.request_id && (
                     <button
                       className={styles.model}
-                      onClick={() => onRequests(detail.model, o.request_id)}
+                      onClick={() => onRequests(detail, o.request_id)}
                     >
                       {o.request_id}
                     </button>

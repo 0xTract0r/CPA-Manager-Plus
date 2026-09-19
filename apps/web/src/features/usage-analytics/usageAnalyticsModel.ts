@@ -669,6 +669,7 @@ export const buildUsageAnalyticsFilters = (
   filters: Partial<
     Pick<
       UsageAnalyticsFiltersState,
+      | 'performanceView'
       | 'authIndex'
       | 'model'
       | 'apiKeyHash'
@@ -687,7 +688,8 @@ export const buildUsageAnalyticsFilters = (
   const provider = filters.provider ?? 'all';
   const authFile = filters.authFile ?? 'all';
   if (isActiveSelectValue(model)) {
-    payload.models = [model.trim()];
+    if (filters.performanceView === 'fast' && model.startsWith('unresolved:')) payload.unresolved_models = [model.slice('unresolved:'.length)];
+    else payload.models = [model.trim()];
   }
   if (apiKeyHash) {
     payload.api_key_hashes = [apiKeyHash];

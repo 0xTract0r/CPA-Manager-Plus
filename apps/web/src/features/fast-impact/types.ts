@@ -27,6 +27,8 @@ export type FastCohort = {
   status: string;
 };
 export type FastModel = {
+ query_model: string;
+ model_resolution: "resolved" | "unresolved";
   model: string;
   attempts: number;
   tiers: Record<string, FastTier>;

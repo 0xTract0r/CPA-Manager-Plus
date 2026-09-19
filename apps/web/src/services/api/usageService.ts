@@ -638,6 +638,7 @@ export interface DashboardSummaryParams {
 }
 
 export interface MonitoringAnalyticsFilters {
+ unresolved_models?: string[];
   resolved_models?: string[];
   request_ids?: string[];
   models?: string[];

@@ -65,6 +65,8 @@ type FastObservation struct {
 	OutputTokens int64  `json:"output_tokens"`
 }
 type FastModel struct {
+	QueryModel            string               `json:"query_model"`
+	ModelResolution       string               `json:"model_resolution"`
 	Model                 string               `json:"model"`
 	Attempts              int                  `json:"attempts"`
 	Tiers                 map[string]*FastTier `json:"tiers"`
@@ -115,8 +117,13 @@ func BuildFastImpact(events []Event, from, to int64, options FastImpactOptions) 
 	sort.Strings(keys)
 	for _, model := range keys {
 		rows := grouped[model]
+		queryModel, resolution := rows[0].ResolvedModel, "resolved"
+		if queryModel == "" {
+			queryModel = rows[0].Model
+			resolution = "unresolved"
+		}
 		sort.SliceStable(rows, func(i, j int) bool { return fastStart(rows[i]) < fastStart(rows[j]) })
-		m := &FastModel{Model: model, Tiers: map[string]*FastTier{}, Cohorts: []*FastCohort{}, Excluded: map[string]int{}, Observations: []FastObservation{}, Status: "missing_baseline"}
+		m := &FastModel{QueryModel: queryModel, ModelResolution: resolution, Model: model, Tiers: map[string]*FastTier{}, Cohorts: []*FastCohort{}, Excluded: map[string]int{}, Observations: []FastObservation{}, Status: "missing_baseline"}
 		for _, tier := range []string{"default", "priority", "flex", "unknown"} {
 			m.Tiers[tier] = newFastTier()
 		}
