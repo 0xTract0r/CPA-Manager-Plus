@@ -104,6 +104,7 @@ export function useUsageAnalytics() {
   );
   const [filters, setFiltersState] = useState<UsageAnalyticsFiltersState>(() => ({
     ...initialUiState.filters,
+    performanceView: 'overview',
     apiKeyHash: getSelectableApiKeyHash(initialUiState.filters.apiKeyHash) || 'all',
   }));
   const [activeTabState, setActiveTabState] = useState<UsageAnalyticsTab>(
@@ -276,7 +277,7 @@ export function useUsageAnalytics() {
         lastSearch.current = incomingSearch;
         pendingSearch.current = null;
         setActiveTabState(incoming.activeTab);
-        setFiltersState(incoming.filters);
+        setFiltersState({ ...incoming.filters, performanceView: 'overview' });
       });
       return () => { cancelled = true; };
     }

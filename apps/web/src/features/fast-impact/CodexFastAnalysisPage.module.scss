@@ -1,0 +1,149 @@
+.page {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+  color: var(--text-primary);
+}
+.breadcrumb {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  a {
+    color: inherit;
+    text-decoration: none;
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+}
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 20px;
+  h1 {
+    margin: 0;
+    font-size: 26px;
+    letter-spacing: -0.5px;
+  }
+  p {
+    margin: 10px 0 0;
+    color: var(--text-secondary);
+    font-size: 14px;
+    line-height: 1.7;
+  }
+}
+.back {
+  color: var(--text-secondary);
+  font-size: 13px;
+  white-space: nowrap;
+  text-decoration: none;
+  padding: 10px 0;
+  &:hover {
+    color: var(--text-primary);
+  }
+}
+.scope {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px 20px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-secondary);
+}
+.identity {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  strong {
+    display: block;
+    font-size: 16px;
+    overflow-wrap: anywhere;
+  }
+}
+.provider {
+  padding: 9px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--bg-primary);
+}
+.caption {
+  display: block;
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-bottom: 5px;
+}
+.scopeNote {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.content {
+  display: grid;
+  gap: 20px;
+  padding: 24px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  min-width: 0;
+  background: var(--bg-primary);
+}
+.actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.range {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  label {
+    display: grid;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    min-width: 0;
+  }
+  input {
+    color: var(--text-primary);
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 8px;
+    max-width: 100%;
+    min-width: 0;
+  }
+}
+@media (max-width: 700px) {
+  .page {
+    gap: 18px;
+  }
+  .header {
+    flex-wrap: wrap;
+    gap: 4px;
+    h1 {
+      font-size: 23px;
+    }
+  }
+  .scope,
+  .content {
+    padding: 16px;
+  }
+  .range {
+    label {
+      width: 100%;
+    }
+    > span {
+      display: none;
+    }
+  }
+}

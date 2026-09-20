@@ -1,4 +1,3 @@
-import { FastImpactPanel } from '@/features/fast-impact/FastImpactPanel';
 import { PerformancePanel } from '@/features/performance/PerformancePanel';
 import { isDemoMode, prefixRouteBase } from '@/features/demo/demoMode';
 import { useCallback, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
@@ -3004,48 +3003,15 @@ function UsageAnalyticsPageInner() {
 
       {usage.activeTab === 'performance' ? (
           <>
-            <div className={styles.performanceViews} aria-label={t('fast_impact.views')}>
-              <Button
-                variant={usage.filters.performanceView !== 'fast' ? 'primary' : 'secondary'}
-                onClick={() => updateFilters({ performanceView: 'overview' })}
-              >
-                {t('fast_impact.overview')}
-              </Button>
-              <Button
-                variant={usage.filters.performanceView === 'fast' ? 'primary' : 'secondary'}
-                onClick={() => updateFilters({ performanceView: 'fast' })}
-              >
-                {t('fast_impact.title')}
-              </Button>
-            </div>
-            {usage.filters.performanceView === 'fast' ? (
-              <FastImpactPanel
-                data={usage.fastImpact}
-                filters={usage.filters}
-                accounts={usage.performanceAuthFiles}
-                mock={isDemoMode()}
-                busy={usage.loading || usage.isUpdating}
-                error={usage.error}
-                onFilters={updateFilters}
-                onRequests={(row, requestId) => {
-                  const model = row.query_model || row.model;
-                  const path = usage.bounds
-                    ? buildMonitoringDetailUrl(
-                        { bucketMs: usage.bounds.fromMs, bucketEndMs: usage.bounds.toMs },
-                        { ...usage.filters, model }
-                      )
-                    : `/monitoring?model=${encodeURIComponent(model)}`;
-                  const target = new URL(path, 'http://local');
-                  target.searchParams.delete('model');
-                  target.searchParams.set(row.model_resolution === 'unresolved' ? 'unresolved_model' : 'resolved_model', model);
-                  target.searchParams.set('status', 'all');
-                  if (requestId) target.searchParams.set('request_id', requestId);
-                  navigate(
-                    `${isDemoMode() ? prefixRouteBase(target.pathname) : target.pathname}${target.search}`
-                  );
-                }}
-              />
-            ) : (
+            {usage.filters.authIndex && usage.filters.authIndex !== 'all' && usage.performanceAuthFiles.some(a => String(a.auth_index ?? a.authIndex) === usage.filters.authIndex && (a.provider || a.type) === 'codex') && (
+              <div className={styles.performanceViews}>
+                <Button variant="secondary" onClick={() => {
+                  const params = new URLSearchParams({ auth_index: usage.filters.authIndex! });
+                  if (usage.bounds) { params.set('from_ms', String(usage.bounds.fromMs)); params.set('to_ms', String(usage.bounds.toMs)); }
+                  navigate(`${isDemoMode() ? prefixRouteBase('/auth-files/codex-fast-analysis') : '/auth-files/codex-fast-analysis'}?${params}`);
+                }}>{t('fast_impact.title')} →</Button>
+              </div>
+            )}
               <PerformancePanel
                 data={usage.performance}
                 mock={isDemoMode()}
@@ -3063,7 +3029,6 @@ function UsageAnalyticsPageInner() {
                   )
                 }
               />
-            )}
           </>
         ) : null}
 

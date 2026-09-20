@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
@@ -31,6 +31,9 @@ export function FastImpactPanel({
   busy,
   error,
   mock = false,
+  accountScoped = false,
+  controlsPrefix,
+  afterControls,
 }: {
   data?: FastImpact;
   filters: UsageAnalyticsFiltersState;
@@ -40,6 +43,9 @@ export function FastImpactPanel({
   busy?: boolean;
   error?: string;
   mock?: boolean;
+  accountScoped?: boolean;
+  controlsPrefix?: ReactNode;
+  afterControls?: ReactNode;
 }) {
   const { t } = useTranslation();
   const text = (key: string) => t(`fast_impact.${key}`);
@@ -76,17 +82,19 @@ export function FastImpactPanel({
     <section className={styles.root} data-testid="fast-impact" aria-busy={busy}>
       <header className={styles.header}>
         <div>
-          <h2>{text('title')}</h2>
-          <p>{text('hint')}</p>
+          <h2>{text(accountScoped ? 'model_comparison' : 'title')}</h2>
+          {!accountScoped && <p>{text('hint')}</p>}
         </div>
         <span className={styles.badge}>{mock ? text('mock') : text('observational')}</span>
       </header>
       {mock && (
         <aside className={styles.notice} data-testid="fast-mock-provenance">
-          {text('mock_notice')}
+          {text(account === 'preview-production' ? 'production_notice' : account === 'preview-synthetic' ? 'synthetic_notice' : 'mock_notice')}
         </aside>
       )}
-      <div className={styles.controls}>
+      <div className={`${styles.controls} ${accountScoped ? styles.scopedControls : ''}`}>
+        {controlsPrefix}
+        {!accountScoped && (
         <label>
           {text('account')}
           <Select
@@ -105,6 +113,7 @@ export function FastImpactPanel({
             }}
           />
         </label>
+        )}
         <label>
           {text('metric')}
           <Select
@@ -129,6 +138,7 @@ export function FastImpactPanel({
           />
         </label>
       </div>
+      {afterControls}
       <p className={styles.definition}>
         {text(metric === 'visible_tps' ? 'visible_definition' : 'e2e_definition')}
       </p>
