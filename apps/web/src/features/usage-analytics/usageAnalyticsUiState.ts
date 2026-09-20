@@ -186,7 +186,7 @@ export const buildUsageAnalyticsUiStateFromSearchParams = (
   params: URLSearchParams,
   fallback: UsageAnalyticsUiState = getDefaultUsageAnalyticsUiState()
 ): UsageAnalyticsUiState => {
-  const activeTab = params.has('tab') ? normalizeActiveTab(params.get('tab')) : fallback.activeTab;
+  const activeTab = params.get('view') === 'fast' ? 'codexFast' : params.has('tab') ? normalizeActiveTab(params.get('tab')) : fallback.activeTab;
   if (!queryHasAnyFilter(params)) {
     return {
       activeTab,

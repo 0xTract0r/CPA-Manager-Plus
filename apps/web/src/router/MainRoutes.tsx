@@ -6,7 +6,6 @@ import {
   type Location,
   type RouteObject,
 } from 'react-router-dom';
-import { CodexFastAnalysisPage } from '@/features/fast-impact/CodexFastAnalysisPage';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { AiProvidersPage } from '@/pages/AiProvidersPage';
 import { AiProvidersClaudeEditLayout } from '@/pages/AiProvidersClaudeEditLayout';
@@ -48,15 +47,13 @@ import { ensureRouteBasePathname, isDemoMode } from '@/features/demo/demoMode';
 import { useAuthStore, useConfigStore } from '@/stores';
 import codexInspectionStyles from '@/features/monitoring/CodexInspectionPage.module.scss';
 
-function UsageAnalyticsRoute() {
+function CodexFastLegacyRedirect() {
   const location = useLocation();
   const params = new URLSearchParams(location.search);
-  if (params.get('view') === 'fast') {
-    params.delete('view'); params.delete('tab'); params.delete('provider');
-    const target = '/auth-files/codex-fast-analysis';
-    return <Navigate replace to={`${isDemoMode() ? ensureRouteBasePathname(target) : target}?${params}`} />;
-  }
-  return <UsageAnalyticsPage />;
+  params.delete('view');
+  params.set('tab', 'codexFast');
+  const target = '/usage-analytics';
+  return <Navigate replace to={`${isDemoMode() ? ensureRouteBasePathname(target) : target}?${params}`} />;
 }
 
 type FeatureKey = 'requestMonitoring' | 'modelPrices' | 'serverCodexInspection';
@@ -213,7 +210,7 @@ const mainRoutes: RouteObject[] = [
   { path: '/ai-providers', element: <AiProvidersPage /> },
   { path: '/ai-providers/*', element: <AiProvidersPage /> },
   { path: '/auth-files', element: <AuthFilesPage /> },
-  { path: '/auth-files/codex-fast-analysis', element: <FeatureGate feature="requestMonitoring"><CodexFastAnalysisPage /></FeatureGate> },
+  { path: '/auth-files/codex-fast-analysis', element: <FeatureGate feature="requestMonitoring"><CodexFastLegacyRedirect /></FeatureGate> },
   { path: '/auth-files/oauth-excluded', element: <AuthFilesOAuthExcludedEditPage /> },
   { path: '/auth-files/oauth-model-alias', element: <AuthFilesOAuthModelAliasEditPage /> },
   { path: '/oauth', element: <OAuthPage /> },
@@ -222,7 +219,7 @@ const mainRoutes: RouteObject[] = [
     path: '/usage-analytics',
     element: (
       <FeatureGate feature="requestMonitoring">
-        <UsageAnalyticsRoute />
+        <UsageAnalyticsPage />
       </FeatureGate>
     ),
   },

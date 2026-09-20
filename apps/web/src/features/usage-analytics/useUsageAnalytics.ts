@@ -204,9 +204,25 @@ export function useUsageAnalytics() {
     [authFileMap, authMetaMap, channelByAuthIndex, sourceInfoMap]
   );
   const setActiveTab = useCallback((tab: UsageAnalyticsTab) => {
+    if (tab === 'codexFast') {
+      setFiltersState(current => ({
+        ...USAGE_ANALYTICS_DEFAULT_FILTERS,
+        timeRange: current.timeRange,
+        customRange: current.customRange,
+        authIndex: monitoringMeta.authFiles.some(a =>
+          String(a.auth_index ?? a.authIndex) === current.authIndex && (a.provider || a.type) !== 'codex'
+        ) ? 'all' : current.authIndex,
+        provider: 'codex',
+        fastMode: current.fastMode,
+        fastMetric: current.fastMetric,
+      }));
+    }
     setActiveTabState(tab);
     writeUsageAnalyticsUiState({ activeTab: tab });
-  }, []);
+  }, [monitoringMeta.authFiles]);
+  const fastAuthIndex = monitoringMeta.authFiles.some(a =>
+    String(a.auth_index ?? a.authIndex) === filters.authIndex && (a.provider || a.type) !== 'codex'
+  ) ? 'all' : filters.authIndex;
   const debouncedSearchQuery = useDebouncedValue(
     filters.searchQuery.trim(),
     USAGE_SEARCH_DEBOUNCE_MS
@@ -249,14 +265,12 @@ export function useUsageAnalytics() {
     [filters, nowMs]
   );
   const analyticsFilters = useMemo(
-    () =>
-      applyIdentitySearchScope(
-        buildUsageAnalyticsFilters({
-          ...filters,
-          apiKeyHash: getSelectableApiKeyHash(filters.apiKeyHash) || 'all',
-        })
-      ),
-    [applyIdentitySearchScope, filters]
+    () => activeTabState === 'codexFast'
+      ? buildUsageAnalyticsFilters({ authIndex: fastAuthIndex, provider: 'codex' })
+      : applyIdentitySearchScope(buildUsageAnalyticsFilters({
+          ...filters, apiKeyHash: getSelectableApiKeyHash(filters.apiKeyHash) || 'all',
+        })),
+    [activeTabState, fastAuthIndex, applyIdentitySearchScope, filters]
   );
 
   const lastSearch = useRef(searchParams.toString());
@@ -303,9 +317,9 @@ export function useUsageAnalytics() {
   }, [resolvedGranularity, selectedBucketMs]);
   const include = useMemo(
     () =>
-      activeTabState === 'performance' && filters.performanceView === 'fast'
+      activeTabState === 'codexFast'
         ? {
-            fast_impact: Boolean(filters.authIndex && filters.authIndex !== 'all'),
+            fast_impact: Boolean(fastAuthIndex && fastAuthIndex !== 'all'),
             granularity: resolvedGranularity,
           }
         : buildUsageAnalyticsInclude(activeTabState, resolvedGranularity, drilldownPreview),
@@ -313,8 +327,7 @@ export function useUsageAnalytics() {
       activeTabState,
       drilldownPreview,
       resolvedGranularity,
-      filters.performanceView,
-      filters.authIndex,
+      fastAuthIndex,
     ]
   );
   const fastImpactOptions = useMemo(
@@ -346,12 +359,12 @@ export function useUsageAnalytics() {
   );
 
   const analytics = useMonitoringAnalytics({
-    fromMs: bounds?.fromMs,
+    fromMs: activeTabState === 'codexFast' && !include.fast_impact ? null : bounds?.fromMs,
     toMs: bounds?.toMs,
     nowMs,
     dataScopeKey,
     fastImpactOptions: include.fast_impact ? fastImpactOptions : undefined,
-    searchQuery: debouncedSearchQuery,
+    searchQuery: activeTabState === 'codexFast' ? '' : debouncedSearchQuery,
     filters: analyticsFilters,
     include,
     throttleMs: 0,
@@ -385,7 +398,7 @@ export function useUsageAnalytics() {
     [bounds, debouncedSearchQuery, identitySearchFilters]
   );
   const filterSelectorsAnalytics = useMonitoringAnalytics({
-    fromMs: bounds?.fromMs,
+    fromMs: activeTabState === 'codexFast' ? null : bounds?.fromMs,
     toMs: bounds?.toMs,
     nowMs,
     dataScopeKey: filterSelectorsDataScopeKey,
@@ -719,6 +732,11 @@ export function useUsageAnalytics() {
     lastRefreshedAt: analytics.lastRefreshedAt,
     refresh,
     fastImpact: analyticsData?.fast_impact,
+    fastFilters: {
+      ...USAGE_ANALYTICS_DEFAULT_FILTERS, authIndex: fastAuthIndex, provider: 'codex',
+      timeRange: filters.timeRange, customRange: filters.customRange,
+      fastMode: filters.fastMode, fastMetric: filters.fastMetric,
+    },
     performance: analyticsData?.performance,
     performanceAuthFiles: monitoringMeta.authFiles,
     performanceAccountSnapshots: analyticsData?.account_stats,
