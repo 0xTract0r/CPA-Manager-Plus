@@ -1772,6 +1772,7 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
                         accountName={editor.fileName}
                         authIndex={editor.authIndex}
                         enabled={!editor.loading}
+                        onOpenAnalysis={onClose}
                       />
                     </>
                   )}

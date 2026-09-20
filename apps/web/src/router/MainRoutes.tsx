@@ -47,6 +47,15 @@ import { ensureRouteBasePathname, isDemoMode } from '@/features/demo/demoMode';
 import { useAuthStore, useConfigStore } from '@/stores';
 import codexInspectionStyles from '@/features/monitoring/CodexInspectionPage.module.scss';
 
+function CodexFastLegacyRedirect() {
+  const location = useLocation();
+  const params = new URLSearchParams(location.search);
+  params.delete('view');
+  params.set('tab', 'codexFast');
+  const target = '/usage-analytics';
+  return <Navigate replace to={`${isDemoMode() ? ensureRouteBasePathname(target) : target}?${params}`} />;
+}
+
 type FeatureKey = 'requestMonitoring' | 'modelPrices' | 'serverCodexInspection';
 
 function PluginGate({ children }: { children: ReactElement }) {
@@ -201,6 +210,7 @@ const mainRoutes: RouteObject[] = [
   { path: '/ai-providers', element: <AiProvidersPage /> },
   { path: '/ai-providers/*', element: <AiProvidersPage /> },
   { path: '/auth-files', element: <AuthFilesPage /> },
+  { path: '/auth-files/codex-fast-analysis', element: <FeatureGate feature="requestMonitoring"><CodexFastLegacyRedirect /></FeatureGate> },
   { path: '/auth-files/oauth-excluded', element: <AuthFilesOAuthExcludedEditPage /> },
   { path: '/auth-files/oauth-model-alias', element: <AuthFilesOAuthModelAliasEditPage /> },
   { path: '/oauth', element: <OAuthPage /> },

@@ -223,6 +223,16 @@ describe('usageAnalyticsUiState', () => {
 });
 
 describe('fast impact deep links', () => {
+  it('restores the standalone usage tab with its selected account and comparison settings', () => {
+    const state = buildUsageAnalyticsUiStateFromSearchParams(new URLSearchParams(
+      'tab=codexFast&auth_index=codex-a&from_ms=1001&to_ms=9009&fast_metric=end_to_end_tps&fast_mode=transition'
+    ));
+    expect(state.activeTab).toBe('codexFast');
+    expect(state.filters.authIndex).toBe('codex-a');
+    expect(state.filters.customRange).toEqual({ startMs: 1001, endMs: 9009 });
+    expect(buildUsageAnalyticsUiStateFromSearchParams(buildUsageAnalyticsSearchParams(state))).toEqual(state);
+  });
+
   it('overrides conflicting saved account/model filters and round-trips all comparison fields', () => {
     const state = buildUsageAnalyticsUiStateFromSearchParams(
       new URLSearchParams(

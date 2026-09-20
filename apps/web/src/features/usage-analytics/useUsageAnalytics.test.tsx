@@ -145,6 +145,29 @@ describe('useUsageAnalytics request orchestration', () => {
     });
   };
 
+  it('prefills Codex account and ignores unrelated global filters in fast analysis', async () => {
+    await renderHook('/usage-analytics?tab=codexFast&auth_index=codex-a&provider=claude&status=failed&search=unrelated&model=other&from_ms=1000&to_ms=9000');
+    const fast = lastParams(params => Boolean(params.include?.fast_impact));
+    expect(latestResult?.activeTab).toBe('codexFast');
+    expect(fast?.filters).toEqual({ auth_indices: ['codex-a'], providers: ['codex'] });
+    expect(fast?.searchQuery).toBe('');
+    expect(fast?.fromMs).toBe(1000);
+    expect(fast?.toMs).toBe(9000);
+    expect(lastParams(params => Boolean(params.include?.filter_selectors))?.fromMs).toBeNull();
+    expect(latestResult?.fastFilters.model).toBe('all');
+    expect(latestResult?.fastFilters.status).toBe('all');
+  });
+
+  it('requires a single Codex account and clears another provider when entering the tab', async () => {
+    monitoringMetaMock.payload.authFiles = [{ name: 'claude.json', provider: 'claude', auth_index: 'claude-a' }];
+    await renderHook('/usage-analytics?tab=performance&auth_index=claude-a');
+    await act(async () => { latestResult?.setActiveTab('codexFast'); });
+    expect(latestResult?.fastFilters.authIndex).toBe('all');
+    expect(lastParams(params => params.include?.fast_impact === false)?.fromMs).toBeNull();
+    await act(async () => { latestResult?.setFilters({ authIndex: 'codex-b' }); });
+    expect(lastParams(params => Boolean(params.include?.fast_impact))?.filters).toEqual({ auth_indices: ['codex-b'], providers: ['codex'] });
+  });
+
   it('keeps full-text search and adds note matches as an OR identity scope', async () => {
     monitoringMetaMock.payload = {
       authFiles: [

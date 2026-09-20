@@ -83,7 +83,7 @@ export function FastImpactPanel({
       </header>
       {mock && (
         <aside className={styles.notice} data-testid="fast-mock-provenance">
-          {text('mock_notice')}
+          {text(account === 'preview-production' ? 'production_notice' : account === 'preview-synthetic' ? 'synthetic_notice' : 'mock_notice')}
         </aside>
       )}
       <div className={styles.controls}>

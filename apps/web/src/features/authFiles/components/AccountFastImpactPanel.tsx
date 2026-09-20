@@ -7,19 +7,23 @@ export interface AccountFastImpactPanelProps {
   accountName?: string | null;
   authIndex?: string | number | null;
   enabled?: boolean;
+  onOpenAnalysis?: () => void;
 }
 
-export function AccountFastImpactPanel({ authIndex, enabled = true }: AccountFastImpactPanelProps) {
+export function AccountFastImpactPanel({ authIndex, enabled = true, onOpenAnalysis }: AccountFastImpactPanelProps) {
   const { t } = useTranslation();
-  if (!enabled) return null;
-  const params = new URLSearchParams({ tab: 'performance', view: 'fast', provider: 'codex' });
+  if (!enabled || authIndex == null || !String(authIndex).trim()) return null;
+  const params = new URLSearchParams({ tab: 'codexFast' });
   if (authIndex != null && String(authIndex).trim()) params.set('auth_index', String(authIndex));
+  // 本地固定样本入口保留采样日期；正式包不会进入此分支。
+  if (import.meta.env.DEV && import.meta.env.VITE_FAST_IMPACT_PREVIEW_URL && String(authIndex).startsWith('preview-')) {
+    params.set('from_ms', '1789741617856'); params.set('to_ms', '1789743906579');
+  }
   const path = isDemoMode() ? prefixRouteBase('/usage-analytics') : '/usage-analytics';
   return (
     <div className={styles.panel} data-testid="account-fast-impact-panel">
-      <strong>{t('fast_impact.title')}</strong>
-      <p>{t('fast_impact.account_hint')}</p>
-      <Link to={`${path}?${params}`}>{t('fast_impact.open_analysis')}</Link>
+      <div><strong>{t('fast_impact.title')}</strong><p>{t('fast_impact.account_hint')}</p></div>
+      <Link to={`${path}?${params}`} onClick={onOpenAnalysis}>{t('fast_impact.open_analysis')} →</Link>
     </div>
   );
 }

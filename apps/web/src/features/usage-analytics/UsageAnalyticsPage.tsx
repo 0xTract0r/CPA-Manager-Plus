@@ -1,7 +1,7 @@
 import { FastImpactPanel } from '@/features/fast-impact/FastImpactPanel';
 import { PerformancePanel } from '@/features/performance/PerformancePanel';
 import { isDemoMode, prefixRouteBase } from '@/features/demo/demoMode';
-import { useCallback, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
@@ -2336,6 +2336,12 @@ function UsageAnalyticsPageInner() {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const usage = useUsageAnalytics();
+  const tabsRowRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (usage.activeTab === 'codexFast') {
+      tabsRowRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
+  }, [usage.activeTab]);
   const chartTheme = useUsageChartTheme();
   const themedUsageMetrics = useMemo(() => getThemedUsageMetrics(chartTheme), [chartTheme]);
   const [selectedMetrics, setSelectedMetrics] =
@@ -2561,7 +2567,7 @@ function UsageAnalyticsPageInner() {
     { value: 'miss', label: t('usage_analytics.cache_status_miss') },
   ];
   const noData =
-    !(usage.activeTab === 'performance' && usage.filters.performanceView === 'fast') &&
+    usage.activeTab !== 'codexFast' &&
     !usage.loading &&
     !usage.error &&
     !hasUsageData(usage.summary, usage.timeline);
@@ -2731,7 +2737,7 @@ function UsageAnalyticsPageInner() {
   return (
     <div className={styles.page}>
       <section className={styles.controlsPanel}>
-        <div className={styles.controlsTabsRow}>
+        <div className={styles.controlsTabsRow} ref={tabsRowRef}>
           <SegmentedTabs
             items={usageTabItems}
             activeTab={usage.activeTab}
@@ -2762,6 +2768,7 @@ function UsageAnalyticsPageInner() {
               ))}
             </div>
 
+            {usage.activeTab !== 'codexFast' && (
             <div
               className={styles.segmentedControl}
               aria-label={t('usage_analytics.filter_granularity')}
@@ -2779,8 +2786,10 @@ function UsageAnalyticsPageInner() {
                 </button>
               ))}
             </div>
+            )}
 
             <div className={styles.refreshControls}>
+              {usage.activeTab !== 'codexFast' && <>
               <span className={styles.filterMeta}>
                 {t('usage_analytics.resolved_granularity', {
                   granularity: usage.resolvedGranularity,
@@ -2802,6 +2811,7 @@ function UsageAnalyticsPageInner() {
                   ? t('usage_analytics.hide_advanced_filters')
                   : t('usage_analytics.show_advanced_filters')}
               </button>
+              </>}
               <Button
                 variant="secondary"
                 size="sm"
@@ -2814,6 +2824,7 @@ function UsageAnalyticsPageInner() {
             </div>
           </div>
 
+          {usage.activeTab !== 'codexFast' && (
           <div className={styles.filterBar}>
             {usage.filters.authIndex && usage.filters.authIndex !== 'all' && usage.filters.performanceView !== 'fast' && <span>{t('fast_impact.account')}: {usage.performanceAuthFiles.find(a => String(a.auth_index ?? a.authIndex) === usage.filters.authIndex)?.note || usage.filters.authIndex}</span>}
             <div className={styles.scopeSearchBar}>
@@ -2866,6 +2877,7 @@ function UsageAnalyticsPageInner() {
               />
             </div>
           </div>
+          )}
 
           {usage.filters.timeRange === 'custom' ? (
             <div className={styles.customRangeRow}>
@@ -2889,7 +2901,7 @@ function UsageAnalyticsPageInner() {
             </div>
           ) : null}
 
-          {advancedOpen ? (
+          {advancedOpen && usage.activeTab !== 'codexFast' ? (
             <div className={styles.advancedPanel}>
               <div className={styles.advancedGrid}>
                 <label className={styles.filterGroup}>
@@ -2928,7 +2940,7 @@ function UsageAnalyticsPageInner() {
         </div>
       </section>
 
-      {usage.error ? (
+      {usage.error && usage.activeTab !== 'codexFast' ? (
         <section className={styles.alertPanel}>
           <IconShield size={22} />
           <div>
@@ -2938,7 +2950,7 @@ function UsageAnalyticsPageInner() {
         </section>
       ) : null}
 
-      {usage.isFirstLoad ? <TabContentSkeleton /> : null}
+      {usage.isFirstLoad && usage.activeTab !== 'codexFast' ? <TabContentSkeleton /> : null}
 
       {!usage.isFirstLoad && noData ? (
         <EmptyState
@@ -3002,50 +3014,33 @@ function UsageAnalyticsPageInner() {
         </>
       ) : null}
 
+      {usage.activeTab === 'codexFast' && (
+        <section className={styles.tablePanel}>
+          <FastImpactPanel
+            data={usage.fastImpact}
+            filters={usage.fastFilters}
+            accounts={usage.performanceAuthFiles}
+            mock={isDemoMode()}
+            busy={usage.loading || usage.isUpdating}
+            error={usage.error}
+            onFilters={updateFilters}
+            onRequests={(row, requestId) => {
+              if (!usage.bounds) return;
+              const target = new URL(buildMonitoringDetailUrl(
+                { bucketMs: usage.bounds.fromMs, bucketEndMs: usage.bounds.toMs },
+                { ...usage.fastFilters, provider: 'codex', model: 'all', status: 'all' }
+              ), 'http://local');
+              target.searchParams.delete('model');
+              target.searchParams.set(row.model_resolution === 'unresolved' ? 'unresolved_model' : 'resolved_model', row.query_model || row.model);
+              if (requestId) target.searchParams.set('request_id', requestId);
+              navigate(`${isDemoMode() ? prefixRouteBase(target.pathname) : target.pathname}${target.search}`);
+            }}
+          />
+        </section>
+      )}
+
       {usage.activeTab === 'performance' ? (
           <>
-            <div className={styles.performanceViews} aria-label={t('fast_impact.views')}>
-              <Button
-                variant={usage.filters.performanceView !== 'fast' ? 'primary' : 'secondary'}
-                onClick={() => updateFilters({ performanceView: 'overview' })}
-              >
-                {t('fast_impact.overview')}
-              </Button>
-              <Button
-                variant={usage.filters.performanceView === 'fast' ? 'primary' : 'secondary'}
-                onClick={() => updateFilters({ performanceView: 'fast' })}
-              >
-                {t('fast_impact.title')}
-              </Button>
-            </div>
-            {usage.filters.performanceView === 'fast' ? (
-              <FastImpactPanel
-                data={usage.fastImpact}
-                filters={usage.filters}
-                accounts={usage.performanceAuthFiles}
-                mock={isDemoMode()}
-                busy={usage.loading || usage.isUpdating}
-                error={usage.error}
-                onFilters={updateFilters}
-                onRequests={(row, requestId) => {
-                  const model = row.query_model || row.model;
-                  const path = usage.bounds
-                    ? buildMonitoringDetailUrl(
-                        { bucketMs: usage.bounds.fromMs, bucketEndMs: usage.bounds.toMs },
-                        { ...usage.filters, model }
-                      )
-                    : `/monitoring?model=${encodeURIComponent(model)}`;
-                  const target = new URL(path, 'http://local');
-                  target.searchParams.delete('model');
-                  target.searchParams.set(row.model_resolution === 'unresolved' ? 'unresolved_model' : 'resolved_model', model);
-                  target.searchParams.set('status', 'all');
-                  if (requestId) target.searchParams.set('request_id', requestId);
-                  navigate(
-                    `${isDemoMode() ? prefixRouteBase(target.pathname) : target.pathname}${target.search}`
-                  );
-                }}
-              />
-            ) : (
               <PerformancePanel
                 data={usage.performance}
                 mock={isDemoMode()}
@@ -3063,7 +3058,6 @@ function UsageAnalyticsPageInner() {
                   )
                 }
               />
-            )}
           </>
         ) : null}
 

@@ -35,7 +35,8 @@ export type UsageAnalyticsTab =
   | 'models'
   | 'apiKeys'
   | 'credentials'
-  | 'heatmap';
+  | 'heatmap'
+  | 'codexFast';
 export type UsageAnalyticsTimeRange = '24h' | 'today' | 'yesterday' | '7d' | '30d' | 'custom';
 export type UsageAnalyticsGranularity = 'auto' | 'hour' | 'day';
 export type UsageAnalyticsResolvedGranularity = 'hour' | 'day';
@@ -474,6 +475,7 @@ export const USAGE_ANALYTICS_TABS: UsageAnalyticsTab[] = [
   'apiKeys',
   'credentials',
   'heatmap',
+  'codexFast',
 ];
 
 export const USAGE_TIME_RANGES: UsageAnalyticsTimeRange[] = [
