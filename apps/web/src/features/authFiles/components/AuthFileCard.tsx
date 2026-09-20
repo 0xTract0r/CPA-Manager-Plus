@@ -65,22 +65,13 @@ import {
   deriveAccountWarmupBadge,
   deriveSubscriptionTierBadge,
 } from '@/features/authFiles/model/accountSessionSummary';
+import { ClaudeTierBadge } from './ClaudeTierBadge';
+import { WarmupPacingButton } from './WarmupPacing';
 import { AuthFileQuotaSection } from '@/features/authFiles/components/AuthFileQuotaSection';
 import styles from '@/features/authFiles/AuthFilesPage.module.scss';
 import reauthStyles from '@/features/authFiles/components/AuthFileReauthInline.module.scss';
 
 const HEALTHY_STATUS_MESSAGES = new Set(['ok', 'healthy', 'ready', 'success', 'available']);
-
-// P7（account-session-count-display）：细粒度订阅等级徽标的英文 defaultValue
-// 兜底文案（i18n 资源未加载/未翻译时的最后一道回退），键与
-// deriveSubscriptionTierBadge 返回的 tier 值一一对应，人类可读而非裸枚举值。
-const SUBSCRIPTION_TIER_BADGE_DEFAULT_LABELS: Record<string, string> = {
-  max_20x: 'Max 20x',
-  max_5x: 'Max 5x',
-  pro: 'Pro',
-  plus: 'Plus',
-  unknown: 'Unknown',
-};
 
 export type AuthFileCardProps = {
   file: AuthFileItem;
@@ -104,6 +95,7 @@ export type AuthFileCardProps = {
   onRefreshAntigravitySubscription?: (file: AuthFileItem) => void;
   quotaCooldown?: QuotaCooldownInfo;
   onShowModels: (file: AuthFileItem) => void;
+  onShowWarmupPacing?: (fileKey: string) => void;
   onReauth?: (file: AuthFileItem) => void;
   /**
    * 迁移自旧版：非 codex OAuth 账号的通用「重新认证」inline 流程状态与回调。
@@ -161,6 +153,7 @@ export function AuthFileCard(props: AuthFileCardProps) {
     onRefreshAntigravitySubscription,
     quotaCooldown,
     onShowModels,
+    onShowWarmupPacing,
     onReauth,
     reauthState,
     onReauthenticate,
@@ -428,11 +421,6 @@ export function AuthFileCard(props: AuthFileCardProps) {
     resolvedProvider,
     file.account_scheduling
   );
-  const subscriptionTierBadgeLabel = subscriptionTierBadge
-    ? t(`auth_files.subscription_tier_badge_${subscriptionTierBadge.tier}`, {
-        defaultValue: SUBSCRIPTION_TIER_BADGE_DEFAULT_LABELS[subscriptionTierBadge.tier],
-      })
-    : '';
 
   // 账号页重排（claude-only）：账号调度派生控件整体收敛为 claude-only。Claude 账号
   // 把「订阅档位（override-aware）+ 手动标记 + 养号标注」并进卡片洞察区的一行套餐区
@@ -882,21 +870,7 @@ export function AuthFileCard(props: AuthFileCardProps) {
                 <span className={styles.claudeTierLabel}>
                   {t('auth_files.account_plan_label', { defaultValue: 'Plan' })}
                 </span>
-                <span
-                  className={`${styles.claudeTierValue} ${
-                    subscriptionTierBadge.known
-                      ? styles.claudeTierValueKnown
-                      : styles.claudeTierValueUnknown
-                  }`}
-                  title={t('auth_files.subscription_tier_badge_title', {
-                    tier: subscriptionTierBadgeLabel,
-                    defaultValue: 'Subscription tier: {{tier}}',
-                  })}
-                  data-testid={`auth-file-tier-badge-${file.name}`}
-                  data-tier={subscriptionTierBadge.tier}
-                >
-                  {subscriptionTierBadgeLabel}
-                </span>
+                <ClaudeTierBadge badge={subscriptionTierBadge} fileName={file.name} />
                 {claudeTierSource === 'override' && (
                   <span
                     className={styles.claudeTierOverrideMarker}
@@ -923,6 +897,9 @@ export function AuthFileCard(props: AuthFileCardProps) {
                   >
                     {t('auth_files.warmup_badge', { defaultValue: 'Warming up' })}
                   </span>
+                )}
+                {claudeWarmupBadge && onShowWarmupPacing && (
+                  <WarmupPacingButton file={file} onOpen={onShowWarmupPacing} />
                 )}
               </div>
             )}

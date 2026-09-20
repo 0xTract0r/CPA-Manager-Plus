@@ -1,3 +1,4 @@
+import pacingFixtures from './pacingFixtures.json';
 import { demoPerformance, withDemoTelemetry } from '@/features/performance/demoPerformance';
 import type {
   AccountActionCandidate,
@@ -2881,6 +2882,19 @@ const demoAccountCandidates: AccountActionCandidate[] = [
 export const getDemoRawConfig = () => clone(initialRawConfig);
 export const getDemoProviderModels = () => clone(demoProviderModels);
 export const getDemoAuthFiles = () => {
+  // 独立 UI 验收样本仅进入 demo/test 构建，由内存 handler 返回，无模型请求。
+  if (typeof window !== 'undefined') {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('pacing-fixtures') === '1') return clone({ files: pacingFixtures.files }) as AuthFilesResponse;
+    if (params.get('pacing-fixtures') === 'boundary') {
+      const files = clone(pacingFixtures.boundary_files) as AuthFileItem[];
+      if (params.get('pacing-revision') === '2') {
+        files[1].account_scheduling!.warmup_traffic_pacing!.request_balance = 2.019;
+        files.reverse();
+      }
+      return { files } as AuthFilesResponse;
+    }
+  }
   const response = clone(demoAuthFiles);
   if (import.meta.env.DEV && import.meta.env.VITE_FAST_IMPACT_PREVIEW_URL) {
     response.files.unshift(

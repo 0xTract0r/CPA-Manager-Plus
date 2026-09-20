@@ -362,6 +362,8 @@ export interface AuthFileAccountScheduling {
    * 时为 null）。前端只按 `mature === false` 判定「养号中」，不臆造其它阶段语义。
    */
   warmup?: AuthFileAccountWarmup | null;
+  /** 纯只读配速快照；旧 core 缺字段时保持未知。 */
+  warmup_traffic_pacing?: AuthFileWarmupTrafficPacing | null;
   /**
    * 账号「首次投产时间」锚点（RFC3339 字符串或 null）。养号曲线以此为起点计算
    * age_days / warmup.stage。未显式设置时 core 在账号首次服务时自动打戳，此时该
@@ -397,6 +399,29 @@ export interface AuthFileAccountScheduling {
   /** 按空闲窗口判定已关闭（超时）的会话数（<= sessions_total）。 */
   sessions_closed?: number;
   [key: string]: unknown;
+}
+
+/** 配速快照中的动态值不可用时为 null，不能当作零。 */
+export interface AuthFileWarmupTrafficPacing {
+  status: 'active' | 'disabled' | 'uninitialized' | 'error' | 'not_applicable';
+  reason: string;
+  observed_at: string;
+  request_balance: number | null;
+  request_capacity: number | null;
+  min_admission_requests: number | null;
+  refill_per_hour: number | null;
+  admission_balance_eta_seconds: number | null;
+  rolling_24h_requests: number | null;
+  daily_request_budget: number | null;
+  rolling_60s_requests: number | null;
+  rpm_limit: number | null;
+  active_binding_groups: number | null;
+  max_active_binding_groups: number | null;
+  active_binding_idle_seconds: number | null;
+  inflight: number | null;
+  concurrency_limit: number | null;
+  pending_requests: number | null;
+  blocking_reasons: string[];
 }
 
 /**
