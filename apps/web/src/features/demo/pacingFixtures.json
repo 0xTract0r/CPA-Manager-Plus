@@ -1,0 +1,443 @@
+{
+  "files": [
+    {
+      "name": "pacing-pro.json",
+      "type": "claude",
+      "provider": "claude",
+      "auth_index": "pacing-pro",
+      "note": "Pacing fixture · pro",
+      "disabled": false,
+      "status": "healthy",
+      "account_scheduling": {
+        "subscription_tier": "pro",
+        "tier_source": "auto",
+        "warmup": {
+          "mature": false,
+          "stage": "ramp",
+          "age_days": 3
+        },
+        "sessions_total": 0,
+        "warmup_traffic_pacing": {
+          "status": "active",
+          "reason": "observed",
+          "observed_at": "2026-09-20T08:00:00Z",
+          "request_balance": 2.55,
+          "request_capacity": 8,
+          "min_admission_requests": 4,
+          "refill_per_hour": 2,
+          "admission_balance_eta_seconds": 2610,
+          "rolling_24h_requests": 12,
+          "daily_request_budget": 48,
+          "rolling_60s_requests": 1,
+          "rpm_limit": 3,
+          "active_binding_groups": 0,
+          "max_active_binding_groups": 1,
+          "active_binding_idle_seconds": 300,
+          "inflight": 0,
+          "concurrency_limit": 1,
+          "pending_requests": 1,
+          "blocking_reasons": [
+            "request_balance"
+          ]
+        }
+      }
+    },
+    {
+      "name": "pacing-max5.json",
+      "type": "claude",
+      "provider": "claude",
+      "auth_index": "pacing-max5",
+      "note": "Pacing fixture · max5",
+      "disabled": false,
+      "status": "healthy",
+      "account_scheduling": {
+        "subscription_tier": "max_5x",
+        "tier_source": "auto",
+        "warmup": {
+          "mature": false,
+          "stage": "ramp",
+          "age_days": 3
+        },
+        "sessions_total": 0,
+        "warmup_traffic_pacing": {
+          "status": "active",
+          "reason": "observed",
+          "observed_at": "2026-09-20T08:00:00Z",
+          "request_balance": 0.75,
+          "request_capacity": 8,
+          "min_admission_requests": 4,
+          "refill_per_hour": 2,
+          "admission_balance_eta_seconds": 2610,
+          "rolling_24h_requests": 12,
+          "daily_request_budget": 48,
+          "rolling_60s_requests": 1,
+          "rpm_limit": 3,
+          "active_binding_groups": 0,
+          "max_active_binding_groups": 1,
+          "active_binding_idle_seconds": 300,
+          "inflight": 0,
+          "concurrency_limit": 1,
+          "pending_requests": 1,
+          "blocking_reasons": [
+            "request_balance"
+          ]
+        }
+      }
+    },
+    {
+      "name": "pacing-max20.json",
+      "type": "claude",
+      "provider": "claude",
+      "auth_index": "pacing-max20",
+      "note": "Pacing fixture · max20",
+      "disabled": false,
+      "status": "healthy",
+      "account_scheduling": {
+        "subscription_tier": "max_20x",
+        "tier_source": "override",
+        "warmup": {
+          "mature": false,
+          "stage": "ramp",
+          "age_days": 3
+        },
+        "sessions_total": 0,
+        "warmup_traffic_pacing": {
+          "status": "active",
+          "reason": "observed",
+          "observed_at": "2026-09-20T08:00:00Z",
+          "request_balance": 6,
+          "request_capacity": 12,
+          "min_admission_requests": 6,
+          "refill_per_hour": 2,
+          "admission_balance_eta_seconds": 2610,
+          "rolling_24h_requests": 12,
+          "daily_request_budget": 48,
+          "rolling_60s_requests": 1,
+          "rpm_limit": 3,
+          "active_binding_groups": 1,
+          "max_active_binding_groups": 1,
+          "active_binding_idle_seconds": 300,
+          "inflight": 0,
+          "concurrency_limit": 1,
+          "pending_requests": 1,
+          "blocking_reasons": [
+            "active_groups"
+          ]
+        }
+      }
+    },
+    {
+      "name": "pacing-disabled.json",
+      "type": "claude",
+      "provider": "claude",
+      "auth_index": "pacing-disabled",
+      "note": "Pacing fixture · disabled",
+      "disabled": false,
+      "status": "healthy",
+      "account_scheduling": {
+        "subscription_tier": "pro",
+        "tier_source": "auto",
+        "warmup": {
+          "mature": false,
+          "stage": "ramp",
+          "age_days": 3
+        },
+        "sessions_total": 0,
+        "warmup_traffic_pacing": {
+          "status": "disabled",
+          "reason": "config_disabled",
+          "observed_at": "2026-09-20T08:00:00Z",
+          "request_balance": null,
+          "request_capacity": 8,
+          "min_admission_requests": 4,
+          "refill_per_hour": null,
+          "admission_balance_eta_seconds": null,
+          "rolling_24h_requests": null,
+          "daily_request_budget": 48,
+          "rolling_60s_requests": null,
+          "rpm_limit": 3,
+          "active_binding_groups": null,
+          "max_active_binding_groups": 1,
+          "active_binding_idle_seconds": 300,
+          "inflight": null,
+          "concurrency_limit": 1,
+          "pending_requests": null,
+          "blocking_reasons": [
+            "request_balance"
+          ]
+        }
+      }
+    },
+    {
+      "name": "pacing-unknown.json",
+      "type": "claude",
+      "provider": "claude",
+      "auth_index": "pacing-unknown",
+      "note": "Pacing fixture · unknown",
+      "disabled": false,
+      "status": "healthy",
+      "account_scheduling": {
+        "subscription_tier": "max_5x",
+        "tier_source": "auto",
+        "warmup": {
+          "mature": false,
+          "stage": "ramp",
+          "age_days": 3
+        },
+        "sessions_total": 0
+      }
+    },
+    {
+      "name": "pacing-error.json",
+      "type": "claude",
+      "provider": "claude",
+      "auth_index": "pacing-error",
+      "note": "Pacing fixture · error",
+      "disabled": false,
+      "status": "healthy",
+      "account_scheduling": {
+        "subscription_tier": "pro",
+        "tier_source": "auto",
+        "warmup": {
+          "mature": false,
+          "stage": "ramp",
+          "age_days": 3
+        },
+        "sessions_total": 0,
+        "warmup_traffic_pacing": {
+          "status": "error",
+          "reason": "state_unavailable",
+          "observed_at": "2026-09-20T08:00:00Z",
+          "request_balance": null,
+          "request_capacity": 8,
+          "min_admission_requests": 4,
+          "refill_per_hour": null,
+          "admission_balance_eta_seconds": null,
+          "rolling_24h_requests": null,
+          "daily_request_budget": 48,
+          "rolling_60s_requests": null,
+          "rpm_limit": 3,
+          "active_binding_groups": null,
+          "max_active_binding_groups": 1,
+          "active_binding_idle_seconds": 300,
+          "inflight": null,
+          "concurrency_limit": 1,
+          "pending_requests": null,
+          "blocking_reasons": [
+            "request_balance"
+          ]
+        }
+      }
+    },
+    {
+      "name": "pacing-uninitialized.json",
+      "type": "claude",
+      "provider": "claude",
+      "auth_index": "pacing-uninitialized",
+      "note": "Pacing fixture · uninitialized",
+      "disabled": false,
+      "status": "healthy",
+      "account_scheduling": {
+        "subscription_tier": "pro",
+        "tier_source": "auto",
+        "warmup": {
+          "mature": false,
+          "stage": "ramp",
+          "age_days": 3
+        },
+        "sessions_total": 0,
+        "warmup_traffic_pacing": {
+          "status": "uninitialized",
+          "reason": "ledger_missing",
+          "observed_at": "2026-09-20T08:00:00Z",
+          "request_balance": null,
+          "request_capacity": 8,
+          "min_admission_requests": 4,
+          "refill_per_hour": null,
+          "admission_balance_eta_seconds": null,
+          "rolling_24h_requests": null,
+          "daily_request_budget": 48,
+          "rolling_60s_requests": null,
+          "rpm_limit": 3,
+          "active_binding_groups": null,
+          "max_active_binding_groups": 1,
+          "active_binding_idle_seconds": 300,
+          "inflight": null,
+          "concurrency_limit": 1,
+          "pending_requests": null,
+          "blocking_reasons": [
+            "request_balance"
+          ]
+        }
+      }
+    },
+    {
+      "name": "pacing-mature.json",
+      "type": "claude",
+      "provider": "claude",
+      "auth_index": "pacing-mature",
+      "note": "Pacing fixture · mature",
+      "disabled": false,
+      "status": "healthy",
+      "account_scheduling": {
+        "subscription_tier": "max_20x",
+        "tier_source": "auto",
+        "warmup": {
+          "mature": true,
+          "stage": "mature",
+          "age_days": 40
+        },
+        "sessions_total": 0,
+        "warmup_traffic_pacing": {
+          "status": "not_applicable",
+          "reason": "mature",
+          "observed_at": "2026-09-20T08:00:00Z",
+          "request_balance": null,
+          "request_capacity": 8,
+          "min_admission_requests": 4,
+          "refill_per_hour": null,
+          "admission_balance_eta_seconds": null,
+          "rolling_24h_requests": null,
+          "daily_request_budget": 48,
+          "rolling_60s_requests": null,
+          "rpm_limit": 3,
+          "active_binding_groups": null,
+          "max_active_binding_groups": 1,
+          "active_binding_idle_seconds": 300,
+          "inflight": null,
+          "concurrency_limit": 1,
+          "pending_requests": null,
+          "blocking_reasons": [
+            "request_balance"
+          ]
+        }
+      }
+    },
+    {
+      "name": "pacing-threshold.json",
+      "type": "claude",
+      "provider": "claude",
+      "auth_index": "pacing-threshold",
+      "note": "Pacing fixture · threshold",
+      "disabled": false,
+      "status": "healthy",
+      "account_scheduling": {
+        "subscription_tier": "pro",
+        "tier_source": "auto",
+        "warmup": {
+          "mature": false,
+          "stage": "ramp",
+          "age_days": 3
+        },
+        "sessions_total": 0,
+        "warmup_traffic_pacing": {
+          "status": "active",
+          "reason": "observed",
+          "observed_at": "2026-09-20T08:00:00Z",
+          "request_balance": 1,
+          "request_capacity": 3,
+          "min_admission_requests": 1,
+          "refill_per_hour": 2,
+          "admission_balance_eta_seconds": 2610,
+          "rolling_24h_requests": 12,
+          "daily_request_budget": 48,
+          "rolling_60s_requests": 1,
+          "rpm_limit": 3,
+          "active_binding_groups": 0,
+          "max_active_binding_groups": 1,
+          "active_binding_idle_seconds": 300,
+          "inflight": 0,
+          "concurrency_limit": 1,
+          "pending_requests": 1,
+          "blocking_reasons": []
+        }
+      }
+    }
+  ],
+  "boundary_files": [
+    {
+      "name": "pacing-shared.json",
+      "type": "claude",
+      "provider": "claude",
+      "auth_index": "first",
+      "note": "Pacing boundary · first",
+      "disabled": false,
+      "status": "healthy",
+      "account_scheduling": {
+        "subscription_tier": "pro",
+        "tier_source": "auto",
+        "warmup": {
+          "mature": false,
+          "stage": "ramp",
+          "age_days": 3
+        },
+        "sessions_total": 0,
+        "warmup_traffic_pacing": {
+          "status": "active",
+          "reason": "observed",
+          "observed_at": "2026-09-20T08:00:00Z",
+          "request_balance": 0.999,
+          "request_capacity": 8,
+          "min_admission_requests": 4,
+          "refill_per_hour": 2,
+          "admission_balance_eta_seconds": 2610,
+          "rolling_24h_requests": 12,
+          "daily_request_budget": 48,
+          "rolling_60s_requests": 1,
+          "rpm_limit": 3,
+          "active_binding_groups": 0,
+          "max_active_binding_groups": 1,
+          "active_binding_idle_seconds": 300,
+          "inflight": 0,
+          "concurrency_limit": 1,
+          "pending_requests": 1,
+          "blocking_reasons": [
+            "request_balance"
+          ]
+        }
+      }
+    },
+    {
+      "name": "pacing-shared.json",
+      "type": "claude",
+      "provider": "claude",
+      "note": "Pacing boundary · second",
+      "disabled": false,
+      "status": "healthy",
+      "account_scheduling": {
+        "subscription_tier": "max_20x",
+        "tier_source": "override",
+        "warmup": {
+          "mature": false,
+          "stage": "ramp",
+          "age_days": 3
+        },
+        "sessions_total": 0,
+        "warmup_traffic_pacing": {
+          "status": "active",
+          "reason": "observed",
+          "observed_at": "2026-09-20T08:00:00Z",
+          "request_balance": 11.999,
+          "request_capacity": 16,
+          "min_admission_requests": 12,
+          "refill_per_hour": 2,
+          "admission_balance_eta_seconds": 2610,
+          "rolling_24h_requests": 12,
+          "daily_request_budget": 48,
+          "rolling_60s_requests": 1,
+          "rpm_limit": 3,
+          "active_binding_groups": 1,
+          "max_active_binding_groups": 1,
+          "active_binding_idle_seconds": 300,
+          "inflight": 0,
+          "concurrency_limit": 1,
+          "pending_requests": 1,
+          "blocking_reasons": [
+            "active_groups"
+          ]
+        }
+      },
+      "authIndex": "second"
+    }
+  ]
+}

@@ -51,6 +51,7 @@ import {
   type QuotaProviderType,
   type ResolvedTheme,
 } from '@/features/authFiles/constants';
+import { WarmupPacingModal } from '@/features/authFiles/components/WarmupPacing';
 import { AuthFileCard } from '@/features/authFiles/components/AuthFileCard';
 import { AuthJsonPasteModal } from '@/features/authFiles/components/AuthJsonPasteModal';
 import { AuthFileModelsModal } from '@/features/authFiles/components/AuthFileModelsModal';
@@ -248,6 +249,7 @@ export function AuthFilesPage() {
   const [batchActionBarVisible, setBatchActionBarVisible] = useState(false);
   const [uiStateHydrated, setUiStateHydrated] = useState(false);
   const [authJsonPasteOpen, setAuthJsonPasteOpen] = useState(false);
+  const [pacingFileKey, setPacingFileKey] = useState<string | null>(null);
   const [batchPriorityOpen, setBatchPriorityOpen] = useState(false);
   const [batchPriorityValue, setBatchPriorityValue] = useState('');
   const [codexReauthTarget, setCodexReauthTarget] = useState<CodexReauthTarget | null>(null);
@@ -2033,6 +2035,7 @@ export function AuthFilesPage() {
                       onRefreshAntigravitySubscription={refreshSubscription}
                       quotaCooldown={getQuotaCooldownForFile(file)}
                       onShowModels={showModels}
+                      onShowWarmupPacing={setPacingFileKey}
                       onReauth={(targetFile) =>
                         setCodexReauthTarget(createCodexReauthTargetFromAuthFile(targetFile))
                       }
@@ -2112,6 +2115,11 @@ export function AuthFilesPage() {
         onDeleteAlias={handleDeleteAlias}
       />
 
+      <WarmupPacingModal
+        file={pacingFileKey === null ? null : (fileBySelectionKey.get(pacingFileKey) ?? null)}
+        open={pacingFileKey !== null}
+        onClose={() => setPacingFileKey(null)}
+      />
       <AuthFileModelsModal
         open={modelsModalOpen}
         fileName={modelsFileName}
