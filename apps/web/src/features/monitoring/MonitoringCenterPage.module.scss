@@ -1737,6 +1737,30 @@
   line-height: 1.45;
 }
 
+.realtimeFastBadge {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 3px;
+  padding: 2px 6px;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--warning-color, #d97706) 88%, var(--text-primary));
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid color-mix(in srgb, var(--warning-color, #d97706) 28%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--warning-color, #d97706) 10%, transparent);
+}
+
+.realtimeFastBadgeBlocked {
+  color: color-mix(in srgb, var(--success-color, #16816a) 88%, var(--text-primary));
+  border-color: color-mix(in srgb, var(--success-color, #16816a) 28%, transparent);
+  background: color-mix(in srgb, var(--success-color, #16816a) 9%, transparent);
+}
+
 // "本次用量" 列每个 "标签 数值" 段（如 "缓存读取 200.0K"）必须整体不可断，
 // 只允许容器在 " · " 分隔符处换行；否则窄列 + 上面的 word-break:break-word 会把
 // 紧凑数字从中间断行（见 buildRealtimeTokenSummary 拼接逻辑）。这里用更高特异性

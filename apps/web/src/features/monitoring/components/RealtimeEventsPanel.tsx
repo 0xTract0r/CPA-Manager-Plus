@@ -157,6 +157,40 @@ const buildReasoningTierNativeTitle = (row: MonitoringEventRow) => {
   return `Effort: ${effort} · Tier: ${tier}`;
 };
 
+type CodexFastDisplay = { label: string; title: string; blocked: boolean };
+
+const buildCodexFastDisplay = (row: MonitoringEventRow, t: TFunction): CodexFastDisplay | null => {
+  const context = row.telemetry?.fast_context;
+  if (!context || context.request_kind !== 'serving') return null;
+  const clientTier = String(context.client_service_tier || '')
+    .trim()
+    .toLowerCase();
+  const upstreamTier = String(context.upstream_request_service_tier || '')
+    .trim()
+    .toLowerCase();
+  const clientRequestedFast = clientTier === 'fast' || clientTier === 'priority';
+  if (
+    clientRequestedFast &&
+    context.server_fast_enabled === false &&
+    (upstreamTier === 'default' || upstreamTier === 'auto')
+  ) {
+    return {
+      label: t('monitoring.codex_fast_blocked'),
+      title: t('monitoring.codex_fast_blocked_hint'),
+      blocked: true,
+    };
+  }
+  if (upstreamTier !== 'fast' && upstreamTier !== 'priority') return null;
+  const source = ['client', 'account', 'both'].includes(context.tier_source)
+    ? context.tier_source
+    : 'unknown';
+  return {
+    label: t(`monitoring.codex_fast_outbound_${source}`),
+    title: t('monitoring.codex_fast_outbound_hint'),
+    blocked: false,
+  };
+};
+
 const shortLabel = (
   t: TFunction,
   shortKey: string,
@@ -1882,6 +1916,7 @@ export function RealtimeEventsPanel({
                 row.resolvedModel.trim() !== row.model;
               const reasoningEffort = formatOptionalText(row.reasoningEffort);
               const serviceTier = formatOptionalText(row.serviceTier);
+              const codexFastDisplay = buildCodexFastDisplay(row, t);
               const failureDetails = buildFailureDetails(row, t, locale);
               const failureTooltipId = failureDetails
                 ? `${tooltipIdPrefix}-failure-tooltip-${row.id}`
@@ -1959,13 +1994,8 @@ export function RealtimeEventsPanel({
                     />
                   </td>
                   <td title={buildReasoningTierNativeTitle(row)}>
-                    {/* 精确复刻上游 seakee 默认的"推理/服务"合并列：两行都带标签、都恒显
-                        (仿上游 formatOptionalText，缺失显中性占位 —，不再像旧版那样只在
-                        service_tier 存在时才渲染第 2 行)。第 1 行 "{思考标签}: {effort}"，
-                        第 2 行 "{服务标签}: {tier}"；字号/字重与上游一致（12px/400），仅
-                        颜色区分——第 1 行走强调色，第 2 行走弱化灰色（见 SCSS 的
-                        .realtimeReasoningValue / .realtimeServiceValue），不再靠字号缩小
-                        把第 2 行做成 <small>。左对齐与其它列一致。 */}
+                    {/* 前两行恒定显示客户端请求的思考强度和服务档位；Codex 有
+                        fast_context 时追加 core 最终出站极速来源或拦截结果徽标。 */}
                     <div className={styles.primaryCell}>
                       <span className={styles.realtimeReasoningValue}>
                         {`${realtimeReasoningLabel}: ${reasoningEffort !== '-' ? reasoningEffort : REASONING_TIER_PLACEHOLDER}`}
@@ -1973,6 +2003,16 @@ export function RealtimeEventsPanel({
                       <span className={styles.realtimeServiceValue}>
                         {`${realtimeServiceLabel}: ${serviceTier !== '-' ? serviceTier : REASONING_TIER_PLACEHOLDER}`}
                       </span>
+                      {codexFastDisplay ? (
+                        <span
+                          className={`${styles.realtimeFastBadge} ${
+                            codexFastDisplay.blocked ? styles.realtimeFastBadgeBlocked : ''
+                          }`}
+                          title={codexFastDisplay.title}
+                        >
+                          {codexFastDisplay.label}
+                        </span>
+                      ) : null}
                     </div>
                   </td>
                   <td>

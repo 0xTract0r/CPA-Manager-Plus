@@ -41,6 +41,14 @@ export interface PerformanceData {
   coverage_note: string;
 }
 export interface RequestTelemetry {
+  fast_context?: {
+    schema_version: number;
+    client_service_tier?: string;
+    upstream_request_service_tier: string;
+    server_fast_enabled?: boolean;
+    tier_source: 'client' | 'account' | 'both' | 'default' | 'unknown' | string;
+    request_kind: 'serving' | 'prewarm' | string;
+  };
   version: number;
   attempt_id: string;
   request_id?: string;

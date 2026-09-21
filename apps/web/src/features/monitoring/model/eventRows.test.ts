@@ -103,6 +103,31 @@ describe('buildEventRows', () => {
     expect(row.searchText).toContain('medium');
   });
 
+  it('keeps final Codex Fast tier and source searchable', () => {
+    const [row] = buildRows({
+      telemetry: {
+        version: 2,
+        attempt_id: 'attempt-fast',
+        started_at_ms: 1,
+        ended_at_ms: 2,
+        transport: 'websocket',
+        observation_kind: 'protocol_content_events',
+        observed_stages: ['executor'],
+        fast_context: {
+          schema_version: 1,
+          client_service_tier: 'priority',
+          upstream_request_service_tier: 'default',
+          server_fast_enabled: false,
+          tier_source: 'default',
+          request_kind: 'serving',
+        },
+      },
+    });
+
+    expect(row.searchText).toContain('priority');
+    expect(row.searchText).toContain('default');
+  });
+
   it('keeps response header diagnostics searchable', () => {
     const [row] = buildRows({
       failed: true,
