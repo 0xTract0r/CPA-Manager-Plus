@@ -184,7 +184,7 @@ function rfc3339ToDatetimeLocal(value: string | null | undefined): string | null
   return toDatetimeLocal(new Date(ms));
 }
 
-/** 首次投产锚点的「一键候选」视图模型（最近活动 / 首次认证 / 当前时间）。 */
+/** 首次投产锚点的「一键候选」视图模型（账号创建 / 最近活动 / 当前时间）。 */
 interface AnchorCandidate {
   key: string;
   testId: string;
@@ -276,8 +276,11 @@ export function AccountSchedulingPanel(props: AccountSchedulingPanelProps) {
   // 变化，也不因一次 Apply 后 echo 省略而丢失，所以读原始基线 prop 而非可变 view）。
   // 主候选是 high-water 的「最近活动」（last_activity_at）——底层是 CLI 设备版本高水位、
   // 仅版本升级时更新，非逐次服务：只用过一个版本的号 ≈ 首次服务，升级过的老号可能偏晚。
-  // 某候选缺失时不渲染那个按钮；「当前时间」永远有（前端本地算，不依赖投影）。刻意不含
-  // 「Anthropic 账号创建时间」——那会虚高成熟度、skip 养号（封号风险）。
+  // 某候选缺失时不渲染那个按钮；「当前时间」永远有（前端本地算，不依赖投影）。
+  //
+  // 已下线「首次认证」候选（原 first_auth_at）：那是随身份轮换刷新的身份分配时间，
+  // 不是账号的真实首投时间，拿来填养号锚点是错值。历史身份轮换时间仍可在「身份变更
+  // 审计」历史（AuthFilesAccountSettingsModal 的 history recorded_at）里查，不受影响。
   const anchorCandidateSource = initialScheduling?.anchor_candidates;
   const anchorCandidates: AnchorCandidate[] = [];
   const lastActivityLocal = rfc3339ToDatetimeLocal(anchorCandidateSource?.last_activity_at);
@@ -296,19 +299,6 @@ export function AccountSchedulingPanel(props: AccountSchedulingPanelProps) {
       variant: 'primary',
     });
   }
-  const firstAuthLocal = rfc3339ToDatetimeLocal(anchorCandidateSource?.first_auth_at);
-  if (firstAuthLocal) {
-    anchorCandidates.push({
-      key: 'first-auth',
-      testId: 'account-settings-scheduling-first-production-at-candidate-first-auth',
-      labelText: t('auth_files.account_settings_scheduling_first_production_at_candidate_first_auth', {
-        defaultValue: 'First authenticated',
-      }),
-      datetimeLocal: firstAuthLocal,
-      displayText: firstAuthLocal.replace('T', ' '),
-      variant: 'secondary',
-    });
-  }
   // 「当前时间」候选恒在（不依赖投影数据）。
   const nowLocal = nowDatetimeLocal();
   anchorCandidates.push({
@@ -321,6 +311,15 @@ export function AccountSchedulingPanel(props: AccountSchedulingPanelProps) {
     displayText: nowLocal.replace('T', ' '),
     variant: 'ghost',
   });
+
+  // 「账号创建（Anthropic）」：**只读展示行**，不是候选按钮，不进 anchor_candidates、
+  // 点击不改 first_production 输入。数据源是 account_scheduling 顶层字段
+  // `account_created_at`（只读展示字段，见 authFile.ts 类型注释），不再从
+  // anchor_candidates 读——那里刻意不含账号创建时间。直接拿账号创建时间当首投锚点
+  // 会虚高账号成熟度、跳过养号曲线（封号风险），是既有防封决策，所以这里只展示、
+  // 不提供一键填充。缺值时不渲染该行。
+  const accountCreatedLocal = rfc3339ToDatetimeLocal(initialScheduling?.account_created_at);
+  const accountCreatedDisplayText = accountCreatedLocal ? accountCreatedLocal.replace('T', ' ') : null;
 
   // 锚点状态回显基于「待应用的输入值」而非 view：清空输入后立即显示「自动」，不残留
   // 已应用但尚未清除的旧锚点，避免和输入框 / 清除动作自相矛盾。有值 → 显示当前锚点；
@@ -523,13 +522,33 @@ export function AccountSchedulingPanel(props: AccountSchedulingPanelProps) {
           onChange={(e) => handleFirstProductionChange(e.target.value)}
           hint={t('auth_files.account_settings_scheduling_first_production_at_hint', {
             defaultValue:
-              'Empty = auto warm-up as a new account (the default for new accounts). To migrate an account that was already serving in production before adaptive scheduling, set its real serve time by picking a candidate above: "Last activity" = derived from this account\'s CLI device-version changes (for an account that only ever used one version this ≈ its first serve; for an upgraded older account it may be later than the true first serve); "First authenticated" = the current identity assignment time (updated after an identity rotation), not strictly the first-ever authentication; "Current time" = stamp now. Setting it earlier than reality makes the account look overly mature and skips warm-up (ban risk) — when unsure, use "Last activity" or "Current time", or leave it empty. "Clear" resets it back to auto.',
+              'Empty = auto warm-up as a new account (the default for new accounts). To migrate an account that was already serving in production before adaptive scheduling, set its real serve time by picking a candidate above: "Last activity" = derived from this account\'s CLI device-version changes (for an account that only ever used one version this ≈ its first serve; for an upgraded older account it may be later than the true first serve); "Current time" = stamp now. Setting it earlier than reality makes the account look overly mature and skips warm-up (ban risk) — when unsure, use "Last activity" or "Current time", or leave it empty. "Clear" resets it back to auto.',
           })}
           error={firstProductionAtError ?? undefined}
         />
-        {/* 候选锚点一键选择：展示该账号真实拥有的时间戳（最近活动 / 首次认证 /
-            当前时间），点一下就把日期输入设成对应值，免手打/猜。每个按钮显示
-            含义标签 + 具体时间，让用户看清在选什么；点选走现有 Apply → PATCH set。 */}
+        {/* 账号创建（Anthropic）：只读展示行，非候选按钮——不触发 handleFirstProductionChange，
+            不参与一键填充首投输入框。缺值不渲染。展示与候选行分离，避免用户误以为点它会
+            填首投锚点（那会虚高账号成熟度、跳过养号，是既有防封决策）。 */}
+        {accountCreatedDisplayText && (
+          <div
+            className={styles.accountCreatedInfo}
+            data-testid="account-settings-scheduling-account-created"
+            title={t('auth_files.account_settings_scheduling_account_created_tooltip', {
+              defaultValue:
+                'Anthropic-side account creation time; stable and reference-only — not a warm-up anchor. Falls back to the subscription creation time when missing.',
+            })}
+          >
+            <span className={styles.candidatesLabel}>
+              {t('auth_files.account_settings_scheduling_account_created_label', {
+                defaultValue: 'Account created (Anthropic)',
+              })}
+            </span>
+            <span className={styles.candidateTime}>{accountCreatedDisplayText}</span>
+          </div>
+        )}
+        {/* 候选锚点一键选择：展示该账号真实拥有的时间戳（最近活动 / 当前时间），
+            点一下就把日期输入设成对应值，免手打/猜。每个按钮显示含义标签 + 具体
+            时间，让用户看清在选什么；点选走现有 Apply → PATCH set。 */}
         <div
           className={styles.candidates}
           data-testid="account-settings-scheduling-first-production-at-candidates"

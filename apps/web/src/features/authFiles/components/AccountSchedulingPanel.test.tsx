@@ -142,8 +142,8 @@ type Harness = {
   getFirstProductionInput: () => ReturnType<ReactTestRenderer['root']['findByType']>;
   getFirstProductionClear: () => ReturnType<ReactTestRenderer['root']['findByType']> | undefined;
   getFirstProductionSetNow: () => ReturnType<ReactTestRenderer['root']['findByType']> | undefined;
+  getAccountCreatedDisplay: () => ReturnType<ReactTestRenderer['root']['findAll']>[number] | undefined;
   getCandidateLastActivity: () => ReturnType<ReactTestRenderer['root']['findByType']> | undefined;
-  getCandidateFirstAuth: () => ReturnType<ReactTestRenderer['root']['findByType']> | undefined;
   getCandidateNow: () => ReturnType<ReactTestRenderer['root']['findByType']> | undefined;
   getApplyButton: () => ReturnType<ReactTestRenderer['root']['findByType']> | undefined;
   getText: () => string;
@@ -159,15 +159,17 @@ const toLocalInput = (rfc: string): string => {
 };
 
 const LAST_ACTIVITY_RFC = '2026-09-02T13:19:00Z';
-const FIRST_AUTH_RFC = '2026-08-30T06:05:00Z';
+const ACCOUNT_CREATED_RFC = '2026-08-30T06:05:00Z';
 
 const candidatesScheduling: AuthFileAccountScheduling = {
   subscription_tier: 'max_5x',
   tier_source: 'auto',
   rate_scale: 1,
+  // account_created_at 是 account_scheduling 顶层只读展示字段，不在 anchor_candidates 里
+  // （见 authFile.ts 类型注释：刻意不作为候选，防止虚高账号成熟度）。
+  account_created_at: ACCOUNT_CREATED_RFC,
   anchor_candidates: {
     last_activity_at: LAST_ACTIVITY_RFC,
-    first_auth_at: FIRST_AUTH_RFC,
   },
 };
 
@@ -214,6 +216,12 @@ const mountPanel = (overrides: Partial<AccountSchedulingPanelProps> = {}): Harne
         (node) =>
           node.props['data-testid'] === 'account-settings-scheduling-first-production-at-set-now'
       );
+  // 「账号创建」是只读展示行（div），不是 Button——用 findAll 按 data-testid 定位，
+  // 不能用 findAllByType(Button)。host 元素在 react-test-renderer 树里只出现一次。
+  const getAccountCreatedDisplay = () =>
+    renderer.root.findAll(
+      (node) => node.props?.['data-testid'] === 'account-settings-scheduling-account-created'
+    )[0];
   const getCandidateLastActivity = () =>
     renderer.root
       .findAllByType(Button)
@@ -221,14 +229,6 @@ const mountPanel = (overrides: Partial<AccountSchedulingPanelProps> = {}): Harne
         (node) =>
           node.props['data-testid'] ===
           'account-settings-scheduling-first-production-at-candidate-last-activity'
-      );
-  const getCandidateFirstAuth = () =>
-    renderer.root
-      .findAllByType(Button)
-      .find(
-        (node) =>
-          node.props['data-testid'] ===
-          'account-settings-scheduling-first-production-at-candidate-first-auth'
       );
   const getCandidateNow = () =>
     renderer.root
@@ -257,7 +257,7 @@ const mountPanel = (overrides: Partial<AccountSchedulingPanelProps> = {}): Harne
     getFirstProductionClear,
     getFirstProductionSetNow,
     getCandidateLastActivity,
-    getCandidateFirstAuth,
+    getAccountCreatedDisplay,
     getCandidateNow,
     getApplyButton,
     getText,
@@ -597,10 +597,47 @@ describe('AccountSchedulingPanel', () => {
     panel.renderer.unmount();
   });
 
-  it('[候选锚点·次选] clicking the first-auth candidate sets the input to that value', () => {
+  it('[账号创建·展示行] renders account-created as a read-only display row, not a candidate button, and clicking it never changes first_production input', () => {
     const panel = mountPanel({ initialScheduling: candidatesScheduling });
-    act(() => panel.getCandidateFirstAuth()?.props.onClick());
-    expect(panel.getFirstProductionInput().props.value).toBe(toLocalInput(FIRST_AUTH_RFC));
+    const display = panel.getAccountCreatedDisplay();
+    expect(display).toBeDefined();
+    // 不是 Button：没有 onClick，类型不是 Button 组件（是普通 div host 元素）。
+    expect(display?.props.onClick).toBeUndefined();
+    expect(display?.type).not.toBe(Button);
+    // 展示的时间来自 account_scheduling 顶层 account_created_at（不再从
+    // anchor_candidates 读），内容里含格式化后的时间字符串。
+    expect(panel.getText()).toContain(toLocalInput(ACCOUNT_CREATED_RFC).replace('T', ' '));
+    // first_production 输入框在挂载时仍为空（未被账号创建时间预填）。
+    expect(panel.getFirstProductionInput().props.value).toBe('');
+    panel.renderer.unmount();
+  });
+
+  it('[账号创建·缺失] omits the read-only display row when account_created_at is absent', () => {
+    const panel = mountPanel(); // autoScheduling：无顶层 account_created_at
+    expect(panel.getAccountCreatedDisplay()).toBeUndefined();
+    panel.renderer.unmount();
+  });
+
+  it('[候选锚点·下线] never renders a "first authenticated" candidate button, even when the legacy field is present', () => {
+    // 后端投影仍可能透出 first_auth_at（类型里保留该字段），但前端已彻底下线这个候选：
+    // 那是随身份轮换刷新的身份分配时间，拿来填养号锚点是错值。
+    const panel = mountPanel({
+      initialScheduling: {
+        subscription_tier: 'max_5x',
+        tier_source: 'auto',
+        rate_scale: 1,
+        anchor_candidates: { last_activity_at: LAST_ACTIVITY_RFC, first_auth_at: '2026-08-30T06:05:00Z' },
+      },
+    });
+    expect(panel.getText()).not.toContain('First authenticated');
+    const firstAuthButton = panel.renderer.root
+      .findAllByType(Button)
+      .find(
+        (node) =>
+          node.props['data-testid'] ===
+          'account-settings-scheduling-first-production-at-candidate-first-auth'
+      );
+    expect(firstAuthButton).toBeUndefined();
     panel.renderer.unmount();
   });
 
@@ -610,13 +647,13 @@ describe('AccountSchedulingPanel', () => {
         subscription_tier: 'max_5x',
         tier_source: 'auto',
         rate_scale: 1,
-        // 只有 last_activity_at，缺 first_auth_at。
+        // 只有 last_activity_at，且无顶层 account_created_at。
         anchor_candidates: { last_activity_at: LAST_ACTIVITY_RFC },
       },
     });
     expect(panel.getCandidateLastActivity()).toBeDefined();
-    // 缺失的候选不渲染对应按钮（优雅降级）。
-    expect(panel.getCandidateFirstAuth()).toBeUndefined();
+    // 账号创建展示行同样按值缺失优雅降级（不渲染）。
+    expect(panel.getAccountCreatedDisplay()).toBeUndefined();
     // 「当前时间」永远有（前端本地算，不依赖投影）。
     expect(panel.getCandidateNow()).toBeDefined();
     panel.renderer.unmount();
@@ -626,7 +663,7 @@ describe('AccountSchedulingPanel', () => {
     // autoScheduling 基线没有 anchor_candidates（真后端投影本轮未接的降级形态）。
     const panel = mountPanel();
     expect(panel.getCandidateLastActivity()).toBeUndefined();
-    expect(panel.getCandidateFirstAuth()).toBeUndefined();
+    expect(panel.getAccountCreatedDisplay()).toBeUndefined();
     expect(panel.getCandidateNow()).toBeDefined();
     panel.renderer.unmount();
   });
@@ -634,8 +671,9 @@ describe('AccountSchedulingPanel', () => {
   it('[候选锚点·禁用] disables the candidate buttons when the disabled prop is set', () => {
     const panel = mountPanel({ initialScheduling: candidatesScheduling, disabled: true });
     expect(panel.getCandidateLastActivity()?.props.disabled).toBe(true);
-    expect(panel.getCandidateFirstAuth()?.props.disabled).toBe(true);
     expect(panel.getCandidateNow()?.props.disabled).toBe(true);
+    // 账号创建是只读展示行，本身没有 disabled 交互态（无 onClick 可禁）。
+    expect(panel.getAccountCreatedDisplay()).toBeDefined();
     panel.renderer.unmount();
   });
 
@@ -678,30 +716,29 @@ describe('AccountSchedulingPanel', () => {
     panel.renderer.unmount();
   });
 
-  it('[候选锚点·demo] pro-03 / default-04 fixtures now render last-activity + now candidates in the panel', () => {
+  it('[候选锚点·demo] pro-03 / default-04 fixtures render last-activity + now candidates in the panel (no first-auth)', () => {
     // 用户走查发现有的 claude demo 号打开只剩「当前时间」候选（缺 anchor_candidates）。
-    // 补齐后：这两个号在面板里必须至少渲染「最近活动 / 首次认证 / 当前时间」。
+    // 补齐后：这两个号在面板里必须至少渲染「最近活动 / 当前时间」；demo fixture 仍带
+    // 遗留 first_auth_at 数据，但该候选已下线，面板绝不应渲染出对应按钮。
     const files = getDemoAuthFiles().files;
     for (const idx of ['claude-pro-03', 'claude-default-04']) {
       const acct = files.find((f) => f.authIndex === idx);
       expect(acct?.provider).toBe('claude');
       const panel = mountPanel({ initialScheduling: acct?.account_scheduling });
       expect(panel.getCandidateLastActivity()).toBeDefined();
-      expect(panel.getCandidateFirstAuth()).toBeDefined();
       expect(panel.getCandidateNow()).toBeDefined();
+      expect(panel.getText()).not.toContain('First authenticated');
       panel.renderer.unmount();
     }
   });
 
-  it('[候选锚点·demo] claude-research-02 stays the graceful-degradation sample (last-activity only, no first-auth)', () => {
+  it('[候选锚点·demo] claude-research-02 stays the graceful-degradation sample (last-activity only)', () => {
     const acct = getDemoAuthFiles().files.find((f) => f.authIndex === 'claude-research-02');
     const cands = acct?.account_scheduling?.anchor_candidates;
     expect(cands?.last_activity_at).toBeTruthy();
-    // 刻意缺 first_auth_at → 面板只渲染「最近活动 / 当前时间」两个候选。
-    expect(cands?.first_auth_at == null).toBe(true);
     const panel = mountPanel({ initialScheduling: acct?.account_scheduling });
     expect(panel.getCandidateLastActivity()).toBeDefined();
-    expect(panel.getCandidateFirstAuth()).toBeUndefined();
+    expect(panel.getAccountCreatedDisplay()).toBeUndefined();
     expect(panel.getCandidateNow()).toBeDefined();
     panel.renderer.unmount();
   });
