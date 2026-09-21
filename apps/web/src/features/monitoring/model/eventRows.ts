@@ -113,6 +113,7 @@ export const buildEventRows = (
       const taskKey = `${detail.timestamp}|${sourceKey}|${authIndex}`;
       const reasoningEffort = readString(detail.reasoning_effort ?? detail.reasoningEffort);
       const serviceTier = readString(detail.service_tier ?? detail.serviceTier);
+      const fastContext = detail.telemetry?.fast_context;
       const executorType = readString(detail.executor_type ?? detail.executorType);
       const failStatusCodeRaw = detail.fail_status_code ?? detail.failStatusCode;
       const failStatusCode =
@@ -244,6 +245,9 @@ export const buildEventRows = (
           projectId,
           reasoningEffort,
           serviceTier,
+          fastContext?.client_service_tier,
+          fastContext?.upstream_request_service_tier,
+          fastContext?.tier_source,
           executorType,
           normalizedFailStatusCode,
           failSummary,

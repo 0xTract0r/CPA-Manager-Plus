@@ -22,8 +22,11 @@ export function withDemoTelemetry(
   const stalled = index % 5 === 2 && !event.model.includes('haiku');
   const duration = Math.max(event.latency_ms || 1000, stalled ? 18000 : 1000);
   const firstBody = event.ttft_ms || Math.min(170, duration / 2);
+  const isCodex = event.auth_provider_snapshot === 'codex';
+  const clientRequestedFast = isCodex && index % 4 === 1;
   return {
     ...event,
+    service_tier: clientRequestedFast ? 'priority' : event.service_tier,
     latency_ms: duration,
     telemetry: {
       version: 1,
@@ -47,6 +50,25 @@ export function withDemoTelemetry(
       stall_threshold_ms: 1000,
       stream_completed: !event.failed,
       failure_kind: event.failed ? 'upstream_error' : undefined,
+      fast_context: isCodex
+        ? clientRequestedFast
+          ? {
+              schema_version: 1,
+              client_service_tier: 'priority',
+              upstream_request_service_tier: 'default',
+              server_fast_enabled: false,
+              tier_source: 'default',
+              request_kind: 'serving',
+            }
+          : {
+              schema_version: 1,
+              client_service_tier: event.service_tier || 'auto',
+              upstream_request_service_tier: 'priority',
+              server_fast_enabled: true,
+              tier_source: 'account',
+              request_kind: 'serving',
+            }
+        : undefined,
     },
   };
 }
