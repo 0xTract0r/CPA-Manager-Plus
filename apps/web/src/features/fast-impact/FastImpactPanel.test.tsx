@@ -25,6 +25,10 @@ vi.mock('react-i18next', async (importOriginal) => ({
         'fast_impact.no_comparable_title': 'No comparable sample',
         'fast_impact.no_comparable_fast_off':
           '{{defaultCount}} default, {{priorityCount}} Fast, {{unknownCount}} unknown',
+        'fast_impact.no_comparable_fast_unknown':
+          'Fast setting unknown: {{defaultCount}} default, {{unknownCount}} unknown',
+        'fast_impact.coverage_chart_aria':
+          '{{defaultCount}} default, {{priorityCount}} Fast, {{flexCount}} Flex, {{unknownCount}} unknown',
         'fast_impact.view_e2e': 'Use end-to-end TPS',
         'fast_impact.data_gap_details': 'View gaps ({{count}})',
         'fast_impact.comparison_details': 'View evidence ({{count}})',
@@ -130,11 +134,27 @@ describe('FastImpactPanel', () => {
     expect(html).toContain('23,446');
     expect(html).toContain('Fast currently off');
     expect(html).toContain('532 default, 0 Fast, 23,446 unknown');
+    expect(html).toContain('aria-label="532 default, 0 Fast, 0 Flex, 23446 unknown"');
     expect(html).toContain('Use end-to-end TPS');
     expect(html).toContain('<details class=');
     expect(html).not.toContain('<details class="" open=""');
     expect(html).toContain('No sample');
     expect(html).not.toContain('>—<');
+  });
+
+  it('does not describe an unknown account setting as Fast enabled', () => {
+    const unknownAccount = { ...account, account_settings: undefined };
+    const html = renderToStaticMarkup(
+      <FastImpactPanel
+        data={productionShape()}
+        filters={filters}
+        accounts={[unknownAccount]}
+        onFilters={vi.fn()}
+        onRequests={vi.fn()}
+      />
+    );
+    expect(html).toContain('Fast setting unknown: 532 default, 23,446 unknown');
+    expect(html).not.toContain('no_comparable_no_fast');
   });
 
   it('shows a bar comparison and opens evidence when both sides have samples', () => {

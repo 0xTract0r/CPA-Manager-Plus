@@ -90,11 +90,11 @@ export function FastImpactPanel({
     };
     if (readiness.totalAttempts > 0 && readiness.unknownAttempts === readiness.totalAttempts)
       return text('no_comparable_legacy', params);
-    if (readiness.priorityAttempts === 0)
-      return text(
-        fastEnabled === false ? 'no_comparable_fast_off' : 'no_comparable_no_fast',
-        params
-      );
+    if (readiness.priorityAttempts === 0) {
+      if (fastEnabled === false) return text('no_comparable_fast_off', params);
+      if (fastEnabled === true) return text('no_comparable_no_fast', params);
+      return text('no_comparable_fast_unknown', params);
+    }
     if (readiness.defaultAttempts === 0) return text('no_comparable_no_default', params);
     if (readiness.metricDefaultSamples === 0 || readiness.metricPrioritySamples === 0)
       return text('no_comparable_metric', params);
@@ -267,6 +267,7 @@ export function FastImpactPanel({
                 aria-label={text('coverage_chart_aria', {
                   defaultCount: readiness.defaultAttempts,
                   priorityCount: readiness.priorityAttempts,
+                  flexCount: readiness.flexAttempts,
                   unknownCount: readiness.unknownAttempts,
                 })}
               >
@@ -312,6 +313,10 @@ export function FastImpactPanel({
                   <span>
                     <i className={styles.coveragePriority} />
                     {text('priority')} {readiness.priorityAttempts.toLocaleString()}
+                  </span>
+                  <span>
+                    <i className={styles.coverageFlex} />
+                    {text('flex')} {readiness.flexAttempts.toLocaleString()}
                   </span>
                   <span>
                     <i className={styles.coverageUnknown} />
