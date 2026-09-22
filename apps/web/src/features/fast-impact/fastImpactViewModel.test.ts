@@ -93,4 +93,14 @@ describe('buildFastImpactViewModel', () => {
     expect(result.comparableRows[0].defaultMetric.p50).toBe(42);
     expect(result.comparableRows[0].priorityMetric.samples).toBe(7);
   });
+
+  it('does not chart aggregate tiers when the model has no shared load cohort', () => {
+    const value = data();
+    value.models[0].tiers.default = tier(10, 8, 8);
+    value.models[0].tiers.priority = tier(10, 8, 8);
+    const result = buildFastImpactViewModel(value, 'visible_tps');
+    expect(result.metricDefaultSamples).toBe(8);
+    expect(result.metricPrioritySamples).toBe(8);
+    expect(result.comparableRows).toHaveLength(0);
+  });
 });

@@ -42,7 +42,7 @@ export function buildFastImpactViewModel(
     };
   });
   const comparableRows = rows.filter(
-    (row) => row.defaultMetric.samples > 0 && row.priorityMetric.samples > 0
+    (row) => row.cohort != null && row.defaultMetric.samples > 0 && row.priorityMetric.samples > 0
   );
   const metricDefaultSamples = data.models.reduce(
     (sum, model) => sum + metricFor(model.tiers.default, metric).samples,
