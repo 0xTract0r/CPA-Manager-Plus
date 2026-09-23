@@ -27,8 +27,8 @@ export type FastCohort = {
   status: string;
 };
 export type FastModel = {
- query_model: string;
- model_resolution: "resolved" | "unresolved";
+  query_model: string;
+  model_resolution: 'resolved' | 'unresolved';
   model: string;
   attempts: number;
   tiers: Record<string, FastTier>;
@@ -71,5 +71,13 @@ export type FastImpact = {
   scanned: number;
   matched: number;
   complete: boolean;
+  tier_coverage?: {
+    default_attempts: number;
+    priority_attempts: number;
+    flex_attempts: number;
+    unknown_attempts: number;
+    known_from_ms?: number;
+    known_to_ms?: number;
+  };
   models: FastModel[];
 };

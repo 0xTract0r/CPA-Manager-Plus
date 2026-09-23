@@ -81,16 +81,26 @@ type FastModel struct {
 	ObservationsTruncated bool                 `json:"observations_truncated"`
 }
 type FastImpact struct {
-	Version          int          `json:"version"`
-	MetricDefinition string       `json:"metric_definition"`
-	FromMS           int64        `json:"from_ms"`
-	ToMS             int64        `json:"to_ms"`
-	Mode             string       `json:"mode"`
-	Metric           string       `json:"metric"`
-	Scanned          int          `json:"scanned"`
-	Matched          int          `json:"matched"`
-	Complete         bool         `json:"complete"`
-	Models           []*FastModel `json:"models"`
+	Version          int              `json:"version"`
+	MetricDefinition string           `json:"metric_definition"`
+	FromMS           int64            `json:"from_ms"`
+	ToMS             int64            `json:"to_ms"`
+	Mode             string           `json:"mode"`
+	Metric           string           `json:"metric"`
+	Scanned          int              `json:"scanned"`
+	Matched          int              `json:"matched"`
+	Complete         bool             `json:"complete"`
+	TierCoverage     FastTierCoverage `json:"tier_coverage"`
+	Models           []*FastModel     `json:"models"`
+}
+
+type FastTierCoverage struct {
+	DefaultAttempts  int   `json:"default_attempts"`
+	PriorityAttempts int   `json:"priority_attempts"`
+	FlexAttempts     int   `json:"flex_attempts"`
+	UnknownAttempts  int   `json:"unknown_attempts"`
+	KnownFromMS      int64 `json:"known_from_ms,omitempty"`
+	KnownToMS        int64 `json:"known_to_ms,omitempty"`
 }
 
 // 同一聚合函数同时用于数据库查询和脱敏预览，避免前端重写统计口径。
@@ -101,7 +111,7 @@ func BuildFastImpact(events []Event, from, to int64, options FastImpactOptions) 
 	if options.Metric == "" {
 		options.Metric = "visible_tps"
 	}
-	result := FastImpact{Version: 1, MetricDefinition: "visible-v2: (output-reasoning)*1000/(last_visible-first_visible); e2e: output*1000/latency; per-request median; quartiles nearest-rank", FromMS: from, ToMS: to, Mode: options.Mode, Metric: options.Metric, Scanned: len(events), Matched: len(events), Complete: true, Models: []*FastModel{}}
+	result := FastImpact{Version: 1, MetricDefinition: "visible-v2: (output-reasoning)*1000/(last_visible-first_visible); e2e: output*1000/latency; per-request median; quartiles nearest-rank", FromMS: from, ToMS: to, Mode: options.Mode, Metric: options.Metric, Scanned: len(events), Matched: len(events), Complete: true, TierCoverage: buildFastTierCoverage(events), Models: []*FastModel{}}
 	grouped := map[string][]Event{}
 	for _, e := range events {
 		model := e.ResolvedModel
@@ -206,6 +216,36 @@ func BuildFastImpact(events []Event, from, to int64, options FastImpactOptions) 
 	}
 	return result
 }
+
+func buildFastTierCoverage(events []Event) FastTierCoverage {
+	coverage := FastTierCoverage{}
+	for _, event := range events {
+		tier, _, kind := fastTier(event)
+		if kind == "prewarm" {
+			continue
+		}
+		switch tier {
+		case "default":
+			coverage.DefaultAttempts++
+		case "priority":
+			coverage.PriorityAttempts++
+		case "flex":
+			coverage.FlexAttempts++
+		default:
+			coverage.UnknownAttempts++
+			continue
+		}
+		started := fastStart(event)
+		if coverage.KnownFromMS == 0 || started < coverage.KnownFromMS {
+			coverage.KnownFromMS = started
+		}
+		if started > coverage.KnownToMS {
+			coverage.KnownToMS = started
+		}
+	}
+	return coverage
+}
+
 func newFastTier() *FastTier { return &FastTier{Excluded: map[string]int{}, Sources: map[string]int{}} }
 func fastStart(e Event) int64 {
 	if e.Telemetry != nil && e.Telemetry.StartedAtMS > 0 {

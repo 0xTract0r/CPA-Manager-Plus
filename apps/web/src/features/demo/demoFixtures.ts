@@ -2885,7 +2885,8 @@ export const getDemoAuthFiles = () => {
   // 独立 UI 验收样本仅进入 demo/test 构建，由内存 handler 返回，无模型请求。
   if (typeof window !== 'undefined') {
     const params = new URLSearchParams(window.location.search);
-    if (params.get('pacing-fixtures') === '1') return clone({ files: pacingFixtures.files }) as AuthFilesResponse;
+    if (params.get('pacing-fixtures') === '1')
+      return clone({ files: pacingFixtures.files }) as AuthFilesResponse;
     if (params.get('pacing-fixtures') === 'boundary') {
       const files = clone(pacingFixtures.boundary_files) as AuthFileItem[];
       if (params.get('pacing-revision') === '2') {
@@ -2907,6 +2908,7 @@ export const getDemoAuthFiles = () => {
           provider: 'codex',
           type: 'codex',
           status: 'healthy',
+          account_settings: { fast: false } as AuthFileItem['account_settings'],
         },
         {
           name: 'synthetic-samples.json',
@@ -2916,6 +2918,7 @@ export const getDemoAuthFiles = () => {
           provider: 'codex',
           type: 'codex',
           status: 'healthy',
+          account_settings: { fast: true } as AuthFileItem['account_settings'],
         },
       ]
     );
