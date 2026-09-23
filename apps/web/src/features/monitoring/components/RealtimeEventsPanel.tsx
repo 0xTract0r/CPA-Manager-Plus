@@ -43,6 +43,7 @@ import {
 } from '@/features/monitoring/monitoringCenterUiState';
 import { useNotificationStore } from '@/stores';
 import { copyToClipboard } from '@/utils/clipboard';
+import { CONTENT_REVEAL_OPEN_EVENT } from '@/utils/contentReveal';
 import { downloadBlob } from '@/utils/download';
 import { maskSensitiveText, truncateText } from '@/utils/format';
 import { formatInUtc8 } from '@/utils/datetime';
@@ -125,7 +126,6 @@ const FAILURE_TOOLTIP_MAX_HEIGHT = 240;
 const FAILURE_TOOLTIP_CLOSE_DELAY_MS = 120;
 export const REALTIME_CONTENT_TOOLTIP_OPEN_DELAY_MS = 500;
 const CONTENT_TOOLTIP_CLOSE_DELAY_MS = 220;
-const REALTIME_CONTENT_TOOLTIP_OPEN_EVENT = 'cpamp:realtime-content-tooltip-open';
 // "强度/等级"列缺值时的中性占位：只用一个 em dash 字符，不落成裸的 "-"（在等宽字体/
 // 部分渲染环境下容易被读成叉号），也不是任何需要按语言翻译的文案。effort 与 tier
 // 皆缺失时，整格只显这一个占位（第 2 行不渲染）。
@@ -570,7 +570,7 @@ function useContentTooltip<T extends HTMLElement>({
     updatePosition();
     if (typeof window !== 'undefined') {
       window.dispatchEvent(
-        new CustomEvent<string>(REALTIME_CONTENT_TOOLTIP_OPEN_EVENT, { detail: ownerId })
+        new CustomEvent<string>(CONTENT_REVEAL_OPEN_EVENT, { detail: ownerId })
       );
     }
     setOpen(true);
@@ -662,9 +662,9 @@ function useContentTooltip<T extends HTMLElement>({
       tooltipHoveredRef.current = false;
       hideNow();
     };
-    window.addEventListener(REALTIME_CONTENT_TOOLTIP_OPEN_EVENT, handleOtherTooltipOpen);
+    window.addEventListener(CONTENT_REVEAL_OPEN_EVENT, handleOtherTooltipOpen);
     return () => {
-      window.removeEventListener(REALTIME_CONTENT_TOOLTIP_OPEN_EVENT, handleOtherTooltipOpen);
+      window.removeEventListener(CONTENT_REVEAL_OPEN_EVENT, handleOtherTooltipOpen);
     };
   }, [hideNow, ownerId]);
 

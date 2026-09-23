@@ -1,8 +1,9 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAccountPrivacyStore } from '@/stores';
 import { resolveAccountIdentity } from '@/utils/accountIdentity';
-import { AccountIdentity } from './AccountIdentity';
+import { CONTENT_REVEAL_OPEN_EVENT } from '@/utils/contentReveal';
+import { AccountEmailReveal, AccountIdentity } from './AccountIdentity';
 import styles from './AccountIdentity.module.scss';
 
 describe('AccountIdentity', () => {
@@ -36,7 +37,7 @@ describe('AccountIdentity', () => {
     expect(renderer!.root.findAllByProps({ role: 'dialog' })).toHaveLength(0);
 
     act(() => email.props.onMouseEnter());
-    expect(renderer!.root.findByProps({ role: 'dialog' })).toBeTruthy();
+    expect(renderer!.root.findAllByProps({ role: 'dialog' })).toHaveLength(0);
   });
 
   it('renders an explicit note label and can move the secondary email out of the identity block', () => {
@@ -179,5 +180,155 @@ describe('AccountIdentity', () => {
 
     act(() => email.props.onKeyDown({ key: 'Escape', preventDefault: vi.fn() }));
     expect(renderer!.root.findAllByProps({ role: 'dialog' })).toHaveLength(0);
+  });
+});
+
+describe('AccountEmailReveal hover availability', () => {
+  let renderer: ReactTestRenderer;
+  let geometry: {
+    clientWidth: number;
+    scrollWidth: number;
+    clientHeight: number;
+    scrollHeight: number;
+  };
+  const email = 'account.owner@example.test';
+  const render = (props: Partial<React.ComponentProps<typeof AccountEmailReveal>> = {}) => {
+    act(() => {
+      renderer = create(
+        <AccountEmailReveal email={email} masked="ac***@example.test" testId="reveal" {...props} />,
+        {
+          createNodeMock: () =>
+            Object.assign(geometry, {
+              getBoundingClientRect: () => ({ left: 20, top: 20, bottom: 40, width: 100 }),
+            }),
+        }
+      );
+    });
+    return renderer.root.findByProps({ 'data-testid': 'reveal' });
+  };
+  const dialogs = () => renderer.root.findAllByProps({ role: 'dialog' });
+  const advance = (ms: number) =>
+    act(() => {
+      vi.advanceTimersByTime(ms);
+    });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      'window',
+      Object.assign(new EventTarget(), {
+        setTimeout,
+        clearTimeout,
+        innerWidth: 1000,
+        innerHeight: 800,
+      })
+    );
+    useAccountPrivacyStore.setState({ maskEmails: false });
+    geometry = { clientWidth: 200, scrollWidth: 200, clientHeight: 20, scrollHeight: 20 };
+  });
+  afterEach(() => {
+    act(() => renderer?.unmount());
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('does not automatically reveal complete content, but still supports explicit click and keyboard', () => {
+    const trigger = render();
+    act(() => trigger.props.onMouseEnter());
+    advance(700);
+    expect(dialogs()).toHaveLength(0);
+    act(() => trigger.props.onClick());
+    expect(dialogs()).toHaveLength(1);
+    act(() => trigger.props.onKeyDown({ key: 'Escape', preventDefault: vi.fn() }));
+    expect(dialogs()).toHaveLength(0);
+    act(() => trigger.props.onFocus());
+    expect(dialogs()).toHaveLength(1);
+  });
+
+  it.each(['masked', 'abbreviated', 'horizontal', 'vertical'])(
+    'delays %s content until 500 ms',
+    (scenario) => {
+      if (scenario === 'horizontal') geometry.scrollWidth = 250;
+      if (scenario === 'vertical') geometry.scrollHeight = 40;
+      const trigger = render(
+        scenario === 'masked'
+          ? { displayMode: 'masked' }
+          : scenario === 'abbreviated'
+            ? { displayValue: 'account…json' }
+            : {}
+      );
+      act(() => trigger.props.onMouseEnter());
+      advance(499);
+      expect(dialogs()).toHaveLength(0);
+      advance(1);
+      expect(dialogs()).toHaveLength(1);
+    }
+  );
+
+  it('cancels a brief pointer pass', () => {
+    const trigger = render({ displayMode: 'masked' });
+    act(() => trigger.props.onMouseEnter());
+    advance(200);
+    act(() => trigger.props.onMouseLeave());
+    advance(500);
+    expect(dialogs()).toHaveLength(0);
+  });
+
+  it('lets another content reveal close a pinned dialog and cancel a pending reveal', () => {
+    const trigger = render({ displayMode: 'masked' });
+    act(() => trigger.props.onClick());
+    expect(dialogs()).toHaveLength(1);
+    act(() => {
+      window.dispatchEvent(new CustomEvent(CONTENT_REVEAL_OPEN_EVENT, { detail: 'monitoring' }));
+    });
+    expect(dialogs()).toHaveLength(0);
+    act(() => trigger.props.onMouseEnter());
+    advance(200);
+    act(() => {
+      window.dispatchEvent(new CustomEvent(CONTENT_REVEAL_OPEN_EVENT, { detail: 'monitoring' }));
+    });
+    advance(500);
+    expect(dialogs()).toHaveLength(0);
+  });
+
+  it('announces its opening to other content reveals', () => {
+    const onOpen = vi.fn();
+    window.addEventListener(CONTENT_REVEAL_OPEN_EVENT, onOpen);
+    const trigger = render({ displayMode: 'masked' });
+    act(() => trigger.props.onMouseEnter());
+    advance(500);
+    expect(onOpen).toHaveBeenCalledOnce();
+  });
+
+  it('cancels stale reveals when privacy is disabled', () => {
+    act(() => {
+      useAccountPrivacyStore.setState({ maskEmails: true });
+    });
+    const trigger = render();
+    act(() => trigger.props.onMouseEnter());
+    advance(200);
+    act(() => {
+      useAccountPrivacyStore.setState({ maskEmails: false });
+    });
+    advance(500);
+    expect(dialogs()).toHaveLength(0);
+  });
+
+  it('rechecks overflow after the delay and closes an automatic reveal on resize', () => {
+    geometry.scrollWidth = 250;
+    const trigger = render();
+    act(() => trigger.props.onMouseEnter());
+    geometry.clientWidth = 250;
+    advance(500);
+    expect(dialogs()).toHaveLength(0);
+    geometry.clientWidth = 200;
+    act(() => trigger.props.onMouseEnter());
+    advance(500);
+    expect(dialogs()).toHaveLength(1);
+    geometry.clientWidth = 250;
+    act(() => {
+      window.dispatchEvent(new Event('resize'));
+    });
+    expect(dialogs()).toHaveLength(0);
   });
 });
