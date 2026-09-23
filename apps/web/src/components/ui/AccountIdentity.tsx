@@ -15,6 +15,7 @@ import { useTranslation } from 'react-i18next';
 import { IconCheck, IconCopy } from '@/components/ui/icons';
 import { useAccountPrivacyStore } from '@/stores/useAccountPrivacyStore';
 import { copyToClipboard } from '@/utils/clipboard';
+import { CONTENT_REVEAL_OPEN_EVENT } from '@/utils/contentReveal';
 import { maskAccountEmail, readEmailLike, type AccountIdentityView } from '@/utils/accountIdentity';
 import styles from './AccountIdentity.module.scss';
 
@@ -72,6 +73,23 @@ export function AccountEmailReveal({
   const isBrowser = typeof document !== 'undefined';
   const shouldMask = displayMode === 'masked' || (displayMode === 'global' && globalMaskEmails);
   const maskedValue = masked && masked !== email ? masked : maskAccountEmail(email);
+  const visibleValue = displayValue || (shouldMask ? maskedValue : email);
+  const [revealedContent, setRevealedContent] = useState({ email, visibleValue });
+  if (revealedContent.email !== email || revealedContent.visibleValue !== visibleValue) {
+    setRevealedContent({ email, visibleValue });
+    setOpen(false);
+    setPinned(false);
+    setCopied(false);
+  }
+  const canAutomaticallyReveal = useCallback(() => {
+    if (visibleValue !== email) return true;
+    const trigger = triggerRef.current;
+    return Boolean(
+      trigger &&
+      (trigger.scrollWidth > trigger.clientWidth + 1 ||
+        trigger.scrollHeight > trigger.clientHeight + 1)
+    );
+  }, [email, visibleValue]);
 
   const clearCloseTimer = useCallback(() => {
     if (closeTimerRef.current === null || typeof window === 'undefined') return;
@@ -89,25 +107,31 @@ export function AccountEmailReveal({
     if (!triggerRef.current || typeof window === 'undefined') return;
     setPosition(resolveTooltipPosition(triggerRef.current));
   }, []);
-  const show = useCallback(() => {
-    clearCloseTimer();
-    clearOpenTimer();
-    if (typeof window === 'undefined') {
-      setOpen(true);
-      return;
-    }
-    openTimerRef.current = window.setTimeout(() => {
-      openTimerRef.current = null;
-      updatePosition();
-      setOpen(true);
-    }, REVEAL_OPEN_DELAY_MS);
-  }, [clearCloseTimer, clearOpenTimer, updatePosition]);
   const showImmediately = useCallback(() => {
     clearCloseTimer();
     clearOpenTimer();
     updatePosition();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent<string>(CONTENT_REVEAL_OPEN_EVENT, { detail: tooltipId })
+      );
+    }
     setOpen(true);
-  }, [clearCloseTimer, clearOpenTimer, updatePosition]);
+  }, [clearCloseTimer, clearOpenTimer, tooltipId, updatePosition]);
+  const show = useCallback(() => {
+    clearCloseTimer();
+    clearOpenTimer();
+    if (!canAutomaticallyReveal()) return;
+    if (typeof window === 'undefined') {
+      showImmediately();
+      return;
+    }
+    openTimerRef.current = window.setTimeout(() => {
+      openTimerRef.current = null;
+      // 等待期间可能切换宽度；完整可见的内容不再自动展开。
+      if (canAutomaticallyReveal()) showImmediately();
+    }, REVEAL_OPEN_DELAY_MS);
+  }, [canAutomaticallyReveal, clearCloseTimer, clearOpenTimer, showImmediately]);
   const hide = useCallback(() => {
     clearOpenTimer();
     clearCloseTimer();
@@ -140,10 +164,9 @@ export function AccountEmailReveal({
       hide();
       return;
     }
-    updatePosition();
+    showImmediately();
     setPinned(true);
-    setOpen(true);
-  }, [clearCloseTimer, clearOpenTimer, hide, pinned, updatePosition]);
+  }, [clearCloseTimer, clearOpenTimer, hide, pinned, showImmediately]);
 
   const handleKeyDown = useCallback(
     (event: KeyboardEvent<HTMLSpanElement>) => {
@@ -184,14 +207,36 @@ export function AccountEmailReveal({
   );
 
   useEffect(() => {
+    clearOpenTimer();
+    clearCloseTimer();
+  }, [email, visibleValue, clearOpenTimer, clearCloseTimer]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleOtherRevealOpen = (event: Event) => {
+      if ((event as CustomEvent<string>).detail !== tooltipId) hide();
+    };
+    window.addEventListener(CONTENT_REVEAL_OPEN_EVENT, handleOtherRevealOpen);
+    return () => window.removeEventListener(CONTENT_REVEAL_OPEN_EVENT, handleOtherRevealOpen);
+  }, [hide, tooltipId]);
+
+  useEffect(() => {
     if (!open || typeof window === 'undefined') return;
-    window.addEventListener('resize', updatePosition);
+    const handleResize = () => {
+      const hasFocus =
+        typeof document !== 'undefined' &&
+        (triggerRef.current?.contains(document.activeElement) ||
+          tooltipRef.current?.contains(document.activeElement));
+      if (!pinned && !hasFocus && !canAutomaticallyReveal()) hide();
+      else updatePosition();
+    };
+    window.addEventListener('resize', handleResize);
     window.addEventListener('scroll', updatePosition, true);
     return () => {
-      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('resize', handleResize);
       window.removeEventListener('scroll', updatePosition, true);
     };
-  }, [open, updatePosition]);
+  }, [canAutomaticallyReveal, hide, open, pinned, updatePosition]);
 
   useEffect(() => {
     if (!open || typeof document === 'undefined') return undefined;
