@@ -110,6 +110,9 @@ export function useUsageAnalytics() {
   const [activeTabState, setActiveTabState] = useState<UsageAnalyticsTab>(
     () => initialUiState.activeTab
   );
+  const fastAuthIndexRef = useRef(
+    initialUiState.activeTab === 'codexFast' ? initialUiState.filters.authIndex || 'all' : 'all'
+  );
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [selectedBucketMs, setSelectedBucketMs] = useState<number | null>(null);
   const [selectedModelId, setSelectedModelId] = useState('');
@@ -205,21 +208,36 @@ export function useUsageAnalytics() {
   );
   const setActiveTab = useCallback((tab: UsageAnalyticsTab) => {
     if (tab === 'codexFast') {
-      setFiltersState(current => ({
-        ...USAGE_ANALYTICS_DEFAULT_FILTERS,
-        timeRange: current.timeRange,
-        customRange: current.customRange,
-        authIndex: monitoringMeta.authFiles.some(a =>
-          String(a.auth_index ?? a.authIndex) === current.authIndex && (a.provider || a.type) !== 'codex'
-        ) ? 'all' : current.authIndex,
-        provider: 'codex',
-        fastMode: current.fastMode,
-        fastMetric: current.fastMetric,
-      }));
+      setFiltersState(current => {
+        const candidate = current.authIndex || fastAuthIndexRef.current;
+        const authIndex = monitoringMeta.authFiles.some(a =>
+          String(a.auth_index ?? a.authIndex) === candidate && (a.provider || a.type) !== 'codex'
+        ) ? 'all' : candidate || 'all';
+        fastAuthIndexRef.current = authIndex;
+        return {
+          ...USAGE_ANALYTICS_DEFAULT_FILTERS,
+          timeRange: current.timeRange,
+          customRange: current.customRange,
+          authIndex,
+          provider: 'codex',
+          fastMode: current.fastMode,
+          fastMetric: current.fastMetric,
+        };
+      });
+    } else if (activeTabState === 'codexFast') {
+      setFiltersState(current => {
+        fastAuthIndexRef.current = current.authIndex || 'all';
+        return {
+          ...current,
+          authIndex: undefined,
+          performanceView: 'overview',
+          provider: USAGE_ANALYTICS_DEFAULT_FILTERS.provider,
+        };
+      });
     }
     setActiveTabState(tab);
     writeUsageAnalyticsUiState({ activeTab: tab });
-  }, [monitoringMeta.authFiles]);
+  }, [activeTabState, monitoringMeta.authFiles]);
   const fastAuthIndex = monitoringMeta.authFiles.some(a =>
     String(a.auth_index ?? a.authIndex) === filters.authIndex && (a.provider || a.type) !== 'codex'
   ) ? 'all' : filters.authIndex;
@@ -633,6 +651,9 @@ export function useUsageAnalytics() {
     ]
   );
   const setFilters = useCallback((patch: Partial<UsageAnalyticsFiltersState>) => {
+    if (activeTabState === 'codexFast' && patch.authIndex !== undefined) {
+      fastAuthIndexRef.current = patch.authIndex || 'all';
+    }
     setFiltersState((current) => {
       const next = {
         ...current,
@@ -647,15 +668,16 @@ export function useUsageAnalytics() {
     setSelectedBucketMs(null);
     setSelectedHeatmapDateKey(USAGE_HEATMAP_ALL_DATES_KEY);
     setSelectedHeatmapCell(null);
-  }, []);
+  }, [activeTabState]);
 
   const resetFilters = useCallback(() => {
+    if (activeTabState === 'codexFast') fastAuthIndexRef.current = 'all';
     setFiltersState(USAGE_ANALYTICS_DEFAULT_FILTERS);
     writeUsageAnalyticsUiState({ filters: USAGE_ANALYTICS_DEFAULT_FILTERS });
     setSelectedBucketMs(null);
     setSelectedHeatmapDateKey(USAGE_HEATMAP_ALL_DATES_KEY);
     setSelectedHeatmapCell(null);
-  }, []);
+  }, [activeTabState]);
 
   const clearFilter = useCallback((key: UsageSelectedFilterKey) => {
     setFiltersState((current) => {

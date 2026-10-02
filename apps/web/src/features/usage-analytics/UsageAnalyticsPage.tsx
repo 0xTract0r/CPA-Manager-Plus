@@ -2826,7 +2826,6 @@ function UsageAnalyticsPageInner() {
 
           {usage.activeTab !== 'codexFast' && (
           <div className={styles.filterBar}>
-            {usage.filters.authIndex && usage.filters.authIndex !== 'all' && usage.filters.performanceView !== 'fast' && <span>{t('fast_impact.account')}: {usage.performanceAuthFiles.find(a => String(a.auth_index ?? a.authIndex) === usage.filters.authIndex)?.note || usage.filters.authIndex}</span>}
             <div className={styles.scopeSearchBar}>
               <IconSearch size={16} />
               <input

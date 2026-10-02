@@ -153,6 +153,31 @@ describe('usageAnalyticsUiState', () => {
     });
   });
 
+  it('repairs a persisted Fast account scope after the user has left the Fast tab', () => {
+    storage.setItem(
+      USAGE_ANALYTICS_UI_STATE_STORAGE_KEY,
+      JSON.stringify({
+        activeTab: 'overview',
+        filters: {
+          ...USAGE_ANALYTICS_DEFAULT_FILTERS,
+          authIndex: 'codex-prod',
+          provider: 'codex',
+          fastMetric: 'end_to_end_tps',
+        },
+      })
+    );
+
+    expect(readUsageAnalyticsUiState()).toEqual({
+      activeTab: 'overview',
+      filters: {
+        ...USAGE_ANALYTICS_DEFAULT_FILTERS,
+        authIndex: undefined,
+        performanceView: undefined,
+        fastMetric: 'end_to_end_tps',
+      },
+    });
+  });
+
   it('returns defaults when stored payload is invalid JSON', () => {
     storage.setItem(USAGE_ANALYTICS_UI_STATE_STORAGE_KEY, '{not json');
     expect(readUsageAnalyticsUiState()).toEqual(getDefaultUsageAnalyticsUiState());
@@ -231,6 +256,28 @@ describe('fast impact deep links', () => {
     expect(state.filters.authIndex).toBe('codex-a');
     expect(state.filters.customRange).toEqual({ startMs: 1001, endMs: 9009 });
     expect(buildUsageAnalyticsUiStateFromSearchParams(buildUsageAnalyticsSearchParams(state))).toEqual(state);
+  });
+
+  it('drops a stale Fast account from ordinary usage tabs and their URLs', () => {
+    const state = buildUsageAnalyticsUiStateFromSearchParams(
+      new URLSearchParams('tab=models&auth_index=codex-a&provider=codex')
+    );
+
+    expect(state.activeTab).toBe('models');
+    expect(state.filters.authIndex).toBeUndefined();
+    expect(state.filters.provider).toBe('all');
+    const params = buildUsageAnalyticsSearchParams({
+      activeTab: 'models',
+      filters: {
+        ...USAGE_ANALYTICS_DEFAULT_FILTERS,
+        authIndex: 'codex-a',
+        provider: 'codex',
+        fastMetric: 'end_to_end_tps',
+      },
+    });
+    expect(params.get('auth_index')).toBeNull();
+    expect(params.get('provider')).toBeNull();
+    expect(params.get('fast_metric')).toBeNull();
   });
 
   it('overrides conflicting saved account/model filters and round-trips all comparison fields', () => {

@@ -133,9 +133,24 @@ export const normalizeUsageAnalyticsUiState = (value: unknown): UsageAnalyticsUi
     return getDefaultUsageAnalyticsUiState();
   }
 
+  const activeTab = normalizeActiveTab((value as Record<string, unknown>).activeTab);
+  const filters = normalizeUsageAnalyticsFilters((value as Record<string, unknown>).filters);
+  if (activeTab !== 'codexFast' && filters.authIndex) {
+    const leakedFastProvider = filters.provider.toLowerCase() === 'codex';
+    return {
+      activeTab,
+      filters: {
+        ...filters,
+        authIndex: undefined,
+        performanceView: undefined,
+        ...(leakedFastProvider ? { provider: USAGE_ANALYTICS_DEFAULT_FILTERS.provider } : {}),
+      },
+    };
+  }
+
   return {
-    activeTab: normalizeActiveTab((value as Record<string, unknown>).activeTab),
-    filters: normalizeUsageAnalyticsFilters((value as Record<string, unknown>).filters),
+    activeTab,
+    filters,
   };
 };
 
@@ -232,10 +247,7 @@ export const buildUsageAnalyticsUiStateFromSearchParams = (
   if (params.has('cache_status')) record.cacheStatus = params.get('cache_status');
   if (params.has('api_key_keyword')) record.apiKeyKeyword = params.get('api_key_keyword') ?? '';
 
-  return {
-    activeTab,
-    filters: normalizeUsageAnalyticsFilters(record),
-  };
+  return normalizeUsageAnalyticsUiState({ activeTab, filters: record });
 };
 
 const setNonDefaultParam = (
@@ -257,10 +269,12 @@ export const buildUsageAnalyticsSearchParams = (state: UsageAnalyticsUiState) =>
   const params = new URLSearchParams();
 
   if (activeTab !== 'overview') params.set('tab', activeTab);
-  if (filters.authIndex && filters.authIndex !== 'all') params.set('auth_index', filters.authIndex);
-  if (filters.performanceView === 'fast') params.set('view', 'fast');
-  if (filters.fastMetric === 'end_to_end_tps') params.set('fast_metric', filters.fastMetric);
-  if (filters.fastMode === 'transition') params.set('fast_mode', filters.fastMode);
+  if (activeTab === 'codexFast') {
+    if (filters.authIndex && filters.authIndex !== 'all') params.set('auth_index', filters.authIndex);
+    if (filters.performanceView === 'fast') params.set('view', 'fast');
+    if (filters.fastMetric === 'end_to_end_tps') params.set('fast_metric', filters.fastMetric);
+    if (filters.fastMode === 'transition') params.set('fast_mode', filters.fastMode);
+  }
   if (filters.timeRange !== defaults.timeRange || filters.timeRange === 'custom') {
     params.set('time_range', filters.timeRange);
   }
