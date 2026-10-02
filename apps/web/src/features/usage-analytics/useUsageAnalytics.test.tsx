@@ -168,6 +168,28 @@ describe('useUsageAnalytics request orchestration', () => {
     expect(lastParams(params => Boolean(params.include?.fast_impact))?.filters).toEqual({ auth_indices: ['codex-b'], providers: ['codex'] });
   });
 
+  it('scopes the Fast account to its tab and restores it only when returning', async () => {
+    await renderHook('/usage-analytics?tab=codexFast&auth_index=codex-a');
+    expect(lastParams(params => Boolean(params.include?.fast_impact))?.filters).toEqual({
+      auth_indices: ['codex-a'],
+      providers: ['codex'],
+    });
+
+    await act(async () => { latestResult?.setActiveTab('models'); });
+    expect(latestResult?.activeTab).toBe('models');
+    expect(latestResult?.filters.authIndex).toBeUndefined();
+    expect(latestResult?.filters.provider).toBe('all');
+    expect(lastParams(params => Boolean(params.include?.model_stats))?.filters).not.toHaveProperty('auth_indices');
+    expect(lastParams(params => Boolean(params.include?.model_stats))?.filters).not.toHaveProperty('providers');
+
+    await act(async () => { latestResult?.setActiveTab('codexFast'); });
+    expect(latestResult?.fastFilters.authIndex).toBe('codex-a');
+    expect(lastParams(params => Boolean(params.include?.fast_impact))?.filters).toEqual({
+      auth_indices: ['codex-a'],
+      providers: ['codex'],
+    });
+  });
+
   it('keeps full-text search and adds note matches as an OR identity scope', async () => {
     monitoringMetaMock.payload = {
       authFiles: [
