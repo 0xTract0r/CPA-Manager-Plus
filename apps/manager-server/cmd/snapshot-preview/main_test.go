@@ -74,6 +74,14 @@ func TestRejectUnsafeAuthAndDoNotExposeExtraManifestFields(t *testing.T) {
 	if strings.Contains(w.Body.String(), "access_token") || strings.Contains(w.Body.String(), "not-a-real-secret") {
 		t.Fatal("raw manifest field leaked")
 	}
+	if !strings.Contains(w.Body.String(), `"preview_mode":"read-only"`) || !strings.Contains(w.Body.String(), `"preview_access":"`+localAdminKey+`"`) {
+		t.Fatal("public local-only preview bootstrap missing")
+	}
+	w = httptest.NewRecorder()
+	p.handler.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
+	if w.Code != http.StatusFound || !strings.Contains(w.Header().Get("Location"), "#/usage-analytics?tab=codexFast&auth_index=snapshot-account") {
+		t.Fatal("local preview root did not open the account analysis")
+	}
 }
 
 func TestSnapshotPricesKeepSourceAmountsAndTimestamps(t *testing.T) {

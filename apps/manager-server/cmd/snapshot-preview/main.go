@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -201,9 +202,14 @@ func newPreview(ctx context.Context, snapshotDir, panelPath string) (_ *preview,
 		return nil, errors.New("historical usage capability must remain visible")
 	}
 	// 不回放任意原始manifest字段，只公开经过选择的快照描述。
-	publicManifest, _ := json.Marshal(map[string]any{"captured_at": m.CapturedAt, "from_ms": m.FromMS, "to_ms": m.ToMS, "exported": m.Exported, "complete": m.Complete, "synthetic_rows": m.SyntheticRows, "events_sha256": m.EventsSHA256})
+	publicManifest, _ := json.Marshal(map[string]any{"captured_at": m.CapturedAt, "from_ms": m.FromMS, "to_ms": m.ToMS, "exported": m.Exported, "complete": m.Complete, "synthetic_rows": m.SyntheticRows, "events_sha256": m.EventsSHA256, "preview_mode": "read-only", "preview_access": localAdminKey})
 	metadata := coreMetadata(authBytes, models)
 	application := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/" && len(accounts.Files) > 0 {
+			entry := fmt.Sprintf("/management.html?snapshot_at=%d#/usage-analytics?tab=codexFast&auth_index=%s&from_ms=%d&to_ms=%d", m.ToMS, url.QueryEscape(accounts.Files[0].AuthIndex), m.FromMS, m.ToMS)
+			http.Redirect(w, r, entry, http.StatusFound)
+			return
+		}
 		if r.URL.Path == "/v1/models" {
 			metadata.ServeHTTP(w, r)
 			return
