@@ -28,7 +28,7 @@
   flex-direction: column;
   height: 100%;
   max-width: 100%;
-  background: var(--bg-primary);
+  background: var(--app-surface-strong, var(--bg-primary));
   box-shadow: $shadow-lg;
   outline: none;
 

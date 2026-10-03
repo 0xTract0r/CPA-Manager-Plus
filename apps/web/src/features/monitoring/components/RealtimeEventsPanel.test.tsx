@@ -58,12 +58,13 @@ const t = ((key: string, options?: Record<string, unknown>) => {
     'monitoring.reasoning_service_short': 'Reasoning / Tier',
     'monitoring.realtime_reasoning_label': 'Reasoning',
     'monitoring.realtime_service_label': 'Service',
-    'monitoring.codex_fast_outbound_client': 'Fast outbound · Client',
+    'monitoring.codex_fast_requested': 'Fast request',
+    'monitoring.codex_fast_outbound_client': 'Client',
     'monitoring.codex_fast_outbound_account': 'Fast outbound · CPA',
     'monitoring.codex_fast_outbound_both': 'Fast outbound · Both',
     'monitoring.codex_fast_outbound_unknown': 'Fast outbound',
-    'monitoring.codex_fast_outbound_hint': 'Final outbound Fast tier and source.',
-    'monitoring.codex_fast_blocked': 'Client Fast blocked',
+    'monitoring.codex_fast_outbound_hint': 'Sent with priority tier. This does not guarantee faster output. Source: {{source}}.',
+    'monitoring.codex_fast_blocked': 'Standard request',
     'monitoring.codex_fast_blocked_hint': 'Client Fast was changed to default.',
     'monitoring.reasoning_tier_hint':
       'Line 1, "Reasoning: xxx", is the reasoning effort; line 2, "Service: xxx", is the requested service tier. Missing values show as "—".',
@@ -569,8 +570,8 @@ describe('RealtimeEventsPanel', () => {
         },
       })
     );
-    expect(markup).toContain('Fast outbound · Client');
-    expect(markup).toContain('Final outbound Fast tier and source.');
+    expect(markup).toContain('Fast request');
+    expect(markup).toContain('This does not guarantee faster output. Source: Client.');
   });
 
   it('shows when CPA blocks a client Fast request', () => {
@@ -597,7 +598,7 @@ describe('RealtimeEventsPanel', () => {
         },
       })
     );
-    expect(markup).toContain('Client Fast blocked');
+    expect(markup).toContain('Standard request');
     expect(markup).toContain('Client Fast was changed to default.');
   });
 

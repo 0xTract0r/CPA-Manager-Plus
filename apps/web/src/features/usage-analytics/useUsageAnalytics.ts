@@ -113,7 +113,7 @@ export function useUsageAnalytics() {
   const fastAuthIndexRef = useRef(
     initialUiState.activeTab === 'codexFast' ? initialUiState.filters.authIndex || 'all' : 'all'
   );
-  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [nowMs, setNowMs] = useState(() => getLocalSnapshotTime() ?? Date.now());
   const [selectedBucketMs, setSelectedBucketMs] = useState<number | null>(null);
   const [selectedModelId, setSelectedModelId] = useState('');
   const [selectedApiKeyHash, setSelectedApiKeyHash] = useState('');
@@ -220,8 +220,8 @@ export function useUsageAnalytics() {
           customRange: current.customRange,
           authIndex,
           provider: 'codex',
-          fastMode: current.fastMode,
-          fastMetric: current.fastMetric,
+          fastMode: 'tier',
+          fastMetric: 'end_to_end_tps',
         };
       });
     } else if (activeTabState === 'codexFast') {
@@ -349,8 +349,8 @@ export function useUsageAnalytics() {
     ]
   );
   const fastImpactOptions = useMemo(
-    () => ({ mode: filters.fastMode || 'tier', metric: filters.fastMetric || 'visible_tps' }),
-    [filters.fastMode, filters.fastMetric]
+    () => ({ mode: 'tier', metric: 'end_to_end_tps' } as const),
+    []
   );
   const dataScopeKey = useMemo(
     () =>
@@ -711,7 +711,7 @@ export function useUsageAnalytics() {
   }, []);
 
   const refresh = useCallback(() => {
-    setNowMs(Date.now());
+    setNowMs(getLocalSnapshotTime() ?? Date.now());
     void loadApiKeyAliases();
     void loadMonitoringMeta();
     void analytics.refresh({ force: true });
@@ -757,7 +757,7 @@ export function useUsageAnalytics() {
     fastFilters: {
       ...USAGE_ANALYTICS_DEFAULT_FILTERS, authIndex: fastAuthIndex, provider: 'codex',
       timeRange: filters.timeRange, customRange: filters.customRange,
-      fastMode: filters.fastMode, fastMetric: filters.fastMetric,
+      fastMode: 'tier' as const, fastMetric: 'end_to_end_tps' as const,
     },
     performance: analyticsData?.performance,
     performanceAuthFiles: monitoringMeta.authFiles,
@@ -814,3 +814,4 @@ export function useUsageAnalytics() {
     setSelectedCredentialId,
   };
 }
+import { getLocalSnapshotTime } from '@/utils/localSnapshot';

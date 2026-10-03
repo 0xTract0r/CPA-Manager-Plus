@@ -135,7 +135,10 @@ export const normalizeUsageAnalyticsUiState = (value: unknown): UsageAnalyticsUi
 
   const activeTab = normalizeActiveTab((value as Record<string, unknown>).activeTab);
   const filters = normalizeUsageAnalyticsFilters((value as Record<string, unknown>).filters);
-  if (activeTab !== 'codexFast' && filters.authIndex) {
+  if (activeTab === 'codexFast') {
+    return { activeTab, filters: { ...filters, performanceView: undefined, fastMode: 'tier', fastMetric: 'end_to_end_tps' } };
+  }
+  if (filters.authIndex) {
     const leakedFastProvider = filters.provider.toLowerCase() === 'codex';
     return {
       activeTab,
@@ -203,10 +206,10 @@ export const buildUsageAnalyticsUiStateFromSearchParams = (
 ): UsageAnalyticsUiState => {
   const activeTab = params.get('view') === 'fast' ? 'codexFast' : params.has('tab') ? normalizeActiveTab(params.get('tab')) : fallback.activeTab;
   if (!queryHasAnyFilter(params)) {
-    return {
+    return normalizeUsageAnalyticsUiState({
       activeTab,
       filters: fallback.filters,
-    };
+    });
   }
 
   const record: Record<string, unknown> = { ...fallback.filters };
@@ -271,9 +274,6 @@ export const buildUsageAnalyticsSearchParams = (state: UsageAnalyticsUiState) =>
   if (activeTab !== 'overview') params.set('tab', activeTab);
   if (activeTab === 'codexFast') {
     if (filters.authIndex && filters.authIndex !== 'all') params.set('auth_index', filters.authIndex);
-    if (filters.performanceView === 'fast') params.set('view', 'fast');
-    if (filters.fastMetric === 'end_to_end_tps') params.set('fast_metric', filters.fastMetric);
-    if (filters.fastMode === 'transition') params.set('fast_mode', filters.fastMode);
   }
   if (filters.timeRange !== defaults.timeRange || filters.timeRange === 'custom') {
     params.set('time_range', filters.timeRange);
