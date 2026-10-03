@@ -2,12 +2,13 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
+import { Input } from '@/components/ui/Input';
 import { Drawer } from '@/components/ui/Drawer';
 import type { AuthFileItem } from '@/types/authFile';
 import type { UsageAnalyticsFiltersState } from '@/features/usage-analytics/usageAnalyticsModel';
 import { formatInUtc8 } from '@/utils/datetime';
 import type { FastImpact, FastMetric, FastModel } from './types';
-import { buildFastImpactViewModel, buildFastModelComparison } from './fastImpactViewModel';
+import { buildFastImpactViewModel, buildFastModelComparison, filterFastModels, type FastModelOrder } from './fastImpactViewModel';
 import styles from './FastImpactPanel.module.scss';
 
 const number = (value: number) => value.toLocaleString(undefined, { maximumFractionDigits: 1 });
@@ -15,6 +16,13 @@ const date = (ms: number) => formatInUtc8(ms, {
   month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
 });
 const modes = ['default', 'priority', 'unknown', 'flex'] as const;
+const browserStorageKey = 'fastImpact.modelBrowser';
+const readModelBrowser = (): { query: string; order: FastModelOrder } => {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(browserStorageKey) || '{}');
+    return { query: typeof saved.query === 'string' ? saved.query.slice(0, 120) : '', order: saved.order === 'name' ? 'name' : 'requests' };
+  } catch { return { query: '', order: 'requests' }; }
+};
 
 export function FastImpactPanel({
   data, filters, accounts, onFilters, onRequests, busy, error, mock = false, snapshotAt,
@@ -32,7 +40,11 @@ export function FastImpactPanel({
   const { t } = useTranslation();
   const text = (key: string, options?: Record<string, unknown>) => t(`fast_impact.${key}`, options);
   const [selected, setSelected] = useState('');
-  const [originalRange, setOriginalRange] = useState<Pick<UsageAnalyticsFiltersState, 'timeRange' | 'customRange'> | null>(null);
+  const [modelBrowser, setModelBrowser] = useState(readModelBrowser);
+  const [selectedActivity, setSelectedActivity] = useState('');
+  useEffect(() => {
+    try { sessionStorage.setItem(browserStorageKey, JSON.stringify(modelBrowser)); } catch { /* 隐私模式仍支持当页筛选。 */ }
+  }, [modelBrowser]);
   const account = filters.authIndex || 'all';
   // 兼容旧链接和本地存储；首页只使用一个明确口径。
   useEffect(() => {
@@ -52,10 +64,11 @@ export function FastImpactPanel({
   const fastEnabled = selectedAccount?.account_settings?.fast ?? selectedAccount?.accountSettings?.fast;
   const updating = busy || Boolean(data && (data.metric !== 'end_to_end_tps' || data.mode !== 'tier'));
   const readiness = data ? buildFastImpactViewModel(data, 'end_to_end_tps') : null;
-  const rows = (data?.models || []).map((model) => ({ model, ...buildFastModelComparison(model) }))
-    .sort((a, b) => Number(b.matched) - Number(a.matched) || b.model.attempts - a.model.attempts);
-  const currentRows = rows.filter((row) => row.model.tiers.default.attempts + row.model.tiers.priority.attempts > 0);
-  const legacyRows = rows.filter((row) => row.model.tiers.default.attempts + row.model.tiers.priority.attempts === 0);
+  const searching = Boolean(modelBrowser.query.trim());
+  const knownModels = (data?.models || []).filter((model) => model.tiers.default.attempts + model.tiers.priority.attempts > 0);
+  const currentRows = filterFastModels(searching ? data?.models || [] : knownModels, modelBrowser.query, modelBrowser.order)
+    .map((model) => ({ model, ...buildFastModelComparison(model) }));
+  const legacyRows = (data?.models || []).filter((model) => model.tiers.default.attempts + model.tiers.priority.attempts === 0);
   const detail = data?.models.find((model) => model.model === selected);
   const detailPair = detail ? buildFastModelComparison(detail) : null;
   const metricValue = (metric: FastMetric) => metric.p50 == null ? text('no_sample') : `${number(metric.p50)} token/s`;
@@ -63,6 +76,8 @@ export function FastImpactPanel({
     .map(([key, count]) => `${text(`exclude_${key}`)} ${count}`).join(' · ') || text('none');
   const activityMax = Math.max(1, ...(data?.activity || []).map((bucket) =>
     bucket.default_attempts + bucket.priority_attempts + bucket.unknown_attempts + bucket.flex_attempts));
+  const activityKey = (fromMs: number) => `${account}:${data?.from_ms}:${data?.to_ms}:${fromMs}`;
+  const activeBucket = data?.activity?.find((bucket) => activityKey(bucket.from_ms) === selectedActivity);
   const legend = (
     <div className={styles.legend}>
       {modes.filter((mode) => mode !== 'flex' || (readiness?.flexAttempts || 0) > 0).map((mode) => (
@@ -98,7 +113,7 @@ export function FastImpactPanel({
       <label>{text('account')}<Select value={account} options={options} ariaLabel={text('account')}
         onChange={(authIndex) => {
           setSelected('');
-          setOriginalRange(null);
+          setSelectedActivity('');
           onFilters({ authIndex, authFile: 'all', provider: 'codex', model: 'all', status: 'all', fastMetric: 'end_to_end_tps', fastMode: 'tier' });
         }} /></label>
       {account !== 'all' && <span className={styles.accountState}>
@@ -117,26 +132,37 @@ export function FastImpactPanel({
             <div><h3>{text('overall_title')}</h3><p>{text('overall_hint')}</p></div>
             <span className={styles.unit}>{text('per_second')}</span>
           </div>
+          <div className={styles.modelTools}>
+            <Input label={text('search_model')} placeholder={text('search_model_hint')} type="search" maxLength={120}
+              value={modelBrowser.query} onChange={(event) => setModelBrowser((current) => ({ ...current, query: event.target.value }))}
+              rightElement={searching ? <Button size="xs" variant="ghost" onClick={() => setModelBrowser((current) => ({ ...current, query: '' }))}>{text('clear_search')}</Button> : undefined} />
+            <div className={styles.modelOrder} role="group" aria-label={text('model_order')}>
+              {(['requests', 'name'] as const).map((order) => <Button key={order} size="sm" variant={modelBrowser.order === order ? 'secondary' : 'ghost'}
+                aria-pressed={modelBrowser.order === order} onClick={() => setModelBrowser((current) => ({ ...current, order }))}>{text(`order_${order}`)}</Button>)}
+            </div>
+          </div>
+          <p className={styles.resultSummary} aria-live="polite">{text('model_result_count', { count: currentRows.length })} · {text(modelBrowser.order === 'requests' ? 'request_order_hint' : 'name_order_hint')}</p>
           {currentRows.length === 0 ? <div className={styles.empty} data-testid="fast-empty-explanation">
-            {text(readiness && readiness.unknownAttempts > 0 ? 'legacy_gap' : 'no_data')}
+            {text(searching ? 'no_model_matches' : readiness && readiness.unknownAttempts > 0 ? 'legacy_gap' : 'no_data')}
           </div> : currentRows.map((row) => {
             const change = data.complete && row.change != null ? Math.round(row.change * 10) / 10 : null;
             const canShowBars = row.matched || row.a.samples === 0 || row.b.samples === 0;
             return <article className={styles.modelCard} key={row.model.model} data-testid="fast-model-row">
               <div className={styles.modelHeading}>
-                <h4>{row.model.model_resolution === 'unresolved' ? text('unresolved_model', { model: row.model.model }) : row.model.model}</h4>
+                <div><h4>{row.model.model_resolution === 'unresolved' ? text('unresolved_model', { model: row.model.model }) : row.model.model}</h4>
+                  <small className={styles.modelCount}>{text('attempt_count', { count: row.model.attempts.toLocaleString() })}</small></div>
                 <Button size="sm" variant="ghost" onClick={() => setSelected(row.model.model)} aria-label={`${row.model.model} · ${text('evidence')}`}>{text('evidence')} ↗</Button>
               </div>
               <div className={styles.modelContent}>
-                {canShowBars ? renderBars(row.a, row.b) : <p className={styles.loadGap}>{text(row.reason)}</p>}
+                {row.reason === 'legacy_gap' ? <p className={styles.loadGap}>{text('legacy_gap')}</p> : canShowBars ? renderBars(row.a, row.b) : <p className={styles.loadGap}>{text(row.reason)}</p>}
                 <div className={styles.result}>
                   {change != null ? <>
                     <span className={change > 0 ? styles.positive : change < 0 ? styles.negative : ''}>{text(change > 0 ? 'faster_by' : change < 0 ? 'slower_by' : 'same_speed', { percent: number(Math.abs(change)) })}</span>
                     <small>{text(row.preliminary ? 'initial_observation' : 'matched_observation')}</small>
-                  </> : canShowBars && <span className={styles.gap}>{text(data.complete ? row.reason : 'partial_result')}</span>}
+                  </> : canShowBars && row.reason !== 'legacy_gap' && <span className={styles.gap}>{text(data.complete ? row.reason : 'partial_result')}</span>}
                 </div>
               </div>
-              <p className={styles.sampleLine}>{text(row.matched ? 'matched_samples' : 'recorded_samples', { defaultCount: row.a.samples, priorityCount: row.b.samples })}</p>
+              {row.reason !== 'legacy_gap' && <p className={styles.sampleLine}>{text(row.matched ? 'matched_samples' : 'recorded_samples', { defaultCount: row.a.samples, priorityCount: row.b.samples })}</p>}
             </article>;
           })}
         </section>
@@ -146,11 +172,10 @@ export function FastImpactPanel({
             {data.activity.map((bucket) => {
               const total = bucket.default_attempts + bucket.priority_attempts + bucket.unknown_attempts + bucket.flex_attempts;
               const label = `${date(bucket.from_ms)} · ${total ? modes.map((mode) => `${text(mode === 'unknown' ? 'unrecorded' : mode)} ${bucket[`${mode}_attempts`]}`).join(' · ') : text('no_requests')}`;
+              const key = activityKey(bucket.from_ms);
               return <button key={bucket.from_ms} className={styles.activityBucket} title={label} aria-label={label} disabled={!total}
-                onClick={() => {
-                  if (!originalRange) setOriginalRange({ timeRange: filters.timeRange, customRange: filters.customRange });
-                  onFilters({ timeRange: 'custom', customRange: { startMs: bucket.from_ms, endMs: bucket.to_ms } });
-                }}>
+                aria-pressed={selectedActivity === key}
+                onClick={() => setSelectedActivity((current) => current === key ? '' : key)}>
                 <span className={styles.activityStack} style={{ height: `${total / activityMax * 100}%` }}>
                   {modes.filter((mode) => bucket[`${mode}_attempts`] > 0).map((mode) => <i key={mode} className={styles[mode]} style={{ height: `${bucket[`${mode}_attempts`] / total * 100}%` }} />)}
                 </span>
@@ -158,14 +183,19 @@ export function FastImpactPanel({
             })}
           </div>
           <div className={styles.activityAxis}><span>{date(data.from_ms)}</span><span>{date(data.to_ms)}</span></div>
-          {originalRange && <Button size="sm" variant="secondary" onClick={() => { onFilters(originalRange); setOriginalRange(null); }}>{text('restore_range')}</Button>}
+          {activeBucket && <div className={styles.activitySelection} data-testid="fast-activity-selection" role="status">
+            <div><p>{date(activeBucket.from_ms)} — {date(activeBucket.to_ms)}</p>
+              <div className={styles.legend}>{modes.filter((mode) => mode !== 'flex' || activeBucket.flex_attempts > 0).map((mode) => <span key={mode}><i className={styles[mode]} />{text(mode === 'unknown' ? 'unrecorded' : mode)} {activeBucket[`${mode}_attempts`].toLocaleString()}</span>)}</div>
+            </div>
+            <Button size="sm" variant="ghost" onClick={() => setSelectedActivity('')}>{text('clear_period')}</Button>
+          </div>}
         </section>}
         <details className={styles.notes} data-testid="fast-data-readiness">
           <summary>{text('data_notes', { count: readiness?.unknownAttempts.toLocaleString() || '0' })}</summary>
           <p>{text('history_explanation')}</p>
           <p>{text('request_counts', { defaultCount: readiness?.defaultAttempts.toLocaleString(), priorityCount: readiness?.priorityAttempts.toLocaleString(), unknownCount: readiness?.unknownAttempts.toLocaleString(), flexCount: readiness?.flexAttempts.toLocaleString() })}</p>
           <p>{text('query_range', { from: date(data.from_ms), to: date(data.to_ms), count: data.scanned.toLocaleString() })}</p>
-          {legacyRows.map((row) => <div className={styles.legacyRow} key={row.model.model}><span>{row.model.model}</span><span>{text('unknown_requests', { count: row.model.tiers.unknown.attempts.toLocaleString() })}</span><Button size="xs" variant="ghost" onClick={() => setSelected(row.model.model)}>{text('evidence')}</Button></div>)}
+          {legacyRows.map((model) => <div className={styles.legacyRow} key={model.model}><span>{model.model}</span><span>{text('unknown_requests', { count: model.tiers.unknown.attempts.toLocaleString() })}</span><Button size="xs" variant="ghost" onClick={() => setSelected(model.model)}>{text('evidence')}</Button></div>)}
         </details>
       </>}
     <footer className={styles.footer}>{text('simple_disclaimer')}</footer>

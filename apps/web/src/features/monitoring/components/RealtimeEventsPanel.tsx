@@ -185,8 +185,8 @@ const buildCodexFastDisplay = (row: MonitoringEventRow, t: TFunction): CodexFast
     ? context.tier_source
     : 'unknown';
   return {
-    label: t(`monitoring.codex_fast_outbound_${source}`),
-    title: t('monitoring.codex_fast_outbound_hint'),
+    label: t('monitoring.codex_fast_requested'),
+    title: t('monitoring.codex_fast_outbound_hint', { source: t(`monitoring.codex_fast_outbound_${source}`) }),
     blocked: false,
   };
 };

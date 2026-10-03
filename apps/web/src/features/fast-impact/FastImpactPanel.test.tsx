@@ -58,6 +58,8 @@ describe('FastImpactPanel simplified experience', () => {
     expect(html).not.toContain('<table');
     expect(html).not.toContain('速度指标');
     expect(html).not.toContain('对比方式');
+    expect(html).toContain('搜索模型');
+    expect(html).toContain('最常使用');
     expect(html).not.toMatch(/<details[^>]* open=/);
   });
   it('uses selected cohort values and samples instead of all-model aggregates', () => {
@@ -123,6 +125,8 @@ describe('FastImpactPanel simplified experience', () => {
     expect(html).toContain('普通 10 · 极速 2 · 模式未记录 4');
     expect(html).toContain('无请求');
     expect(html).toContain('disabled=""');
+    expect(html).toContain('不会改变上方对比');
+    expect(html).not.toContain('恢复原时间范围');
     expect(render(data())).not.toContain('fast-activity-chart');
   });
 });

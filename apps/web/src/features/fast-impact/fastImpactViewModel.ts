@@ -1,5 +1,14 @@
 import type { FastImpact, FastMetric, FastModel, FastTier } from './types';
 
+export type FastModelOrder = 'requests' | 'name';
+
+export function filterFastModels(models: FastModel[], query: string, order: FastModelOrder) {
+  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  return models.filter((model) => terms.every((term) => `${model.model} ${model.query_model}`.toLowerCase().includes(term)))
+    .sort((a, b) => (order === 'requests' ? b.attempts - a.attempts : 0)
+      || a.model.localeCompare(b.model, 'en', { numeric: true, sensitivity: 'base' }));
+}
+
 export const selectFastImpactPair = (model: FastModel) => {
   const cohort = model.cohorts.find((candidate) => candidate.key === model.selected_cohort);
   return {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { FastImpact, FastMetric, FastTier } from './types';
-import { buildFastImpactViewModel } from './fastImpactViewModel';
+import { buildFastImpactViewModel, filterFastModels } from './fastImpactViewModel';
 
 const metric = (samples: number, p50: number | null = null): FastMetric => ({
   samples,
@@ -63,6 +63,23 @@ const data = (): FastImpact => ({
 });
 
 describe('buildFastImpactViewModel', () => {
+  it('orders by actual request count even when a model has no comparable cohort', () => {
+    const template = data().models[0];
+    const models = [
+      { ...template, model: 'gpt-6-sol', attempts: 5 },
+      { ...template, model: 'gpt-6-astra', attempts: 500, selected_cohort: '' },
+      { ...template, model: 'gpt-6.1-sol', attempts: 20 },
+    ];
+    expect(filterFastModels(models, '', 'requests').map((m) => m.model)).toEqual(['gpt-6-astra', 'gpt-6.1-sol', 'gpt-6-sol']);
+    expect(filterFastModels(models, '', 'name').map((m) => m.model)).toEqual(['gpt-6-astra', 'gpt-6-sol', 'gpt-6.1-sol']);
+  });
+  it('finds specific model names including legacy-only records and reports no matches honestly', () => {
+    const template = data().models[0];
+    const models = [{ ...template, model: 'gpt-5.3-codex-spark', query_model: 'gpt-5.3-codex-spark', tiers: { ...template.tiers, default: tier(0) } }, template];
+    expect(filterFastModels(models, '  SPARK  ', 'requests')).toHaveLength(1);
+    expect(filterFastModels(models, 'GPT-6 ASTRA', 'requests')[0].model).toBe('gpt-6-astra');
+    expect(filterFastModels(models, 'missing-model', 'requests')).toHaveLength(0);
+  });
   it('explains legacy unknown coverage and one-sided current data', () => {
     const result = buildFastImpactViewModel(data(), 'visible_tps');
     expect(result.knownAttempts).toBe(532);
