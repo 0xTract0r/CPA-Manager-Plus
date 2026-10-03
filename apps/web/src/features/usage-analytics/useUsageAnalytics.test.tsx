@@ -153,6 +153,7 @@ describe('useUsageAnalytics request orchestration', () => {
     expect(fast?.searchQuery).toBe('');
     expect(fast?.fromMs).toBe(1000);
     expect(fast?.toMs).toBe(9000);
+    expect(fast?.fastImpactOptions).toEqual({ mode: 'tier', metric: 'end_to_end_tps' });
     expect(lastParams(params => Boolean(params.include?.filter_selectors))?.fromMs).toBeNull();
     expect(latestResult?.fastFilters.model).toBe('all');
     expect(latestResult?.fastFilters.status).toBe('all');

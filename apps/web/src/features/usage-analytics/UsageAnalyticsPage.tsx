@@ -1,4 +1,5 @@
 import { FastImpactPanel } from '@/features/fast-impact/FastImpactPanel';
+import { getLocalSnapshotTime } from '@/utils/localSnapshot';
 import { PerformancePanel } from '@/features/performance/PerformancePanel';
 import { isDemoMode, prefixRouteBase } from '@/features/demo/demoMode';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
@@ -3016,6 +3017,7 @@ function UsageAnalyticsPageInner() {
       {usage.activeTab === 'codexFast' && (
         <section className={styles.tablePanel}>
           <FastImpactPanel
+            snapshotAt={getLocalSnapshotTime()}
             data={usage.fastImpact}
             filters={usage.fastFilters}
             accounts={usage.performanceAuthFiles}

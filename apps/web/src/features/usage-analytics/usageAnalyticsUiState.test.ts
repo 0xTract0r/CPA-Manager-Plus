@@ -255,6 +255,10 @@ describe('fast impact deep links', () => {
     expect(state.activeTab).toBe('codexFast');
     expect(state.filters.authIndex).toBe('codex-a');
     expect(state.filters.customRange).toEqual({ startMs: 1001, endMs: 9009 });
+    expect(state.filters.fastMode).toBe('tier');
+    expect(state.filters.fastMetric).toBe('end_to_end_tps');
+    expect(buildUsageAnalyticsSearchParams(state).has('fast_mode')).toBe(false);
+    expect(buildUsageAnalyticsSearchParams(state).has('fast_metric')).toBe(false);
     expect(buildUsageAnalyticsUiStateFromSearchParams(buildUsageAnalyticsSearchParams(state))).toEqual(state);
   });
 

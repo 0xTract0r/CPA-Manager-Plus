@@ -9,6 +9,26 @@ export const selectFastImpactPair = (model: FastModel) => {
   };
 };
 
+// 首页数值、条形、样本量和变化必须来自同一组请求。
+export function buildFastModelComparison(model: FastModel) {
+  const pair = selectFastImpactPair(model);
+  const a = pair.defaultTier.end_to_end_tps;
+  const b = pair.priorityTier.end_to_end_tps;
+  const hasBoth = a.samples > 0 && b.samples > 0 && a.p50 != null && b.p50 != null;
+  const matched = Boolean(pair.cohort && hasBoth && pair.cohort.status !== 'low_comparability');
+  const minimumSamples = Math.min(a.samples, b.samples);
+  const change = matched && minimumSamples >= 5 ? pair.cohort?.change_pct ?? null : null;
+  let reason = 'timing_gap';
+  if (model.tiers.default.attempts + model.tiers.priority.attempts === 0) reason = 'legacy_gap';
+  else if (model.tiers.priority.attempts === 0) reason = 'priority_gap';
+  else if (model.tiers.default.attempts === 0) reason = 'default_gap';
+  else if (pair.cohort?.status === 'low_comparability') reason = 'load_information_gap';
+  else if (!pair.cohort && hasBoth) reason = 'load_gap';
+  else if (matched && minimumSamples < 5) reason = 'small_sample';
+  else if (matched && change == null) reason = 'load_gap';
+  return { ...pair, a, b, matched, change, reason, preliminary: minimumSamples < 20 };
+}
+
 const metricFor = (tier: FastTier, metric: 'visible_tps' | 'end_to_end_tps'): FastMetric =>
   tier[metric];
 
