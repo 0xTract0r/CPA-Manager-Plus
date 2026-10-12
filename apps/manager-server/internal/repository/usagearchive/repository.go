@@ -3,6 +3,7 @@ package usagearchive
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path"
@@ -13,6 +14,7 @@ import (
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/repository/usageevent"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/repository/usagemonitoring"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/repository/usagepricing"
+	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/repository/usageprojection"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/repository/usagerollup"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/usage"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/usageidentity"
@@ -1285,6 +1287,40 @@ func (r *Repository) DeleteBatch(ctx context.Context, runID string, limit int, n
 	if err := rows.Close(); err != nil {
 		return DeleteBatchResult{}, err
 	}
+	if len(candidates) > 0 {
+		// A projection watermark is not proof that every retained row is actually
+		// present. Refresh this bounded batch from raw inside the same transaction
+		// and prove the exact rows exist before any irreversible raw deletion.
+		candidateIDs := make([]int64, len(candidates))
+		for index, candidate := range candidates {
+			candidateIDs[index] = candidate.ID
+		}
+		if err := usageprojection.UpsertEventIDs(ctx, tx, candidateIDs, nowMS); err != nil {
+			return DeleteBatchResult{}, err
+		}
+		encodedIDs, err := json.Marshal(candidateIDs)
+		if err != nil {
+			return DeleteBatchResult{}, err
+		}
+		var rawCount, retainedCount int64
+		if err := tx.QueryRowContext(ctx, `select
+			count(*),
+			coalesce(sum(case when p.event_id is not null and p.timestamp_ms = e.timestamp_ms then 1 else 0 end), 0)
+			from usage_events e
+			left join usage_monitoring_event_projection_v1 p on p.event_id = e.id
+			where e.id in (select value from json_each(?))`, string(encodedIDs)).Scan(&rawCount, &retainedCount); err != nil {
+			return DeleteBatchResult{}, err
+		}
+		if rawCount != int64(len(candidates)) || retainedCount != rawCount {
+			return DeleteBatchResult{}, fmt.Errorf(
+				"%w: retained usage projection handoff raw=%d retained=%d candidates=%d",
+				ErrCoverageIncomplete,
+				rawCount,
+				retainedCount,
+				len(candidates),
+			)
+		}
+	}
 	type dailyDeleted struct{ count, minMS, maxMS int64 }
 	daily := make(map[int64]dailyDeleted)
 	for _, candidate := range candidates {
@@ -1692,8 +1728,26 @@ func validateDeleteCoverage(ctx context.Context, tx *sql.Tx, run Run) error {
 	if err := validateCoverage(ctx, tx, run); err != nil {
 		return err
 	}
-	_, err := validateCurrentDeleteReadiness(ctx, tx, run)
-	return err
+	if _, err := validateCurrentDeleteReadiness(ctx, tx, run); err != nil {
+		return err
+	}
+	// A rollup watermark proves worker progress, not that retained rows from an
+	// interrupted delete are still materialized. Never resume destructive cleanup
+	// if this run has already lost an exact retained projection row.
+	var retainedProjectionIncomplete bool
+	if err := tx.QueryRowContext(ctx, `select exists (
+		select 1
+		from usage_archive_event_refs archived
+		left join usage_monitoring_event_projection_v1 p on p.event_id = archived.raw_event_id
+		where archived.run_id = ? and archived.raw_deleted_at_ms is not null
+			and (p.event_id is null or p.timestamp_ms <> archived.timestamp_ms)
+	)`, run.ID).Scan(&retainedProjectionIncomplete); err != nil {
+		return err
+	}
+	if retainedProjectionIncomplete {
+		return fmt.Errorf("%w: retained usage projection is missing a deleted archive event", ErrCoverageIncomplete)
+	}
+	return nil
 }
 
 type hourlyAggregateCoverageState struct {
