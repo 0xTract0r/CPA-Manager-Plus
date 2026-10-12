@@ -1338,6 +1338,34 @@ func TestRepositoryDeleteRejectsRawRowsRemovedOutsideMaintenance(t *testing.T) {
 	}
 }
 
+func TestRepositoryDeleteDoesNotRewriteHealthyRetainedProjection(t *testing.T) {
+	db, repository, run := prepareVerifiedArchiveRun(t, "healthy-retained-projection-no-rewrite")
+	ctx := context.Background()
+	const sentinelUpdatedAtMS int64 = 12_345
+	if _, err := db.Exec(`update usage_monitoring_event_projection_v1
+		set updated_at_ms = ? where event_id = 1`, sentinelUpdatedAtMS); err != nil {
+		t.Fatalf("mark retained projection fixture: %v", err)
+	}
+	if _, err := repository.BeginDelete(ctx, run.ID, 69_000); err != nil {
+		t.Fatalf("begin delete: %v", err)
+	}
+	result, err := repository.DeleteBatch(ctx, run.ID, 1, 69_001)
+	if err != nil {
+		t.Fatalf("delete healthy retained batch: %v", err)
+	}
+	if result.Deleted != 1 || result.Run.DeletedEventCount != 1 {
+		t.Fatalf("delete result = %#v", result)
+	}
+	var updatedAtMS int64
+	if err := db.QueryRow(`select updated_at_ms
+		from usage_monitoring_event_projection_v1 where event_id = 1`).Scan(&updatedAtMS); err != nil {
+		t.Fatalf("read retained projection after delete: %v", err)
+	}
+	if updatedAtMS != sentinelUpdatedAtMS {
+		t.Fatalf("healthy retained projection was rewritten: updated_at_ms=%d want=%d", updatedAtMS, sentinelUpdatedAtMS)
+	}
+}
+
 func TestRepositoryDeleteRepairsMissingRetainedProjectionBeforeRawDelete(t *testing.T) {
 	db, repository, run := prepareVerifiedArchiveRun(t, "repair-missing-retained-projection")
 	ctx := context.Background()

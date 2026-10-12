@@ -1289,18 +1289,45 @@ func (r *Repository) DeleteBatch(ctx context.Context, runID string, limit int, n
 	}
 	if len(candidates) > 0 {
 		// A projection watermark is not proof that every retained row is actually
-		// present. Refresh this bounded batch from raw inside the same transaction
-		// and prove the exact rows exist before any irreversible raw deletion.
+		// present. Repair only missing or timestamp-mismatched rows, then prove the
+		// whole bounded batch is retained before any irreversible raw deletion.
 		candidateIDs := make([]int64, len(candidates))
 		for index, candidate := range candidates {
 			candidateIDs[index] = candidate.ID
 		}
-		if err := usageprojection.UpsertEventIDs(ctx, tx, candidateIDs, nowMS); err != nil {
-			return DeleteBatchResult{}, err
-		}
 		encodedIDs, err := json.Marshal(candidateIDs)
 		if err != nil {
 			return DeleteBatchResult{}, err
+		}
+		repairRows, err := tx.QueryContext(ctx, `select e.id
+			from usage_events e
+			left join usage_monitoring_event_projection_v1 p on p.event_id = e.id
+			where e.id in (select value from json_each(?))
+				and (p.event_id is null or p.timestamp_ms <> e.timestamp_ms)
+			order by e.id`, string(encodedIDs))
+		if err != nil {
+			return DeleteBatchResult{}, err
+		}
+		repairIDs := make([]int64, 0)
+		for repairRows.Next() {
+			var eventID int64
+			if err := repairRows.Scan(&eventID); err != nil {
+				_ = repairRows.Close()
+				return DeleteBatchResult{}, err
+			}
+			repairIDs = append(repairIDs, eventID)
+		}
+		if err := repairRows.Err(); err != nil {
+			_ = repairRows.Close()
+			return DeleteBatchResult{}, err
+		}
+		if err := repairRows.Close(); err != nil {
+			return DeleteBatchResult{}, err
+		}
+		if len(repairIDs) > 0 {
+			if err := usageprojection.UpsertEventIDs(ctx, tx, repairIDs, nowMS); err != nil {
+				return DeleteBatchResult{}, err
+			}
 		}
 		var rawCount, retainedCount int64
 		if err := tx.QueryRowContext(ctx, `select
