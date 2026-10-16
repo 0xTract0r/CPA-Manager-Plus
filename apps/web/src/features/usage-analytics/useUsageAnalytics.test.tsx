@@ -113,7 +113,7 @@ describe('useUsageAnalytics request orchestration', () => {
             {
               id: 'credential-a.json',
               auth_file_snapshot: 'credential-a.json',
-              auth_indices: ['auth-a'],
+              auth_index: 'auth-a',
               calls: 10,
               success_calls: 9,
               failure_calls: 1,
@@ -606,7 +606,12 @@ describe('useUsageAnalytics request orchestration', () => {
       latestResult?.setActiveTab('credentials');
       await Promise.resolve();
     });
-    expect(latestResult?.credentialRows[0]?.channels).toContain('retained-channel');
+    expect(latestResult?.credentialRows[0]).toMatchObject({
+      label: 'retained-channel',
+      account: 'retained@example.com',
+      provider: 'codex',
+      authIndex: 'auth-a',
+    });
 
     monitoringMetaMocks.load.mockResolvedValueOnce({
       authFiles: [],
@@ -621,7 +626,12 @@ describe('useUsageAnalytics request orchestration', () => {
       await Promise.resolve();
     });
 
-    expect(latestResult?.credentialRows[0]?.channels).toContain('retained-channel');
+    expect(latestResult?.credentialRows[0]).toMatchObject({
+      label: 'retained-channel',
+      account: 'retained@example.com',
+      provider: 'codex',
+      authIndex: 'auth-a',
+    });
     expect(latestResult?.error).toBe('meta offline');
   });
 
