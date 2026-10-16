@@ -102,6 +102,13 @@ const openExternalURL = (url: string) => {
 };
 
 export function PluginsPage() {
+  const connectionScope = useAuthStore((state) =>
+    JSON.stringify([state.apiBase, state.managementKey])
+  );
+  return <PluginsPageContent key={connectionScope} />;
+}
+
+function PluginsPageContent() {
   const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState<PluginPageTab>(() =>
@@ -194,7 +201,15 @@ function InstalledPluginsView({
 
   const connected = connectionStatus === 'connected';
 
+  const listRequestIdRef = useRef(0);
+  useEffect(
+    () => () => {
+      listRequestIdRef.current += 1;
+    },
+    []
+  );
   const loadPlugins = useCallback(async () => {
+    const requestId = ++listRequestIdRef.current;
     if (!connected) {
       setLoading(false);
       setError(t('notification.connection_required'));
@@ -210,15 +225,17 @@ function InstalledPluginsView({
     setError('');
     try {
       const plugins = await pluginsApi.list();
+      if (requestId !== listRequestIdRef.current) return;
       setData(plugins);
     } catch (err: unknown) {
+      if (requestId !== listRequestIdRef.current) return;
       setError(
         hasStatus(err, 404)
           ? t('plugin_management.unsupported_backend')
           : getErrorMessage(err, t('plugin_management.load_failed'))
       );
     } finally {
-      setLoading(false);
+      if (requestId === listRequestIdRef.current) setLoading(false);
     }
   }, [connected, supportsPlugin, t]);
 
@@ -229,8 +246,16 @@ function InstalledPluginsView({
       predicate?: (plugin: PluginListEntry, response: PluginListResponse) => boolean
     ) => {
       if (waitForRegistration && pluginID && predicate) {
-        const result = await waitForPluginState(pluginID, predicate);
-        setData(result.response);
+        const requestId = ++listRequestIdRef.current;
+        try {
+          const result = await waitForPluginState(pluginID, predicate);
+          if (requestId === listRequestIdRef.current) {
+            setData(result.response);
+            setError('');
+          }
+        } finally {
+          if (requestId === listRequestIdRef.current) setLoading(false);
+        }
         return;
       }
       if (waitForRegistration) {
@@ -711,7 +736,7 @@ function InstalledPluginsView({
         </div>
       </section>
 
-      {loading ? (
+      {loading && !data ? (
         <div className={styles.list} aria-busy="true">
           {Array.from({ length: 4 }, (_, index) => (
             <div key={index} className={styles.skeletonRow} />

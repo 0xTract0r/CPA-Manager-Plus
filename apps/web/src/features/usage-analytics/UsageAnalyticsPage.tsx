@@ -1566,7 +1566,7 @@ function HeatmapDetailPanel({
         <span>{t('common.loading')}</span>
       </div>
     );
-  } else if (dateError) {
+  } else if (dateError && !detail) {
     content = (
       <div className={styles.chartEmptyInline}>
         <IconX size={24} />
@@ -1589,6 +1589,7 @@ function HeatmapDetailPanel({
         }`}
         aria-busy={dateLoading}
       >
+        {dateError ? <div role="alert">{dateError}</div> : null}
         {dateLoading ? (
           <div className={styles.heatmapDetailRefreshBadge} role="status">
             <IconRefreshCw size={14} />
@@ -2049,7 +2050,7 @@ function EntityTrendChart({
     [chartTheme, hasHighlight, highlightId, metric, series]
   );
 
-  if (loading) {
+  if (loading && series.length === 0) {
     return (
       <div className={styles.chartEmptyInline}>
         <IconRefreshCw size={24} />
@@ -2058,7 +2059,7 @@ function EntityTrendChart({
     );
   }
 
-  if (error) {
+  if (error && series.length === 0) {
     return (
       <div className={styles.chartEmptyInline}>
         <IconX size={24} />
@@ -2078,12 +2079,15 @@ function EntityTrendChart({
   }
 
   return (
-    <EChartsView
-      option={option}
-      className={styles.echartsCanvas}
-      style={{ height: 260 }}
-      ariaLabel={t('usage_analytics.entity_trend_title')}
-    />
+    <div aria-busy={loading}>
+      {error ? <div role="alert">{error}</div> : null}
+      <EChartsView
+        option={option}
+        className={styles.echartsCanvas}
+        style={{ height: 260 }}
+        ariaLabel={t('usage_analytics.entity_trend_title')}
+      />
+    </div>
   );
 }
 

@@ -128,6 +128,21 @@ const renderTab = (
 };
 
 describe('AccountConfigurationTab', () => {
+  it.each([true, false])(
+    'retains the loaded form during reload or failure (loading=%s)',
+    (loading) => {
+      const editor = makeEditor('codex', makeDraft({ prefix: 'retained-prefix' }));
+      editor.state = { ...editor.state!, loading, error: loading ? '' : 'refresh offline' };
+      const renderer = renderTab(makeRow(), editor);
+      expect(
+        renderer.root.findAllByType(Input).some((node) => node.props.value === 'retained-prefix')
+      ).toBe(true);
+      expect(findLoadingSpinners(renderer)).toHaveLength(0);
+      if (!loading) expect(readText(renderer.toJSON())).toContain('refresh offline');
+      act(() => renderer.unmount());
+    }
+  );
+
   it('keeps the initial configuration state free of animated loading icons', () => {
     const editor = makeEditor('codex');
     editor.state = null;

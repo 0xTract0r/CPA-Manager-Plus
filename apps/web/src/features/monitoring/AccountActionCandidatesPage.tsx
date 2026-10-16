@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
@@ -56,6 +56,14 @@ const getHeaderEvidence = (candidate: AccountActionCandidate) => ({
 });
 
 export function AccountActionCandidatesPage() {
+  const connectionScope = useAuthStore((state) =>
+    JSON.stringify([state.apiBase, state.managementKey])
+  );
+  const { managerServiceBase } = usePanelFeatureAvailability();
+  return <AccountActionCandidatesPageContent key={`${connectionScope}:${managerServiceBase}`} />;
+}
+
+function AccountActionCandidatesPageContent() {
   const { t } = useTranslation();
   const managementKey = useAuthStore((state) => state.managementKey);
   const { showNotification, showConfirmation } = useNotificationStore();
@@ -70,9 +78,24 @@ export function AccountActionCandidatesPage() {
   const [evidenceCandidate, setEvidenceCandidate] = useState<AccountActionCandidate | null>(null);
 
   const managerBase = featureAvailability.managerServiceBase;
+  const requestIdRef = useRef(0);
+  useLayoutEffect(() => {
+    requestIdRef.current += 1;
+    setItems([]);
+    setPendingCount(0);
+    setError('');
+    setLoading(true);
+    return () => {
+      requestIdRef.current += 1;
+    };
+  }, [managerBase, managementKey, filter]);
 
   const loadCandidates = useCallback(async () => {
-    if (!managerBase || !managementKey) return;
+    const requestId = ++requestIdRef.current;
+    if (!managerBase || !managementKey) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError('');
     try {
@@ -82,9 +105,11 @@ export function AccountActionCandidatesPage() {
         filter === 'all' ? '' : filter,
         200
       );
+      if (requestId !== requestIdRef.current) return;
       setItems(response.items);
       setPendingCount(response.pendingCount);
     } catch (err) {
+      if (requestId !== requestIdRef.current) return;
       const message = err instanceof Error ? err.message : String(err || 'request failed');
       setError(message);
       showNotification(
@@ -92,9 +117,12 @@ export function AccountActionCandidatesPage() {
         'error'
       );
     } finally {
-      setLoading(false);
+      if (requestId === requestIdRef.current) setLoading(false);
     }
   }, [filter, managementKey, managerBase, showNotification, t]);
+
+  const loadCandidatesRef = useRef(loadCandidates);
+  loadCandidatesRef.current = loadCandidates;
 
   useEffect(() => {
     if (featureAvailability.checking) return;
@@ -159,7 +187,7 @@ export function AccountActionCandidatesPage() {
             showNotification(t('account_actions.delete_success'), 'success');
             break;
         }
-        await loadCandidates();
+        await loadCandidatesRef.current();
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err || 'request failed');
         showNotification(
@@ -173,7 +201,7 @@ export function AccountActionCandidatesPage() {
         setActingId(null);
       }
     },
-    [loadCandidates, managementKey, managerBase, showNotification, t]
+    [managementKey, managerBase, showNotification, t]
   );
 
   const confirmDelete = useCallback(
@@ -274,7 +302,8 @@ export function AccountActionCandidatesPage() {
             <strong>{t('account_actions.load_failed_title')}</strong>
             <span>{error}</span>
           </div>
-        ) : visibleItems.length === 0 && !loading ? (
+        ) : null}
+        {visibleItems.length === 0 && !loading ? (
           <div className={styles.emptyState}>
             <strong>{t('account_actions.empty_title')}</strong>
             <span>{t('account_actions.empty_desc')}</span>
@@ -304,7 +333,9 @@ export function AccountActionCandidatesPage() {
                         <div className={styles.accountCell}>
                           <strong>{candidate.accountSnapshot || candidate.authLabel || '-'}</strong>
                           <span>{candidate.provider || '-'}</span>
-                          {candidate.accountIdSnapshot ? <small>{candidate.accountIdSnapshot}</small> : null}
+                          {candidate.accountIdSnapshot ? (
+                            <small>{candidate.accountIdSnapshot}</small>
+                          ) : null}
                         </div>
                       </td>
                       <td>

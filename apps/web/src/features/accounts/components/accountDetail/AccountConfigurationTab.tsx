@@ -46,7 +46,8 @@ export function AccountConfigurationTab({
   } = editor;
   const capabilities = getAuthFileConfigurationCapabilities(state?.providerKey || row.provider);
   const providerLabel = getProviderLabel(state?.providerKey || row.provider, t);
-  const disabled = disableControls || sharedSourceReadOnly || state?.saving === true;
+  const disabled =
+    disableControls || sharedSourceReadOnly || state?.saving === true || state?.loading === true;
   const reloadAndRestoreFocus = () => {
     void editor.reload().then(() => {
       if (typeof window === 'undefined') return;
@@ -90,7 +91,7 @@ export function AccountConfigurationTab({
     );
   }
 
-  if (!state || state.loading) {
+  if (!state || (state.loading && !state.record)) {
     return (
       <div className={styles.configurationLoading} role="status" aria-live="polite">
         <span>{t('accounts.config_loading')}</span>
@@ -98,7 +99,7 @@ export function AccountConfigurationTab({
     );
   }
 
-  if (state.error || !draft || !state.record) {
+  if (!draft || !state.record) {
     return (
       <div className={styles.drawerDetailStack}>
         <section className={styles.drawerSection}>
@@ -127,7 +128,13 @@ export function AccountConfigurationTab({
       data-provider={state.providerKey}
       role="region"
       aria-label={t('accounts.detail_tab_config')}
+      aria-busy={state.loading}
     >
+      {state.error ? (
+        <div className={styles.configurationLoadError} role="alert">
+          {state.error}
+        </div>
+      ) : null}
       <div className={styles.configurationToolbar}>
         {dirty ? (
           <span className={styles.configurationDirtyBadge} role="status">

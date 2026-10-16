@@ -18,6 +18,7 @@ import {
   type UsageServiceStatus,
 } from '@/services/api/usageService';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
+import { useRequestMonitoringAvailability } from '@/hooks/useRequestMonitoringAvailability';
 import { loadMonitoringMetaPayload } from '@/features/monitoring/services/monitoringMetaService';
 import { buildMonitoringAuthMetaMap } from '@/features/monitoring/model/authMeta';
 import { buildAuthFileMapFromMeta } from '@/features/monitoring/model/sourceDisplay';
@@ -61,6 +62,14 @@ interface DashboardDisplayMeta {
 const HEALTH_REFRESH_INTERVAL_MS = 60_000;
 
 export function DashboardPage() {
+  const connectionScope = useAuthStore((state) =>
+    JSON.stringify([state.apiBase, state.managementKey])
+  );
+  const { serviceBase } = useRequestMonitoringAvailability();
+  return <DashboardPageContent key={`${connectionScope}:${serviceBase}`} />;
+}
+
+function DashboardPageContent() {
   const { t, i18n } = useTranslation();
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const serverVersion = useAuthStore((state) => state.serverVersion);
@@ -74,6 +83,7 @@ export function DashboardPage() {
   const models = useModelsStore((state) => state.models);
   const modelsLoading = useModelsStore((state) => state.loading);
   const modelsError = useModelsStore((state) => state.error);
+  const modelsCache = useModelsStore((state) => state.cache);
   const fetchModelsFromStore = useModelsStore((state) => state.fetchModels);
 
   const [stats, setStats] = useState<{
@@ -101,6 +111,7 @@ export function DashboardPage() {
   const [collectorError, setCollectorError] = useState('');
   const [errorLogs, setErrorLogs] = useState<ErrorLogFile[]>([]);
   const [errorLogsLoading, setErrorLogsLoading] = useState(false);
+  const [errorLogsLoaded, setErrorLogsLoaded] = useState(false);
   const [managerCpaBase, setManagerCpaBase] = useState('');
   const [displayMeta, setDisplayMeta] = useState<DashboardDisplayMeta>({
     authFiles: [],
@@ -109,6 +120,18 @@ export function DashboardPage() {
   });
 
   const apiKeysCache = useRef<string[]>([]);
+  const statsRequestId = useRef(0);
+  const healthRequestId = useRef(0);
+  const modelRequestId = useRef(0);
+  useEffect(
+    () => () => {
+      statsRequestId.current += 1;
+      healthRequestId.current += 1;
+      modelRequestId.current += 1;
+    },
+    []
+  );
+  const [statsError, setStatsError] = useState('');
 
   useEffect(() => {
     apiKeysCache.current = [];
@@ -171,12 +194,14 @@ export function DashboardPage() {
   }, [config?.apiKeys]);
 
   const fetchModels = useCallback(async () => {
+    const requestId = ++modelRequestId.current;
     if (connectionStatus !== 'connected' || !apiBase) {
       return;
     }
 
     try {
       const apiKeys = await resolveApiKeysForModels();
+      if (requestId !== modelRequestId.current) return;
       const primaryKey = apiKeys[0];
       await fetchModelsFromStore(apiBase, primaryKey);
     } catch {
@@ -185,6 +210,7 @@ export function DashboardPage() {
   }, [connectionStatus, apiBase, resolveApiKeysForModels, fetchModelsFromStore]);
 
   const refreshStats = useCallback(async () => {
+    const requestId = ++statsRequestId.current;
     if (connectionStatus === 'connected') {
       setLoading(true);
       try {
@@ -199,25 +225,34 @@ export function DashboardPage() {
             providersApi.getOpenAIProviders(),
           ]);
 
-        setStats({
-          apiKeys: keysRes.status === 'fulfilled' ? keysRes.value.length : null,
-          authFiles: filesRes.status === 'fulfilled' ? filesRes.value.files.length : null,
-        });
+        if (requestId !== statsRequestId.current) return;
+        setStats((current) => ({
+          apiKeys: keysRes.status === 'fulfilled' ? keysRes.value.length : current.apiKeys,
+          authFiles:
+            filesRes.status === 'fulfilled' ? filesRes.value.files.length : current.authFiles,
+        }));
 
-        setProviderStats({
-          gemini: resolveProviderCount(geminiRes),
-          codex: resolveProviderCount(codexRes),
-          xai: resolveProviderCount(xaiRes, { unsupportedAsZero: true }),
-          claude: resolveProviderCount(claudeRes),
-          openai: resolveProviderCount(openaiRes),
-        });
+        setProviderStats((current) => ({
+          gemini: resolveProviderCount(geminiRes) ?? current.gemini,
+          codex: resolveProviderCount(codexRes) ?? current.codex,
+          xai: resolveProviderCount(xaiRes, { unsupportedAsZero: true }) ?? current.xai,
+          claude: resolveProviderCount(claudeRes) ?? current.claude,
+          openai: resolveProviderCount(openaiRes) ?? current.openai,
+        }));
+        setStatsError(
+          [keysRes, filesRes, geminiRes, codexRes, xaiRes, claudeRes, openaiRes].some(
+            (result) => result.status === 'rejected'
+          )
+            ? t('notification.refresh_failed')
+            : ''
+        );
       } finally {
-        setLoading(false);
+        if (requestId === statsRequestId.current) setLoading(false);
       }
     } else {
       setLoading(false);
     }
-  }, [connectionStatus]);
+  }, [connectionStatus, t]);
 
   const usageEnabled = usageSummary.enabled;
   const usageServiceBase = usageSummary.serviceBase;
@@ -261,11 +296,13 @@ export function DashboardPage() {
   }, [displayMeta.apiKeyAliases]);
 
   const refreshHealth = useCallback(async () => {
+    const requestId = ++healthRequestId.current;
     if (!usageEnabled || !usageServiceBase) {
       setCollectorStatus(null);
       setCollectorError('');
       setCollectorLoading(false);
       setErrorLogs([]);
+      setErrorLogsLoaded(false);
       setErrorLogsLoading(false);
       setManagerCpaBase('');
       setDisplayMeta({ authFiles: [], channels: [], apiKeyAliases: [] });
@@ -284,11 +321,11 @@ export function DashboardPage() {
         usageServiceApi.getApiKeyAliases(usageServiceBase, managementKey),
       ]);
 
+    if (requestId !== healthRequestId.current) return;
     if (collectorResult.status === 'fulfilled') {
       setCollectorStatus(collectorResult.value);
       setCollectorError('');
     } else {
-      setCollectorStatus(null);
       const reason = collectorResult.reason;
       setCollectorError(reason instanceof Error ? reason.message : String(reason));
     }
@@ -296,9 +333,9 @@ export function DashboardPage() {
 
     if (logsResult.status === 'fulfilled') {
       setErrorLogs(Array.isArray(logsResult.value.files) ? logsResult.value.files : []);
-    } else {
-      setErrorLogs([]);
+      setErrorLogsLoaded(true);
     }
+    if (logsResult.status === 'rejected') setCollectorError(t('notification.refresh_failed'));
     setErrorLogsLoading(false);
 
     setManagerCpaBase(
@@ -315,7 +352,7 @@ export function DashboardPage() {
           ? aliasesResult.value.items
           : current.apiKeyAliases,
     }));
-  }, [apiBase, config, managementKey, usageEnabled, usageServiceBase]);
+  }, [apiBase, config, managementKey, usageEnabled, usageServiceBase, t]);
 
   const refreshDashboard = useCallback(async () => {
     setCurrentTime(new Date());
@@ -373,10 +410,10 @@ export function DashboardPage() {
     },
     {
       label: t('nav.ai_providers'),
-      value: loading ? '-' : providerStatsReady ? totalProviderKeys : '-',
+      value: providerStatsReady ? totalProviderKeys : '-',
       icon: <IconBot size={24} />,
       path: '/ai-providers',
-      loading: loading,
+      loading: loading && !hasProviderStats,
       sublabel: hasProviderStats
         ? t('dashboard.provider_keys_detail', {
             gemini: providerStats.gemini ?? '-',
@@ -397,10 +434,14 @@ export function DashboardPage() {
     },
     {
       label: t('dashboard.available_models'),
-      value: getDashboardModelCountDisplay(models.length, modelsLoading, modelsError),
+      value: getDashboardModelCountDisplay(
+        models.length,
+        modelsLoading && !modelsCache,
+        modelsCache ? null : modelsError
+      ),
       icon: <IconSatellite size={24} />,
       path: '/system',
-      loading: modelsLoading,
+      loading: modelsLoading && !modelsCache,
       sublabel: t('dashboard.available_models_desc'),
     },
   ];
@@ -505,13 +546,13 @@ export function DashboardPage() {
           connectionStatus={connectionStatus}
           refreshSignal={cardRefreshSignal}
           usageEnabled={usageSummary.enabled}
-          usageLoading={usageSummary.loading}
+          usageLoading={usageSummary.loading && !usageSummary.summary}
           usageError={usageSummary.error}
           collectorStatus={collectorStatus}
           collectorLoading={collectorLoading}
           collectorError={collectorError}
           errorLogCount={errorLogs.length}
-          errorLogsLoading={errorLogsLoading}
+          errorLogsLoading={errorLogsLoading && !errorLogsLoaded}
         />
       </section>
 
@@ -579,6 +620,7 @@ export function DashboardPage() {
       )}
 
       {/* 6. Quick Stats + Config Summary */}
+      {statsError ? <div role="alert">{statsError}</div> : null}
       <section className={styles.bottomSummaryRow}>
         <div className={styles.quickStatsPanel}>
           <div className={styles.bentoGrid}>

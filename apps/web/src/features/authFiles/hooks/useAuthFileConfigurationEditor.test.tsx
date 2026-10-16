@@ -86,6 +86,30 @@ describe('useAuthFileConfigurationEditor', () => {
   let renderer: ReactTestRenderer | null = null;
   let latest: UseAuthFileConfigurationEditorResult | null = null;
 
+  it('keeps a same-credential draft and source visible while revalidating and after failure', async () => {
+    await act(async () => {
+      renderer = create(<Harness />);
+    });
+    await flush();
+    const previous = latest!.draft;
+    const next = createDeferred<string>();
+    mocks.downloadText.mockReturnValueOnce(next.promise);
+    let pending!: Promise<void>;
+    act(() => {
+      pending = latest!.reload();
+    });
+    expect(latest!.state?.loading).toBe(true);
+    expect(latest!.draft).toEqual(previous);
+    expect(latest!.rawDataText).toContain('old');
+    await act(async () => {
+      next.reject(new Error('offline'));
+      await pending;
+    });
+    expect(latest!.state?.error).toBe('offline');
+    expect(latest!.draft).toEqual(previous);
+    expect(latest!.rawDataText).toContain('old');
+  });
+
   function Harness({
     enabled = true,
     activeFile = file,

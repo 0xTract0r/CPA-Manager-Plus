@@ -1,4 +1,5 @@
 import {
+  useRef,
   useCallback,
   useEffect,
   useId,
@@ -518,7 +519,15 @@ export function PluginStorePage({
     navigate('/plugins');
   }, [navigate, onManageInstalled]);
 
+  const listRequestIdRef = useRef(0);
+  useEffect(
+    () => () => {
+      listRequestIdRef.current += 1;
+    },
+    []
+  );
   const loadStore = useCallback(async () => {
+    const requestId = ++listRequestIdRef.current;
     if (!connected) {
       setLoading(false);
       setError({ kind: 'generic', message: t('notification.connection_required') });
@@ -534,8 +543,10 @@ export function PluginStorePage({
     setError(null);
     try {
       const store = await pluginStoreApi.list();
+      if (requestId !== listRequestIdRef.current) return;
       setData(store);
     } catch (err: unknown) {
+      if (requestId !== listRequestIdRef.current) return;
       const status = getErrorStatus(err);
       if (status === 404) {
         setError({ kind: 'unsupported', message: t('plugin_store.unsupported_backend') });
@@ -554,7 +565,7 @@ export function PluginStorePage({
         });
       }
     } finally {
-      setLoading(false);
+      if (requestId === listRequestIdRef.current) setLoading(false);
     }
   }, [connected, supportsPlugin, t]);
 

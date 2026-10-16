@@ -151,21 +151,25 @@ export function useAuthFileConfigurationEditor(
     const fileName = targetFile.name;
     const selectionKey = getAuthFileSelectionKey(targetFile);
     const scopeKey = getConfigurationScopeKey(requestConnectionKey, targetFile);
-    setScopedState({
-      scopeKey,
-      value: {
-        authFile: targetFile,
-        fileName,
-        loading: true,
-        saving: false,
-        error: '',
-        record: null,
-        recordIndex: null,
-        providerKey: '',
-        originalDraft: null,
-        draft: null,
-      },
-    });
+    setScopedState((previous) =>
+      previous?.scopeKey === scopeKey && previous.value.record
+        ? { ...previous, value: { ...previous.value, loading: true, error: '' } }
+        : {
+            scopeKey,
+            value: {
+              authFile: targetFile,
+              fileName,
+              loading: true,
+              saving: false,
+              error: '',
+              record: null,
+              recordIndex: null,
+              providerKey: '',
+              originalDraft: null,
+              draft: null,
+            },
+          }
+    );
 
     try {
       const rawText = requestScope
@@ -242,6 +246,8 @@ export function useAuthFileConfigurationEditor(
     !hasErrors &&
     !disableControls &&
     !sharedSourceReadOnly &&
+    !state?.loading &&
+    !state?.error &&
     state?.saving !== true;
   const rawDataText = state?.record ? buildRedactedAuthFileConfigurationText(state.record) : '';
 
@@ -252,7 +258,13 @@ export function useAuthFileConfigurationEditor(
     ) => {
       setScopedState((previous) => {
         if (previous?.scopeKey !== currentScopeKey) return previous;
-        if (sharedSourceReadOnly || !previous.value.draft || previous.value.saving) return previous;
+        if (
+          sharedSourceReadOnly ||
+          !previous.value.draft ||
+          previous.value.saving ||
+          previous.value.loading
+        )
+          return previous;
         return {
           ...previous,
           value: {

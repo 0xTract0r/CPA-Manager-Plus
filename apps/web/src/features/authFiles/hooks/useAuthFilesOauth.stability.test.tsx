@@ -225,6 +225,38 @@ describe('useAuthFilesOauth loader reference stability', () => {
     expect(mocks.getOauthModelAlias).toHaveBeenCalledTimes(1);
   });
 
+  it('treats successful empty rule responses as loaded through refresh failure', async () => {
+    harness = mountHarness(); await flushAsync();
+    expect(harness.getLatest().excludedLoaded).toBe(true);
+    expect(harness.getLatest().modelAliasLoaded).toBe(true);
+    mocks.getOauthExcludedModels.mockRejectedValueOnce(new Error('offline'));
+    mocks.getOauthModelAlias.mockRejectedValueOnce(new Error('offline'));
+    await act(async () => { await Promise.all([harness!.getLatest().loadExcluded(), harness!.getLatest().loadModelAlias()]); });
+    expect(harness.getLatest()).toMatchObject({ excluded: {}, modelAlias: {}, excludedLoaded: true, modelAliasLoaded: true, excludedError: 'error', modelAliasError: 'error' });
+    harness.switchConnection('connection-b');
+    expect(harness.getLatest().excludedLoaded).toBe(false);
+    expect(harness.getLatest().modelAliasLoaded).toBe(false);
+  });
+
+  it('retains model definitions when re-entering the same diagram fails', async () => {
+    let latest!: UseAuthFilesOauthResult;
+    function Diagram({ visible }: { visible: boolean }) {
+      const result = useAuthFilesOauth({ viewMode: visible ? 'diagram' : 'list', files: DIAGRAM_FILES, connectionKey: 'connection-a', requestScope: { apiBase: 'http://connection-a.local:8317', managementKey: 'connection-a-key' } });
+      useEffect(() => { latest = result; }, [result]);
+      return null;
+    }
+    mocks.getModelDefinitions.mockResolvedValue([{ id: 'retained-model' }]);
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<Diagram visible />); });
+    expect(latest.allProviderModels.codex).toEqual([{ id: 'retained-model' }]);
+    act(() => { renderer.update(<Diagram visible={false} />); });
+    mocks.getModelDefinitions.mockRejectedValueOnce(new Error('offline'));
+    await act(async () => { renderer.update(<Diagram visible />); });
+    expect(latest.allProviderModels.codex).toEqual([{ id: 'retained-model' }]);
+    expect(mocks.showNotification).toHaveBeenCalledWith('notification.refresh_failed', 'error');
+    act(() => renderer.unmount());
+  });
+
   it('pins OAuth diagram model requests to the captured CPA connection', async () => {
     let renderer: ReactTestRenderer;
     act(() => {

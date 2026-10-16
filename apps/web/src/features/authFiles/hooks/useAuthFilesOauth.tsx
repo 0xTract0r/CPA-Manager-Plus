@@ -28,8 +28,10 @@ class OAuthConnectionScopeChangedError extends Error {}
 export type UseAuthFilesOauthResult = {
   excluded: Record<string, string[]>;
   excludedError: OAuthConfigLoadState;
+  excludedLoaded: boolean;
   modelAlias: Record<string, OAuthModelAliasEntry[]>;
   modelAliasError: OAuthConfigLoadState;
+  modelAliasLoaded: boolean;
   allProviderModels: Record<string, AuthFileModelItem[]>;
   providerList: string[];
   loadExcluded: () => Promise<void>;
@@ -70,8 +72,10 @@ export function useAuthFilesOauth(options: UseAuthFilesOauthOptions): UseAuthFil
 
   const [excluded, setExcluded] = useState<Record<string, string[]>>({});
   const [excludedError, setExcludedError] = useState<OAuthConfigLoadState>('loading');
+  const [excludedLoaded, setExcludedLoaded] = useState(false);
   const [modelAlias, setModelAlias] = useState<Record<string, OAuthModelAliasEntry[]>>({});
   const [modelAliasError, setModelAliasError] = useState<OAuthConfigLoadState>('loading');
+  const [modelAliasLoaded, setModelAliasLoaded] = useState(false);
   const [allProviderModels, setAllProviderModels] = useState<Record<string, AuthFileModelItem[]>>(
     {}
   );
@@ -116,8 +120,10 @@ export function useAuthFilesOauth(options: UseAuthFilesOauthOptions): UseAuthFil
     queueMicrotask(() => {
       if (cancelled || connectionKeyRef.current !== normalizedConnectionKey) return;
       setExcluded({});
+      setExcludedLoaded(false);
       setExcludedError('loading');
       setModelAlias({});
+      setModelAliasLoaded(false);
       setModelAliasError('loading');
       setAllProviderModels({});
       setStateConnectionKey(normalizedConnectionKey);
@@ -184,21 +190,24 @@ export function useAuthFilesOauth(options: UseAuthFilesOauthOptions): UseAuthFil
             const models = await authFilesApi.getModelDefinitions(provider, requestScope);
             return { provider, models };
           } catch {
-            return { provider, models: [] as AuthFileModelItem[] };
+            return { provider, models: null };
           }
         })
       );
 
       if (cancelled || !isConnectionCurrent(requestConnectionKey)) return;
 
-      const nextModels: Record<string, AuthFileModelItem[]> = {};
-      results.forEach(({ provider, models }) => {
-        if (models.length > 0) {
-          nextModels[provider] = models;
-        }
+      setAllProviderModels((current) => {
+        const nextModels: Record<string, AuthFileModelItem[]> = {};
+        results.forEach(({ provider, models }) => {
+          const retained = models ?? current[provider];
+          if (retained?.length) nextModels[provider] = retained;
+        });
+        return nextModels;
       });
-
-      setAllProviderModels(nextModels);
+      if (results.some(({ models }) => models === null)) {
+        showNotification(t('notification.refresh_failed'), 'error');
+      }
     };
 
     void loadAllModels();
@@ -206,7 +215,15 @@ export function useAuthFilesOauth(options: UseAuthFilesOauthOptions): UseAuthFil
     return () => {
       cancelled = true;
     };
-  }, [isConnectionCurrent, normalizedConnectionKey, providerList, requestScope, viewMode]);
+  }, [
+    isConnectionCurrent,
+    normalizedConnectionKey,
+    providerList,
+    requestScope,
+    viewMode,
+    showNotification,
+    t,
+  ]);
 
   const loadExcluded = useCallback(
     async (options?: { soft?: boolean }) => {
@@ -228,6 +245,7 @@ export function useAuthFilesOauth(options: UseAuthFilesOauthOptions): UseAuthFil
         excludedUnsupportedRef.current = false;
         excludedBaselineOkRef.current = true;
         setExcluded(res || {});
+        setExcludedLoaded(true);
         setExcludedError('ready');
       } catch (err: unknown) {
         if (
@@ -277,6 +295,7 @@ export function useAuthFilesOauth(options: UseAuthFilesOauthOptions): UseAuthFil
         mappingsUnsupportedRef.current = false;
         modelAliasBaselineOkRef.current = true;
         setModelAlias(res || {});
+        setModelAliasLoaded(true);
         setModelAliasError('ready');
       } catch (err: unknown) {
         if (
@@ -707,8 +726,10 @@ export function useAuthFilesOauth(options: UseAuthFilesOauthOptions): UseAuthFil
 
   return {
     excluded: scopedExcluded,
+    excludedLoaded: stateConnectionKey === normalizedConnectionKey && excludedLoaded,
     excludedError: stateConnectionKey === normalizedConnectionKey ? excludedError : 'loading',
     modelAlias: scopedModelAlias,
+    modelAliasLoaded: stateConnectionKey === normalizedConnectionKey && modelAliasLoaded,
     modelAliasError: stateConnectionKey === normalizedConnectionKey ? modelAliasError : 'loading',
     allProviderModels: scopedAllProviderModels,
     providerList,
