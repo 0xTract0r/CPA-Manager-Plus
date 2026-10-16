@@ -658,7 +658,7 @@ describe('useAuthFileConfigurationEditor', () => {
     expect(latest?.dirty).toBe(false);
   });
 
-  it('retains successful save with fallback draft and download warning when raw download fails', async () => {
+  it('keeps a successful save visible but read-only until the failed source reload recovers', async () => {
     await act(async () => {
       renderer = create(<Harness />);
       await Promise.resolve();
@@ -674,6 +674,10 @@ describe('useAuthFileConfigurationEditor', () => {
 
     expect(latest?.dirty).toBe(false);
     expect(latest?.draft?.note).toBe('updated-note');
+    expect(latest?.state?.error).toBe('raw download network error');
+    expect(latest?.canSave).toBe(false);
+    act(() => latest?.updateField('note', 'blocked-unverified-edit'));
+    expect(latest?.draft?.note).toBe('updated-note');
     expect(mocks.showNotification).toHaveBeenCalledWith('accounts.config_saved_success', 'success');
     expect(mocks.showNotification).toHaveBeenCalledWith(
       expect.stringContaining('notification.download_failed'),
@@ -681,6 +685,21 @@ describe('useAuthFileConfigurationEditor', () => {
     );
     expect(mocks.reconcileSource).toHaveBeenCalledWith('xai.json');
     expect(mocks.onSaved).toHaveBeenCalledWith('xai.json');
+
+    setDownloadedRecord({
+      type: 'xai',
+      auth_index: 'auth-1',
+      account_id: 'account-1',
+      note: 'updated-note',
+    });
+    await act(async () => {
+      await latest?.reload();
+    });
+
+    expect(latest?.state?.error).toBe('');
+    act(() => latest?.updateField('note', 'recovered-edit'));
+    expect(latest?.dirty).toBe(true);
+    expect(latest?.canSave).toBe(true);
     expect(mocks.list).not.toHaveBeenCalled();
   });
 
@@ -714,6 +733,10 @@ describe('useAuthFileConfigurationEditor', () => {
       expect.stringContaining('notification.update_failed'),
       'error'
     );
+    expect(latest?.state?.error).toBe('');
+    act(() => latest?.updateField('note', 'second-edit-after-reconcile-warning'));
+    expect(latest?.dirty).toBe(true);
+    expect(latest?.canSave).toBe(true);
     expect(mocks.list).not.toHaveBeenCalled();
   });
 
@@ -734,6 +757,8 @@ describe('useAuthFileConfigurationEditor', () => {
 
     expect(latest?.dirty).toBe(false);
     expect(latest?.draft?.note).toBe('updated-note');
+    expect(latest?.state?.error).toBe('raw download failed');
+    expect(latest?.canSave).toBe(false);
     expect(mocks.showNotification).toHaveBeenCalledWith('accounts.config_saved_success', 'success');
     expect(mocks.showNotification).toHaveBeenCalledWith(
       expect.stringContaining('notification.download_failed'),

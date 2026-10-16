@@ -402,8 +402,7 @@ export function useAuthFileConfigurationEditor(
         nextRecordIndex = refreshed.recordIndex;
       } catch (refreshError: unknown) {
         if (!isCurrentTarget()) return;
-        sourceRefreshWarning =
-          refreshError instanceof Error ? refreshError.message : t('common.unknown_error');
+        sourceRefreshWarning = resolveLoadError(refreshError);
       }
       const normalizedDraft = buildAuthFileConfigurationDraft(nextRecord, nextProviderKey);
       setScopedState((previous) => {
@@ -419,6 +418,7 @@ export function useAuthFileConfigurationEditor(
             ...previous.value,
             authFile: resolution.target ?? previous.value.authFile,
             saving: false,
+            error: sourceRefreshWarning,
             record: nextRecord,
             recordIndex: nextRecordIndex,
             providerKey: nextProviderKey,
@@ -467,6 +467,7 @@ export function useAuthFileConfigurationEditor(
     patchResult.patch,
     reconcileSource,
     requestScope,
+    resolveLoadError,
     showNotification,
     state,
     t,
