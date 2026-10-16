@@ -75,6 +75,15 @@ func TestLatencyCoveringIndexAPIExperiment(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	if targetOnly {
+		var actualCount int
+		if err := db.QueryRow(`select count(*) from usage_events`).Scan(&actualCount); err != nil {
+			t.Fatal(err)
+		}
+		if actualCount != count {
+			t.Fatalf("target-only API experiment requires a complete fixture: marker=%d usage_events=%d", count, actualCount)
+		}
+	}
 	// Keep the experiment's DDL timeout/WAL policy aligned with CPAMP.
 	if _, err := db.Exec(`pragma busy_timeout=5000`); err != nil {
 		t.Fatal(err)

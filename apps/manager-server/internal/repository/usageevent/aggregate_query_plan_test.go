@@ -25,17 +25,17 @@ func TestTopModelsQueryUsesTimestampIndexBeforePricingMaterialization(t *testing
 		t.Fatal(err)
 	}
 	t.Run("timestamp_only", func(t *testing.T) {
-		assertTopModelsTimestampPlan(t, db)
+		assertTopModelsTimestampPlan(t, db, "idx_usage_events_timestamp")
 	})
 	if _, err := db.Exec(latencyCoverDDL); err != nil {
 		t.Fatal(err)
 	}
 	t.Run("timestamp_and_latency_cover", func(t *testing.T) {
-		assertTopModelsTimestampPlan(t, db)
+		assertTopModelsTimestampPlan(t, db, "")
 	})
 }
 
-func assertTopModelsTimestampPlan(t *testing.T, db *sql.DB) {
+func assertTopModelsTimestampPlan(t *testing.T, db *sql.DB, requiredIndex string) {
 	t.Helper()
 	rows, err := db.Query(`explain query plan `+topModelsSQL, int64(1_000), int64(2_000), 5)
 	if err != nil {
@@ -53,7 +53,11 @@ func assertTopModelsTimestampPlan(t *testing.T, db *sql.DB) {
 			t.Fatalf("scan query plan: %v", err)
 		}
 		details = append(details, detail)
-		usesTimestampRange = usesTimestampRange || (strings.Contains(detail, "SEARCH usage_events USING ") && strings.Contains(detail, "(timestamp_ms>? AND timestamp_ms<?)"))
+		if requiredIndex != "" {
+			usesTimestampRange = usesTimestampRange || strings.Contains(detail, "SEARCH usage_events USING INDEX "+requiredIndex)
+		} else {
+			usesTimestampRange = usesTimestampRange || (strings.Contains(detail, "SEARCH usage_events USING ") && strings.Contains(detail, "(timestamp_ms>? AND timestamp_ms<?)"))
+		}
 		fullUsageScan = fullUsageScan || strings.Contains(detail, "SCAN usage_events")
 	}
 	if err := rows.Err(); err != nil {
