@@ -208,7 +208,7 @@ INSERT/UPDATE/DELETE abort triggers 在维护全程保护 raw usage，前后 che
 - SQLite lifecycle 测试：空／已有数据、重启、离线构建、锁失败、真实 DDL 中断、原始历史和状态恢复。
 - usageevent 回归／opt-in 实验：自然 planner、NULL/0/失败／筛选精确结果、真实 SQL A/B、Go 排序和写入；CPU helper 按平台拆分。
 - monitoring opt-in 实验：真实认证 handler 与五 Tab 响应精确比较。
-- 原 TopModels query-plan 回归保留 timestamp-only 的原断言，并新增两索引共存场景，要求特定自然索引和 timestamp 范围条件，继续禁止全表扫描。
+- 原 TopModels query-plan 回归保留 timestamp-only 场景，并新增两索引共存场景；只要求 timestamp 范围索引搜索并继续禁止全表扫描，不锁定 SQLite 必须选择哪一个 timestamp-leading 索引。
 - 无 API/UI、生产 SQL、分位数定义、归档语义、新配置或后台系统变化。没有生产 INDEXED BY；试验索引选择只存在于测试。
 
 升级后的非空 usage_events 继续可服务，性能提升需停 Manager Server 后运行现有 `cpa-manager-plus cleanup-derived --db-path <数据库>`，完成后重启。新空库由既有 post-listen maintenance 创建。在线 periodic maintenance 不建大库索引。
@@ -241,7 +241,39 @@ CPAMP_LATENCY_PERF=1 CPAMP_LATENCY_PERF_EVENTS=100000 go test ./internal/reposit
 # 仅 windows / engine / writes 时可设置 CPAMP_LATENCY_PERF_MODE。
 # 已存在的 marked fixture 可设置 CPAMP_LATENCY_PERF_RESUME，EVENTS 须相同。
 
-CPAMP_LATENCY_PERF_DB=<marked-fixture> go test ./internal/http/controller/monitoring -run '^TestLatencyCoveringIndexAPIExperiment$' -count=1 -timeout=120m -v
+CPAMP_LATENCY_PERF_DB=<marked-fixture> go test ./internal/http/controller/monitoring -run '^TestLatencyCoveringIndexAPIExperiment 必须是预先创建的任务独占临时目录。大库实验要求 lsof。
+SQLITE_TMPDIR=<task-owned-temp-dir> CPAMP_LATENCY_PERF_MAINT_DB=<marked-3200000-fixture> go test ./internal/repository/sqlite -run '^TestLatencyCoverIndexLargeOfflineExperiment$' -count=1 -timeout=20m -v
+
+go test ./...
+go test -race ./...
+go vet ./...
+go build -o <task-owned-output> ./cmd/cpa-manager-plus
+go test ./internal/repository/usageevent -run '^$' -bench 'Benchmark(LatencyPercentilesWithFilter|InsertBatch)$' -benchtime=3x -benchmem -count=1
+```
+
+已有 LatencyPercentiles benchmark 直接 Open 后插入，没有调用 post-listen maintenance；它验证既有路径基线，不能当作新索引 A/B 证据。A/B 收益来自上述 opt-in 实验。
+
+## F. Git 交付
+
+性能报告、结果 JSON、测试和一行索引登记作为同一紧耦合提交交付到 `dev` PR。Commit SHA、PR URL、实时 CI 与合并条件记录在 PR 和最终交付消息，避免将自身 SHA 写回提交内容造成循环。提交前检查完整 staged diff；数据库、可执行文件、overlay、scratch 脚本及日志不进 Git。统一推送，PR 不自动合并，不发布版本。
+ -count=1 -timeout=120m -v
+# 合并前目标场景：仅 320 万事件、30 天 Overview、生产默认 rollup=true，避免重跑完整 API 矩阵。
+CPAMP_LATENCY_PERF_DB=<marked-3200000-fixture> CPAMP_LATENCY_PERF_API_TARGET_ONLY=1 go test ./internal/http/controller/monitoring -run '^TestLatencyCoveringIndexAPIExperiment 必须是预先创建的任务独占临时目录。大库实验要求 lsof。
+SQLITE_TMPDIR=<task-owned-temp-dir> CPAMP_LATENCY_PERF_MAINT_DB=<marked-3200000-fixture> go test ./internal/repository/sqlite -run '^TestLatencyCoverIndexLargeOfflineExperiment$' -count=1 -timeout=20m -v
+
+go test ./...
+go test -race ./...
+go vet ./...
+go build -o <task-owned-output> ./cmd/cpa-manager-plus
+go test ./internal/repository/usageevent -run '^$' -bench 'Benchmark(LatencyPercentilesWithFilter|InsertBatch)$' -benchtime=3x -benchmem -count=1
+```
+
+已有 LatencyPercentiles benchmark 直接 Open 后插入，没有调用 post-listen maintenance；它验证既有路径基线，不能当作新索引 A/B 证据。A/B 收益来自上述 opt-in 实验。
+
+## F. Git 交付
+
+性能报告、结果 JSON、测试和一行索引登记作为同一紧耦合提交交付到 `dev` PR。Commit SHA、PR URL、实时 CI 与合并条件记录在 PR 和最终交付消息，避免将自身 SHA 写回提交内容造成循环。提交前检查完整 staged diff；数据库、可执行文件、overlay、scratch 脚本及日志不进 Git。统一推送，PR 不自动合并，不发布版本。
+ -count=1 -timeout=120m -v
 # SQLITE_TMPDIR 必须是预先创建的任务独占临时目录。大库实验要求 lsof。
 SQLITE_TMPDIR=<task-owned-temp-dir> CPAMP_LATENCY_PERF_MAINT_DB=<marked-3200000-fixture> go test ./internal/repository/sqlite -run '^TestLatencyCoverIndexLargeOfflineExperiment$' -count=1 -timeout=20m -v
 
