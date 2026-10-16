@@ -86,6 +86,7 @@ export type UseAuthFilesDataResult = {
   selectionCount: number;
   loading: boolean;
   initialLoading: boolean;
+  hasLoaded: boolean;
   error: string;
   uploading: boolean;
   authJsonPasteSaving: boolean;
@@ -2199,6 +2200,7 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions = {}): UseAuth
     selectionCount,
     loading,
     initialLoading: loading && !hasLoaded,
+    hasLoaded,
     error,
     uploading,
     authJsonPasteSaving,

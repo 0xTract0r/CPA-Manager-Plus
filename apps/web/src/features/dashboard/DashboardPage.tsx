@@ -114,6 +114,7 @@ function DashboardPageContent() {
   const [errorLogsLoaded, setErrorLogsLoaded] = useState(false);
   const [errorLogsError, setErrorLogsError] = useState('');
   const [managerCpaBase, setManagerCpaBase] = useState('');
+  const [healthMetaError, setHealthMetaError] = useState('');
   const [displayMeta, setDisplayMeta] = useState<DashboardDisplayMeta>({
     authFiles: [],
     channels: [],
@@ -257,6 +258,7 @@ function DashboardPageContent() {
 
   const usageEnabled = usageSummary.enabled;
   const usageServiceBase = usageSummary.serviceBase;
+  const usageSummaryBootstrapError = Boolean(usageSummary.error && !usageSummary.summary);
   const authMetaMap = useMemo(
     () => buildMonitoringAuthMetaMap(displayMeta.authFiles),
     [displayMeta.authFiles]
@@ -307,6 +309,7 @@ function DashboardPageContent() {
       setErrorLogsError('');
       setErrorLogsLoading(false);
       setManagerCpaBase('');
+      setHealthMetaError('');
       setDisplayMeta({ authFiles: [], channels: [], apiKeyAliases: [] });
       return;
     }
@@ -343,10 +346,13 @@ function DashboardPageContent() {
     }
     setErrorLogsLoading(false);
 
-    setManagerCpaBase(
-      managerConfigResult.status === 'fulfilled'
-        ? managerConfigResult.value.config.cpaConnection?.cpaBaseUrl || apiBase || ''
-        : apiBase || ''
+    if (managerConfigResult.status === 'fulfilled') {
+      setManagerCpaBase(managerConfigResult.value.config.cpaConnection?.cpaBaseUrl || apiBase || '');
+    }
+    setHealthMetaError(
+      [managerConfigResult, metaResult, aliasesResult].some((result) => result.status === 'rejected')
+        ? t('notification.refresh_failed')
+        : ''
     );
 
     setDisplayMeta((current) => ({
@@ -357,7 +363,7 @@ function DashboardPageContent() {
           ? aliasesResult.value.items
           : current.apiKeyAliases,
     }));
-  }, [apiBase, config, managementKey, usageEnabled, usageServiceBase]);
+  }, [apiBase, config, managementKey, t, usageEnabled, usageServiceBase]);
 
   const refreshDashboard = useCallback(async () => {
     setCurrentTime(new Date());
@@ -562,6 +568,7 @@ function DashboardPageContent() {
           errorLogsLoaded={errorLogsLoaded}
         />
       </section>
+      {healthMetaError ? <div className="error-box" role="alert">{healthMetaError}</div> : null}
 
       {/* 3. Today's Overview (Metrics Cards) */}
       {usageSummary.enabled && (
@@ -580,7 +587,7 @@ function DashboardPageContent() {
       )}
 
       {/* 4. Charts Row (Traffic, Activity, Tokens) */}
-      {usageSummary.enabled && (
+      {usageSummary.enabled && !usageSummaryBootstrapError && (
         <section className={styles.chartsRow}>
           <TrafficOverviewCard
             timeline={usageSummary.trafficTimeline}
@@ -593,7 +600,7 @@ function DashboardPageContent() {
       )}
 
       {/* 5. Data & Status Row (Rankings, Health, Failures) */}
-      {usageSummary.enabled && (
+      {usageSummary.enabled && !usageSummaryBootstrapError && (
         <section className={styles.dataRow}>
           <UsageMetricsCard
             summary={usageSummary.summary}

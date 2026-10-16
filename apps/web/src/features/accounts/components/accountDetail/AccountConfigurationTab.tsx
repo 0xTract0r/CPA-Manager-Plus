@@ -136,7 +136,17 @@ export function AccountConfigurationTab({
     >
       {state.error ? (
         <div className={styles.configurationLoadError} role="alert">
-          {state.error}
+          <span>{state.error}</span>
+          <Button
+            variant="secondary"
+            size="sm"
+            id={reloadButtonId}
+            data-account-config-reload="retry"
+            onClick={reloadAndRestoreFocus}
+          >
+            <IconRefreshCw size={14} />
+            {t('common.retry')}
+          </Button>
         </div>
       ) : null}
       <div className={styles.configurationToolbar}>

@@ -789,7 +789,7 @@ function InstalledPluginsView({
             <div key={index} className={styles.skeletonRow} />
           ))}
         </div>
-      ) : visiblePlugins.length === 0 ? (
+      ) : error && !data ? null : visiblePlugins.length === 0 ? (
         <section className={styles.emptySurface}>
           <EmptyState
             title={t('plugin_management.no_plugins')}

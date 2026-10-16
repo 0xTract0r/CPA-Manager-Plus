@@ -1072,7 +1072,7 @@ export function ClaudeEditDrawer({
                   <div className={styles.sectionHint}>
                     {t('ai_providers.claude_models_fetch_loading')}
                   </div>
-                ) : discoveredModels.length === 0 ? (
+                ) : !modelsLoaded ? null : discoveredModels.length === 0 ? (
                   <div className={styles.sectionHint}>
                     {t('ai_providers.claude_models_fetch_empty')}
                   </div>

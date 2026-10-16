@@ -351,7 +351,7 @@ export function AiProvidersClaudeModelsPage() {
             <div className={styles.sectionHint}>
               {t('ai_providers.claude_models_fetch_loading')}
             </div>
-          ) : models.length === 0 ? (
+          ) : !modelsLoaded ? null : models.length === 0 ? (
             <div className={styles.sectionHint}>{t('ai_providers.claude_models_fetch_empty')}</div>
           ) : filteredModels.length === 0 ? (
             <div className={styles.sectionHint}>{t('ai_providers.claude_models_search_empty')}</div>

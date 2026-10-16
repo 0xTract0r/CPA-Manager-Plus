@@ -260,11 +260,11 @@ function AccountActionCandidatesPageContent() {
         </div>
         <div className={styles.heroStats}>
           <div className={styles.statCard}>
-            <span className={styles.statValue}>{pendingCount}</span>
+            <span className={styles.statValue}>{loaded ? pendingCount : '-'}</span>
             <span className={styles.statLabel}>{t('account_actions.pending_count')}</span>
           </div>
           <div className={styles.statCard}>
-            <span className={styles.statValue}>{visibleItems.length}</span>
+            <span className={styles.statValue}>{loaded ? visibleItems.length : '-'}</span>
             <span className={styles.statLabel}>{t('account_actions.visible_count')}</span>
           </div>
         </div>
@@ -282,7 +282,9 @@ function AccountActionCandidatesPageContent() {
               onClick={() => setFilter(key)}
             >
               {t(`account_actions.filter_${key}`)}
-              {key !== 'all' && typeof statusCounts[key] === 'number' ? ` · ${statusCounts[key]}` : ''}
+              {loaded && key !== 'all' && typeof statusCounts[key] === 'number'
+                ? ` · ${statusCounts[key]}`
+                : ''}
             </button>
           ))}
         </div>
@@ -312,12 +314,12 @@ function AccountActionCandidatesPageContent() {
             <span>{error}</span>
           </div>
         ) : null}
-        {visibleItems.length === 0 && (loaded || !loading) ? (
+        {visibleItems.length === 0 && loaded ? (
           <div className={styles.emptyState}>
             <strong>{t('account_actions.empty_title')}</strong>
             <span>{t('account_actions.empty_desc')}</span>
           </div>
-        ) : (
+        ) : visibleItems.length === 0 ? null : (
           <div className={styles.tableWrap}>
             <table className={styles.table}>
               <thead>

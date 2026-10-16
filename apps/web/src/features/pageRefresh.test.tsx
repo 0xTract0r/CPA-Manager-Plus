@@ -36,10 +36,13 @@ const mocks = vi.hoisted(() => ({
   logs: vi.fn(),
   errorLogs: vi.fn(),
   status: vi.fn(),
+  managerConfig: vi.fn(),
+  aliases: vi.fn(),
+  meta: vi.fn(),
   candidates: vi.fn(),
   ignoreCandidate: vi.fn(),
   deleteCandidate: vi.fn(),
-  usageSummary: { loading: false, summary: null as object | null },
+  usageSummary: { loading: false, summary: null as object | null, error: '' },
   clearLogs: vi.fn(),
   confirmation: vi.fn(),
   keys: vi.fn(),
@@ -125,13 +128,13 @@ vi.mock('@/services/api/usageService', () => ({
     listAccountActionCandidates: mocks.candidates,
     ignoreAccountActionCandidate: mocks.ignoreCandidate,
     deleteAccountActionCandidateAuthFile: mocks.deleteCandidate,
-    getManagerConfig: async () => ({ config: {} }),
-    getApiKeyAliases: async () => ({ items: [] }),
+    getManagerConfig: mocks.managerConfig,
+    getApiKeyAliases: mocks.aliases,
     getAccountProcessingPolicy: mocks.policy, updateAccountProcessingPolicy: mocks.updatePolicy,
   },
 }));
 vi.mock('./monitoring/services/monitoringMetaService', () => ({
-  loadMonitoringMetaPayload: async () => ({ authFiles: [], channels: [] }),
+  loadMonitoringMetaPayload: mocks.meta,
 }));
 vi.mock('./dashboard/hooks/useDashboardUsageSummary', () => ({
   useDashboardUsageSummary: () => ({
@@ -228,7 +231,7 @@ beforeEach(() => {
   });
   mocks.auth.managementKey = 'a';
   mocks.auth.apiBase = 'https://a.test';
-  mocks.usageSummary = { loading: false, summary: null };
+  mocks.usageSummary = { loading: false, summary: null, error: '' };
   mocks.auth.connectionStatus = 'connected';
   mocks.auth.supportsPlugin = true;
   mocks.managerBase = 'https://manager.test';
@@ -247,6 +250,11 @@ beforeEach(() => {
   mocks.logs.mockReset();
   mocks.errorLogs.mockReset();
   mocks.status.mockReset();
+  mocks.managerConfig.mockReset().mockResolvedValue({
+    config: { cpaConnection: { cpaBaseUrl: 'https://cpa.last-good' } },
+  });
+  mocks.aliases.mockReset().mockResolvedValue({ items: [] });
+  mocks.meta.mockReset().mockResolvedValue({ authFiles: [], channels: [] });
   mocks.candidates.mockReset();
   mocks.confirmation.mockReset();
   mocks.clearLogs.mockReset();
@@ -376,6 +384,44 @@ describe('page refresh interactions', () => {
     await act(async () => { next.reject(new Error('empty refresh offline')); await pending; });
     expect(text(renderer.root)).toContain('account_actions.empty_title');
     expect(text(renderer.root)).toContain('empty refresh offline');
+  });
+
+  it('keeps candidate bootstrap failure distinct from a successful empty result', async () => {
+    mocks.candidates.mockRejectedValueOnce(new Error('candidate bootstrap offline'));
+    await mount(<AccountActionCandidatesPage />);
+    const output = text(renderer.root);
+    expect(output).toContain('candidate bootstrap offline');
+    expect(output).not.toContain('account_actions.empty_title');
+  });
+
+  it('keeps installed-plugin bootstrap failure distinct from a successful empty result', async () => {
+    mocks.plugins.mockRejectedValueOnce(new Error('plugin bootstrap offline'));
+    await mount(<PluginsPage />);
+    const output = text(renderer.root);
+    expect(output).toContain('plugin bootstrap offline');
+    expect(output).not.toContain('plugin_management.no_plugins');
+  });
+
+  it('does not render dashboard no-data regions after a bootstrap summary failure', async () => {
+    mocks.usageSummary = { loading: false, summary: null, error: 'summary bootstrap offline' };
+    await mount(<DashboardPage />);
+    expect(renderer.root.findAllByType(UsageMetricsCard)).toHaveLength(1);
+    expect(renderer.root.findAllByType(TrafficOverviewCard)).toHaveLength(0);
+    expect(renderer.root.findAllByType(HealthAlertsCard)).toHaveLength(0);
+  });
+
+  it('retains dashboard CPA base and reports auxiliary health refresh failures', async () => {
+    await mount(<DashboardPage />);
+    const version = () => renderer.root.findByType(VersionCard);
+    expect(version().props.cpaBase).toBe('https://cpa.last-good');
+
+    mocks.managerConfig.mockRejectedValueOnce(new Error('manager config offline'));
+    mocks.meta.mockRejectedValueOnce(new Error('meta offline'));
+    mocks.aliases.mockRejectedValueOnce(new Error('aliases offline'));
+    await act(async () => { await refresh(); });
+
+    expect(version().props.cpaBase).toBe('https://cpa.last-good');
+    expect(text(renderer.root)).toContain('notification.refresh_failed');
   });
 
   it('uses a successful empty dashboard summary during background refresh', async () => {

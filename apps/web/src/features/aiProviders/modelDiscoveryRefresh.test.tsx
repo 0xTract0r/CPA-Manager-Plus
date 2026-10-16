@@ -252,4 +252,14 @@ describe.each(cases)('%s revalidation', (_name, Component, provider, drawer) => 
     await act(async () => { pending.reject(new Error('offline')); });
     expect(JSON.stringify(renderer.toJSON())).toContain('offline');
   });
+
+  it('keeps a bootstrap discovery failure distinct from a successful empty result', async () => {
+    const first = deferred();
+    mocks.fetch.mockReturnValueOnce(first.promise);
+    await open();
+    await act(async () => { first.reject(new Error('bootstrap offline')); });
+    const output = JSON.stringify(renderer.toJSON());
+    expect(output).toContain('bootstrap offline');
+    expect(output).not.toContain(`ai_providers.${provider}_models_fetch_empty`);
+  });
 });

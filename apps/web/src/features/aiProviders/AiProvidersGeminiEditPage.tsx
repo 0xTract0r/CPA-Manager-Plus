@@ -861,7 +861,7 @@ export function AiProvidersGeminiEditPage() {
                   <div className={styles.sectionHint}>
                     {t('ai_providers.gemini_models_fetch_loading')}
                   </div>
-                ) : discoveredModels.length === 0 ? (
+                ) : !modelsLoaded ? null : discoveredModels.length === 0 ? (
                   <div className={styles.sectionHint}>
                     {t('ai_providers.gemini_models_fetch_empty')}
                   </div>

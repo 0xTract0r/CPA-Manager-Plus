@@ -312,7 +312,7 @@ export function AiProvidersOpenAIModelsPage() {
             <div className={styles.sectionHint}>
               {t('ai_providers.openai_models_fetch_loading')}
             </div>
-          ) : models.length === 0 ? (
+          ) : !modelsLoaded ? null : models.length === 0 ? (
             <div className={styles.sectionHint}>{t('ai_providers.openai_models_fetch_empty')}</div>
           ) : filteredModels.length === 0 ? (
             <div className={styles.sectionHint}>{t('ai_providers.openai_models_search_empty')}</div>

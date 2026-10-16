@@ -139,7 +139,12 @@ describe('AccountConfigurationTab', () => {
       ).toBe(true);
       expect(findLoadingSpinners(renderer)).toHaveLength(0);
       expect(renderer.root.findAllByType(Input).every((node) => node.props.disabled)).toBe(true);
-      if (!loading) expect(readText(renderer.toJSON())).toContain('refresh offline');
+      if (!loading) {
+        expect(readText(renderer.toJSON())).toContain('refresh offline');
+        expect(
+          renderer.root.findAllByProps({ 'data-account-config-reload': 'retry' })
+        ).toHaveLength(1);
+      }
       editor.state = { ...editor.state!, loading: false, error: '' };
       act(() => renderer.update(
         <AccountConfigurationTab row={makeRow()} disableControls={false} editor={editor} onCopyText={vi.fn()} />

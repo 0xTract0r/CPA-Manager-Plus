@@ -390,9 +390,9 @@ function SystemPageContent() {
             <div className={`status-badge ${modelStatus.type}`}>{modelStatus.message}</div>
           )}
           {modelsError && <div className="error-box">{modelsError}</div>}
-          {modelsLoading && !modelsCache && models.length === 0 ? (
+          {modelsLoading && !modelsCache ? (
             <div className="hint">{t('common.loading')}</div>
-          ) : models.length === 0 ? (
+          ) : !modelsCache ? null : models.length === 0 ? (
             <div className="hint">{t('system_info.models_empty')}</div>
           ) : (
             <div className="item-list">

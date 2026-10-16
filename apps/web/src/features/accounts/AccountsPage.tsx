@@ -1316,6 +1316,7 @@ export function AccountsPage() {
     selectionCount,
     loading,
     initialLoading,
+    hasLoaded,
     error,
     uploading,
     authJsonPasteSaving,
@@ -10154,15 +10155,15 @@ export function AccountsPage() {
 
   const renderAccountsOverview = () => (
     <>
-      <AccountMetricsGrid metrics={metrics} />
+      {hasLoaded ? <AccountMetricsGrid metrics={metrics} /> : null}
       {error ? <div className={styles.errorBox}>{error}</div> : null}
       {initialLoading ? (
         <div className={styles.loadingPanel}>
           <LoadingSpinner />
         </div>
-      ) : (
+      ) : hasLoaded ? (
         renderAccountCards()
-      )}
+      ) : null}
       {renderDetailDrawer()}
     </>
   );
