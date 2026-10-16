@@ -1025,7 +1025,7 @@ describe('page refresh interactions', () => {
     };
     const autoRefreshToggle = renderer.root
       .findAllByType(ToggleSwitch)
-      .find((node) => JSON.stringify(node.props.label).includes('logs.auto_refresh'));
+      .find((node) => text(node).includes('logs.auto_refresh'));
     expect(autoRefreshToggle).toBeTruthy();
     act(() => { autoRefreshToggle!.props.onChange(true); });
     expect(poll).not.toBeNull();
