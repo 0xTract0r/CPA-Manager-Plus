@@ -678,6 +678,10 @@ describe('useAuthFileConfigurationEditor', () => {
     expect(latest?.canSave).toBe(false);
     act(() => latest?.updateField('note', 'blocked-unverified-edit'));
     expect(latest?.draft?.note).toBe('updated-note');
+    await act(async () => {
+      await latest?.save();
+    });
+    expect(mocks.patchFieldsWithPluginSourceFallback).toHaveBeenCalledTimes(1);
     expect(mocks.showNotification).toHaveBeenCalledWith('accounts.config_saved_success', 'success');
     expect(mocks.showNotification).toHaveBeenCalledWith(
       expect.stringContaining('notification.download_failed'),
