@@ -22,8 +22,12 @@ vi.mock('@/features/monitoring/hooks/useUsageData', () => ({
   useUsageData: () => ({ apiKeyAliases: [], loadApiKeyAliases: vi.fn() }),
 }));
 
+const monitoringMetaMocks = vi.hoisted(() => ({
+  load: vi.fn(),
+}));
+
 vi.mock('@/features/monitoring/services/monitoringMetaService', () => ({
-  loadMonitoringMetaPayload: () => Promise.resolve({ authFiles: [], channels: [] }),
+  loadMonitoringMetaPayload: monitoringMetaMocks.load,
 }));
 
 vi.mock('@/stores', () => ({
@@ -109,6 +113,7 @@ describe('useUsageAnalytics request orchestration', () => {
             {
               id: 'credential-a.json',
               auth_file_snapshot: 'credential-a.json',
+              auth_indices: ['auth-a'],
               calls: 10,
               success_calls: 9,
               failure_calls: 1,
@@ -241,6 +246,13 @@ describe('useUsageAnalytics request orchestration', () => {
     mainRefresh.mockReset();
     selectorRefresh.mockReset();
     auxiliaryRefresh.mockReset();
+    monitoringMetaMocks.load.mockReset().mockResolvedValue({
+      authFiles: [],
+      authFilesLoaded: true,
+      channels: [],
+      channelsLoaded: true,
+      error: '',
+    });
     useMonitoringAnalyticsMock.mockReset();
     useMonitoringAnalyticsMock.mockImplementation(resultFor);
   });
@@ -561,6 +573,56 @@ describe('useUsageAnalytics request orchestration', () => {
     expect(latestResult?.credentialTrendLoading).toBe(false);
     expect(latestResult?.credentialTrendError).toBe('timeline failed');
     expect(latestResult?.credentialRows).toHaveLength(1);
+  });
+
+  it('retains last-good metadata when a manual metadata refresh partially fails', async () => {
+    monitoringMetaMocks.load.mockResolvedValueOnce({
+      authFiles: [
+        {
+          name: 'credential-a.json',
+          auth_index: 'auth-a',
+          account: 'retained@example.com',
+          provider: 'codex',
+        },
+      ],
+      authFilesLoaded: true,
+      channels: [
+        {
+          key: 'retained:0',
+          name: 'retained-channel',
+          baseUrl: 'https://retained.test',
+          host: 'retained.test',
+          disabled: false,
+          authIndices: ['auth-a'],
+          modelNames: [],
+        },
+      ],
+      channelsLoaded: true,
+      error: '',
+    });
+
+    await renderHook();
+    await act(async () => {
+      latestResult?.setActiveTab('credentials');
+      await Promise.resolve();
+    });
+    expect(latestResult?.credentialRows[0]?.channels).toContain('retained-channel');
+
+    monitoringMetaMocks.load.mockResolvedValueOnce({
+      authFiles: [],
+      authFilesLoaded: false,
+      channels: [],
+      channelsLoaded: false,
+      error: 'meta offline',
+    });
+    await act(async () => {
+      latestResult?.refresh();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(latestResult?.credentialRows[0]?.channels).toContain('retained-channel');
+    expect(latestResult?.error).toBe('meta offline');
   });
 
   it('recognizes successful empty auxiliary snapshots but rejects them after scope invalidation', async () => {

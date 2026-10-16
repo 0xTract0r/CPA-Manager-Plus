@@ -943,6 +943,38 @@ describe('page refresh interactions', () => {
     expect(renderer.root.findAllByType(ToggleSwitch)).toHaveLength(0);
   });
 
+  it('does not publish a policy mutation result after switching managers', async () => {
+    mocks.policy.mockReset();
+    mocks.updatePolicy.mockReset();
+    mocks.noop.mockClear();
+    const capability = { enabled: true, configured: true, source: 'database', locked: false, envKey: 'ENV', configFileKey: 'field' };
+    const policy = { codexQuotaCooldown: capability, authIssueQueue: capability, authIssueAutoDisable: capability };
+    mocks.policy.mockResolvedValueOnce(policy);
+    await mount(<AccountProcessingPolicySection />);
+
+    const mutation = deferred<unknown>();
+    mocks.updatePolicy.mockReturnValueOnce(mutation.promise);
+    act(() => {
+      renderer.root.findAllByType(ToggleSwitch)[0].props.onChange(false);
+    });
+
+    mocks.policy.mockReturnValue(new Promise(() => {}));
+    mocks.managerBase = 'https://new-manager.test';
+    await act(async () => {
+      renderer.update(<AccountProcessingPolicySection />);
+    });
+
+    await act(async () => {
+      mutation.resolve(policy);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(
+      mocks.noop.mock.calls.some(([message]) => message === 'accountPolicy.save_success')
+    ).toBe(false);
+  });
+
   it.each(['logs', 'system', 'dashboard', 'candidates'] as const)('rejects a late %s response after a connection switch', async (kind) => {
     const old = deferred<unknown>(), next = deferred<unknown>();
     mocks.logs.mockResolvedValue({ lines: [] }); mocks.candidates.mockResolvedValue({ items: [], pendingCount: 0 });

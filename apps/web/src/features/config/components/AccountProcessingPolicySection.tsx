@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
@@ -87,12 +87,14 @@ function AccountProcessingPolicyContent() {
   }, [managerServiceBase, managementKey, showNotification, t]);
 
   const requestIdRef = useRef(0);
-  useEffect(
-    () => () => {
+  const scopeActiveRef = useRef(false);
+  useLayoutEffect(() => {
+    scopeActiveRef.current = true;
+    return () => {
+      scopeActiveRef.current = false;
       requestIdRef.current += 1;
-    },
-    []
-  );
+    };
+  }, []);
   useEffect(() => {
     void load();
   }, [load]);
@@ -111,12 +113,14 @@ function AccountProcessingPolicyContent() {
           managementKey,
           patch
         );
+        if (!scopeActiveRef.current) return;
         setStatus(data);
         showNotification(
           t('accountPolicy.save_success', { defaultValue: 'Account processing policy updated.' }),
           'success'
         );
       } catch (err) {
+        if (!scopeActiveRef.current) return;
         const code = getUsageServiceErrorCode(err);
         const message =
           code === 'account_processing_policy_env_locked'
@@ -133,7 +137,7 @@ function AccountProcessingPolicyContent() {
           'error'
         );
       } finally {
-        setSavingKey(null);
+        if (scopeActiveRef.current) setSavingKey(null);
       }
     },
     [managerServiceBase, managementKey, showNotification, t]
