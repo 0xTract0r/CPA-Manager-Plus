@@ -94,8 +94,12 @@ vi.mock('@/hooks/useLocalStorage', () => ({
 vi.mock('@/hooks/usePanelFeatureAvailability', () => ({
   usePanelFeatureAvailability: () => ({
     checking: false,
+    panelHostConfirmed: true,
+    panelHostMode: 'manager_embedded',
+    panelBase: mocks.auth.apiBase,
     managerServiceAvailable: true,
     managerServiceBase: mocks.managerBase,
+    requestMonitoringAvailable: true,
   }),
 }));
 vi.mock('@/hooks/useRequestMonitoringAvailability', () => ({
@@ -254,7 +258,13 @@ beforeEach(() => {
     config: { cpaConnection: { cpaBaseUrl: 'https://cpa.last-good' } },
   });
   mocks.aliases.mockReset().mockResolvedValue({ items: [] });
-  mocks.meta.mockReset().mockResolvedValue({ authFiles: [], channels: [] });
+  mocks.meta.mockReset().mockResolvedValue({
+    authFiles: [],
+    authFilesLoaded: true,
+    channels: [],
+    channelsLoaded: true,
+    error: '',
+  });
   mocks.candidates.mockReset();
   mocks.confirmation.mockReset();
   mocks.clearLogs.mockReset();
@@ -410,17 +420,68 @@ describe('page refresh interactions', () => {
     expect(renderer.root.findAllByType(HealthAlertsCard)).toHaveLength(0);
   });
 
-  it('retains dashboard CPA base and reports auxiliary health refresh failures', async () => {
+  it('keeps manager CPA base unknown when manager config bootstrap fails', async () => {
+    mocks.managerConfig.mockRejectedValueOnce(new Error('manager config bootstrap offline'));
+    await mount(<DashboardPage />);
+    const version = renderer.root.findByType(VersionCard);
+
+    expect(version.props.cpaBase).toBe('');
+    expect(text(renderer.root)).toContain('notification.refresh_failed');
+  });
+
+  it('retains dashboard auxiliary snapshots across real partial meta refresh failures', async () => {
+    mocks.meta.mockResolvedValue({
+      authFiles: [
+        {
+          name: 'retained.json',
+          type: 'codex',
+          provider: 'codex',
+          authIndex: 'auth-retained',
+          account: 'retained@example.com',
+        },
+      ],
+      authFilesLoaded: true,
+      channels: [
+        {
+          key: 'retained:0',
+          name: 'retained',
+          baseUrl: 'https://channel.test',
+          host: 'channel.test',
+          disabled: false,
+          authIndices: ['auth-retained'],
+          modelNames: [],
+        },
+      ],
+      channelsLoaded: true,
+      error: '',
+    });
+    mocks.aliases.mockResolvedValue({
+      items: [{ apiKeyHash: 'retained-hash', alias: 'Retained key' }],
+    });
+
     await mount(<DashboardPage />);
     const version = () => renderer.root.findByType(VersionCard);
+    const health = () => renderer.root.findByType(HealthAlertsCard);
     expect(version().props.cpaBase).toBe('https://cpa.last-good');
+    expect(health().props.authFileMap.has('auth-retained')).toBe(true);
+    expect(health().props.channelByAuthIndex.has('auth-retained')).toBe(true);
+    expect(health().props.apiKeyAliasMap.has('retained-hash')).toBe(true);
 
     mocks.managerConfig.mockRejectedValueOnce(new Error('manager config offline'));
-    mocks.meta.mockRejectedValueOnce(new Error('meta offline'));
+    mocks.meta.mockResolvedValueOnce({
+      authFiles: [],
+      authFilesLoaded: false,
+      channels: [],
+      channelsLoaded: false,
+      error: 'meta offline',
+    });
     mocks.aliases.mockRejectedValueOnce(new Error('aliases offline'));
     await act(async () => { await refresh(); });
 
     expect(version().props.cpaBase).toBe('https://cpa.last-good');
+    expect(health().props.authFileMap.has('auth-retained')).toBe(true);
+    expect(health().props.channelByAuthIndex.has('auth-retained')).toBe(true);
+    expect(health().props.apiKeyAliasMap.has('retained-hash')).toBe(true);
     expect(text(renderer.root)).toContain('notification.refresh_failed');
   });
 

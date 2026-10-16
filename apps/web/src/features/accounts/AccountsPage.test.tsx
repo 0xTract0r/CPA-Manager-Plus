@@ -651,6 +651,7 @@ vi.mock('@/features/authFiles/hooks/useAuthFilesData', () => ({
       selectionCount: mocks.selectionCount,
       loading: mocks.authFilesLoading,
       initialLoading: mocks.authFilesLoading && mocks.files.length === 0,
+      hasLoaded: mocks.files.length > 0 || !mocks.authFilesLoading,
       error: '',
       uploading: false,
       authJsonPasteSaving: false,

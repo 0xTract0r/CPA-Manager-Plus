@@ -142,7 +142,9 @@ describe('AccountConfigurationTab', () => {
       if (!loading) {
         expect(readText(renderer.toJSON())).toContain('refresh offline');
         expect(
-          renderer.root.findAllByProps({ 'data-account-config-reload': 'retry' })
+          renderer.root
+            .findAllByType('button')
+            .filter((node) => node.props['data-account-config-reload'] === 'retry')
         ).toHaveLength(1);
       }
       editor.state = { ...editor.state!, loading: false, error: '' };

@@ -18,7 +18,7 @@ import {
   type UsageServiceStatus,
 } from '@/services/api/usageService';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
-import { useRequestMonitoringAvailability } from '@/hooks/useRequestMonitoringAvailability';
+import { usePanelFeatureAvailability } from '@/hooks/usePanelFeatureAvailability';
 import { loadMonitoringMetaPayload } from '@/features/monitoring/services/monitoringMetaService';
 import { buildMonitoringAuthMetaMap } from '@/features/monitoring/model/authMeta';
 import { buildAuthFileMapFromMeta } from '@/features/monitoring/model/sourceDisplay';
@@ -65,11 +65,20 @@ export function DashboardPage() {
   const connectionScope = useAuthStore((state) =>
     JSON.stringify([state.apiBase, state.managementKey])
   );
-  const { serviceBase } = useRequestMonitoringAvailability();
-  return <DashboardPageContent key={`${connectionScope}:${serviceBase}`} />;
+  const featureAvailability = usePanelFeatureAvailability();
+  const useApiBaseAsCpaBase =
+    featureAvailability.panelHostConfirmed &&
+    featureAvailability.panelHostMode === 'external_panel';
+
+  return (
+    <DashboardPageContent
+      key={`${connectionScope}:${featureAvailability.managerServiceBase}`}
+      useApiBaseAsCpaBase={useApiBaseAsCpaBase}
+    />
+  );
 }
 
-function DashboardPageContent() {
+function DashboardPageContent({ useApiBaseAsCpaBase }: { useApiBaseAsCpaBase: boolean }) {
   const { t, i18n } = useTranslation();
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const serverVersion = useAuthStore((state) => state.serverVersion);
@@ -346,18 +355,29 @@ function DashboardPageContent() {
     }
     setErrorLogsLoading(false);
 
+    const metaRefreshFailed =
+      metaResult.status === 'rejected' ||
+      (metaResult.status === 'fulfilled' && Boolean(metaResult.value.error));
+
     if (managerConfigResult.status === 'fulfilled') {
-      setManagerCpaBase(managerConfigResult.value.config.cpaConnection?.cpaBaseUrl || apiBase || '');
+      setManagerCpaBase(managerConfigResult.value.config.cpaConnection?.cpaBaseUrl || '');
     }
     setHealthMetaError(
-      [managerConfigResult, metaResult, aliasesResult].some((result) => result.status === 'rejected')
+      [managerConfigResult, aliasesResult].some((result) => result.status === 'rejected') ||
+        metaRefreshFailed
         ? t('notification.refresh_failed')
         : ''
     );
 
     setDisplayMeta((current) => ({
-      authFiles: metaResult.status === 'fulfilled' ? metaResult.value.authFiles : current.authFiles,
-      channels: metaResult.status === 'fulfilled' ? metaResult.value.channels : current.channels,
+      authFiles:
+        metaResult.status === 'fulfilled' && metaResult.value.authFilesLoaded
+          ? metaResult.value.authFiles
+          : current.authFiles,
+      channels:
+        metaResult.status === 'fulfilled' && metaResult.value.channelsLoaded
+          ? metaResult.value.channels
+          : current.channels,
       apiKeyAliases:
         aliasesResult.status === 'fulfilled' && Array.isArray(aliasesResult.value.items)
           ? aliasesResult.value.items
@@ -552,7 +572,7 @@ function DashboardPageContent() {
         <VersionCard
           appVersion={__APP_VERSION__ || t('dashboard.version_unknown')}
           apiVersion={serverVersion || t('dashboard.version_unknown')}
-          cpaBase={managerCpaBase || apiBase || ''}
+          cpaBase={managerCpaBase || (useApiBaseAsCpaBase ? apiBase : '')}
           serverBuildDate={serverBuildDate || undefined}
           connectionStatus={connectionStatus}
           refreshSignal={cardRefreshSignal}
