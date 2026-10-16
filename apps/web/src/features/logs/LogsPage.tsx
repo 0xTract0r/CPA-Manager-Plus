@@ -264,9 +264,7 @@ function LogsPageContent() {
     } catch (err: unknown) {
       if (generation !== logGenerationRef.current) return;
       console.error('Failed to load logs:', err);
-      if (!incremental) {
-        setError(getErrorMessage(err) || t('logs.load_error'));
-      }
+      setError(getErrorMessage(err) || t('logs.load_error'));
     } finally {
       if (generation === logGenerationRef.current) {
         if (!incremental) setLoading(false);
@@ -816,7 +814,7 @@ function LogsPageContent() {
 
             {loading && !logsLoaded ? (
               <div className="hint">{t('logs.loading')}</div>
-            ) : logState.buffer.length > 0 && filteredLines.length > 0 ? (
+            ) : error && !logsLoaded ? null : logState.buffer.length > 0 && filteredLines.length > 0 ? (
               <div
                 ref={scroller.logViewerRef}
                 className={styles.logPanel}
@@ -983,7 +981,7 @@ function LogsPageContent() {
               <div className={styles.errorPanel}>
                 {loadingErrors && !errorLogsLoaded ? (
                   <div className="hint">{t('common.loading')}</div>
-                ) : errorLogs.length === 0 ? (
+                ) : errorLogsError && !errorLogsLoaded ? null : errorLogs.length === 0 ? (
                   <div className="hint">{t('logs.error_logs_empty')}</div>
                 ) : (
                   <div className="item-list">

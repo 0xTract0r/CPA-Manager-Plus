@@ -429,6 +429,51 @@ describe('page refresh interactions', () => {
     expect(text(renderer.root)).toContain('notification.refresh_failed');
   });
 
+  it('uses channel config fallback only until a successful remote snapshot exists', async () => {
+    const fallbackChannel = {
+      key: 'fallback:0',
+      name: 'fallback',
+      baseUrl: 'https://fallback.test',
+      host: 'fallback.test',
+      disabled: false,
+      authIndices: ['auth-fallback'],
+      modelNames: [],
+    };
+    mocks.meta.mockResolvedValueOnce({
+      authFiles: [],
+      authFilesLoaded: true,
+      channels: [fallbackChannel],
+      channelsLoaded: false,
+      error: 'channels offline',
+    });
+
+    await mount(<DashboardPage />);
+    const health = () => renderer.root.findByType(HealthAlertsCard);
+    expect(health().props.channelByAuthIndex.has('auth-fallback')).toBe(true);
+    expect(text(renderer.root)).toContain('notification.refresh_failed');
+
+    mocks.meta.mockResolvedValueOnce({
+      authFiles: [],
+      authFilesLoaded: true,
+      channels: [],
+      channelsLoaded: true,
+      error: '',
+    });
+    await act(async () => { await refresh(); });
+    expect(health().props.channelByAuthIndex.has('auth-fallback')).toBe(false);
+
+    mocks.meta.mockResolvedValueOnce({
+      authFiles: [],
+      authFilesLoaded: true,
+      channels: [fallbackChannel],
+      channelsLoaded: false,
+      error: 'channels offline again',
+    });
+    await act(async () => { await refresh(); });
+    expect(health().props.channelByAuthIndex.has('auth-fallback')).toBe(false);
+    expect(text(renderer.root)).toContain('notification.refresh_failed');
+  });
+
   it('retains dashboard auxiliary snapshots across real partial meta refresh failures', async () => {
     mocks.meta.mockResolvedValue({
       authFiles: [
@@ -946,6 +991,57 @@ describe('page refresh interactions', () => {
       expect(text(renderer.root)).not.toContain('Retained Plugin');
     }
   );
+
+  it.each([
+    ['logs', 'bootstrap logs offline', 'logs.empty_title'],
+    ['errors', 'bootstrap errors offline', 'logs.error_logs_empty'],
+  ] as const)(
+    'does not render a known-empty state when %s bootstrap fails',
+    async (tab, message, emptyKey) => {
+      if (tab === 'errors') {
+        mocks.params = new URLSearchParams('tab=errors');
+        mocks.errorLogs.mockRejectedValueOnce(new Error(message));
+      } else {
+        mocks.logs.mockRejectedValueOnce(new Error(message));
+      }
+
+      await mount(<LogsPage />);
+      expect(text(renderer.root)).toContain(message);
+      expect(text(renderer.root)).not.toContain(emptyKey);
+    }
+  );
+
+  it('keeps logs visible and reports auto-refresh failures', async () => {
+    mocks.logs.mockResolvedValueOnce({ lines: ['poll-retained-line'], latestAfter: 1 });
+    await mount(<LogsPage />);
+    expect(text(renderer.root)).toContain('poll-retained-line');
+
+    let poll: (() => void) | null = null;
+    (window as unknown as { setInterval: (handler: () => void) => number }).setInterval = (
+      handler
+    ) => {
+      poll = handler;
+      return 1;
+    };
+    const autoRefreshToggle = renderer.root
+      .findAllByType(ToggleSwitch)
+      .find((node) => JSON.stringify(node.props.label).includes('logs.auto_refresh'));
+    expect(autoRefreshToggle).toBeTruthy();
+    act(() => { autoRefreshToggle!.props.onChange(true); });
+    expect(poll).not.toBeNull();
+
+    const next = deferred<unknown>();
+    mocks.logs.mockReturnValueOnce(next.promise);
+    act(() => { poll!(); });
+    await act(async () => {
+      next.reject(new Error('poll offline'));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(text(renderer.root)).toContain('poll-retained-line');
+    expect(text(renderer.root)).toContain('poll offline');
+  });
 
   it.each(['logs', 'errors'])(
     'keeps existing %s while refreshing, reports failure, and replaces successful data',

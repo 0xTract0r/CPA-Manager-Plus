@@ -133,6 +133,7 @@ function DashboardPageContent({ useApiBaseAsCpaBase }: { useApiBaseAsCpaBase: bo
   const apiKeysCache = useRef<string[]>([]);
   const statsRequestId = useRef(0);
   const healthRequestId = useRef(0);
+  const channelsSnapshotLoadedRef = useRef(false);
   const modelRequestId = useRef(0);
   useEffect(
     () => () => {
@@ -319,6 +320,7 @@ function DashboardPageContent({ useApiBaseAsCpaBase }: { useApiBaseAsCpaBase: bo
       setErrorLogsLoading(false);
       setManagerCpaBase('');
       setHealthMetaError('');
+      channelsSnapshotLoadedRef.current = false;
       setDisplayMeta({ authFiles: [], channels: [], apiKeyAliases: [] });
       return;
     }
@@ -369,15 +371,21 @@ function DashboardPageContent({ useApiBaseAsCpaBase }: { useApiBaseAsCpaBase: bo
         : ''
     );
 
+    const nextChannels =
+      metaResult.status === 'fulfilled' &&
+      (metaResult.value.channelsLoaded || !channelsSnapshotLoadedRef.current)
+        ? metaResult.value.channels
+        : null;
+    if (metaResult.status === 'fulfilled' && metaResult.value.channelsLoaded) {
+      channelsSnapshotLoadedRef.current = true;
+    }
+
     setDisplayMeta((current) => ({
       authFiles:
         metaResult.status === 'fulfilled' && metaResult.value.authFilesLoaded
           ? metaResult.value.authFiles
           : current.authFiles,
-      channels:
-        metaResult.status === 'fulfilled' && metaResult.value.channelsLoaded
-          ? metaResult.value.channels
-          : current.channels,
+      channels: nextChannels ?? current.channels,
       apiKeyAliases:
         aliasesResult.status === 'fulfilled' && Array.isArray(aliasesResult.value.items)
           ? aliasesResult.value.items
