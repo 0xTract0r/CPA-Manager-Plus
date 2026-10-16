@@ -73,15 +73,24 @@ function AccountActionCandidatesPageContent() {
   const [filter, setFilter] = useState<StatusFilter>('pending');
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState('');
   const [actingId, setActingId] = useState<number | null>(null);
   const [evidenceCandidate, setEvidenceCandidate] = useState<AccountActionCandidate | null>(null);
 
   const managerBase = featureAvailability.managerServiceBase;
   const requestIdRef = useRef(0);
+  const scopeActiveRef = useRef(false);
+  useLayoutEffect(() => {
+    scopeActiveRef.current = true;
+    return () => {
+      scopeActiveRef.current = false;
+    };
+  }, []);
   useLayoutEffect(() => {
     requestIdRef.current += 1;
     setItems([]);
+    setLoaded(false);
     setPendingCount(0);
     setError('');
     setLoading(true);
@@ -107,6 +116,7 @@ function AccountActionCandidatesPageContent() {
       );
       if (requestId !== requestIdRef.current) return;
       setItems(response.items);
+      setLoaded(true);
       setPendingCount(response.pendingCount);
     } catch (err) {
       if (requestId !== requestIdRef.current) return;
@@ -162,21 +172,18 @@ function AccountActionCandidatesPageContent() {
 
   const runAction = useCallback(
     async (candidate: AccountActionCandidate, action: CandidateAction) => {
-      if (!managerBase || !managementKey) return;
+      if (!scopeActiveRef.current || !managerBase || !managementKey) return;
       setActingId(candidate.id);
       try {
         switch (action) {
           case 'ignore':
             await usageServiceApi.ignoreAccountActionCandidate(managerBase, managementKey, candidate.id);
-            showNotification(t('account_actions.ignore_success'), 'success');
             break;
           case 'resolve':
             await usageServiceApi.resolveAccountActionCandidate(managerBase, managementKey, candidate.id);
-            showNotification(t('account_actions.resolve_success'), 'success');
             break;
           case 'enable':
             await usageServiceApi.enableAccountActionCandidate(managerBase, managementKey, candidate.id);
-            showNotification(t('account_actions.enable_success'), 'success');
             break;
           case 'delete':
             await usageServiceApi.deleteAccountActionCandidateAuthFile(
@@ -184,11 +191,13 @@ function AccountActionCandidatesPageContent() {
               managementKey,
               candidate.id
             );
-            showNotification(t('account_actions.delete_success'), 'success');
             break;
         }
+        if (!scopeActiveRef.current) return;
+        showNotification(t(`account_actions.${action}_success`), 'success');
         await loadCandidatesRef.current();
       } catch (err) {
+        if (!scopeActiveRef.current) return;
         const message = err instanceof Error ? err.message : String(err || 'request failed');
         showNotification(
           t('account_actions.action_failed', {
@@ -303,7 +312,7 @@ function AccountActionCandidatesPageContent() {
             <span>{error}</span>
           </div>
         ) : null}
-        {visibleItems.length === 0 && !loading ? (
+        {visibleItems.length === 0 && (loaded || !loading) ? (
           <div className={styles.emptyState}>
             <strong>{t('account_actions.empty_title')}</strong>
             <span>{t('account_actions.empty_desc')}</span>

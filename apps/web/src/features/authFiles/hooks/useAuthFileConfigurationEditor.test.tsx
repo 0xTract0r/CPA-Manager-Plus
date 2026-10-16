@@ -108,6 +108,18 @@ describe('useAuthFileConfigurationEditor', () => {
     expect(latest!.state?.error).toBe('offline');
     expect(latest!.draft).toEqual(previous);
     expect(latest!.rawDataText).toContain('old');
+    act(() => latest!.updateField('note', 'blocked draft'));
+    expect(latest!.draft).toEqual(previous);
+    expect(latest!.dirty).toBe(false);
+    expect(latest!.canSave).toBe(false);
+    await act(async () => { await latest!.reload(); });
+    act(() => latest!.updateField('note', 'recovered edit'));
+    expect(latest!.dirty).toBe(true);
+    expect(latest!.canSave).toBe(true);
+    await act(async () => { await latest!.save(); });
+    expect(mocks.patchFieldsWithPluginSourceFallback).toHaveBeenCalledWith(
+      expect.anything(), { note: 'recovered edit' }, expect.anything()
+    );
   });
 
   function Harness({

@@ -266,10 +266,9 @@ export function useAuthFilesOauth(options: UseAuthFilesOauthOptions): UseAuthFil
           }
           return;
         }
-        if (!soft) {
-          setExcludedError('error');
-          excludedBaselineOkRef.current = false;
-        }
+        setExcludedError('error');
+        excludedBaselineOkRef.current = false;
+        if (soft) showNotification(t('notification.refresh_failed'), 'warning');
       }
     },
     [isConnectionCurrent, normalizedConnectionKey, requestScope, showNotification, t]
@@ -316,10 +315,9 @@ export function useAuthFilesOauth(options: UseAuthFilesOauthOptions): UseAuthFil
           }
           return;
         }
-        if (!soft) {
-          setModelAliasError('error');
-          modelAliasBaselineOkRef.current = false;
-        }
+        setModelAliasError('error');
+        modelAliasBaselineOkRef.current = false;
+        if (soft) showNotification(t('notification.refresh_failed'), 'warning');
       }
     },
     [isConnectionCurrent, normalizedConnectionKey, requestScope, showNotification, t]

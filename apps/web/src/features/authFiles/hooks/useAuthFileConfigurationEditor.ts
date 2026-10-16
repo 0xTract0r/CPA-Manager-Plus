@@ -262,6 +262,7 @@ export function useAuthFileConfigurationEditor(
           sharedSourceReadOnly ||
           !previous.value.draft ||
           previous.value.saving ||
+          previous.value.error ||
           previous.value.loading
         )
           return previous;

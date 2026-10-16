@@ -86,6 +86,8 @@ describe('useUsageAnalytics request orchestration', () => {
   let selectorError = '';
   let credentialTimelineError = '';
   let credentialTimelineLoading = false;
+  let emptyAuxiliarySnapshot = false;
+  let auxiliaryScopeStale = false;
   let apiKeyTimelineAvailable = true;
   let mainTimelineBucketCalls = 5;
   let apiKeyStats: MonitoringAnalyticsApiKeyStatRow[] = [createApiKeyStatRow()];
@@ -151,7 +153,9 @@ describe('useUsageAnalytics request orchestration', () => {
       enabled: Boolean(params.fromMs && params.toMs),
       loading: credentialTimeline ? credentialTimelineLoading : false,
       error: selectors ? selectorError : credentialTimeline ? credentialTimelineError : '',
-      data: selectors
+      data: emptyAuxiliarySnapshot && !main && !selectors
+        ? emptyAnalyticsResponse
+        : selectors
         ? selectorError
           ? null
           : {
@@ -203,7 +207,7 @@ describe('useUsageAnalytics request orchestration', () => {
                   ],
                 }
               : null,
-      dataStale: false,
+      dataStale: !main && !selectors && auxiliaryScopeStale,
       lastRefreshedAt: null,
       serviceBase: 'http://manager.local',
       unavailableReason: '',
@@ -228,6 +232,8 @@ describe('useUsageAnalytics request orchestration', () => {
     selectorError = '';
     credentialTimelineError = '';
     credentialTimelineLoading = false;
+    emptyAuxiliarySnapshot = false;
+    auxiliaryScopeStale = false;
     apiKeyTimelineAvailable = true;
     mainTimelineBucketCalls = 5;
     apiKeyStats = [createApiKeyStatRow()];
@@ -555,5 +561,21 @@ describe('useUsageAnalytics request orchestration', () => {
     expect(latestResult?.credentialTrendLoading).toBe(false);
     expect(latestResult?.credentialTrendError).toBe('timeline failed');
     expect(latestResult?.credentialRows).toHaveLength(1);
+  });
+
+  it('recognizes successful empty auxiliary snapshots but rejects them after scope invalidation', async () => {
+    emptyAuxiliarySnapshot = true;
+    await renderHook();
+    await act(async () => { latestResult!.setActiveTab('credentials'); });
+    expect(latestResult!.credentialTrendSeries).toEqual([]);
+    expect(latestResult!.credentialTrendLoaded).toBe(true);
+    expect(latestResult!.heatmapDateLoaded).toBe(true);
+    credentialTimelineLoading = true;
+    await act(async () => { latestResult!.setSelectedCredentialId('credential-a.json'); });
+    expect(latestResult!.credentialTrendLoaded).toBe(true);
+    auxiliaryScopeStale = true;
+    await act(async () => { latestResult!.setSelectedCredentialId('credential-b.json'); });
+    expect(latestResult!.credentialTrendLoaded).toBe(false);
+    expect(latestResult!.heatmapDateLoaded).toBe(false);
   });
 });

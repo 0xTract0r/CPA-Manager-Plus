@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -133,6 +133,13 @@ function LogsPageContent() {
   const pendingFullReloadRef = useRef(false);
   const logGenerationRef = useRef(0);
   const errorLogRequestRef = useRef(0);
+  const scopeActiveRef = useRef(false);
+  useLayoutEffect(() => {
+    scopeActiveRef.current = true;
+    return () => {
+      scopeActiveRef.current = false;
+    };
+  }, []);
   useEffect(
     () => () => {
       logGenerationRef.current += 1;
@@ -279,8 +286,10 @@ function LogsPageContent() {
       variant: 'danger',
       confirmText: t('common.confirm'),
       onConfirm: async () => {
+        if (!scopeActiveRef.current) return;
         try {
           await logsApi.clearLogs();
+          if (!scopeActiveRef.current) return;
           logGenerationRef.current += 1;
           logRequestInFlightRef.current = false;
           pendingFullReloadRef.current = false;
@@ -290,6 +299,7 @@ function LogsPageContent() {
           resetLogPosition();
           showNotification(t('logs.clear_success'), 'success');
         } catch (err: unknown) {
+          if (!scopeActiveRef.current) return;
           const message = getErrorMessage(err);
           showNotification(
             `${t('notification.delete_failed')}${message ? `: ${message}` : ''}`,

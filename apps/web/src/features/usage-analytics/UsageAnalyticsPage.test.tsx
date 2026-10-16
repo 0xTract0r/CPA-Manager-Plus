@@ -1302,6 +1302,37 @@ describe('UsageAnalyticsPage', () => {
     expect(text).toContain('timeline failed');
   });
 
+  it.each(['credentials', 'heatmap'] as const)(
+    'retains a successful empty %s snapshot during refresh, failure, and recovery',
+    (tab) => {
+      const state = createUsageState({
+        activeTab: tab,
+        credentialTrendLoaded: true,
+        credentialTrendSeries: [],
+        heatmapDateLoaded: true,
+        heatmapDetail: null,
+        selectedHeatmapCell: { weekday: 1, hour: 9 },
+        selectedHeatmapDateKey: '2026-06-08',
+      });
+      mocks.usageState = state;
+      const renderer = renderPage();
+      const panel = () => renderer.root.find(n => typeof n.type === 'function' && n.type.name === (tab === 'credentials' ? 'EntityTrendChart' : 'HeatmapDetailPanel'));
+      const emptyLabel = tab === 'credentials' ? 'usage_analytics.empty_title' : 'usage_analytics.heatmap_date_empty';
+      for (const phase of ['pending', 'failure', 'recovery']) {
+        Object.assign(state, {
+          credentialTrendLoading: phase === 'pending',
+          heatmapDateLoading: phase === 'pending',
+          credentialTrendError: phase === 'failure' ? 'empty refresh offline' : '',
+          heatmapDateError: phase === 'failure' ? 'empty refresh offline' : '',
+        });
+        act(() => renderer.update(<UsageAnalyticsPage />));
+        expect(getText(panel())).toContain(emptyLabel);
+        expect(getText(panel())).not.toContain('common.loading');
+        expect(panel().findAllByProps({ role: 'alert' }).length).toBe(phase === 'failure' ? 1 : 0);
+      }
+    }
+  );
+
   it.each([true, false])(
     'keeps the credential trend visible during pending/failure revalidation (loading=%s)',
     (loading) => {

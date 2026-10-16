@@ -559,6 +559,7 @@ function DashboardPageContent() {
           errorLogCount={errorLogs.length}
           errorLogsLoading={errorLogsLoading && !errorLogsLoaded}
           errorLogsError={errorLogsError}
+          errorLogsLoaded={errorLogsLoaded}
         />
       </section>
 
@@ -570,7 +571,7 @@ function DashboardPageContent() {
             summary={usageSummary.summary}
             topModels={usageSummary.topModels}
             modelCostRank={usageSummary.modelCostRank}
-            loading={usageSummary.loading}
+            loading={usageSummary.loading && !usageSummary.summary}
             error={usageSummary.error}
             lastRefreshedAt={usageSummary.lastRefreshedAt}
             mode="metrics-only"
@@ -586,7 +587,7 @@ function DashboardPageContent() {
             trafficNowMs={usageSummary.summary?.window.now_ms}
             todayRequestHealthTimeline={usageSummary.todayRequestHealthTimeline}
             tokenMix={usageSummary.tokenMix}
-            loading={usageSummary.loading}
+            loading={usageSummary.loading && !usageSummary.summary}
           />
         </section>
       )}
@@ -598,13 +599,13 @@ function DashboardPageContent() {
             summary={usageSummary.summary}
             topModels={usageSummary.topModels}
             modelCostRank={usageSummary.modelCostRank}
-            loading={usageSummary.loading}
+            loading={usageSummary.loading && !usageSummary.summary}
             error={usageSummary.error}
             lastRefreshedAt={usageSummary.lastRefreshedAt}
             mode="rank-only"
           />
           <HealthAlertsCard
-            loading={usageSummary.loading}
+            loading={usageSummary.loading && !usageSummary.summary}
             recentFailures={usageSummary.recentFailures}
             channelHealth={usageSummary.channelHealth}
             authMetaMap={authMetaMap}

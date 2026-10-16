@@ -204,10 +204,18 @@ function InstalledPluginsView({
   const canOperate = connected && supportsPlugin && Boolean(data);
   const canOperateRef = useRef(canOperate);
   canOperateRef.current = canOperate;
+  const operationEpochRef = useRef(0);
+  // Captured actions stay invalid after access is revoked, even if access later recovers.
+  const operationEpoch = operationEpochRef.current;
+  const canContinueOperation = useCallback(
+    () => canOperateRef.current && operationEpochRef.current === operationEpoch,
+    [operationEpoch]
+  );
 
   const listRequestIdRef = useRef(0);
   const clearPluginData = useCallback(() => {
     canOperateRef.current = false;
+    operationEpochRef.current += 1;
     listRequestIdRef.current += 1;
     configRequestSeq.current += 1;
     setData(null);
@@ -222,6 +230,7 @@ function InstalledPluginsView({
   useEffect(
     () => () => {
       canOperateRef.current = false;
+      operationEpochRef.current += 1;
       listRequestIdRef.current += 1;
     },
     []
@@ -266,7 +275,7 @@ function InstalledPluginsView({
       pluginID?: string,
       predicate?: (plugin: PluginListEntry, response: PluginListResponse) => boolean
     ) => {
-      if (!canOperateRef.current) return;
+      if (!canContinueOperation()) return;
       if (waitForRegistration && pluginID && predicate) {
         const requestId = ++listRequestIdRef.current;
         try {
@@ -292,10 +301,10 @@ function InstalledPluginsView({
       if (waitForRegistration) {
         await wait(PLUGIN_ENABLE_REFRESH_DELAY_MS);
       }
-      if (!canOperateRef.current) return;
+      if (!canContinueOperation()) return;
       await loadPlugins();
     },
-    [loadPlugins, clearPluginData, t]
+    [loadPlugins, clearPluginData, canContinueOperation, t]
   );
 
   useHeaderRefresh(loadPlugins, connected && supportsPlugin);
@@ -340,7 +349,7 @@ function InstalledPluginsView({
   );
 
   const openConfigDrawer = async (plugin: PluginListEntry) => {
-    if (!canOperateRef.current || openingConfigID || mutatingID) return;
+    if (!canContinueOperation() || openingConfigID || mutatingID) return;
 
     const requestSeq = configRequestSeq.current + 1;
     configRequestSeq.current = requestSeq;
@@ -385,7 +394,7 @@ function InstalledPluginsView({
   };
 
   const handleTogglePlugin = async (plugin: PluginListEntry, enabled: boolean) => {
-    if (!canOperateRef.current) return;
+    if (!canContinueOperation()) return;
     setMutatingID(plugin.id);
     try {
       await pluginsApi.updateEnabled(plugin.id, enabled);
@@ -407,7 +416,7 @@ function InstalledPluginsView({
   };
 
   const handleDeletePlugin = (plugin: PluginListEntry) => {
-    if (!canOperateRef.current || openingConfigID || mutatingID) return;
+    if (!canContinueOperation() || openingConfigID || mutatingID) return;
 
     showConfirmation({
       title: t('plugin_management.delete_confirm_title'),
@@ -418,7 +427,7 @@ function InstalledPluginsView({
       cancelText: t('common.cancel'),
       variant: 'danger',
       onConfirm: async () => {
-        if (!canOperateRef.current) return;
+        if (!canContinueOperation()) return;
         setMutatingID(plugin.id);
         try {
           const result = await pluginsApi.deletePlugin(plugin.id);
@@ -453,7 +462,7 @@ function InstalledPluginsView({
   };
 
   const handleReinstallPlugin = (plugin: PluginListEntry) => {
-    if (!canOperateRef.current || openingConfigID || mutatingID) return;
+    if (!canContinueOperation() || openingConfigID || mutatingID) return;
 
     showConfirmation({
       title: t('plugin_management.reinstall_confirm_title'),
@@ -464,12 +473,12 @@ function InstalledPluginsView({
       cancelText: t('common.cancel'),
       variant: 'danger',
       onConfirm: async () => {
-        if (!canOperateRef.current) return;
+        if (!canContinueOperation()) return;
         const mutationKey = `${plugin.id}:reinstall`;
         setMutatingID(mutationKey);
         try {
           const store = await pluginStoreApi.list();
-          if (!canOperateRef.current) return;
+          if (!canContinueOperation()) return;
           const candidates = store.plugins.filter((entry) => entry.id === plugin.id);
           const storeEntry =
             candidates.find((entry) => entry.installed) ??
@@ -494,7 +503,7 @@ function InstalledPluginsView({
           }
 
           const sourceId = storeEntry.sourceId || undefined;
-          if (!canOperateRef.current) return;
+          if (!canContinueOperation()) return;
           const installResult = await pluginStoreApi.install(storeEntry.id, { sourceId });
           clearConfigCache();
           await loadPluginsAfterMutation(
@@ -529,7 +538,8 @@ function InstalledPluginsView({
   };
 
   const handleSaveConfig = async () => {
-    if (!canOperateRef.current || !editingPlugin || !draft || openingConfigID || mutatingID) return;
+    if (!canContinueOperation() || !editingPlugin || !draft || openingConfigID || mutatingID)
+      return;
     const { patch, errors } = buildPluginConfigPatch(draft, editingPlugin.configFields, t);
 
     if (Object.keys(errors).length > 0) {

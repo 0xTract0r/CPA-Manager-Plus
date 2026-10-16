@@ -47,7 +47,11 @@ export function AccountConfigurationTab({
   const capabilities = getAuthFileConfigurationCapabilities(state?.providerKey || row.provider);
   const providerLabel = getProviderLabel(state?.providerKey || row.provider, t);
   const disabled =
-    disableControls || sharedSourceReadOnly || state?.saving === true || state?.loading === true;
+    disableControls ||
+    sharedSourceReadOnly ||
+    Boolean(state?.error) ||
+    state?.saving === true ||
+    state?.loading === true;
   const reloadAndRestoreFocus = () => {
     void editor.reload().then(() => {
       if (typeof window === 'undefined') return;

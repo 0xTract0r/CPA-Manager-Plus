@@ -46,6 +46,13 @@ mechanism. A bootstrap failure can use the initial error/retry state. Security
 or capability rejection (for example revoked plugin access) can remove content
 that is no longer safe or valid to display.
 
+Distinguish an unknown bootstrap value from a known zero or empty result when
+reporting health. If a retained form needs a verified read baseline to save,
+make it read-only after a failed reload and restore editing after a successful
+retry. Do not allow edits that cannot be saved. If a write succeeds but its
+reconciliation fails, report both outcomes and prevent further writes that
+depend on the stale baseline until recovery.
+
 ## View state
 
 Data refresh must preserve the current tab, search, filters, grouping,
@@ -62,6 +69,9 @@ retaining data. Clear or hide the old snapshot before displaying a new scope;
 initial loading is allowed here. Never display one account's quota, another
 provider's models, or the previous connection's data under the new identity.
 Ordinary refresh must not change the scope key or remount the page.
+Bind global destructive confirmations to the scope that opened them. Leaving
+that scope must invalidate their callbacks, including when the user returns
+to the same connection later.
 
 ## Concurrency
 
@@ -71,6 +81,9 @@ must invalidate outstanding requests. Check scope after awaited work; checking
 only before dispatch is insufficient. Test rapid refresh, out-of-order replies,
 account/tab/connection changes, and reads overlapping mutations. A stale
 request's finally block must not unlock a newer operation.
+Capability or authorization loss must invalidate captured operations with a
+monotonic generation. Restoring access permits new actions; it must not resume
+an older multi-stage operation or revive an old confirmation.
 
 ## Verification
 

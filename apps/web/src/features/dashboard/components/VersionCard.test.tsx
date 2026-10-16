@@ -203,6 +203,7 @@ const renderCard = async ({
           collectorLoading={false}
           errorLogCount={0}
           errorLogsLoading={false}
+          errorLogsLoaded={true}
           {...health}
         />
       </MemoryRouter>
@@ -226,6 +227,14 @@ afterEach(() => {
 });
 
 describe('VersionCard release links', () => {
+  it.each([false, true])('distinguishes unknown error-log count from known zero (loaded=%s)', async (loaded) => {
+    const renderer = await renderCard({ health: { errorLogsLoaded: loaded, errorLogCount: 0, errorLogsError: 'logs offline' } });
+    const logs = getText(renderer.root.find(n =>
+      (n.type === 'div' || n.type === 'a') && n.props.className?.split(' ').includes(styles.healthItem) && getText(n).includes('dashboard.health_error_logs')
+    ));
+    expect(logs).toContain(loaded ? 'notification.refresh_failed' : 'notification.load_failed');
+    expect(logs.includes('dashboard.health_status_normal')).toBe(loaded);
+  });
   it('shows stale error-log count with refresh failure without marking Collector or Queue unavailable', async () => {
     const renderer = await renderCard({
       health: { usageEnabled: true, errorLogCount: 3, errorLogsError: 'logs offline' },
@@ -739,6 +748,7 @@ describe('VersionCard external panel fallback', () => {
             collectorLoading={false}
             errorLogCount={0}
             errorLogsLoading={false}
+            errorLogsLoaded={true}
           />
         </MemoryRouter>
       );
@@ -818,6 +828,7 @@ describe('VersionCard external panel fallback', () => {
             collectorLoading={false}
             errorLogCount={0}
             errorLogsLoading={false}
+            errorLogsLoaded={true}
           />
         </MemoryRouter>
       );

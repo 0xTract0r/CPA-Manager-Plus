@@ -41,6 +41,7 @@ interface VersionCardProps {
   errorLogCount: number;
   errorLogsLoading: boolean;
   errorLogsError?: string;
+  errorLogsLoaded: boolean;
 }
 
 interface LatestVersions {
@@ -143,6 +144,7 @@ export function VersionCard({
   errorLogCount,
   errorLogsLoading,
   errorLogsError,
+  errorLogsLoaded,
 }: VersionCardProps) {
   const { t, i18n } = useTranslation();
   const showNotification = useNotificationStore((state) => state.showNotification);
@@ -457,9 +459,12 @@ export function VersionCard({
       : t('dashboard.health_status_normal');
   const errorLogState: HealthItem = {
     label: t('dashboard.health_error_logs'),
-    value: errorLogsError
-      ? `${errorLogValue} · ${t('notification.refresh_failed')}`
-      : errorLogValue,
+    value:
+      errorLogsError && !errorLogsLoaded
+        ? t('notification.load_failed')
+        : errorLogsError
+          ? `${errorLogValue} · ${t('notification.refresh_failed')}`
+          : errorLogValue,
     tone: errorLogsError ? 'error' : errorLogsLoading ? 'muted' : errorLogCount > 0 ? 'warn' : 'ok',
     icon: errorLogsError || errorLogCount > 0 ? <IconInfo size={16} /> : <IconCheck size={16} />,
     to: '/logs?tab=errors',
