@@ -607,7 +607,7 @@ describe('useUsageAnalytics request orchestration', () => {
       await Promise.resolve();
     });
     expect(latestResult?.credentialRows[0]).toMatchObject({
-      label: 'retained-channel',
+      label: 'credential-a.json',
       account: 'retained@example.com',
       provider: 'codex',
       authIndex: 'auth-a',
@@ -627,7 +627,7 @@ describe('useUsageAnalytics request orchestration', () => {
     });
 
     expect(latestResult?.credentialRows[0]).toMatchObject({
-      label: 'retained-channel',
+      label: 'credential-a.json',
       account: 'retained@example.com',
       provider: 'codex',
       authIndex: 'auth-a',
