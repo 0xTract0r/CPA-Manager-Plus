@@ -112,6 +112,7 @@ function DashboardPageContent() {
   const [errorLogs, setErrorLogs] = useState<ErrorLogFile[]>([]);
   const [errorLogsLoading, setErrorLogsLoading] = useState(false);
   const [errorLogsLoaded, setErrorLogsLoaded] = useState(false);
+  const [errorLogsError, setErrorLogsError] = useState('');
   const [managerCpaBase, setManagerCpaBase] = useState('');
   const [displayMeta, setDisplayMeta] = useState<DashboardDisplayMeta>({
     authFiles: [],
@@ -205,7 +206,7 @@ function DashboardPageContent() {
       const primaryKey = apiKeys[0];
       await fetchModelsFromStore(apiBase, primaryKey);
     } catch {
-      // Ignore model fetch errors on dashboard
+      // The models store retains its last snapshot and exposes the refresh error below.
     }
   }, [connectionStatus, apiBase, resolveApiKeysForModels, fetchModelsFromStore]);
 
@@ -303,6 +304,7 @@ function DashboardPageContent() {
       setCollectorLoading(false);
       setErrorLogs([]);
       setErrorLogsLoaded(false);
+      setErrorLogsError('');
       setErrorLogsLoading(false);
       setManagerCpaBase('');
       setDisplayMeta({ authFiles: [], channels: [], apiKeyAliases: [] });
@@ -334,8 +336,11 @@ function DashboardPageContent() {
     if (logsResult.status === 'fulfilled') {
       setErrorLogs(Array.isArray(logsResult.value.files) ? logsResult.value.files : []);
       setErrorLogsLoaded(true);
+      setErrorLogsError('');
+    } else {
+      const reason = logsResult.reason;
+      setErrorLogsError(reason instanceof Error ? reason.message : String(reason));
     }
-    if (logsResult.status === 'rejected') setCollectorError(t('notification.refresh_failed'));
     setErrorLogsLoading(false);
 
     setManagerCpaBase(
@@ -352,7 +357,7 @@ function DashboardPageContent() {
           ? aliasesResult.value.items
           : current.apiKeyAliases,
     }));
-  }, [apiBase, config, managementKey, usageEnabled, usageServiceBase, t]);
+  }, [apiBase, config, managementKey, usageEnabled, usageServiceBase]);
 
   const refreshDashboard = useCallback(async () => {
     setCurrentTime(new Date());
@@ -553,6 +558,7 @@ function DashboardPageContent() {
           collectorError={collectorError}
           errorLogCount={errorLogs.length}
           errorLogsLoading={errorLogsLoading && !errorLogsLoaded}
+          errorLogsError={errorLogsError}
         />
       </section>
 
@@ -621,6 +627,7 @@ function DashboardPageContent() {
 
       {/* 6. Quick Stats + Config Summary */}
       {statsError ? <div role="alert">{statsError}</div> : null}
+      {modelsError ? <div role="alert">{modelsError}</div> : null}
       <section className={styles.bottomSummaryRow}>
         <div className={styles.quickStatsPanel}>
           <div className={styles.bentoGrid}>

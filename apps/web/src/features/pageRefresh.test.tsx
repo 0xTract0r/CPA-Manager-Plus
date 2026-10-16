@@ -11,7 +11,8 @@ import { DatabaseStatusCard } from './system/components/DatabaseStatusCard';
 import { VersionCard } from './dashboard/components/VersionCard';
 import { AccountProcessingPolicySection } from './config/components/AccountProcessingPolicySection';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
-import type { PluginListResponse } from '@/types';
+import { DropdownMenu } from '@/components/ui/DropdownMenu';
+import type { PluginListResponse, PluginStoreResponse } from '@/types';
 
 const mocks = vi.hoisted(() => ({
   auth: {
@@ -27,6 +28,8 @@ const mocks = vi.hoisted(() => ({
   plugins: vi.fn(),
   pluginStore: vi.fn(),
   updatePlugin: vi.fn(),
+  installPlugin: vi.fn(),
+  deletePlugin: vi.fn(),
   logs: vi.fn(),
   errorLogs: vi.fn(),
   status: vi.fn(),
@@ -40,7 +43,10 @@ const mocks = vi.hoisted(() => ({
   noop: vi.fn(),
   fetchModels: vi.fn(),
   fetchConfig: vi.fn(),
-  models: { models: [{ name: 'gpt-retained' }], loading: false, error: null },
+  models: {
+    models: [{ name: 'gpt-retained' }], loading: false, error: null as string | null,
+    cache: { data: [{ name: 'gpt-retained' }], timestamp: 1, apiBase: 'https://a.test', apiKey: 'key' },
+  },
   config: { loggingToFile: true, requestLog: true, apiKeys: ['key'] },
   scrollNode: { scrollTop: 10, scrollHeight: 1000, clientHeight: 100 },
   requestScroll: vi.fn(),
@@ -92,8 +98,8 @@ vi.mock('@/hooks/useRequestMonitoringAvailability', () => ({
   }),
 }));
 vi.mock('@/services/api', () => ({
-  pluginsApi: { list: mocks.plugins, updateEnabled: mocks.updatePlugin },
-  pluginStoreApi: { list: mocks.pluginStore },
+  pluginsApi: { list: mocks.plugins, updateEnabled: mocks.updatePlugin, deletePlugin: mocks.deletePlugin },
+  pluginStoreApi: { list: mocks.pluginStore, install: mocks.installPlugin },
   apiKeysApi: { list: mocks.keys },
   authFilesApi: { list: mocks.files },
   providersApi: {
@@ -152,15 +158,18 @@ vi.mock('./dashboard/components/VersionCard', () => ({
     collectorStatus,
     errorLogCount,
     collectorError,
+    errorLogsError,
   }: {
     collectorStatus: unknown;
     errorLogCount: number;
     collectorError: string;
+    errorLogsError: string;
   }) => (
     <section>
       {JSON.stringify(collectorStatus)}
       {errorLogCount}
       {collectorError}
+      {errorLogsError}
     </section>
   ),
 }));
@@ -206,18 +215,27 @@ beforeEach(() => {
   vi.stubGlobal('window', {
     setInterval,
     clearInterval,
+    dispatchEvent: mocks.noop,
+    setTimeout: mocks.noop,
     addEventListener: mocks.noop,
     removeEventListener: mocks.noop,
     location: { search: '' },
   });
   mocks.auth.managementKey = 'a';
+  mocks.auth.connectionStatus = 'connected';
+  mocks.auth.supportsPlugin = true;
   mocks.managerBase = 'https://manager.test';
   mocks.params = new URLSearchParams();
   mocks.models.loading = false;
+  mocks.models.error = null;
   mocks.requestScroll.mockClear();
   mocks.fetchModels.mockResolvedValue(mocks.models.models);
   mocks.fetchConfig.mockResolvedValue({});
   mocks.plugins.mockReset();
+  mocks.pluginStore.mockReset();
+  mocks.installPlugin.mockReset().mockResolvedValue({ restartRequired: false });
+  mocks.deletePlugin.mockReset();
+  mocks.updatePlugin.mockReset();
   mocks.updatePlugin.mockResolvedValue(undefined);
   mocks.logs.mockReset();
   mocks.errorLogs.mockReset();
@@ -257,7 +275,317 @@ const pluginData: PluginListResponse = {
   ],
 };
 
+const storeData: PluginStoreResponse = {
+  pluginsEnabled: true,
+  pluginsDir: 'plugins',
+  sources: [],
+  sourceErrors: [],
+  plugins: [
+    {
+      storeId: 'official:retained-plugin',
+      sourceId: 'official',
+      sourceName: 'official',
+      sourceUrl: '',
+      id: 'retained-plugin',
+      name: 'Retained Store Plugin',
+      description: '',
+      author: 'test',
+      version: '2.0',
+      repository: 'https://github.com/router-for-me/retained-plugin',
+      installType: 'local',
+      authRequired: false,
+      authConfigured: true,
+      platforms: [],
+      logo: '',
+      homepage: '',
+      license: '',
+      tags: [],
+      installed: false,
+      installedVersion: '',
+      path: '',
+      configured: false,
+      registered: false,
+      enabled: false,
+      effectiveEnabled: false,
+      updateAvailable: false,
+    },
+  ],
+};
+
+const installOptions = () =>
+  renderer.root.find(
+    (node) => typeof node.type === 'function' && node.type.name === 'PluginInstallOptionsModal'
+  );
+const clickButton = (label: string) =>
+  renderer.root
+    .findAllByType('button')
+    .find((node) => text(node) === label)!
+    .props.onClick();
+
 describe('page refresh interactions', () => {
+  it.each([false, true])(
+    'does not roll back a successful store mutation when an earlier read arrives (update=%s)',
+    async (isUpdate) => {
+      const { PluginStorePage } = await vi.importActual<typeof import('./plugins/PluginStorePage')>(
+        './plugins/PluginStorePage'
+      );
+      const before = {
+        ...storeData,
+        plugins: [
+          {
+            ...storeData.plugins[0],
+            installed: isUpdate,
+            installedVersion: isUpdate ? '1.0' : '',
+            updateAvailable: isUpdate,
+          },
+        ],
+      };
+      mocks.pluginStore.mockResolvedValueOnce(before);
+      await mount(<PluginStorePage />);
+      const old = deferred<PluginStoreResponse>();
+      mocks.pluginStore.mockReturnValueOnce(old.promise);
+      let pending!: Promise<unknown>;
+      act(() => {
+        pending = refresh();
+      });
+      act(() => {
+        clickButton(isUpdate ? 'plugin_store.update' : 'plugin_store.install');
+      });
+      const after = {
+        ...storeData,
+        plugins: [
+          {
+            ...storeData.plugins[0],
+            installed: true,
+            installedVersion: '2.0',
+            configured: true,
+            registered: true,
+            enabled: true,
+            effectiveEnabled: true,
+          },
+        ],
+      };
+      mocks.pluginStore.mockResolvedValueOnce(after);
+      await act(async () => {
+        await installOptions().props.onConfirm();
+      });
+      expect(mocks.installPlugin).toHaveBeenCalledOnce();
+      expect(text(renderer.root)).toContain('v2.0');
+      const refreshReleased = !(
+        renderer.root.findAllByType('button').find((n) => text(n) === 'plugin_store.refresh')!.props
+          .disabled
+      );
+      await act(async () => {
+        old.resolve(before);
+        await pending;
+      });
+      expect(text(renderer.root)).toContain('v2.0');
+      expect(
+        renderer.root
+          .findAllByType('button')
+          .some((n) => text(n) === 'plugin_store.update' || text(n) === 'plugin_store.install')
+      ).toBe(false);
+      expect(refreshReleased).toBe(true);
+    }
+  );
+
+  it.each(
+    (['installed', 'store'] as const).flatMap((kind) =>
+      ([401, 403, 404, 'capability'] as const).map((reason) => ({ kind, reason }))
+    )
+  )(
+    'removes $kind data and blocks captured operations after access is revoked ($reason)',
+    async ({ kind, reason }) => {
+      const { PluginStorePage } = await vi.importActual<typeof import('./plugins/PluginStorePage')>(
+        './plugins/PluginStorePage'
+      );
+      mocks.auth.supportsPlugin = true;
+      mocks.plugins.mockResolvedValue(pluginData);
+      mocks.pluginStore.mockResolvedValue(storeData);
+      const element = () => (kind === 'installed' ? <PluginsPage /> : <PluginStorePage />);
+      await mount(element());
+      let staleOperation: () => Promise<unknown>;
+      if (kind === 'installed') {
+        const toggle = renderer.root.findByType(ToggleSwitch).props.onChange;
+        staleOperation = () => toggle(false);
+      } else {
+        act(() => {
+          clickButton('plugin_store.install');
+        });
+        staleOperation = installOptions().props.onConfirm;
+      }
+      if (reason === 'capability') {
+        mocks.auth.supportsPlugin = false;
+        await act(async () => {
+          renderer.update(element());
+        });
+      } else {
+        const api = kind === 'installed' ? mocks.plugins : mocks.pluginStore;
+        api.mockRejectedValueOnce(Object.assign(new Error('access revoked'), { status: reason }));
+        await act(async () => {
+          await refresh();
+        });
+      }
+      expect(text(renderer.root)).not.toContain(
+        kind === 'installed' ? 'Retained Plugin' : 'Retained Store Plugin'
+      );
+      expect(text(renderer.root)).toContain(
+        reason === 'capability' || reason === 404 ? 'unsupported_backend' : 'access revoked'
+      );
+      await act(async () => {
+        await staleOperation();
+      });
+      expect(mocks.updatePlugin).not.toHaveBeenCalled();
+      expect(mocks.installPlugin).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(['installed', 'store'] as const)(
+    'blocks a captured %s delete confirmation and ignores a read after capability revocation',
+    async (kind) => {
+      const { PluginStorePage } = await vi.importActual<typeof import('./plugins/PluginStorePage')>(
+        './plugins/PluginStorePage'
+      );
+      mocks.plugins.mockResolvedValue(pluginData);
+      mocks.pluginStore.mockResolvedValue({
+        ...storeData,
+        plugins: [{ ...storeData.plugins[0], installed: true }],
+      });
+      const element = () => (kind === 'installed' ? <PluginsPage /> : <PluginStorePage />);
+      await mount(element());
+      act(() => {
+        if (kind === 'installed') {
+          renderer.root
+            .findByType(DropdownMenu)
+            .props.items.find((item: { key: string }) => item.key === 'delete')
+            .onClick();
+        } else {
+          renderer.root
+            .findAllByType('button')
+            .find((n) => n.props['aria-label'] === 'plugin_store.delete_plugin')!
+            .props.onClick();
+        }
+      });
+      const confirm = mocks.confirmation.mock.lastCall![0].onConfirm;
+      const old = deferred<unknown>();
+      (kind === 'installed' ? mocks.plugins : mocks.pluginStore).mockReturnValueOnce(old.promise);
+      let pending!: Promise<unknown>;
+      act(() => {
+        pending = refresh();
+      });
+      mocks.auth.supportsPlugin = false;
+      await act(async () => {
+        renderer.update(element());
+      });
+      await act(async () => {
+        await confirm();
+        old.resolve(kind === 'installed' ? pluginData : storeData);
+        await pending;
+      });
+      expect(mocks.deletePlugin).not.toHaveBeenCalled();
+      expect(text(renderer.root)).not.toContain(
+        kind === 'installed' ? 'Retained Plugin' : 'Retained Store Plugin'
+      );
+    }
+  );
+
+  it.each(['installed', 'store'] as const)(
+    'clears %s data when mutation reconciliation rejects access',
+    async (kind) => {
+      const { PluginStorePage } = await vi.importActual<typeof import('./plugins/PluginStorePage')>(
+        './plugins/PluginStorePage'
+      );
+      mocks.plugins.mockResolvedValueOnce(pluginData);
+      mocks.pluginStore.mockResolvedValueOnce(storeData);
+      await mount(kind === 'installed' ? <PluginsPage /> : <PluginStorePage />);
+      (kind === 'installed' ? mocks.plugins : mocks.pluginStore).mockRejectedValueOnce(
+        Object.assign(new Error('access revoked during reconciliation'), { status: 403 })
+      );
+      await act(async () => {
+        if (kind === 'installed') {
+          await renderer.root.findByType(ToggleSwitch).props.onChange(false);
+        } else {
+          clickButton('plugin_store.install');
+        }
+      });
+      if (kind === 'store') {
+        await act(async () => { await installOptions().props.onConfirm(); });
+      }
+      expect(text(renderer.root)).not.toContain(
+        kind === 'installed' ? 'Retained Plugin' : 'Retained Store Plugin'
+      );
+      expect(text(renderer.root)).toContain('access revoked during reconciliation');
+    }
+  );
+
+  it('does not restore store data when reconciliation finishes after capability revocation', async () => {
+    const { PluginStorePage } = await vi.importActual<typeof import('./plugins/PluginStorePage')>(
+      './plugins/PluginStorePage'
+    );
+    mocks.pluginStore.mockResolvedValueOnce(storeData);
+    await mount(<PluginStorePage />);
+    act(() => {
+      clickButton('plugin_store.install');
+    });
+    const poll = deferred<PluginStoreResponse>();
+    mocks.pluginStore.mockReturnValueOnce(poll.promise);
+    let mutation!: Promise<unknown>;
+    await act(async () => {
+      mutation = installOptions().props.onConfirm();
+    });
+    mocks.auth.supportsPlugin = false;
+    await act(async () => {
+      renderer.update(<PluginStorePage active={false} />);
+    });
+    await act(async () => {
+      poll.resolve({ ...storeData, plugins: [{ ...storeData.plugins[0], installed: true }] });
+      await mutation;
+    });
+    expect(text(renderer.root)).not.toContain('Retained Store Plugin');
+  });
+
+  it('attributes an error-log-only failure to logs while keeping collector health and last-known count', async () => {
+    await mount(<DashboardPage />);
+    mocks.errorLogs.mockRejectedValueOnce(new Error('logs offline'));
+    await act(async () => {
+      await refresh();
+    });
+    const version = () => renderer.root.findByType(VersionCard);
+    expect(version().props.collectorError).toBe('');
+    expect(version().props.errorLogsError).toBe('logs offline');
+    expect(version().props.errorLogCount).toBe(1);
+    expect(version().props.collectorStatus.marker).toBe('last-good');
+    await act(async () => {
+      await refresh();
+    });
+    expect(version().props.errorLogsError).toBe('');
+  });
+
+  it('keeps cached model count visible and exposes a failed background refresh', async () => {
+    await mount(<DashboardPage />);
+    const modelLink = () =>
+      renderer.root.findAllByType('a').find((n) => text(n).includes('dashboard.available_models'))!;
+    expect(text(modelLink())).toContain('1');
+    mocks.fetchModels.mockImplementationOnce(async () => {
+      mocks.models.error = 'models offline';
+    });
+    await act(async () => {
+      await refresh();
+      renderer.update(<DashboardPage />);
+    });
+    expect(text(modelLink())).toContain('1');
+    expect(
+      renderer.root
+        .findAllByProps({ role: 'alert' })
+        .some((n) => text(n).includes('models offline'))
+    ).toBe(true);
+    mocks.models.error = null;
+    await act(async () => {
+      renderer.update(<DashboardPage />);
+    });
+    expect(text(renderer.root)).not.toContain('models offline');
+  });
+
   it('keeps store results on failure and only accepts the latest overlapping refresh', async () => {
     const { PluginStorePage } = await vi.importActual<typeof import('./plugins/PluginStorePage')>('./plugins/PluginStorePage');
     const data = { plugins: [], sources: [], sourceErrors: [], pluginsEnabled: true, pluginsDir: 'plugins' };

@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -200,10 +201,27 @@ function InstalledPluginsView({
   const configRequestSeq = useRef(0);
 
   const connected = connectionStatus === 'connected';
+  const canOperate = connected && supportsPlugin && Boolean(data);
+  const canOperateRef = useRef(canOperate);
+  canOperateRef.current = canOperate;
 
   const listRequestIdRef = useRef(0);
+  const clearPluginData = useCallback(() => {
+    canOperateRef.current = false;
+    listRequestIdRef.current += 1;
+    configRequestSeq.current += 1;
+    setData(null);
+    setEditingPlugin(null);
+    setDraft(null);
+    setOpeningConfigID('');
+    setLoading(false);
+  }, []);
+  useLayoutEffect(() => {
+    if (!connected || !supportsPlugin) clearPluginData();
+  }, [connected, supportsPlugin, clearPluginData]);
   useEffect(
     () => () => {
+      canOperateRef.current = false;
       listRequestIdRef.current += 1;
     },
     []
@@ -211,11 +229,13 @@ function InstalledPluginsView({
   const loadPlugins = useCallback(async () => {
     const requestId = ++listRequestIdRef.current;
     if (!connected) {
+      clearPluginData();
       setLoading(false);
       setError(t('notification.connection_required'));
       return;
     }
     if (!supportsPlugin) {
+      clearPluginData();
       setLoading(false);
       setError(t('plugin_management.unsupported_backend'));
       return;
@@ -229,6 +249,7 @@ function InstalledPluginsView({
       setData(plugins);
     } catch (err: unknown) {
       if (requestId !== listRequestIdRef.current) return;
+      if ([401, 403, 404].some((status) => hasStatus(err, status))) clearPluginData();
       setError(
         hasStatus(err, 404)
           ? t('plugin_management.unsupported_backend')
@@ -237,7 +258,7 @@ function InstalledPluginsView({
     } finally {
       if (requestId === listRequestIdRef.current) setLoading(false);
     }
-  }, [connected, supportsPlugin, t]);
+  }, [connected, supportsPlugin, clearPluginData, t]);
 
   const loadPluginsAfterMutation = useCallback(
     async (
@@ -245,6 +266,7 @@ function InstalledPluginsView({
       pluginID?: string,
       predicate?: (plugin: PluginListEntry, response: PluginListResponse) => boolean
     ) => {
+      if (!canOperateRef.current) return;
       if (waitForRegistration && pluginID && predicate) {
         const requestId = ++listRequestIdRef.current;
         try {
@@ -253,6 +275,15 @@ function InstalledPluginsView({
             setData(result.response);
             setError('');
           }
+        } catch (err: unknown) {
+          if (
+            requestId === listRequestIdRef.current &&
+            [401, 403, 404].some((status) => hasStatus(err, status))
+          ) {
+            clearPluginData();
+            setError(getErrorMessage(err, t('plugin_management.load_failed')));
+          }
+          throw err;
         } finally {
           if (requestId === listRequestIdRef.current) setLoading(false);
         }
@@ -261,9 +292,10 @@ function InstalledPluginsView({
       if (waitForRegistration) {
         await wait(PLUGIN_ENABLE_REFRESH_DELAY_MS);
       }
+      if (!canOperateRef.current) return;
       await loadPlugins();
     },
-    [loadPlugins]
+    [loadPlugins, clearPluginData, t]
   );
 
   useHeaderRefresh(loadPlugins, connected && supportsPlugin);
@@ -308,7 +340,7 @@ function InstalledPluginsView({
   );
 
   const openConfigDrawer = async (plugin: PluginListEntry) => {
-    if (openingConfigID || mutatingID) return;
+    if (!canOperateRef.current || openingConfigID || mutatingID) return;
 
     const requestSeq = configRequestSeq.current + 1;
     configRequestSeq.current = requestSeq;
@@ -353,6 +385,7 @@ function InstalledPluginsView({
   };
 
   const handleTogglePlugin = async (plugin: PluginListEntry, enabled: boolean) => {
+    if (!canOperateRef.current) return;
     setMutatingID(plugin.id);
     try {
       await pluginsApi.updateEnabled(plugin.id, enabled);
@@ -374,7 +407,7 @@ function InstalledPluginsView({
   };
 
   const handleDeletePlugin = (plugin: PluginListEntry) => {
-    if (openingConfigID || mutatingID) return;
+    if (!canOperateRef.current || openingConfigID || mutatingID) return;
 
     showConfirmation({
       title: t('plugin_management.delete_confirm_title'),
@@ -385,6 +418,7 @@ function InstalledPluginsView({
       cancelText: t('common.cancel'),
       variant: 'danger',
       onConfirm: async () => {
+        if (!canOperateRef.current) return;
         setMutatingID(plugin.id);
         try {
           const result = await pluginsApi.deletePlugin(plugin.id);
@@ -419,7 +453,7 @@ function InstalledPluginsView({
   };
 
   const handleReinstallPlugin = (plugin: PluginListEntry) => {
-    if (openingConfigID || mutatingID) return;
+    if (!canOperateRef.current || openingConfigID || mutatingID) return;
 
     showConfirmation({
       title: t('plugin_management.reinstall_confirm_title'),
@@ -430,10 +464,12 @@ function InstalledPluginsView({
       cancelText: t('common.cancel'),
       variant: 'danger',
       onConfirm: async () => {
+        if (!canOperateRef.current) return;
         const mutationKey = `${plugin.id}:reinstall`;
         setMutatingID(mutationKey);
         try {
           const store = await pluginStoreApi.list();
+          if (!canOperateRef.current) return;
           const candidates = store.plugins.filter((entry) => entry.id === plugin.id);
           const storeEntry =
             candidates.find((entry) => entry.installed) ??
@@ -458,6 +494,7 @@ function InstalledPluginsView({
           }
 
           const sourceId = storeEntry.sourceId || undefined;
+          if (!canOperateRef.current) return;
           const installResult = await pluginStoreApi.install(storeEntry.id, { sourceId });
           clearConfigCache();
           await loadPluginsAfterMutation(
@@ -492,7 +529,7 @@ function InstalledPluginsView({
   };
 
   const handleSaveConfig = async () => {
-    if (!editingPlugin || !draft || openingConfigID || mutatingID) return;
+    if (!canOperateRef.current || !editingPlugin || !draft || openingConfigID || mutatingID) return;
     const { patch, errors } = buildPluginConfigPatch(draft, editingPlugin.configFields, t);
 
     if (Object.keys(errors).length > 0) {
@@ -781,7 +818,7 @@ function InstalledPluginsView({
             const logo = resolvePluginAsset(plugin.logo || plugin.metadata?.logo || '');
             const repositoryURL = buildRepositoryURL(plugin.metadata?.githubRepository ?? '');
             const openingConfig = openingConfigID === plugin.id;
-            const actionBusy = Boolean(mutatingID || openingConfigID);
+            const actionBusy = !canOperate || Boolean(mutatingID || openingConfigID);
             const subtitle = display.subtitleParts.join(' / ');
             const menuItems: DropdownMenuItem[] = [
               ...(repositoryURL
@@ -949,7 +986,7 @@ function InstalledPluginsView({
             <Button variant="secondary" onClick={closeConfigDrawer} disabled={savingConfig}>
               {t('common.cancel')}
             </Button>
-            <Button onClick={handleSaveConfig} loading={savingConfig}>
+            <Button onClick={handleSaveConfig} loading={savingConfig} disabled={!canOperate}>
               {t('common.save')}
             </Button>
           </div>
