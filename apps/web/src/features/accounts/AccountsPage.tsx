@@ -1530,6 +1530,7 @@ export function AccountsPage() {
   } | null>(null);
   const [accountWindowUsageQueryContext, setAccountWindowUsageQueryContext] = useState<{
     rowKey: string;
+    identitySignature: string;
     asOfMs: number;
   } | null>(null);
   const [accountWindowUsageError, setAccountWindowUsageError] = useState('');
@@ -4482,6 +4483,9 @@ export function AccountsPage() {
     [rows, selectedRowKey]
   );
   const accountHistoryTargets = useMemo(() => buildAccountHistoryTargetEntries(rows), [rows]);
+  const selectedRowIdentitySignature = selectedRow
+    ? accountHistoryIdentityByRowKey.get(selectedRow.selectionKey) ?? ''
+    : '';
   const accountHistoryAutoContextKey = useMemo(
     () =>
       JSON.stringify({
@@ -4861,7 +4865,8 @@ export function AccountsPage() {
         buildAccountQuotaWindowDefinitions(buildQuotaDisplayWindows(selectedRow))
     );
     const asOfMs =
-      accountWindowUsageQueryContext?.rowKey === selectedRow.selectionKey
+      accountWindowUsageQueryContext?.rowKey === selectedRow.selectionKey &&
+      accountWindowUsageQueryContext.identitySignature === selectedRowIdentitySignature
         ? accountWindowUsageQueryContext.asOfMs
         : undefined;
     return buildAccountWindowUsageTargetEntries([selectedRow], windowsByRowKey, asOfMs);
@@ -4870,11 +4875,19 @@ export function AccountsPage() {
     buildQuotaDisplayWindows,
     effectiveQuotaWindowDefinitionsByRowKey,
     selectedRow,
+    selectedRowIdentitySignature,
   ]);
   const matchingAccountWindowUsageByKey = useMemo(
     () =>
-      filterAccountWindowUsageByTargetRanges(accountWindowUsageTargets, accountWindowUsageByKey),
-    [accountWindowUsageByKey, accountWindowUsageTargets]
+      accountWindowUsageQueryContext?.identitySignature === selectedRowIdentitySignature
+        ? filterAccountWindowUsageByTargetRanges(accountWindowUsageTargets, accountWindowUsageByKey)
+        : new Map<string, MonitoringAccountWindowUsageItem>(),
+    [
+      accountWindowUsageByKey,
+      accountWindowUsageQueryContext,
+      accountWindowUsageTargets,
+      selectedRowIdentitySignature,
+    ]
   );
   const selectedHeaderSnapshotRevision = useMemo(() => {
     if (selectedRow?.provider !== CODEX_CONFIG.type) return '';
@@ -4888,6 +4901,7 @@ export function AccountsPage() {
         managerConnectionFingerprint,
         requestMonitoringAvailable: featureAvailability.requestMonitoringAvailable,
         selectedRowKey: selectedRow?.selectionKey ?? selectedRowKey,
+        selectedRowIdentitySignature,
         selectedHeaderSnapshotRevision,
         historyRevision: accountHistoryRefreshRevision,
         historyAutoRevision: accountHistoryAutoRefreshRevision,
@@ -4902,6 +4916,7 @@ export function AccountsPage() {
       managerConnectionFingerprint,
       selectedRow,
       selectedHeaderSnapshotRevision,
+      selectedRowIdentitySignature,
       selectedRowKey,
     ]
   );
@@ -6007,6 +6022,7 @@ export function AccountsPage() {
       if (!isCurrentRequest()) return;
       setAccountWindowUsageQueryContext({
         rowKey: selectedRow.selectionKey,
+        identitySignature: selectedRowIdentitySignature,
         asOfMs: queryAsOfMs,
       });
       setAccountWindowUsageByKey(buildAccountWindowUsageByKey(entries, response.items ?? []));
@@ -6038,6 +6054,7 @@ export function AccountsPage() {
     managerStorageAvailable,
     quotaWindowDefinitionsByRowKey,
     selectedRow,
+    selectedRowIdentitySignature,
     t,
   ]);
 
