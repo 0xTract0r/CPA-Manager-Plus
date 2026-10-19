@@ -12422,7 +12422,7 @@ describe('AccountsPage replacement flows', () => {
       serverCodexInspectionAvailable: false,
     };
     mocks.getAccountHistory.mockImplementation(async (_base, _key, request) => {
-      if (request.accounts[0]?.account_snapshot !== 'old@example.com') {
+      if ((request.accounts[0] as { account_snapshot?: string } | undefined)?.account_snapshot !== 'old@example.com') {
         throw new Error('history temporarily unavailable');
       }
       return makeAccountHistoryResponse([{
@@ -12453,7 +12453,7 @@ describe('AccountsPage replacement flows', () => {
     expect(readText(findAccountCardByKey(renderer, rowKey))).not.toContain('$12.34');
     await flushPromises();
     expect(mocks.getAccountHistory.mock.calls.some((call) =>
-      call[2]?.accounts[0]?.account_snapshot === 'new@example.com'
+      (call[2]?.accounts[0] as { account_snapshot?: string } | undefined)?.account_snapshot === 'new@example.com'
     )).toBe(true);
     expect(readText(findAccountCardByKey(renderer, rowKey))).not.toContain('$12.34');
   });
