@@ -18286,19 +18286,20 @@ describe('AccountsPage replacement flows', () => {
         serverCodexInspectionAvailable: false,
       };
       const now = Date.now();
+      const quotaWindows = [{
+        id: 'five-hour',
+        label: 'Five hours',
+        usedPercent: 40,
+        resetLabel: new Date(now + 3 * 3600 * 1000).toISOString(),
+        resetAtMs: now + 3 * 3600 * 1000,
+        resetAccuracy: 'exact' as const,
+        limitWindowSeconds: 5 * 3600,
+        modelScope: CODEX_MAIN_SCOPE,
+      }];
       mocks.quotaState.codexQuota = {
         ...buildCredentialScopedQuotaRecord(file, {
           status: 'success',
-          windows: [{
-            id: 'five-hour',
-            label: 'Five hours',
-            usedPercent: 40,
-            resetLabel: new Date(now + 3 * 3600 * 1000).toISOString(),
-            resetAtMs: now + 3 * 3600 * 1000,
-            resetAccuracy: 'exact',
-            limitWindowSeconds: 5 * 3600,
-            modelScope: CODEX_MAIN_SCOPE,
-          }],
+          windows: quotaWindows,
         }),
       };
       let requests = 0;
@@ -18362,12 +18363,11 @@ describe('AccountsPage replacement flows', () => {
       // previous account's retained usage, even if the quota window is identical.
       const replaced = makeCodexFile(file.name, 'auth-retain', 'replacement@example.com');
       expect(getAuthFileSelectionKey(replaced)).toBe(rowKey);
-      const previousQuota = mocks.quotaState.codexQuota[getQuotaCredentialStoreKey(file)];
       mocks.files = [replaced];
       mocks.quotaState.codexQuota = {
         ...buildCredentialScopedQuotaRecord(replaced, {
           status: 'success',
-          windows: previousQuota.windows,
+          windows: quotaWindows,
         }),
       };
       await act(async () => {
