@@ -6084,8 +6084,12 @@ export function AccountsPage() {
         !managementKey ||
         entries.length === 0
       ) {
-        if (!mergeResult) {
-          setAccountHistoryByRowKey(new Map());
+        // A temporary monitoring capability check must not blank already loaded
+        // history. Connection changes are cleared by the connection-scope effect.
+        if (!mergeResult && entries.length === 0) {
+          setAccountHistoryByRowKey((current) =>
+            current.size === 0 ? current : new Map()
+          );
         }
         setAccountHistoryLoading(accountHistoryPendingRequestsRef.current.size > 0);
         setAccountHistoryErrorsByRowKey((current) => {
@@ -6898,9 +6902,8 @@ export function AccountsPage() {
         buildAccountWindowUsageByKey(queryTargets, response.items ?? [])
       );
     } catch {
-      if (isCurrentRequest()) {
-        setListWindowUsageByKey((current) => (current.size === 0 ? current : new Map()));
-      }
+      // Keep the last successful usage while this refresh fails. The existing
+      // target-range filter still rejects changed credentials or quota cycles.
       // 失败静默降级，不阻塞列表显示
     } finally {
       if (listWindowUsageReqIdRef.current === requestId) {
