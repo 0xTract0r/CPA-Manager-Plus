@@ -2233,9 +2233,21 @@ export function AccountsPage() {
       checking: featureAvailability.checking,
       requestMonitoringAvailable: featureAvailability.requestMonitoringAvailable,
     };
-    // A passive checking-state transition alone must not discard already
-    // rendered history and window usage; connection and capability changes do.
-    if (!connectionScopeChanged && !monitoringCapabilityChanged) return;
+    // A checking-only transition invalidates in-flight history requests, but
+    // must not discard the last verified history or quota-window presentation.
+    // Actual connection/capability changes still clear the scoped snapshots.
+    if (!connectionScopeChanged && !monitoringCapabilityChanged) {
+      accountHistoryAutoAbortRef.current?.abort();
+      accountHistoryAutoAbortRef.current = null;
+      accountHistoryTargetAbortRef.current?.abort();
+      accountHistoryTargetAbortRef.current = null;
+      accountHistoryRefreshRequestIdRef.current += 1;
+      accountHistoryRefreshPromiseRef.current = null;
+      accountHistoryAutoLoadKeyRef.current = null;
+      accountHistoryAutoRequestContextKeyRef.current = null;
+      setHistoryRefreshing(false);
+      return;
+    }
     quotaCooldownRequestIdRef.current += 1;
     accountHistoryAutoAbortRef.current?.abort();
     accountHistoryAutoAbortRef.current = null;
