@@ -231,6 +231,7 @@ import {
 } from '@/features/accounts/model/accountSubscriptionPresentation';
 import { resolveAccountQuotaWindowUsageAndForecast } from '@/features/accounts/model/accountQuotaWindowUsagePresentation';
 import { formatCompactNumber, formatCompactUsd, formatUsd } from '@/utils/usage';
+import { resolveCredentialIdentity } from '@/utils/authFileCredentialIdentity';
 import {
   getAuthFileCodexInspectionKeyForFile,
   getAuthFileCodexInspectionKeyForIdentity,
@@ -3674,11 +3675,11 @@ export function AccountsPage() {
   );
 
   const accountHistoryIdentityByRowKey = useMemo(
-    () => new Map(buildAccountHistoryTargetEntries(rows).map((entry) => [
-      entry.rowKey,
-      JSON.stringify(entry.target),
+    () => new Map(files.map((file) => [
+      getAuthFileSelectionKey(file),
+      JSON.stringify(resolveCredentialIdentity(file)),
     ])),
-    [rows]
+    [files]
   );
   const verifiedAccountHistoryByRowKey = useMemo(() => {
     const current = new Map<string, MonitoringAccountHistoryItem>();
@@ -4866,7 +4867,7 @@ export function AccountsPage() {
     );
     const asOfMs =
       accountWindowUsageQueryContext?.rowKey === selectedRow.selectionKey &&
-      accountWindowUsageQueryContext.identitySignature === selectedRowIdentitySignature
+      accountWindowUsageQueryContext?.identitySignature === selectedRowIdentitySignature
         ? accountWindowUsageQueryContext.asOfMs
         : undefined;
     return buildAccountWindowUsageTargetEntries([selectedRow], windowsByRowKey, asOfMs);
@@ -6265,7 +6266,7 @@ export function AccountsPage() {
             if (nextItem) {
               merged.set(entry.rowKey, {
                 item: nextItem,
-                identitySignature: JSON.stringify(entry.target),
+                identitySignature: accountHistoryIdentityByRowKey.get(entry.rowKey) ?? '',
               });
             }
           });
@@ -6332,6 +6333,7 @@ export function AccountsPage() {
     },
     [
       accountHistoryAutoContextKey,
+      accountHistoryIdentityByRowKey,
       accountHistoryTargets,
       featureAvailability.checking,
       featureAvailability.managerServiceBase,
