@@ -13217,6 +13217,98 @@ describe('AccountsPage replacement flows', () => {
     expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(1);
   });
 
+  it('rejects old detail quota usage after a same-row credential replacement', async () => {
+    const original = makeCodexFile('detail-replacement.json', 'auth-detail', 'old-detail@example.com');
+    const replacement = makeCodexFile(original.name, 'auth-detail', 'new-detail@example.com');
+    const rowKey = getAuthFileSelectionKey(original);
+    expect(getAuthFileSelectionKey(replacement)).toBe(rowKey);
+    mocks.files = [original];
+    mocks.location = {
+      pathname: '/accounts',
+      search: `?account=${encodeURIComponent(rowKey)}&tab=quota`,
+    };
+    mocks.panelFeatureAvailability = {
+      checking: false,
+      managerServiceBase: 'http://manager.local:18317',
+      requestMonitoringAvailable: true,
+      serverCodexInspectionAvailable: false,
+    };
+    const resetAtMs = Date.now() + 3 * 3600 * 1000;
+    const quotaWindows = [{
+      id: 'five-hour',
+      label: 'Five hours',
+      usedPercent: 40,
+      resetLabel: new Date(resetAtMs).toISOString(),
+      resetAtMs,
+      resetAccuracy: 'exact' as const,
+      limitWindowSeconds: 5 * 3600,
+      modelScope: CODEX_MAIN_SCOPE,
+    }];
+    mocks.quotaState.codexQuota = {
+      ...buildCredentialScopedQuotaRecord(original, {
+        status: 'success',
+        windows: quotaWindows,
+      }),
+    };
+    let replaceStarted = false;
+    mocks.getAccountWindowUsage.mockImplementation(async (_base, _key, request) => {
+      if (replaceStarted) throw new Error('detail usage temporarily unavailable');
+      return {
+        generated_at_ms: Date.now(),
+        items: request.windows.map((window) => ({
+          request_key: window.request_key,
+          row_key: window.row_key,
+          window_key: window.window_key,
+          provider_window_id: window.provider_window_id,
+          period: window.period,
+          from_ms: window.from_ms,
+          to_ms: window.to_ms,
+          matched: true,
+          total_requests: 10,
+          success_calls: 10,
+          failure_calls: 0,
+          total_tokens: 50_000,
+          total_cost: 0.5,
+          success_rate: 1,
+          last_seen_ms: Date.now() - 1_000,
+          scope_match_status: 'complete',
+          unmatched_requests: 0,
+          sync_status: 'ready',
+        })),
+      };
+    });
+
+    const renderer = await renderAccountsPage();
+    await flushPromises();
+    await flushPromises();
+    expect(
+      renderer.root.findByType(AccountQuotaTab).props.detailView.quota.windows[0].currentUsage
+    ).toMatchObject({ totalCost: 0.5, totalTokens: 50_000 });
+
+    replaceStarted = true;
+    mocks.files = [replacement];
+    mocks.quotaState.codexQuota = {
+      ...buildCredentialScopedQuotaRecord(replacement, {
+        status: 'success',
+        windows: quotaWindows,
+      }),
+    };
+    await act(async () => {
+      renderer.update(<AccountsPage />);
+      await Promise.resolve();
+    });
+    expect(
+      renderer.root.findByType(AccountQuotaTab).props.detailView.quota.windows[0].currentUsage
+    ).toBeNull();
+    await flushPromises();
+    expect(mocks.getAccountWindowUsage.mock.calls.some((call) =>
+      call[2]?.windows.some((window) => window.account_snapshot === 'new-detail@example.com')
+    )).toBe(true);
+    expect(
+      renderer.root.findByType(AccountQuotaTab).props.detailView.quota.windows[0].currentUsage
+    ).toBeNull();
+  });
+
   it('presents quota window with remaining in header, used and forecast in fixed slots, and reset at bottom right', async () => {
     const file = makeCodexFile('codex-slots.json', 'auth-slots', 'slots@example.com');
     mocks.files = [file];
