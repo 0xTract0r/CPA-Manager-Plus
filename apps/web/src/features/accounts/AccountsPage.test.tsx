@@ -18303,11 +18303,13 @@ describe('AccountsPage replacement flows', () => {
       };
       let requests = 0;
       const deferredRefresh: { reject: (() => void) | null } = { reject: null };
+      const identityRefresh: { reject: (() => void) | null } = { reject: null };
       mocks.getAccountWindowUsage.mockImplementation((_base, _key, request) => {
         requests += 1;
-        if (requests === 2) {
+        if (requests === 2 || requests === 3) {
           return new Promise((_resolve, reject) => {
-            deferredRefresh.reject = () => reject(new Error('temporary network failure'));
+            const target = requests === 2 ? deferredRefresh : identityRefresh;
+            target.reject = () => reject(new Error('temporary network failure'));
           });
         }
         return Promise.resolve({
@@ -18354,6 +18356,38 @@ describe('AccountsPage replacement flows', () => {
       await flushPromises();
       expect(readText(findAccountCardByKey(renderer, rowKey))).toContain('$0.50');
       expect(readText(findAccountCardByKey(renderer, rowKey))).toContain('50.0K');
+
+      // The physical filename and auth index stay the same across a credential
+      // replacement. A failed request for the new account must not reveal the
+      // previous account's retained usage, even if the quota window is identical.
+      const replaced = makeCodexFile(file.name, 'auth-retain', 'replacement@example.com');
+      expect(getAuthFileSelectionKey(replaced)).toBe(rowKey);
+      const previousQuota = mocks.quotaState.codexQuota[getQuotaCredentialStoreKey(file)];
+      mocks.files = [replaced];
+      mocks.quotaState.codexQuota = {
+        ...buildCredentialScopedQuotaRecord(replaced, {
+          status: 'success',
+          windows: previousQuota.windows,
+        }),
+      };
+      await act(async () => {
+        renderer.update(<AccountsPage />);
+        await Promise.resolve();
+      });
+      expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(3);
+      expect(mocks.getAccountWindowUsage.mock.calls[2]?.[2].windows[0]?.account_snapshot).toBe(
+        'replacement@example.com'
+      );
+      expect(readText(findAccountCardByKey(renderer, rowKey))).not.toContain('$0.50');
+      expect(readText(findAccountCardByKey(renderer, rowKey))).not.toContain('50.0K');
+
+      await act(async () => {
+        identityRefresh.reject?.();
+        await Promise.resolve();
+      });
+      await flushPromises();
+      expect(readText(findAccountCardByKey(renderer, rowKey))).not.toContain('$0.50');
+      expect(readText(findAccountCardByKey(renderer, rowKey))).not.toContain('50.0K');
     });
 
     it('refreshes list window usage after single account quota refresh succeeds without opening drawer', async () => {
