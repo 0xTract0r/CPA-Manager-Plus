@@ -22,10 +22,13 @@ type SourceInfoEntry = Required<Pick<SourceInfo, 'displayName' | 'type' | 'ident
 export interface SourceInfoMap {
   byAuthIndex: Map<string, SourceInfoEntry | null>;
   bySource: Map<string, SourceInfoEntry | null>;
+  bySourceAndProvider?: Map<string, SourceInfoEntry | null>;
   byIdentityKey: Map<string, SourceInfoEntry>;
 }
 
 const buildProviderIdentityKey = (type: string, index: number | string) => `${type}:${index}`;
+const buildProviderSourceKey = (provider: string, source: string) =>
+  JSON.stringify([provider, source]);
 
 const hasDisableAllModelsRule = (models?: string[]) =>
   Array.isArray(models) && models.some((model) => String(model ?? '').trim() === '*');
@@ -157,6 +160,7 @@ const buildOpenAIKeyDisplayNameMap = (providers: OpenAIProviderConfig[]) => {
 export function buildSourceInfoMap(input: SourceInfoMapInput): SourceInfoMap {
   const byAuthIndex = new Map<string, SourceInfoEntry | null>();
   const bySource = new Map<string, SourceInfoEntry | null>();
+  const bySourceAndProvider = new Map<string, SourceInfoEntry | null>();
   const byIdentityKey = new Map<string, SourceInfoEntry>();
 
   const registerProvider = (
@@ -170,6 +174,7 @@ export function buildSourceInfoMap(input: SourceInfoMapInput): SourceInfoMap {
 
     Array.from(candidates).forEach((candidate) => {
       registerIdentity(bySource, candidate, entry);
+      registerIdentity(bySourceAndProvider, buildProviderSourceKey(entry.type, candidate), entry);
     });
   };
 
@@ -249,7 +254,7 @@ export function buildSourceInfoMap(input: SourceInfoMapInput): SourceInfoMap {
     });
   });
 
-  [byAuthIndex, bySource].forEach((map) => {
+  [byAuthIndex, bySource, bySourceAndProvider].forEach((map) => {
     map.forEach((entry) => {
       if (entry) {
         byIdentityKey.set(entry.identityKey, entry);
@@ -257,7 +262,7 @@ export function buildSourceInfoMap(input: SourceInfoMapInput): SourceInfoMap {
     });
   });
 
-  return { byAuthIndex, bySource, byIdentityKey };
+  return { byAuthIndex, bySource, bySourceAndProvider, byIdentityKey };
 }
 
 export const buildSourceProviderStateMap = (sourceInfoMap: SourceInfoMap) => {
@@ -274,7 +279,8 @@ export function resolveSourceDisplay(
   sourceRaw: string,
   authIndex: unknown,
   sourceInfoMap: SourceInfoMap,
-  authFileMap: Map<string, CredentialInfo>
+  authFileMap: Map<string, CredentialInfo>,
+  providerRaw: unknown = ''
 ): SourceInfo {
   const source = normalizeUsageSourceId(sourceRaw);
   const authIndexKey = normalizeAuthIndex(authIndex);
@@ -295,6 +301,16 @@ export function resolveSourceDisplay(
 
   const matchedBySource = source ? sourceInfoMap.bySource.get(source) : null;
   if (matchedBySource) return matchedBySource;
+
+  // Resolve cross-provider collisions only when the event identifies its provider.
+  // Never guess between multiple entries of the same provider.
+  if (source && matchedBySource === null) {
+    const provider = typeof providerRaw === 'string' ? providerRaw.trim().toLowerCase() : '';
+    const matchedByProvider = provider
+      ? sourceInfoMap.bySourceAndProvider?.get(buildProviderSourceKey(provider, source))
+      : null;
+    if (matchedByProvider) return matchedByProvider;
+  }
 
   if (source) {
     return {
