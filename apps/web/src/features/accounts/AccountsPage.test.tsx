@@ -18264,12 +18264,12 @@ describe('AccountsPage replacement flows', () => {
         }),
       };
       let requests = 0;
-      let rejectRefresh: (() => void) | null = null;
+      const deferredRefresh: { reject: (() => void) | null } = { reject: null };
       mocks.getAccountWindowUsage.mockImplementation((_base, _key, request) => {
         requests += 1;
         if (requests === 2) {
           return new Promise((_resolve, reject) => {
-            rejectRefresh = () => reject(new Error('temporary network failure'));
+            deferredRefresh.reject = () => reject(new Error('temporary network failure'));
           });
         }
         return Promise.resolve({
@@ -18310,7 +18310,7 @@ describe('AccountsPage replacement flows', () => {
       expect(readText(findAccountCardByKey(renderer, rowKey))).toContain('50.0K');
 
       await act(async () => {
-        rejectRefresh?.();
+        deferredRefresh.reject?.();
         await Promise.resolve();
       });
       await flushPromises();
