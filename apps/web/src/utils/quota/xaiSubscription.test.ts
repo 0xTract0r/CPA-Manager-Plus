@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
 import { apiCallApi } from '@/services/api/apiCall';
 import { fetchXaiSubscription } from './xaiSubscription';
 import { XAI_CLI_CHAT_PROXY_BASE_URL } from './constants';
@@ -122,13 +123,234 @@ describe('xAI subscription lookup', () => {
     const second = fetchXaiSubscription({ ...file, authIndex: 'xai-2' });
     let active = true;
     const third = fetchXaiSubscription({ ...file, authIndex: 'xai-3' }, undefined, () => active);
-    await vi.waitFor(() => expect(requests).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(requests).toHaveBeenCalledTimes(1));
     active = false;
-    pending.forEach((resolve) => resolve(result({ subscriptionTier: 'SuperGrokPro' })));
+    pending[0](result({ subscriptionTier: 'SuperGrokPro' }));
+    await vi.waitFor(() => expect(requests).toHaveBeenCalledTimes(2));
+    pending[1](result({ subscriptionTier: 'SuperGrokPro' }));
     expect(
       (await Promise.all([first, second, third])).map((value) => value?.planType ?? null)
     ).toEqual(['SuperGrok Heavy', 'SuperGrok Heavy', null]);
     expect(requests).toHaveBeenCalledTimes(2);
+  });
+
+  const scope = {
+    baseURL: 'https://cpa.example/v0/management',
+    headers: { Authorization: 'Bearer fixture-key' },
+    cpampScopedRequest: true,
+  };
+
+  it('shares the actual result for repeated scoped lookups while a request is in flight', async () => {
+    let finish!: (value: ReturnType<typeof result>) => void;
+    requests.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        })
+    );
+    const first = fetchXaiSubscription(file, scope);
+    await vi.waitFor(() => expect(requests).toHaveBeenCalledTimes(1));
+    const second = fetchXaiSubscription({ ...file }, { ...scope });
+    finish(result({ subscriptionTier: 'SuperGrokPro' }));
+    expect((await Promise.all([first, second])).map((value) => value?.planType)).toEqual([
+      'SuperGrok Heavy',
+      'SuperGrok Heavy',
+    ]);
+    expect(requests).toHaveBeenCalledTimes(1);
+    requests.mockResolvedValueOnce(result({ subscriptionTier: 'Free' }));
+    expect((await fetchXaiSubscription(file, scope))?.planType).toBe('Free');
+    expect(requests).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not let the first consumer cancellation cancel another consumer', async () => {
+    let finish!: (value: ReturnType<typeof result>) => void;
+    const controller = new AbortController();
+    requests.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        })
+    );
+    const first = fetchXaiSubscription(file, { ...scope, signal: controller.signal });
+    await vi.waitFor(() => expect(requests).toHaveBeenCalledTimes(1));
+    const second = fetchXaiSubscription(file, scope);
+    controller.abort();
+    expect(requests.mock.calls[0][1]?.signal?.aborted).toBe(false);
+    finish(result({ subscriptionTier: 'SuperGrokPro' }));
+    expect(await first).toBeNull();
+    expect((await second)?.planType).toBe('SuperGrok Heavy');
+    expect(requests).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not let a stale first generation suppress a current coalesced consumer', async () => {
+    let finish!: (value: ReturnType<typeof result>) => void;
+    requests.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        })
+    );
+    let active = true;
+    const first = fetchXaiSubscription(file, scope, () => active);
+    const second = fetchXaiSubscription(file, scope);
+    active = false;
+    await vi.waitFor(() => expect(requests).toHaveBeenCalledTimes(1));
+    finish(result({ subscriptionTier: 'SuperGrokPro' }));
+    expect(await first).toBeNull();
+    expect((await second)?.planType).toBe('SuperGrok Heavy');
+  });
+
+  it('coalesces queued work and skips it if all consumers become stale', async () => {
+    let finish!: (value: ReturnType<typeof result>) => void;
+    requests.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        })
+    );
+    const blocking = fetchXaiSubscription({ ...file, authIndex: 'blocking' }, scope);
+    await vi.waitFor(() => expect(requests).toHaveBeenCalledTimes(1));
+    let active = true;
+    const first = fetchXaiSubscription(file, scope, () => active);
+    const second = fetchXaiSubscription(file, scope, () => active);
+    active = false;
+    finish(result({ subscriptionTier: 'Free' }));
+    expect(await blocking).toMatchObject({ planType: 'Free' });
+    expect(await Promise.all([first, second])).toEqual([null, null]);
+    expect(requests).toHaveBeenCalledTimes(1);
+  });
+
+  it('coalesces queued consumers and returns the same result to both', async () => {
+    let finish!: (value: ReturnType<typeof result>) => void;
+    requests
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          })
+      )
+      .mockResolvedValueOnce(result({ subscriptionTier: 'SuperGrokPro' }));
+    const blocking = fetchXaiSubscription({ ...file, authIndex: 'blocking' }, scope);
+    await vi.waitFor(() => expect(requests).toHaveBeenCalledTimes(1));
+    const first = fetchXaiSubscription(file, scope);
+    const second = fetchXaiSubscription(file, scope);
+    finish(result({ subscriptionTier: 'Free' }));
+    await blocking;
+    expect((await Promise.all([first, second])).map((value) => value?.planType)).toEqual([
+      'SuperGrok Heavy',
+      'SuperGrok Heavy',
+    ]);
+    expect(requests).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not join a skipped task during its completion microtasks', async () => {
+    let active = true;
+    let retry: ReturnType<typeof fetchXaiSubscription> | undefined;
+    let scheduled = false;
+    requests.mockResolvedValue(result({ subscriptionTier: 'SuperGrokPro' }));
+    const skipped = fetchXaiSubscription(file, scope, () => {
+      if (!active && !scheduled) {
+        scheduled = true;
+        queueMicrotask(() => {
+          active = true;
+          retry = fetchXaiSubscription(file, scope);
+        });
+      }
+      return active;
+    });
+    active = false;
+    expect(await skipped).toBeNull();
+    expect(retry).toBeDefined();
+    expect(await retry).toMatchObject({ planType: 'SuperGrok Heavy' });
+    expect(requests).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not share work without a captured connection scope', async () => {
+    requests.mockResolvedValue(result({ subscriptionTier: 'SuperGrokPro' }));
+    await Promise.all([fetchXaiSubscription(file), fetchXaiSubscription(file)]);
+    expect(requests).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps legacy cancel-token requests independent rather than sharing their cancellation', async () => {
+    const source = axios.CancelToken.source();
+    const config = { ...scope, cancelToken: source.token };
+    requests.mockResolvedValue(result({ subscriptionTier: 'Free' }));
+    await Promise.all([fetchXaiSubscription(file, config), fetchXaiSubscription(file, config)]);
+    expect(requests).toHaveBeenCalledTimes(2);
+    expect(requests.mock.calls[0][1]?.cancelToken).toBe(source.token);
+  });
+
+  it('cancels shared transport when all consumers cancel and does not reuse it', async () => {
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    requests
+      .mockImplementationOnce(
+        (_request, config) =>
+          new Promise((_resolve, reject) => {
+            config?.signal?.addEventListener?.('abort', () => reject(new Error('cancelled')));
+          })
+      )
+      .mockResolvedValueOnce(result({ subscriptionTier: 'Free' }));
+    const first = fetchXaiSubscription(file, { ...scope, signal: firstController.signal });
+    const second = fetchXaiSubscription(file, { ...scope, signal: secondController.signal });
+    await vi.waitFor(() => expect(requests).toHaveBeenCalledTimes(1));
+    firstController.abort();
+    expect(requests.mock.calls[0][1]?.signal?.aborted).toBe(false);
+    secondController.abort();
+    expect(requests.mock.calls[0][1]?.signal?.aborted).toBe(true);
+    const next = fetchXaiSubscription(file, scope);
+    expect(await Promise.all([first, second])).toEqual([null, null]);
+    expect((await next)?.planType).toBe('Free');
+    expect(requests).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['connection', 'managementKey', 'credential', 'credentialRefresh'])(
+    'does not coalesce a different %s',
+    async (change) => {
+      requests.mockResolvedValue(result({ subscriptionTier: 'SuperGrokPro' }));
+      const otherScope =
+        change === 'connection'
+          ? { ...scope, baseURL: 'https://other.example' }
+          : change === 'managementKey'
+            ? { ...scope, headers: { Authorization: 'Bearer other-key' } }
+            : scope;
+      const otherFile =
+        change === 'credential'
+          ? { ...file, authIndex: 'other' }
+          : change === 'credentialRefresh'
+            ? { ...file, last_refresh: '2026-10-19T10:00:00Z' }
+            : file;
+      await Promise.all([
+        fetchXaiSubscription(file, scope),
+        fetchXaiSubscription(otherFile, otherScope),
+      ]);
+      expect(requests).toHaveBeenCalledTimes(2);
+    }
+  );
+
+  it('does not reuse a request started before a newer quota snapshot', async () => {
+    let finish!: (value: ReturnType<typeof result>) => void;
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1000);
+    try {
+      requests
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              finish = resolve;
+            })
+        )
+        .mockResolvedValueOnce(result({ subscriptionTier: 'Free' }));
+      const first = fetchXaiSubscription(file, scope);
+      await vi.waitFor(() => expect(requests).toHaveBeenCalledTimes(1));
+      clock.mockReturnValue(2000);
+      const newer = fetchXaiSubscription(file, scope, () => true, 2000);
+      finish(result({ subscriptionTier: 'SuperGrokPro' }));
+      expect((await first)?.planType).toBe('SuperGrok Heavy');
+      expect((await newer)?.planType).toBe('Free');
+      expect(requests).toHaveBeenCalledTimes(2);
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it('does not accept a payload without an explicit upstream success status', async () => {

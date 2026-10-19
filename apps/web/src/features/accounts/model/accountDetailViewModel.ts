@@ -1435,7 +1435,9 @@ export const buildAccountDetailViewModel = (
     recommendation,
     quotaCooldown,
     codexStatus: options.codexStatus ?? null,
-    quotaWindows: accountQuotaWindows,
+    // The list model filters entitlement evidence itself, but also needs the
+    // observed windows to explain why availability remains unconfirmed.
+    quotaWindows: row.provider === 'xai' ? quotaWindows : accountQuotaWindows,
     requestEvidence,
   });
   const value = buildValueSummary(row, options.valueRow);

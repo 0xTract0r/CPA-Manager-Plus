@@ -821,13 +821,13 @@ export const XAI_CONFIG: QuotaConfig<XaiQuotaState, XaiBillingSummary> = {
     billing: null,
     ...buildQuotaCredentialIdentity(file),
   }),
+  // A new quota observation must not renew an older paid-entitlement observation.
   buildSuccessState: (billing, file, currentState) => {
     const previous = file ? scopeCredentialQuotaState(file, currentState) : undefined;
+    const superseded = previous?.billing?.subscription || previous?.billing?.subscriptionSuperseded;
     return {
       status: 'success',
-      billing: billing.subscription || !previous?.billing?.subscription
-        ? billing
-        : { ...billing, subscription: previous.billing.subscription },
+      billing: superseded ? { ...billing, subscriptionSuperseded: true } : billing,
       ...buildQuotaCredentialIdentity(file),
       fetchedAtMs: Date.now(),
     };
@@ -837,7 +837,8 @@ export const XAI_CONFIG: QuotaConfig<XaiQuotaState, XaiBillingSummary> = {
     const subscription = await fetchXaiSubscription(
       file,
       requestScope ? createScopedApiRequestConfig(requestScope) : undefined,
-      context?.isCurrent
+      context?.isCurrent,
+      state.fetchedAtMs
     );
     return subscription
       ? {

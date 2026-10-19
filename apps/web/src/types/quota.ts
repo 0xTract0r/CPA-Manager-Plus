@@ -646,6 +646,8 @@ export interface XaiBillingSummary {
   diagnostics?: XaiBillingDiagnostic[];
   rateLimited?: boolean;
   subscription?: XaiSubscriptionInfo;
+  /** A prior subscription observation was discarded; file metadata cannot replace it. */
+  subscriptionSuperseded?: boolean;
 }
 
 export interface XaiQuotaState extends CredentialScopedQuotaState {

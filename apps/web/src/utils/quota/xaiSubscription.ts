@@ -1,14 +1,57 @@
-import type { AxiosRequestConfig } from 'axios';
+import { AxiosHeaders, type AxiosRequestConfig } from 'axios';
 import type { AuthFileItem, XaiSubscriptionInfo } from '@/types';
 import { apiCallApi } from '@/services/api/apiCall';
 import { normalizeAuthIndex } from '@/utils/authIndex';
 import { XAI_CLI_CHAT_PROXY_BASE_URL, XAI_REQUEST_HEADERS } from './constants';
 import { createKeyedSerialTaskQueue } from './providerRefreshScheduler';
+import { getQuotaCredentialStoreKey } from './credentialScope';
 
 const SUBSCRIPTION_TIMEOUT_MS = 8000;
-// Optional background lookups must not escape the batch refresh concurrency limit.
-const subscriptionQueues = [createKeyedSerialTaskQueue(), createKeyedSerialTaskQueue()];
+// One optional lane may overlap the regular quota lane; it never adds a second
+// background provider request, including across independently-triggered batches.
+const subscriptionQueue = createKeyedSerialTaskQueue();
 let subscriptionSequence = 0;
+interface PendingSubscription {
+  consumers: Set<() => boolean>;
+  controller: AbortController;
+  startedAtMs?: number;
+  promise: Promise<XaiSubscriptionInfo | null>;
+}
+const pendingSubscriptions = new Map<string, PendingSubscription>();
+
+const subscriptionKey = (file: AuthFileItem, config?: AxiosRequestConfig): string | null => {
+  // Without a captured connection, a global client may have changed underneath us.
+  if (
+    !config?.baseURL ||
+    !('cpampScopedRequest' in config) ||
+    !config.cpampScopedRequest ||
+    config.cancelToken
+  )
+    return null;
+  const headers = AxiosHeaders.from(config.headers as AxiosHeaders | undefined).toJSON();
+  // This key exists only while pending, is never logged, and distinguishes keys
+  // for the same CPA URL as well as replaced/refreshed credentials.
+  return JSON.stringify([
+    config.baseURL,
+    Object.keys(headers)
+      .sort()
+      .map((key) => [key, headers[key]]),
+    getQuotaCredentialStoreKey(file),
+    normalizeAuthIndex(file.authIndex ?? file['auth_index']),
+    ...[
+      'lastRefresh',
+      'last_refresh',
+      'lastRefreshedAt',
+      'last_refreshed_at',
+      'updatedAtMs',
+      'updated_at_ms',
+      'updatedAt',
+      'updated_at',
+      'modified',
+      'modtime',
+    ].map((key) => file[key] ?? null),
+  ]);
+};
 const PLANS: Readonly<Record<string, string>> = {
   free: 'Free',
   grokpro: 'SuperGrok',
@@ -95,16 +138,70 @@ const lookupSubscription = async (
   return null;
 };
 
-/** Resolve at most two subscription lookups at once, including separate refresh batches. */
+/** Share scoped in-flight work without sharing a caller's lifetime or stale evidence. */
 export const fetchXaiSubscription = async (
   file: AuthFileItem,
   requestConfig?: AxiosRequestConfig,
-  isCurrent: () => boolean = () => true
+  isCurrent: () => boolean = () => true,
+  minimumObservedAtMs = 0
 ): Promise<XaiSubscriptionInfo | null> => {
-  const sequence = subscriptionSequence++;
-  let result: XaiSubscriptionInfo | null = null;
-  await subscriptionQueues[sequence % subscriptionQueues.length].run(String(sequence), async () => {
-    result = await lookupSubscription(file, requestConfig, isCurrent);
-  });
-  return result;
+  const consumerIsCurrent = () => !requestConfig?.signal?.aborted && isCurrent();
+  if (!consumerIsCurrent()) return null;
+  const key = subscriptionKey(file, requestConfig);
+  let pending = key ? pendingSubscriptions.get(key) : undefined;
+  // A request started before the new quota snapshot cannot confirm its plan.
+  // Equal millisecond timestamps are ambiguous, so only share if strictly newer.
+  if (
+    pending?.controller.signal.aborted ||
+    (pending?.startedAtMs !== undefined && pending.startedAtMs <= minimumObservedAtMs)
+  ) {
+    pending = undefined;
+  }
+  if (!pending) {
+    const consumers = new Set<() => boolean>();
+    const controller = new AbortController();
+    const entry: PendingSubscription = {
+      consumers,
+      controller,
+      promise: Promise.resolve(null),
+    };
+    let result: XaiSubscriptionInfo | null = null;
+    const anyCurrent = () => [...consumers].some((current) => current());
+    entry.promise = subscriptionQueue
+      .run(String(subscriptionSequence++), async () => {
+        try {
+          if (!anyCurrent()) return;
+          entry.startedAtMs = Date.now();
+          result = await lookupSubscription(
+            file,
+            // Shared work has an independent cancellation signal. An unscoped
+            // request has just one consumer and retains its original signal.
+            key ? { ...requestConfig, signal: controller.signal } : requestConfig,
+            anyCurrent
+          );
+        } finally {
+          // Remove even skipped work before exposing its completion to other
+          // microtasks, so a current consumer cannot join a finished lookup.
+          if (key && pendingSubscriptions.get(key) === entry) pendingSubscriptions.delete(key);
+        }
+      })
+      .then(() => result);
+    pending = entry;
+    if (key) pendingSubscriptions.set(key, entry);
+  }
+  const entry = pending;
+  entry.consumers.add(consumerIsCurrent);
+  const onAbort = () => {
+    if (![...entry.consumers].some((current) => current())) entry.controller.abort();
+  };
+  requestConfig?.signal?.addEventListener?.('abort', onAbort);
+  try {
+    const result = await entry.promise;
+    return consumerIsCurrent() && result && result.observedAtMs >= minimumObservedAtMs
+      ? result
+      : null;
+  } finally {
+    entry.consumers.delete(consumerIsCurrent);
+    requestConfig?.signal?.removeEventListener?.('abort', onAbort);
+  }
 };

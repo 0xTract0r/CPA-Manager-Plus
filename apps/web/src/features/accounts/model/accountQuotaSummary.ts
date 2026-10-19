@@ -1100,8 +1100,12 @@ export const resolveAccountQuota = (
     const subscription = quota.billing?.subscription;
     const planType =
       subscription && subscription.observedAtMs >= (readAuthFileCredentialRefreshAtMs(file) ?? 0)
-        ? subscription.planType
-        : filePlanType;
+        ? subscription.observedAtMs >= (quota.fetchedAtMs ?? 0)
+          ? subscription.planType
+          : null
+        : quota.billing?.subscriptionSuperseded
+          ? null
+          : filePlanType;
     return quotaFromXaiBilling(quota.billing, planType, {
       fetchedAtMs: quota.fetchedAtMs,
     });

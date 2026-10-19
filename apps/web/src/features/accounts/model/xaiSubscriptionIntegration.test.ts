@@ -94,7 +94,10 @@ describe('xAI subscription data reaches account presentation', () => {
     const list = buildAccountListItem(row, { quotaWindows });
     expect(list.health.status).toBe('raw');
     expect(list.health.reasonKey).toBe('accounts.health_reason_xai_plan_unknown');
+    expect(row.quota.remainingPercent).toBeNull();
+    expect(list.quota).toMatchObject({ remainingPercent: 43, usedPercent: 57 });
     const detail = buildAccountDetailViewModel(row, { quotaWindows });
+    expect(detail.overview.decision.reasonKey).toBe('accounts.health_reason_xai_plan_unknown');
     expect(detail.overview.capacity).toMatchObject({
       hasData: true,
       remainingPercent: 43,
@@ -110,6 +113,63 @@ describe('xAI subscription data reaches account presentation', () => {
     );
     expect(row.planType).toBeNull();
     expect(buildAccountListItem(row, { quotaWindows }).health.status).toBe('raw');
+  });
+
+  it('cannot combine an older paid subscription with a newer quota observation', () => {
+    const row = makeRow(
+      { planType: 'SuperGrok Heavy', source: 'user', observedAtMs: observedAt },
+      { quotaAt: observedAt + 1, filePlan: 'SuperGrok Heavy' }
+    );
+    expect(row.planType).toBeNull();
+    expect(row.quota.remainingPercent).toBeNull();
+    expect(buildAccountListItem(row, { quotaWindows }).health.status).toBe('raw');
+    expect(buildAccountListItem(row, { quotaWindows }).quota.remainingPercent).toBe(43);
+  });
+
+  it.each([0, 43])(
+    'displays %s%% informational quota without promoting health or recommendations',
+    (remainingPercent) => {
+      const row = makeRow();
+      const windows = [
+        { ...quotaWindows[0], remainingPercent, usedPercent: 100 - remainingPercent },
+      ];
+      const list = buildAccountListItem(row, { quotaWindows: windows });
+      const detail = buildAccountDetailViewModel(row, { quotaWindows: windows });
+      expect(list.quota.remainingPercent).toBe(remainingPercent);
+      expect(row.quota.status).toBe('unknown');
+      expect(list.health.status).toBe('raw');
+      expect(detail.overview.decision.reasonKey).toBe('accounts.health_reason_xai_plan_unknown');
+      expect(detail.strategy.recommendation).toBeNull();
+    }
+  );
+
+  it('explains unconfirmed availability consistently for a Free plan in list and detail', () => {
+    const row = makeRow({ planType: 'Free', source: 'user', observedAtMs: observedAt });
+    expect(buildAccountListItem(row, { quotaWindows }).health.reasonKey).toBe(
+      'accounts.health_reason_xai_quota_unconfirmed'
+    );
+    expect(buildAccountDetailViewModel(row, { quotaWindows }).overview.decision.reasonKey).toBe(
+      'accounts.health_reason_xai_quota_unconfirmed'
+    );
+  });
+
+  it.each(['disabled', 'error', 'loading'] as const)(
+    'does not replace a %s row with a cached informational percentage',
+    (state) => {
+      const row = makeRow();
+      const changed = {
+        ...row,
+        disabled: state === 'disabled',
+        quota: { ...row.quota, status: state },
+      };
+      expect(buildAccountListItem(changed, { quotaWindows }).quota.remainingPercent).toBeNull();
+    }
+  );
+
+  it('does not override an intentionally unknown paid-plan quota summary', () => {
+    const row = makeRow();
+    row.planType = 'SuperGrok Heavy';
+    expect(buildAccountListItem(row, { quotaWindows }).quota.remainingPercent).toBeNull();
   });
 
   it('does not reuse subscription evidence from before credential refresh', () => {
