@@ -1506,8 +1506,12 @@ export function AccountsPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(() => initialWorkspaceUrlState.current.pageSize);
   const [usageRows, setUsageRows] = useState<UsageValueRow[]>([]);
+  type ScopedAccountHistory = {
+    item: MonitoringAccountHistoryItem;
+    identitySignature: string;
+  };
   const [accountHistoryByRowKey, setAccountHistoryByRowKey] = useState<
-    Map<string, MonitoringAccountHistoryItem>
+    Map<string, ScopedAccountHistory>
   >(() => new Map());
   const [accountHistoryLoading, setAccountHistoryLoading] = useState(false);
   const [accountHistoryErrorsByRowKey, setAccountHistoryErrorsByRowKey] = useState<
@@ -3668,16 +3672,32 @@ export function AccountsPage() {
     [connectionFingerprint, files, inspectionResults, navigate, showNotification, t]
   );
 
+  const accountHistoryIdentityByRowKey = useMemo(
+    () => new Map(buildAccountHistoryTargetEntries(rows).map((entry) => [
+      entry.rowKey,
+      JSON.stringify(entry.target),
+    ])),
+    [rows]
+  );
+  const verifiedAccountHistoryByRowKey = useMemo(() => {
+    const current = new Map<string, MonitoringAccountHistoryItem>();
+    accountHistoryByRowKey.forEach((scoped, selectionKey) => {
+      if (scoped.identitySignature === accountHistoryIdentityByRowKey.get(selectionKey)) {
+        current.set(selectionKey, scoped.item);
+      }
+    });
+    return current;
+  }, [accountHistoryByRowKey, accountHistoryIdentityByRowKey]);
   const requestEvidenceBySelectionKey = useMemo(() => {
     const evidenceMap = new Map<string, AccountRequestEvidenceInput>();
-    accountHistoryByRowKey.forEach((history, selectionKey) => {
+    verifiedAccountHistoryByRowKey.forEach((history, selectionKey) => {
       evidenceMap.set(selectionKey, {
         latestRequest: history.latest_request ?? null,
         recentRequests: history.recent_requests ?? [],
       });
     });
     return evidenceMap;
-  }, [accountHistoryByRowKey]);
+  }, [verifiedAccountHistoryByRowKey]);
   const headerSnapshotLookup = useMemo(
     () => buildUsageHeaderSnapshotLookup(headerSnapshots),
     [headerSnapshots]
@@ -4930,7 +4950,7 @@ export function AccountsPage() {
   );
   const isListQueryContextMatching = useMemo(() => {
     if (!listWindowUsageQueryContext) return false;
-     if (listWindowUsageQueryContext.pageKeys.length !== pageRows.length) return false;
+    if (listWindowUsageQueryContext.pageKeys.length !== pageRows.length) return false;
     return pageRows.every(
       (row, idx) => listWindowUsageQueryContext.pageKeys[idx] === row.selectionKey
     );
@@ -6206,7 +6226,7 @@ export function AccountsPage() {
         setAccountHistoryByRowKey((current) => {
           const merged = mergeResult
             ? new Map(current)
-            : new Map<string, MonitoringAccountHistoryItem>();
+            : new Map<string, ScopedAccountHistory>();
           entries.forEach((entry) => {
             const requestVersion = requestVersions.get(entry.rowKey);
             if (accountHistoryRequestVersionsRef.current.get(entry.rowKey) !== requestVersion) {
@@ -6225,7 +6245,12 @@ export function AccountsPage() {
             }
             merged.delete(entry.rowKey);
             const nextItem = nextHistory.get(entry.rowKey);
-            if (nextItem) merged.set(entry.rowKey, nextItem);
+            if (nextItem) {
+              merged.set(entry.rowKey, {
+                item: nextItem,
+                identitySignature: JSON.stringify(entry.target),
+              });
+            }
           });
           return merged;
         });
@@ -8849,7 +8874,7 @@ export function AccountsPage() {
 
   const resolveAccountRowContext = (row: AccountRow) => {
     const recommendation = recommendationBySelectionKey.get(row.selectionKey) ?? null;
-    const accountHistory = accountHistoryByRowKey.get(row.selectionKey) ?? null;
+    const accountHistory = verifiedAccountHistoryByRowKey.get(row.selectionKey) ?? null;
     const quotaWindows =
       quotaDisplayWindowsByRowKey.get(row.selectionKey) ?? buildQuotaDisplayWindows(row);
     const quotaLifecycleBarOverride = getAccountQuotaLifecycleBarOverride(row.quota.status);
@@ -9901,7 +9926,7 @@ export function AccountsPage() {
       windowUsageByKey: matchingAccountWindowUsageByKey,
       actionCandidates: accountActionCandidates,
       matchedActionCandidates: actionCandidatesByRowKey.get(selectedRow.selectionKey) ?? [],
-      history: accountHistoryByRowKey.get(selectedRow.selectionKey) ?? null,
+      history: verifiedAccountHistoryByRowKey.get(selectedRow.selectionKey) ?? null,
       valueRow,
       codexQuota: selectedCodexQuota,
       xaiQuota:
