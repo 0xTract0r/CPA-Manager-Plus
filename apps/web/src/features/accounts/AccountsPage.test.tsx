@@ -18541,7 +18541,7 @@ describe('AccountsPage replacement flows', () => {
       expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
     });
 
-    it('clears stale exact usage and forecast data when a live list usage request fails silently', async () => {
+    it('retains last verified exact usage when a live list usage request fails silently', async () => {
       vi.useFakeTimers();
       const file = makeCodexFile('codex-fail-clear.json', 'auth-fail-clear', 'fail-clear@example.com');
       mocks.files = [file];
@@ -18617,7 +18617,8 @@ describe('AccountsPage replacement flows', () => {
 
       expect(mocks.getAccountWindowUsage).toHaveBeenCalledTimes(2);
       const cardAfterFailure = findAccountCardByKey(renderer, getAuthFileSelectionKey(file));
-      expect(readText(cardAfterFailure)).not.toContain('$0.50');
+      expect(readText(cardAfterFailure)).toContain('$0.50');
+      expect(readText(cardAfterFailure)).toContain('50.0K');
       expect(mocks.showNotification).not.toHaveBeenCalled();
     });
 
