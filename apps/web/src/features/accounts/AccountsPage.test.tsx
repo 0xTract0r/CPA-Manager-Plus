@@ -12409,6 +12409,55 @@ describe('AccountsPage replacement flows', () => {
     expect(readText(findAccountCardByKey(renderer, rowKey))).toContain('$12.34');
   });
 
+  it('does not retain old historical usage when an account changes behind the same row key', async () => {
+    const original = makeCodexFile('history-replaced.json', 'auth-same', 'old@example.com');
+    const replacement = makeCodexFile(original.name, 'auth-same', 'new@example.com');
+    const rowKey = getAuthFileSelectionKey(original);
+    expect(getAuthFileSelectionKey(replacement)).toBe(rowKey);
+    mocks.files = [original];
+    mocks.panelFeatureAvailability = {
+      checking: false,
+      managerServiceBase: 'http://manager.local:18317',
+      requestMonitoringAvailable: true,
+      serverCodexInspectionAvailable: false,
+    };
+    mocks.getAccountHistory.mockImplementation(async (_base, _key, request) => {
+      if (request.accounts[0]?.account_snapshot !== 'old@example.com') {
+        throw new Error('history temporarily unavailable');
+      }
+      return makeAccountHistoryResponse([{
+        row_key: rowKey,
+        account_key: 'old@example.com',
+        matched: true,
+        total_requests: 100,
+        success_calls: 100,
+        failure_calls: 0,
+        total_tokens: 12_000,
+        total_cost: 12.34,
+        success_rate: 1,
+        first_seen_ms: 1,
+        last_seen_ms: 2,
+        sync_status: 'ready',
+      }]);
+    });
+
+    const renderer = await renderAccountsPage();
+    await flushPromises();
+    expect(readText(findAccountCardByKey(renderer, rowKey))).toContain('$12.34');
+
+    mocks.files = [replacement];
+    await act(async () => {
+      renderer.update(<AccountsPage />);
+      await Promise.resolve();
+    });
+    expect(readText(findAccountCardByKey(renderer, rowKey))).not.toContain('$12.34');
+    await flushPromises();
+    expect(mocks.getAccountHistory.mock.calls.some((call) =>
+      call[2]?.accounts[0]?.account_snapshot === 'new@example.com'
+    )).toBe(true);
+    expect(readText(findAccountCardByKey(renderer, rowKey))).not.toContain('$12.34');
+  });
+
   it('renders account history from rollup data instead of monitoring account stats or auth-file health', async () => {
     mocks.files = [
       {
@@ -18278,7 +18327,8 @@ describe('AccountsPage replacement flows', () => {
     it('keeps trusted list usage visible while a passive refresh is pending or fails', async () => {
       vi.useFakeTimers();
       const file = makeCodexFile('codex-refresh-retain.json', 'auth-retain', 'retain@example.com');
-      mocks.files = [file];
+      const stable = makeCodexFile('codex-stable-sibling.json', 'auth-stable', 'stable@example.com');
+      mocks.files = [file, stable];
       mocks.panelFeatureAvailability = {
         checking: false,
         managerServiceBase: 'http://manager.local:18317',
@@ -18298,6 +18348,10 @@ describe('AccountsPage replacement flows', () => {
       }];
       mocks.quotaState.codexQuota = {
         ...buildCredentialScopedQuotaRecord(file, {
+          status: 'success',
+          windows: quotaWindows,
+        }),
+        ...buildCredentialScopedQuotaRecord(stable, {
           status: 'success',
           windows: quotaWindows,
         }),
@@ -18363,9 +18417,13 @@ describe('AccountsPage replacement flows', () => {
       // previous account's retained usage, even if the quota window is identical.
       const replaced = makeCodexFile(file.name, 'auth-retain', 'replacement@example.com');
       expect(getAuthFileSelectionKey(replaced)).toBe(rowKey);
-      mocks.files = [replaced];
+      mocks.files = [replaced, stable];
       mocks.quotaState.codexQuota = {
         ...buildCredentialScopedQuotaRecord(replaced, {
+          status: 'success',
+          windows: quotaWindows,
+        }),
+        ...buildCredentialScopedQuotaRecord(stable, {
           status: 'success',
           windows: quotaWindows,
         }),
@@ -18380,6 +18438,8 @@ describe('AccountsPage replacement flows', () => {
       );
       expect(readText(findAccountCardByKey(renderer, rowKey))).not.toContain('$0.50');
       expect(readText(findAccountCardByKey(renderer, rowKey))).not.toContain('50.0K');
+      expect(readText(findAccountCardByKey(renderer, getAuthFileSelectionKey(stable)))).toContain('$0.50');
+      expect(readText(findAccountCardByKey(renderer, getAuthFileSelectionKey(stable)))).toContain('50.0K');
 
       await act(async () => {
         identityRefresh.reject?.();
@@ -18388,6 +18448,8 @@ describe('AccountsPage replacement flows', () => {
       await flushPromises();
       expect(readText(findAccountCardByKey(renderer, rowKey))).not.toContain('$0.50');
       expect(readText(findAccountCardByKey(renderer, rowKey))).not.toContain('50.0K');
+      expect(readText(findAccountCardByKey(renderer, getAuthFileSelectionKey(stable)))).toContain('$0.50');
+      expect(readText(findAccountCardByKey(renderer, getAuthFileSelectionKey(stable)))).toContain('50.0K');
     });
 
     it('refreshes list window usage after single account quota refresh succeeds without opening drawer', async () => {
