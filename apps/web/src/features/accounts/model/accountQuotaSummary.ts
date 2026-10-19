@@ -1097,7 +1097,12 @@ export const resolveAccountQuota = (
     if (quota.status === 'loading') return loadingQuota(filePlanType);
     if (quota.status === 'error')
       return quotaFromError(quota.error, filePlanType, quota.errorStatus, quota.failedAtMs);
-    return quotaFromXaiBilling(quota.billing, filePlanType, {
+    const subscription = quota.billing?.subscription;
+    const planType =
+      subscription && subscription.observedAtMs >= (readAuthFileCredentialRefreshAtMs(file) ?? 0)
+        ? subscription.planType
+        : filePlanType;
+    return quotaFromXaiBilling(quota.billing, planType, {
       fetchedAtMs: quota.fetchedAtMs,
     });
   }

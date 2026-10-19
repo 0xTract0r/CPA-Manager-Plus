@@ -1257,13 +1257,27 @@ export const buildAccountListItem = (
       : row.provider === 'xai' && !isConfirmedPaidXaiPlan(row.planType)
         ? []
         : quotaWindows;
-  const health = resolveHealthStatus(
+  const resolvedHealth = resolveHealthStatus(
     row,
     quotaCooldown,
     options.codexStatus ?? null,
     accountQuotaWindows,
     options.requestEvidence
   );
+  const health =
+    resolvedHealth.status === 'raw' &&
+    row.provider === 'xai' &&
+    quotaWindows.length > 0
+      ? {
+          ...resolvedHealth,
+          reasonKey: row.planType
+            ? 'accounts.health_reason_xai_quota_unconfirmed'
+            : 'accounts.health_reason_xai_plan_unknown',
+          tooltipKey: row.planType
+            ? 'accounts.health_reason_xai_quota_unconfirmed'
+            : 'accounts.health_reason_xai_plan_unknown',
+        }
+      : resolvedHealth;
   const planPresentation = getPlanPresentation({
     provider: row.provider,
     planType: row.planType,

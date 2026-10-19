@@ -17,6 +17,8 @@ import type {
 } from '@/types';
 import type { UsageHeaderSnapshot } from '@/services/api/usageService';
 import type { AuthFilesApiRequestScope } from '@/services/api/authFiles';
+import { createScopedApiRequestConfig } from '@/services/api/client';
+import { fetchXaiSubscription } from '@/utils/quota/xaiSubscription';
 import type {
   AntigravityQuotaData,
   ClaudeQuotaData,
@@ -74,6 +76,12 @@ export interface QuotaConfig<TState, TData> {
     context?: QuotaFetchContext
   ) => Promise<TData>;
   getStoreKey?: (file: AuthFileItem) => string;
+  enrichState?: (
+    file: AuthFileItem,
+    state: TState,
+    requestScope?: AuthFilesApiRequestScope,
+    context?: QuotaFetchContext
+  ) => Promise<TState>;
   buildLoadingState: (file?: AuthFileItem) => TState;
   buildSuccessState: (data: TData, file?: AuthFileItem, currentState?: TState) => TState;
   buildErrorState: (message: string, status?: number, file?: AuthFileItem) => TState;
@@ -813,12 +821,31 @@ export const XAI_CONFIG: QuotaConfig<XaiQuotaState, XaiBillingSummary> = {
     billing: null,
     ...buildQuotaCredentialIdentity(file),
   }),
-  buildSuccessState: (billing, file) => ({
-    status: 'success',
-    billing,
-    ...buildQuotaCredentialIdentity(file),
-    fetchedAtMs: Date.now(),
-  }),
+  buildSuccessState: (billing, file, currentState) => {
+    const previous = file ? scopeCredentialQuotaState(file, currentState) : undefined;
+    return {
+      status: 'success',
+      billing: billing.subscription || !previous?.billing?.subscription
+        ? billing
+        : { ...billing, subscription: previous.billing.subscription },
+      ...buildQuotaCredentialIdentity(file),
+      fetchedAtMs: Date.now(),
+    };
+  },
+  enrichState: async (file, state, requestScope, context) => {
+    if (!state.billing || state.billing.officialApiHealth) return state;
+    const subscription = await fetchXaiSubscription(
+      file,
+      requestScope ? createScopedApiRequestConfig(requestScope) : undefined,
+      context?.isCurrent
+    );
+    return subscription
+      ? {
+          ...state,
+          billing: { ...state.billing, subscription },
+        }
+      : state;
+  },
   buildErrorState: (message, status, file) => ({
     status: 'error',
     billing: null,
@@ -907,4 +934,3 @@ export const META_CONFIG: QuotaConfig<MetaQuotaState, MetaQuotaData> = {
   }),
   scopeState: scopeCredentialQuotaState,
 };
-
