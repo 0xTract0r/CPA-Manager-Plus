@@ -1521,6 +1521,7 @@ export function AccountsPage() {
   >(() => new Map());
   const [listWindowUsageQueryContext, setListWindowUsageQueryContext] = useState<{
     pageKeys: string[];
+    identitySignature: string;
     asOfMs: number;
   } | null>(null);
   const [accountWindowUsageQueryContext, setAccountWindowUsageQueryContext] = useState<{
@@ -4915,13 +4916,22 @@ export function AccountsPage() {
     quotaWindowDefinitionsByRowKey,
     effectiveLayoutMode,
   ]);
+  // The auth index can stay unchanged while the credential account changes.
+  // Only reuse a window-usage snapshot for the exact identity it queried.
+  const listWindowUsageIdentitySignature = useMemo(
+    () => JSON.stringify(buildAccountHistoryTargetEntries(pageRows)),
+    [pageRows]
+  );
   const isListQueryContextMatching = useMemo(() => {
     if (!listWindowUsageQueryContext) return false;
+    if (listWindowUsageQueryContext.identitySignature !== listWindowUsageIdentitySignature) {
+      return false;
+    }
     if (listWindowUsageQueryContext.pageKeys.length !== pageRows.length) return false;
     return pageRows.every(
       (row, idx) => listWindowUsageQueryContext.pageKeys[idx] === row.selectionKey
     );
-  }, [listWindowUsageQueryContext, pageRows]);
+  }, [listWindowUsageIdentitySignature, listWindowUsageQueryContext, pageRows]);
   const listWindowUsageTargets = useMemo(() => {
     if (pageRows.length === 0) return [];
     const asOfMs = isListQueryContextMatching
@@ -4931,8 +4941,10 @@ export function AccountsPage() {
   }, [isListQueryContextMatching, listQuotaWindowsByRowKey, listWindowUsageQueryContext, pageRows]);
   const matchingListWindowUsageByKey = useMemo(
     () =>
-      filterAccountWindowUsageByTargetRanges(listWindowUsageTargets, listWindowUsageByKey),
-    [listWindowUsageByKey, listWindowUsageTargets]
+      isListQueryContextMatching
+        ? filterAccountWindowUsageByTargetRanges(listWindowUsageTargets, listWindowUsageByKey)
+        : new Map<string, MonitoringAccountWindowUsageItem>(),
+    [isListQueryContextMatching, listWindowUsageByKey, listWindowUsageTargets]
   );
   const listWindowUsageDefinitionsSignature = useMemo(() => {
     const payload = pageRows.map((row) => {
@@ -4986,12 +4998,14 @@ export function AccountsPage() {
         managerConnectionFingerprint,
         requestMonitoringAvailable: featureAvailability.requestMonitoringAvailable,
         pageKeys: pageRows.map((r) => r.selectionKey),
+        identitySignature: listWindowUsageIdentitySignature,
         definitionsSignature: listWindowUsageDefinitionsSignature,
       }),
     [
       featureAvailability.checking,
       featureAvailability.requestMonitoringAvailable,
       listWindowUsageDefinitionsSignature,
+      listWindowUsageIdentitySignature,
       managerConnectionFingerprint,
       pageRows,
     ]
@@ -6889,6 +6903,7 @@ export function AccountsPage() {
       setListWindowUsageByKey((current) => (current.size === 0 ? current : new Map()));
       setListWindowUsageQueryContext({
         pageKeys: currentPageKeys,
+        identitySignature: listWindowUsageIdentitySignature,
         asOfMs: queryAsOfMs,
       });
       return;
@@ -6911,6 +6926,7 @@ export function AccountsPage() {
       if (!isCurrentRequest()) return;
       setListWindowUsageQueryContext({
         pageKeys: currentPageKeys,
+        identitySignature: listWindowUsageIdentitySignature,
         asOfMs: queryAsOfMs,
       });
       setListWindowUsageByKey(
@@ -6932,6 +6948,7 @@ export function AccountsPage() {
     featureAvailability.managerServiceBase,
     featureAvailability.requestMonitoringAvailable,
     listQuotaWindowsByRowKey,
+    listWindowUsageIdentitySignature,
     managementKey,
     managerStorageAvailable,
     pageRows,
