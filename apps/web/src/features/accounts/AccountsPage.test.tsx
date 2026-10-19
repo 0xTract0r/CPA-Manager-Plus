@@ -12371,6 +12371,44 @@ describe('AccountsPage replacement flows', () => {
     expect(mocks.deselectAll).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps loaded history visible during a checking-only monitoring transition', async () => {
+    const file = makeCodexFile('checking-history.json', 'auth-checking', 'checking@example.com');
+    const rowKey = getAuthFileSelectionKey(file);
+    mocks.files = [file];
+    mocks.panelFeatureAvailability = {
+      checking: false,
+      managerServiceBase: 'http://manager.local:18317',
+      requestMonitoringAvailable: true,
+      serverCodexInspectionAvailable: false,
+    };
+    mocks.getAccountHistory.mockResolvedValue(
+      makeAccountHistoryResponse([{
+        row_key: rowKey,
+        account_key: 'checking@example.com',
+        matched: true,
+        total_requests: 100,
+        success_calls: 99,
+        failure_calls: 1,
+        total_tokens: 12_000,
+        total_cost: 12.34,
+        success_rate: 0.99,
+        first_seen_ms: 1,
+        last_seen_ms: 2,
+        sync_status: 'ready',
+      }])
+    );
+
+    const renderer = await renderAccountsPage();
+    await flushPromises();
+    expect(readText(findAccountCardByKey(renderer, rowKey))).toContain('$12.34');
+
+    mocks.panelFeatureAvailability = { ...mocks.panelFeatureAvailability, checking: true };
+    await act(async () => {
+      renderer.update(<AccountsPage />);
+    });
+    expect(readText(findAccountCardByKey(renderer, rowKey))).toContain('$12.34');
+  });
+
   it('renders account history from rollup data instead of monitoring account stats or auth-file health', async () => {
     mocks.files = [
       {
