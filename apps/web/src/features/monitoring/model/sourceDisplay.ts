@@ -176,6 +176,12 @@ export const buildMonitoringSourceDisplay = (
   const channelHost = firstReadable(channelMeta?.host);
   const resolvedSourceName = firstReadable(sourceMeta.displayName);
   const labelCandidates = firstReadable(authMeta?.label, explicitLabel, snapshotLabel);
+  const configuredSourceName = Boolean(
+    resolvedSourceName &&
+      sourceMeta.identityKey &&
+      !sourceMeta.identityKey.startsWith('source:') &&
+      !sourceMeta.identityKey.startsWith('auth:')
+  );
   // Prefer key-disambiguated source names (e.g. "kuaileshifu #1") over the bare
   // OpenAI-compatible provider/channel name when multi-key providers share a label.
   const sourceLabel = firstReadable(
@@ -183,7 +189,9 @@ export const buildMonitoringSourceDisplay = (
       (isKeyDisambiguatedLabel(resolvedSourceName, channel) ||
         isKeyDisambiguatedLabel(resolvedSourceName, channelHost) ||
         isKeyDisambiguatedLabel(resolvedSourceName, labelCandidates) ||
-        isKeyDisambiguatedLabel(resolvedSourceName, account))
+        isKeyDisambiguatedLabel(resolvedSourceName, account) ||
+        (configuredSourceName &&
+          isProviderLikeMonitoringLabel(firstReadable(labelCandidates, account), provider)))
       ? resolvedSourceName
       : '',
     labelCandidates,

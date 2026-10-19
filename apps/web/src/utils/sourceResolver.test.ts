@@ -69,6 +69,13 @@ describe('source resolver', () => {
     expect(resolved.type).toBe('');
     expect(resolved.identityKey).toBe('shared:m:sk-s...cdef');
     expect(resolved.displayName).not.toContain('sk-shared');
+
+    const codex = resolveSourceDisplay('m:sk-s...cdef', '', sourceInfoMap, new Map(), 'codex');
+    const claude = resolveSourceDisplay('m:sk-s...cdef', '', sourceInfoMap, new Map(), 'claude');
+    expect(codex.identityKey).toBe('codex:0');
+    expect(codex.type).toBe('codex');
+    expect(claude.identityKey).toBe('claude:0');
+    expect(claude.type).toBe('claude');
   });
 
   it('keeps Codex and Claude source ordinals separate for reordered shared keys (#1013)', () => {
@@ -146,6 +153,25 @@ describe('source resolver', () => {
     expect(sourceInfoMap.bySource.get(source)).toBeNull();
     expect(resolved.displayName).toBe(source);
     expect(resolved.identityKey).toBe(`source:${source}`);
+  });
+
+  it('keeps same-provider shared labels ambiguous', () => {
+    const sourceInfoMap = buildSourceInfoMap({
+      codexApiKeys: [
+        { apiKey: 'sk-reused-key-abcdef1234', prefix: 'One Relay' },
+        { apiKey: 'sk-reused-key-abcdef1234', prefix: 'One Relay' },
+      ],
+    });
+    const resolved = resolveSourceDisplay(
+      'm:sk-r...1234',
+      '',
+      sourceInfoMap,
+      new Map(),
+      'codex'
+    );
+    expect(resolved.displayName).toBe('One Relay');
+    expect(resolved.identityKey).toBe('shared:m:sk-r...1234');
+    expect(resolved.type).toBe('codex');
   });
 
   it('distinguishes multiple keys from the same base URL without exposing raw keys', () => {

@@ -300,17 +300,20 @@ export function resolveSourceDisplay(
   }
 
   const matchedBySource = source ? sourceInfoMap.bySource.get(source) : null;
-  if (matchedBySource) return matchedBySource;
+  const sharedAcrossProviders =
+    matchedBySource?.identityKey.startsWith('shared:') && !matchedBySource.type;
+  if (matchedBySource && !sharedAcrossProviders) return matchedBySource;
 
-  // Resolve cross-provider collisions only when the event identifies its provider.
-  // Never guess between multiple entries of the same provider.
-  if (source && matchedBySource === null) {
+  // A source shared across providers may have one display name but distinct
+  // provider identities. Keep same-provider ambiguity unchanged.
+  if (source && (matchedBySource === null || sharedAcrossProviders)) {
     const provider = typeof providerRaw === 'string' ? providerRaw.trim().toLowerCase() : '';
     const matchedByProvider = provider
       ? sourceInfoMap.bySourceAndProvider?.get(buildProviderSourceKey(provider, source))
       : null;
     if (matchedByProvider) return matchedByProvider;
   }
+  if (matchedBySource) return matchedBySource;
 
   if (source) {
     return {

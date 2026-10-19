@@ -72,11 +72,11 @@ describe('buildMonitoringSourceDisplay', () => {
     const context = { ...emptyContext, sourceInfoMap };
 
     const codex = buildMonitoringSourceDisplay(
-      { source: 'm:sk-1...0001', authProviderSnapshot: 'codex' },
+      { source: 'm:sk-1...0001', authLabelSnapshot: 'codex', authProviderSnapshot: 'codex' },
       context
     );
     const claude = buildMonitoringSourceDisplay(
-      { source: 'm:sk-1...0001', authProviderSnapshot: 'claude' },
+      { source: 'm:sk-1...0001', authLabelSnapshot: 'claude', authProviderSnapshot: 'claude' },
       context
     );
 

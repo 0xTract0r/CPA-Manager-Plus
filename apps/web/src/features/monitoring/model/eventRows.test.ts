@@ -378,6 +378,7 @@ describe('buildEventRows', () => {
       timestamp,
       source: `m:sk-${index + 1}...000${index + 1}`,
       auth_index: null,
+      auth_label_snapshot: 'codex',
       auth_provider_snapshot: index === 0 ? 'codex' : '',
       provider: 'codex',
       latency_ms: 1000,
@@ -406,7 +407,7 @@ describe('buildEventRows', () => {
     });
 
     const [claudeRow] = buildEventRows(
-      [{ ...events[0], auth_provider_snapshot: 'claude', provider: 'claude' }],
+      [{ ...events[0], auth_label_snapshot: 'claude', auth_provider_snapshot: 'claude', provider: 'claude' }],
       new Map(),
       new Map(),
       sourceInfoMap,
@@ -419,7 +420,7 @@ describe('buildEventRows', () => {
     expect(buildRealtimeSourceDisplay(claudeRow, t).primary).toBe('relay-a.example #2');
 
     const [unknownRow] = buildEventRows(
-      [{ ...events[0], auth_provider_snapshot: '', provider: '' }],
+      [{ ...events[0], auth_label_snapshot: '', auth_provider_snapshot: '', provider: '' }],
       new Map(),
       new Map(),
       sourceInfoMap,
@@ -429,6 +430,17 @@ describe('buildEventRows', () => {
     );
     expect(unknownRow.source).toBe('m:sk-1...0001');
     expect(unknownRow.sourceKey).toBe('source:m:sk-1...0001');
+
+    const [customLabelRow] = buildEventRows(
+      [{ ...events[0], auth_label_snapshot: 'Human-readable Relay' }],
+      new Map(),
+      new Map(),
+      sourceInfoMap,
+      new Map(),
+      {},
+      new Map()
+    );
+    expect(customLabelRow.source).toBe('Human-readable Relay');
   });
 
   it('prefers multi-key OpenAI-compatible disambiguation in realtime source cells', () => {
