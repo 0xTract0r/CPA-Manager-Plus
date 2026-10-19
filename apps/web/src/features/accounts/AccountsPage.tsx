@@ -2220,10 +2220,10 @@ export function AccountsPage() {
       prev.managerServiceBase !== featureAvailability.managerServiceBase ||
       prev.managementKey !== managementKey ||
       prev.connectionFingerprint !== connectionFingerprint;
-    const availabilityChanged =
-      prev.checking !== featureAvailability.checking ||
+    const monitoringCapabilityChanged =
       prev.requestMonitoringAvailable !== featureAvailability.requestMonitoringAvailable;
-    if (!connectionScopeChanged && !availabilityChanged) {
+    const checkingChanged = prev.checking !== featureAvailability.checking;
+    if (!connectionScopeChanged && !monitoringCapabilityChanged && !checkingChanged) {
       return;
     }
     headerSnapshotContextRef.current = {
@@ -2233,6 +2233,9 @@ export function AccountsPage() {
       checking: featureAvailability.checking,
       requestMonitoringAvailable: featureAvailability.requestMonitoringAvailable,
     };
+    // A passive checking-state transition alone must not discard already
+    // rendered history and window usage; connection and capability changes do.
+    if (!connectionScopeChanged && !monitoringCapabilityChanged) return;
     quotaCooldownRequestIdRef.current += 1;
     accountHistoryAutoAbortRef.current?.abort();
     accountHistoryAutoAbortRef.current = null;
