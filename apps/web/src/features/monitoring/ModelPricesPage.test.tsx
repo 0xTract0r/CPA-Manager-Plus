@@ -94,7 +94,7 @@ describe('ModelPricesPage Attention UI', () => {
 
   it('keeps the existing model price table mounted while usage summary loads', async () => {
     vi.spyOn(usageServiceApi, 'getModelPriceUsageSummary').mockImplementation(
-      () => new Promise(() => {})
+      () => new Promise<Awaited<ReturnType<typeof usageServiceApi.getModelPriceUsageSummary>>>(() => {})
     );
 
     let renderer: ReactTestRenderer;
