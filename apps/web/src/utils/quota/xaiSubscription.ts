@@ -10,7 +10,10 @@ const SUBSCRIPTION_TIMEOUT_MS = 8000;
 // One optional lane may overlap the regular quota lane; it never adds a second
 // background provider request, including across independently-triggered batches.
 const subscriptionQueue = createKeyedSerialTaskQueue();
-let subscriptionSequence = 0;
+// Lookups for the same credential are coalesced by pendingSubscriptions below,
+// not by the queue key. Each new lookup gets its own queue task id so that a
+// superseded (aborted or too old) lookup cannot swallow the one replacing it.
+let nextSubscriptionTaskId = 0;
 interface PendingSubscription {
   consumers: Set<() => boolean>;
   controller: AbortController;
@@ -168,7 +171,7 @@ export const fetchXaiSubscription = async (
     let result: XaiSubscriptionInfo | null = null;
     const anyCurrent = () => [...consumers].some((current) => current());
     entry.promise = subscriptionQueue
-      .run(String(subscriptionSequence++), async () => {
+      .run(`xai-subscription-${nextSubscriptionTaskId++}`, async () => {
         try {
           if (!anyCurrent()) return;
           entry.startedAtMs = Date.now();

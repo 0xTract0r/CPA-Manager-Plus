@@ -935,3 +935,4 @@ export const META_CONFIG: QuotaConfig<MetaQuotaState, MetaQuotaData> = {
   }),
   scopeState: scopeCredentialQuotaState,
 };
+
