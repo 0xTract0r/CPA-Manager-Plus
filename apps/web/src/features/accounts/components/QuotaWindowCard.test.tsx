@@ -57,6 +57,22 @@ const usage = (
   ...overrides,
 });
 
+const emptyUsage = (
+  overrides: Partial<AccountDetailWindowUsageSummary> = {}
+): AccountDetailWindowUsageSummary =>
+  usage({
+    matched: false,
+    totalRequests: 0,
+    successCalls: 0,
+    failureCalls: 0,
+    totalTokens: 0,
+    totalCost: 0,
+    successRate: null,
+    lastSeenMs: null,
+    syncStatus: 'empty',
+    ...overrides,
+  });
+
 const makeWindow = (overrides: Partial<AccountDetailQuotaWindow> = {}): AccountDetailQuotaWindow =>
   ({
     key: 'five-hour',
@@ -433,7 +449,7 @@ describe('QuotaWindowCard', () => {
     expect(text).not.toContain('accounts.detail_current_window');
   });
 
-  it('renders model quota cards with a provider-window warning', () => {
+  it('renders model quota cards with an unavailable-usage warning', () => {
     const renderer = renderCard(
       makeWindow({
         modelScope: { kind: 'models', models: ['demo-model'], complete: true },
@@ -449,12 +465,74 @@ describe('QuotaWindowCard', () => {
     const warning = renderer.root.findByProps({ 'data-quota-model-warning': 'true' });
     expect(warning).toBeTruthy();
     expect(warning.props.role).toBe('alert');
+    expect(warning.props['data-quota-window-warning-reason']).toBe('usage_unavailable');
     expect(renderer.root.findByProps({ 'data-quota-window-icon': 'model' })).toBeTruthy();
     expect(renderer.root.findAllByProps({ 'data-quota-progress': 'shared' })).toHaveLength(1);
     expect(renderer.root.findAllByProps({ 'data-quota-standard-comparison': 'true' })).toHaveLength(
       0
     );
-    expect(readText(renderer.root)).toContain('accounts.detail_model_window_stats_unavailable');
+    expect(renderer.root.findAllByProps({ 'data-quota-window-empty': 'true' })).toHaveLength(0);
+    expect(readText(renderer.root)).toContain('accounts.detail_model_window_usage_unavailable');
+    expect(readText(renderer.root)).toContain(
+      'accounts.detail_model_window_usage_unavailable_desc'
+    );
+  });
+
+  it('shows a neutral empty-usage hint when both windows are explicitly empty', () => {
+    const renderer = renderCard(
+      makeWindow({
+        modelScope: { kind: 'models', models: ['demo-model'], complete: true },
+        usage: emptyUsage(),
+        currentUsage: emptyUsage(),
+        previousUsage: emptyUsage({ fromMs: -17_999_000, toMs: 1_000 }),
+        forecast: null,
+      }),
+      'model'
+    );
+
+    expect(renderer.root.findByProps({ 'data-quota-window-empty': 'true' })).toBeTruthy();
+    expect(renderer.root.findAllByProps({ 'data-quota-model-warning': 'true' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ role: 'alert' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ 'data-quota-model-comparison': 'true' })).toHaveLength(0);
+    expect(readText(renderer.root)).toContain('accounts.detail_model_window_empty_usage');
+  });
+
+  it('keeps the empty-usage state neutral only when the snapshot is current', () => {
+    const renderer = renderCard(
+      makeWindow({
+        stale: true,
+        modelScope: { kind: 'models', models: ['demo-model'], complete: true },
+        usage: emptyUsage(),
+        currentUsage: emptyUsage(),
+        previousUsage: emptyUsage({ fromMs: -17_999_000, toMs: 1_000 }),
+        forecast: null,
+      }),
+      'model'
+    );
+
+    const warning = renderer.root.findByProps({ 'data-quota-model-warning': 'true' });
+    expect(warning.props['data-quota-window-warning-reason']).toBe('stale');
+    expect(renderer.root.findAllByProps({ 'data-quota-window-empty': 'true' })).toHaveLength(0);
+    expect(readText(warning)).toContain('accounts.detail_quota_snapshot_stale');
+    expect(renderer.root.findAllByProps({ 'data-quota-source-warnings': 'true' })).toHaveLength(0);
+  });
+
+  it('does not treat an incomplete model scope as an empty window', () => {
+    const renderer = renderCard(
+      makeWindow({
+        modelScope: { kind: 'models', models: ['demo-model'], complete: true },
+        usage: emptyUsage({ scopeMatchStatus: 'partial', unmatchedRequests: 3 }),
+        currentUsage: emptyUsage({ scopeMatchStatus: 'partial', unmatchedRequests: 3 }),
+        previousUsage: emptyUsage({ fromMs: -17_999_000, toMs: 1_000 }),
+        forecast: null,
+      }),
+      'model'
+    );
+
+    const warning = renderer.root.findByProps({ 'data-quota-model-warning': 'true' });
+    expect(warning.props['data-quota-window-warning-reason']).toBe('scope_incomplete');
+    expect(readText(warning)).toContain('accounts.detail_scope_incomplete');
+    expect(renderer.root.findAllByProps({ 'data-quota-window-empty': 'true' })).toHaveLength(0);
   });
 
   it('renders model quota cards with previous, current, and forecast columns', () => {
@@ -478,7 +556,7 @@ describe('QuotaWindowCard', () => {
     );
   });
 
-  it('shows an incomplete boundary for model quota without model statistics warning or comparisons', () => {
+  it('warns when a model quota boundary is incomplete even if usage exists', () => {
     const renderer = renderCard(
       makeWindow({
         kind: 'weekly',
@@ -498,7 +576,10 @@ describe('QuotaWindowCard', () => {
     );
 
     expect(renderer.root.findAllByProps({ 'data-quota-card-mode': 'model' })).toHaveLength(1);
-    expect(readText(renderer.root)).toContain('accounts.detail_window_boundary_incomplete');
+    const warning = renderer.root.findByProps({ 'data-quota-model-warning': 'true' });
+    expect(warning.props['data-quota-window-warning-reason']).toBe('boundary_incomplete');
+    expect(readText(warning)).toContain('accounts.detail_window_boundary_incomplete');
+    expect(renderer.root.findAllByProps({ 'data-quota-window-empty': 'true' })).toHaveLength(0);
     expect(readText(renderer.root)).not.toContain('accounts.detail_model_window_stats_unavailable');
     expect(readText(renderer.root)).not.toContain(
       'accounts.detail_model_window_stats_unavailable_desc'

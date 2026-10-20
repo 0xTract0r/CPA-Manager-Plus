@@ -50,6 +50,14 @@ interface QuotaWindowCardProps {
 
 type MetricTone = 'blue' | 'green' | 'teal' | 'amber';
 
+type ModelWarningReason =
+  | 'scope_unknown'
+  | 'boundary_incomplete'
+  | 'scope_incomplete'
+  | 'stale'
+  | 'usage_unavailable'
+  | null;
+
 const QUOTA_PROGRESS_HIGH_THRESHOLD = 70;
 const QUOTA_PROGRESS_MEDIUM_THRESHOLD = 30;
 
@@ -431,8 +439,40 @@ export const QuotaWindowCard = ({
   const hasEarlyReset = previousEndReason === 'early_reset';
   const hasProviderReset = previousEndReason === 'provider_reset';
   const hasLifecycleNotice = lifecycleUnavailable || reopened || hasEarlyReset || hasProviderReset;
+  const modelWindowHasInterval =
+    q.windowMode === 'fixed' || q.windowMode === 'calendar' || q.windowMode === 'rolling';
+  const modelWindowEmptyUsage =
+    resolvedMode === 'model' &&
+    q.modelScope?.complete === true &&
+    modelWindowHasInterval &&
+    q.previousPeriod !== null &&
+    !modelBoundaryIncomplete &&
+    !q.stale &&
+    !lifecycleUnavailable &&
+    !hasScopeWarning &&
+    !q.forecast &&
+    usage?.matched === false &&
+    usage.syncStatus === 'empty' &&
+    previousUsage?.matched === false &&
+    previousUsage.syncStatus === 'empty';
+  const modelWarningReason: ModelWarningReason =
+    resolvedMode !== 'model' || modelWindowEmptyUsage
+      ? null
+      : q.modelScope?.complete === false
+        ? 'scope_unknown'
+        : modelBoundaryIncomplete
+          ? 'boundary_incomplete'
+          : !modelHasUsableUsage
+            ? hasScopeWarning
+              ? 'scope_incomplete'
+              : q.stale && !lifecycleUnavailable
+                ? 'stale'
+                : 'usage_unavailable'
+            : null;
+  const showStaleSourceMeta =
+    Boolean(q.stale) && !lifecycleUnavailable && modelWarningReason !== 'stale';
   const hasSourceWarnings =
-    (Boolean(q.stale) && !lifecycleUnavailable) ||
+    showStaleSourceMeta ||
     hasLifecycleNotice ||
     (hasScopeWarning && !modelWindowStatsUnavailable);
 
@@ -449,7 +489,7 @@ export const QuotaWindowCard = ({
 
   const sourceMetaWarnings = hasSourceWarnings ? (
     <div className={styles.sourceMetaWarnings} data-quota-source-warnings="true">
-      {q.stale && !lifecycleUnavailable ? (
+      {showStaleSourceMeta ? (
         <span className={styles.sourceMetaWarn}>
           <IconTriangleAlert size={12} />
           {t('accounts.detail_quota_snapshot_stale')}
@@ -549,25 +589,52 @@ export const QuotaWindowCard = ({
     </div>
   );
 
+  const modelWarningTitle = (() => {
+    switch (modelWarningReason) {
+      case 'scope_unknown':
+        return t('accounts.detail_scope_unknown');
+      case 'boundary_incomplete':
+        return t('accounts.detail_window_boundary_incomplete');
+      case 'scope_incomplete':
+        return t('accounts.detail_scope_incomplete', {
+          defaultValue: '模型范围用量可能不完整',
+          count: unmatchedScopeRequests,
+        });
+      case 'stale':
+        return t('accounts.detail_quota_snapshot_stale');
+      case 'usage_unavailable':
+        return t('accounts.detail_model_window_usage_unavailable');
+      case null:
+      default:
+        return '';
+    }
+  })();
+  const modelWarningDescription =
+    modelWarningReason === 'usage_unavailable'
+      ? t('accounts.detail_model_window_usage_unavailable_desc')
+      : null;
   const modelWarning =
-    modelWindowStatsUnavailable &&
-    (q.modelScope?.complete === false || !modelBoundaryIncomplete) ? (
-      <div className={styles.modelWarning} data-quota-model-warning="true" role="alert">
+    modelWarningReason !== null ? (
+      <div
+        className={styles.modelWarning}
+        data-quota-model-warning="true"
+        data-quota-window-warning-reason={modelWarningReason}
+        role="alert"
+      >
         <span className={styles.warningIcon} aria-hidden="true">
           <IconTriangleAlert size={13} />
         </span>
         <div>
-          <strong>
-            {q.modelScope?.complete === false
-              ? t('accounts.detail_scope_unknown')
-              : t('accounts.detail_model_window_stats_unavailable')}
-          </strong>
-          {q.modelScope?.complete === false ? null : (
-            <p>{t('accounts.detail_model_window_stats_unavailable_desc')}</p>
-          )}
+          <strong>{modelWarningTitle}</strong>
+          {modelWarningDescription ? <p>{modelWarningDescription}</p> : null}
         </div>
       </div>
     ) : null;
+  const modelEmptyUsage = modelWindowEmptyUsage ? (
+    <div className={styles.modelEmptyUsage} data-quota-window-empty="true">
+      {t('accounts.detail_model_window_empty_usage')}
+    </div>
+  ) : null;
 
   const header = (
     <div className={styles.header}>
@@ -651,6 +718,7 @@ export const QuotaWindowCard = ({
         {header}
         {progress}
         {modelWarning}
+        {modelEmptyUsage}
         {modelHasUsableUsage && !modelBoundaryIncomplete ? (
           <div className={styles.compareColumns} data-quota-model-comparison="true">
             <UsageColumn
@@ -699,7 +767,7 @@ export const QuotaWindowCard = ({
           </div>
         ) : null}
         {sourceMeta}
-        {modelBoundaryIncomplete ? (
+        {modelBoundaryIncomplete && modelWarningReason !== 'boundary_incomplete' ? (
           <div className={styles.emptyState}>{t('accounts.detail_window_boundary_incomplete')}</div>
         ) : null}
       </div>
