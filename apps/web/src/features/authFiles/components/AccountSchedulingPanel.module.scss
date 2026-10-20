@@ -69,9 +69,9 @@
   font-size: 12px;
 }
 
-// 候选锚点一键选择区：小标题 + 一行可换行的候选按钮（最近活动 / 首次认证 /
-// 当前时间）。同 .fieldActions 用常规 flow + flex-wrap，不用绝对定位悬浮槽，避免
-// 与输入框、其它动作按钮重叠。
+// 候选锚点一键选择区：小标题 + 一行可换行的候选按钮（最近活动 / 当前时间）。
+// 同 .fieldActions 用常规 flow + flex-wrap，不用绝对定位悬浮槽，避免与输入框、
+// 其它动作按钮重叠。
 .candidates {
   display: flex;
   flex-direction: column;
@@ -82,6 +82,15 @@
 .candidatesLabel {
   color: var(--text-secondary);
   font-size: 12px;
+}
+
+// 「账号创建（Anthropic）」只读展示行：与候选按钮区分开的纯信息行，无交互，
+// 复用 .candidatesLabel / .candidateTime 的视觉语言（次级文字 + 等宽时间）。
+.accountCreatedInfo {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
 .candidateButtons {

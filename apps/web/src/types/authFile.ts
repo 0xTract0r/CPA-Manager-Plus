@@ -386,6 +386,14 @@ export interface AuthFileAccountScheduling {
    */
   anchor_candidates?: AuthFileAccountAnchorCandidates | null;
   /**
+   * Anthropic 侧账号创建时间（RFC3339 字符串或 null）：只读展示字段，**不是**
+   * anchor_candidates 的成员、不参与 first_production_at 一键填充候选。直接拿它
+   * 当首投时间会虚高账号成熟度、跳过养号曲线 → 封号风险，是既有防封决策（见
+   * anchor_candidates 注释「刻意不含账号创建时间」）。前端仅用于只读展示行，
+   * 缺失/为 null 时不渲染该行。
+   */
+  account_created_at?: string | null;
+  /**
    * 该账号索引下观测到的去重 SessionID 总数（P6，core
    * internal/usage.SessionAggregateForAuthIndex，按空闲窗口分桶）。
    * 恒为非负整数；0 是「确有其事的 0」（真的没有会话），不是「未知」——
@@ -492,7 +500,12 @@ export interface AuthFileAccountAnchorCandidates {
    * 显得过于成熟）。最贴近锚点语义，前端作为推荐候选高亮。
    */
   last_activity_at?: string | null;
-  /** 该账号「首次认证 / 接入本系统」时间（次选候选）。 */
+  /**
+   * 该账号「首次认证 / 接入本系统」时间——随身份轮换刷新的身份分配时间，不是账号
+   * 真实首投时间。前端已不再把它作为「首次投产时间（养号锚点）」的候选（拿来填会
+   * 是错值）；历史身份轮换时间仍可在「身份变更审计」历史（recorded_at）里查。字段
+   * 保留在类型里仅因后端投影仍可能透出，非前端消费入口。
+   */
   first_auth_at?: string | null;
   [key: string]: unknown;
 }
