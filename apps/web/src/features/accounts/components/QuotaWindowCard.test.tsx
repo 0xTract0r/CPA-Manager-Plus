@@ -591,17 +591,67 @@ describe('QuotaWindowCard', () => {
     const renderer = renderCard(
       makeWindow({
         modelScope: { kind: 'family', key: 'gemini', complete: true },
-        usage: usage({ matched: false }),
-        currentUsage: usage({ matched: false }),
+        usage: emptyUsage(),
+        currentUsage: emptyUsage(),
         forecast: { requests: 120, tokens: 1_200_000, cost: 120, basis: 'previous' },
       }),
       'model'
     );
 
-    expect(renderer.root.findByProps({ 'data-quota-model-comparison': 'true' })).toBeTruthy();
+    const comparison = renderer.root.findByProps({ 'data-quota-model-comparison': 'true' });
+    const current = comparison.findByProps({ 'data-quota-usage-period': 'current' });
+    const currentText = readText(current);
     expect(renderer.root.findAllByProps({ 'data-quota-model-warning': 'true' })).toHaveLength(0);
-    expect(readText(renderer.root)).toContain('accounts.detail_window_stats_empty');
-    expect(readText(renderer.root)).toContain('accounts.detail_forecast_basis_previous');
+    expect(currentText).toContain('accounts.detail_model_window_empty_usage');
+    expect(currentText).not.toContain('accounts.detail_window_stats_empty');
+    expect(readText(comparison)).toContain('accounts.detail_forecast_basis_previous');
+  });
+
+  it('keeps model comparisons when only the current window has actual usage', () => {
+    const renderer = renderCard(
+      makeWindow({
+        modelScope: { kind: 'family', key: 'gemini', complete: true },
+        usage: usage(),
+        currentUsage: usage(),
+        previousUsage: emptyUsage({ fromMs: -17_999_000, toMs: 1_000 }),
+        forecast: null,
+      }),
+      'model'
+    );
+
+    const comparison = renderer.root.findByProps({ 'data-quota-model-comparison': 'true' });
+    const previous = comparison.findByProps({ 'data-quota-usage-period': 'previous' });
+    const current = comparison.findByProps({ 'data-quota-usage-period': 'current' });
+    const previousText = readText(previous);
+    const currentText = readText(current);
+    expect(previousText).toContain('accounts.detail_model_window_empty_usage');
+    expect(previousText).not.toContain('accounts.detail_window_stats_empty');
+    expect(currentText).toContain('accounts.detail_usage_requests');
+    expect(currentText).toContain('accounts.detail_usage_tokens');
+    expect(currentText).toContain('accounts.detail_usage_cost');
+    expect(currentText).not.toContain('accounts.detail_model_window_empty_usage');
+    expect(renderer.root.findAllByProps({ 'data-quota-model-warning': 'true' })).toHaveLength(0);
+  });
+
+  it('distinguishes unavailable usage from an explicit empty period', () => {
+    const renderer = renderCard(
+      makeWindow({
+        modelScope: { kind: 'family', key: 'gemini', complete: true },
+        usage: null,
+        currentUsage: null,
+        previousUsage: usage({ fromMs: -17_999_000, toMs: 1_000, successRate: 98 }),
+        forecast: null,
+      }),
+      'model'
+    );
+
+    const comparison = renderer.root.findByProps({ 'data-quota-model-comparison': 'true' });
+    const current = comparison.findByProps({ 'data-quota-usage-period': 'current' });
+    const currentText = readText(current);
+    expect(currentText).toContain('accounts.detail_model_window_usage_unavailable');
+    expect(currentText).not.toContain('accounts.detail_model_window_empty_usage');
+    expect(renderer.root.findAllByProps({ 'data-quota-window-empty': 'true' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ role: 'alert' })).toHaveLength(0);
   });
 
   it('merges missing model scope into the single alert while keeping stale evidence separate', () => {

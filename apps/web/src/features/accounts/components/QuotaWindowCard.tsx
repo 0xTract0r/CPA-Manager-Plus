@@ -287,6 +287,7 @@ const UsageColumn = ({
   usage,
   labels,
   emptyMessage,
+  unavailableMessage,
 }: {
   title: string;
   subtitle: string;
@@ -294,17 +295,24 @@ const UsageColumn = ({
   usage: AccountDetailWindowUsageSummary | null | undefined;
   labels: UsageLabels;
   emptyMessage: string;
-}): JSX.Element => (
-  <div className={styles.compareColumn} data-quota-usage-period={period}>
-    <div className={styles.compareColumnTitle}>{title}</div>
-    <div className={styles.compareColumnSubtitle}>{subtitle || '\u00a0'}</div>
-    {usage?.matched ? (
-      <UsageMetricList usage={usage} labels={labels} />
-    ) : (
-      <EmptyUsage message={emptyMessage} />
-    )}
-  </div>
-);
+  unavailableMessage?: string;
+}): JSX.Element => {
+  const explicitEmpty = usage?.matched === false && usage.syncStatus === 'empty';
+  const columnMessage = explicitEmpty
+    ? emptyMessage
+    : (unavailableMessage ?? emptyMessage);
+  return (
+    <div className={styles.compareColumn} data-quota-usage-period={period}>
+      <div className={styles.compareColumnTitle}>{title}</div>
+      <div className={styles.compareColumnSubtitle}>{subtitle || '\u00a0'}</div>
+      {usage?.matched ? (
+        <UsageMetricList usage={usage} labels={labels} />
+      ) : (
+        <EmptyUsage message={columnMessage} />
+      )}
+    </div>
+  );
+};
 
 const ForecastColumn = ({
   forecast,
@@ -731,9 +739,8 @@ export const QuotaWindowCard = ({
               period="previous"
               usage={previousUsage}
               labels={usageLabels}
-              emptyMessage={t('accounts.detail_window_stats_empty', {
-                defaultValue: '窗口统计暂未采集',
-              })}
+              emptyMessage={t('accounts.detail_model_window_empty_usage')}
+              unavailableMessage={t('accounts.detail_model_window_usage_unavailable')}
             />
             <UsageColumn
               title={t('accounts.detail_current_used', { defaultValue: '当前窗口已用' })}
@@ -746,9 +753,8 @@ export const QuotaWindowCard = ({
               period="current"
               usage={usage}
               labels={usageLabels}
-              emptyMessage={t('accounts.detail_window_stats_empty', {
-                defaultValue: '窗口统计暂未采集',
-              })}
+              emptyMessage={t('accounts.detail_model_window_empty_usage')}
+              unavailableMessage={t('accounts.detail_model_window_usage_unavailable')}
             />
             <ForecastColumn
               forecast={q.forecast}

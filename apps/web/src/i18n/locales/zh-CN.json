@@ -1739,7 +1739,7 @@
     "detail_quota_latest_observation_time": "最近观测时间",
     "detail_model_window_stats_unavailable": "窗口统计暂未提供",
     "detail_model_window_stats_unavailable_desc": "Provider 未提供该模型窗口级别，当前仅展示配额总量和用量。",
-    "detail_model_window_empty_usage": "本窗口暂无用量",
+    "detail_model_window_empty_usage": "未找到匹配的本地用量记录",
     "detail_model_window_usage_unavailable": "窗口用量暂不可用",
     "detail_model_window_usage_unavailable_desc": "用量数据暂不可用或尚未加载，无法确认该窗口的用量。",
     "detail_usage_time_empty": "暂无使用时间范围",
