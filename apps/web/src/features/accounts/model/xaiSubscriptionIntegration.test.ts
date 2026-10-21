@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AuthFileItem, XaiBillingSummary, XaiSubscriptionInfo } from '@/types';
+import { buildQuotaFailureState, XAI_CONFIG } from '@/components/quota/quotaConfigs';
 import {
   buildQuotaCredentialIdentity,
   getQuotaCredentialStoreKey,
@@ -30,6 +31,7 @@ function makeRow(
     filePlan?: string;
     quotaAt?: number;
     cachedAuthIndex?: string;
+    refreshFailed?: boolean;
   } = {}
 ) {
   const file: AuthFileItem = {
@@ -56,6 +58,22 @@ function makeRow(
     usedPercent: null,
     subscription,
   };
+  const successState = {
+    ...buildQuotaCredentialIdentity(cachedFile),
+    status: 'success' as const,
+    billing,
+    fetchedAtMs: options.quotaAt ?? observedAt,
+  };
+  const quotaState = options.refreshFailed
+    ? buildQuotaFailureState(
+        XAI_CONFIG,
+        'quota refresh failed',
+        503,
+        cachedFile,
+        successState,
+        (options.quotaAt ?? observedAt) + 120_000
+      )
+    : successState;
   const stores: AccountQuotaStores = {
     antigravityQuota: {},
     claudeQuota: {},
@@ -64,12 +82,7 @@ function makeRow(
     devinQuota: {},
     metaQuota: {},
     xaiQuota: {
-      [getQuotaCredentialStoreKey(cachedFile)]: {
-        ...buildQuotaCredentialIdentity(cachedFile),
-        status: 'success',
-        billing,
-        fetchedAtMs: options.quotaAt ?? observedAt,
-      },
+      [getQuotaCredentialStoreKey(cachedFile)]: quotaState,
     },
   };
   return buildAccountRows([file], stores)[0];
@@ -202,6 +215,18 @@ describe('xAI subscription data reaches account presentation', () => {
   it('retains a supplied file plan when there is no matching quota entry', () => {
     const row = makeRow(undefined, { filePlan: 'SuperGrok Heavy', cachedAuthIndex: 'old-account' });
     expect(row.planType).toBe('SuperGrok Heavy');
+  });
+
+  it('keeps a live Free plan over a stale Heavy file plan after a quota refresh failure', () => {
+    const row = makeRow(
+      { planType: 'Free', source: 'user', observedAtMs: observedAt },
+      { filePlan: 'SuperGrok Heavy', refreshFailed: true }
+    );
+    expect(row.quota.status).toBe('error');
+    expect(row.planType).toBe('Free');
+    expect(buildAccountListItem(row, { quotaWindows }).identity.planPresentation?.fullLabel).toBe(
+      'Free'
+    );
   });
 
   it('does not infer paid availability from a Free subscription with informational quota', () => {
