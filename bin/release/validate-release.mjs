@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generateReleaseInfo } from './generate-release-info.mjs';
@@ -175,7 +175,180 @@ const releaseTagFromPath = (filePath) => {
   return null;
 };
 
-export const validateChangedReleaseContent = ({ changedFiles, readFile, fileExists }) => {
+// 只记录固定上游原样历史导入；真实发布入口仍要求完整的当前发布契约。
+const historicalImportSource = '794ef828023960ccad0a2e9848293aee0880d688';
+const historicalTags = new Set([
+  'v1.11.0',
+  'v1.11.1',
+  'v1.11.10',
+  'v1.11.11',
+  'v1.11.12',
+  'v1.11.2',
+  'v1.11.3',
+  'v1.11.4',
+  'v1.11.5',
+  'v1.11.6',
+  'v1.11.7',
+  'v1.11.8',
+  'v1.11.9',
+  'v1.12.0',
+  'v1.12.0-beta1',
+  'v1.12.0-beta2',
+  'v1.12.0-beta3',
+  'v1.12.0-rc.1',
+  'v1.12.0-rc.2',
+  'v1.12.0-rc.3',
+  'v1.12.1',
+  'v1.12.10',
+  'v1.12.11',
+  'v1.12.12',
+  'v1.12.13',
+  'v1.12.14',
+  'v1.12.2',
+  'v1.12.3',
+  'v1.12.4',
+  'v1.12.5',
+  'v1.12.6',
+  'v1.12.7',
+  'v1.12.8',
+  'v1.12.9',
+  'v1.13.0',
+  'v1.13.1',
+  'v1.13.2',
+  'v1.14.0',
+  'v1.14.1',
+  'v1.14.2',
+  'v1.14.3',
+  'v1.14.4',
+  'v1.14.5',
+  'v1.14.6',
+  'v1.14.7',
+  'v1.14.8',
+  'v1.14.9',
+]);
+const belongsToTag = (filePath, tag) => {
+  // 稳定版 v1.12.0 不能吞并 v1.12.0-beta1 的独立 bundle。
+  const match =
+    /^docs\/release-notes\/(.+)-(?:en|zh)\.md$/.exec(filePath) ||
+    /^docs\/release-posts\/(.+)-telegram\.html$/.exec(filePath);
+  if (match) return match[1] === tag;
+  // 不认识的同 tag 附件也属于形状变化，取最长前缀以隔开已知 prerelease。
+  return (
+    [...historicalTags]
+      .sort((left, right) => right.length - left.length)
+      .find(
+        (candidate) =>
+          filePath.startsWith(`docs/release-notes/${candidate}-`) ||
+          filePath.startsWith(`docs/release-posts/${candidate}-`)
+      ) === tag
+  );
+};
+const releaseDirectories = ['docs/release-notes', 'docs/release-posts'];
+const treeEntries = (git, ref) =>
+  git(['ls-tree', '-rz', ref, '--', ...releaseDirectories])
+    .split('\0')
+    .filter(Boolean)
+    .map((line) => {
+      const [metadata, filePath] = line.split('\t');
+      const [mode, , blob] = metadata.split(' ');
+      return { path: filePath, mode, blob };
+    });
+
+const historicalImportContext = ({ repository, baseSha, git }) => {
+  if (repository !== '0xTract0r/CPA-Manager-Plus' || !/^[a-f0-9]{40}$/.test(baseSha || ''))
+    return null;
+  try {
+    if (git(['rev-parse', '--is-shallow-repository']) !== 'false') return null;
+    git(['merge-base', '--is-ancestor', historicalImportSource, 'HEAD']);
+    git(['merge-base', '--is-ancestor', baseSha, 'HEAD']);
+    const source = treeEntries(git, historicalImportSource).filter(({ path: filePath }) =>
+      [...historicalTags].some((tag) => belongsToTag(filePath, tag))
+    );
+    if (source.length !== 137) return null;
+    const index = git(['ls-files', '--stage', '-z', '--', ...releaseDirectories])
+      .split('\0')
+      .filter(Boolean)
+      .map((line) => {
+        const [metadata, filePath] = line.split('\t');
+        const [mode, blob, stage] = metadata.split(' ');
+        return { path: filePath, mode, blob, stage };
+      });
+    return {
+      source,
+      baseSha,
+      head: treeEntries(git, 'HEAD'),
+      base: treeEntries(git, baseSha),
+      index,
+      // 不带 exclude-standard，忽略规则下的额外本地文件也必须拒绝。
+      localPaths: git(['ls-files', '--cached', '--others', '-z', '--', ...releaseDirectories])
+        .split('\0')
+        .filter(Boolean),
+      root: git(['rev-parse', '--show-toplevel']),
+    };
+  } catch {
+    return null;
+  }
+};
+
+const historicalImport = ({ tag, changedFiles, context, git }) => {
+  if (!context || !historicalTags.has(tag)) return null;
+  const source = context.source.filter(({ path: filePath }) => belongsToTag(filePath, tag));
+  const expectedPaths = source.map(({ path: filePath }) => filePath).sort();
+  const samePaths = (paths) => JSON.stringify([...paths].sort()) === JSON.stringify(expectedPaths);
+  if (!source.length || !source.every(({ path: filePath }) => changedFiles.includes(filePath)))
+    return null;
+  if (!samePaths(changedFiles.filter((filePath) => belongsToTag(filePath, tag)))) return null;
+  if (!samePaths(context.localPaths.filter((filePath) => belongsToTag(filePath, tag)))) return null;
+  if (context.base.some(({ path: filePath }) => belongsToTag(filePath, tag))) return null;
+  const head = context.head.filter(({ path: filePath }) => belongsToTag(filePath, tag));
+  const index = context.index.filter(({ path: filePath }) => belongsToTag(filePath, tag));
+  if (
+    !samePaths(head.map(({ path: filePath }) => filePath)) ||
+    !samePaths(index.map(({ path: filePath }) => filePath))
+  )
+    return null;
+  try {
+    for (const entry of source) {
+      const matches = (candidate) =>
+        candidate.path === entry.path &&
+        candidate.mode === entry.mode &&
+        candidate.blob === entry.blob;
+      if (
+        !head.some(matches) ||
+        !index.some((candidate) => candidate.stage === '0' && matches(candidate))
+      )
+        return null;
+      const stat = lstatSync(path.join(context.root, entry.path));
+      const worktreeMode = stat.isSymbolicLink()
+        ? '120000'
+        : stat.isFile()
+          ? stat.mode & 0o111
+            ? '100755'
+            : '100644'
+          : '';
+      if (worktreeMode !== entry.mode) return null;
+      if (git(['hash-object', '--no-filters', '--', entry.path]) !== entry.blob) return null;
+    }
+    return {
+      tag,
+      sourceRepository: 'seakee/CPA-Manager-Plus',
+      sourceCommit: historicalImportSource,
+      baseCommit: context.baseSha,
+      files: source,
+    };
+  } catch {
+    return null;
+  }
+};
+
+export const validateChangedReleaseContent = ({
+  changedFiles,
+  readFile,
+  fileExists,
+  repository,
+  baseSha,
+  git = runGit,
+}) => {
   const tags = [
     ...new Set(
       changedFiles
@@ -185,15 +358,23 @@ export const validateChangedReleaseContent = ({ changedFiles, readFile, fileExis
     ),
   ].sort();
 
+  const context = historicalImportContext({ repository, baseSha, git });
+  const historicalImports = tags
+    .map((tag) => historicalImport({ tag, changedFiles, context, git }))
+    .filter(Boolean);
+  const importedTags = new Set(historicalImports.map(({ tag }) => tag));
   return {
     tags,
-    releases: tags.map((tag) =>
-      validateReleaseContent({
-        tag,
-        ...(readFile ? { readFile } : {}),
-        ...(fileExists ? { fileExists } : {}),
-      })
-    ),
+    historicalImports,
+    releases: tags
+      .filter((tag) => !importedTags.has(tag))
+      .map((tag) =>
+        validateReleaseContent({
+          tag,
+          ...(readFile ? { readFile } : {}),
+          ...(fileExists ? { fileExists } : {}),
+        })
+      ),
   };
 };
 
@@ -299,7 +480,11 @@ const runCli = () => {
     if (options.changedContent) {
       const input = readFileSync(0, 'utf8');
       const changedFiles = input.split(options.null ? '\0' : /\r?\n/).filter(Boolean);
-      const content = validateChangedReleaseContent({ changedFiles });
+      const content = validateChangedReleaseContent({
+        changedFiles,
+        repository: options.repository,
+        baseSha: options.baseSha,
+      });
       console.log(JSON.stringify({ ok: true, mode: 'changed-content', ...content }, null, 2));
       return;
     }
