@@ -1687,13 +1687,14 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions = {}): UseAuth
         );
       } finally {
         if (statusRefreshPendingRef.current.get(operationKey) === generation) statusRefreshPendingRef.current.delete(operationKey);
-        if (!isCurrent()) return;
-        setStatusRefreshing((prev) => {
-          if (!prev[name]) return prev;
-          const next = { ...prev };
-          delete next[name];
-          return next;
-        });
+        if (isCurrent()) {
+          setStatusRefreshing((prev) => {
+            if (!prev[name]) return prev;
+            const next = { ...prev };
+            delete next[name];
+            return next;
+          });
+        }
       }
     },
     [captureLegacyPatchTargets, commitFiles, onStatusHistoryChanged, requestScope, showNotification, t]
