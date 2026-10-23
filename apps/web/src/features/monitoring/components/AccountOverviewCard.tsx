@@ -26,10 +26,13 @@ import type {
 import { formatDateTimeUtc8 } from '@/utils/datetime';
 import { formatCompactNumber, formatUsd } from '@/utils/usage';
 import type { StatusBarData } from '@/utils/recentRequests';
+import { getPlanPresentation } from '@/utils/plans';
 import { MonitoringHealthStatusBar } from './MonitoringHealthStatusBar';
 import {
   buildAccountSecondaryText,
   buildAccountSummaryMetrics,
+  buildCacheTokenPresentation,
+  formatAccountQuotaResetDisplay,
   formatPercent,
   getAccountStatusDotClassName,
   getAccountStatusLabel,
@@ -81,6 +84,7 @@ export function AccountSummaryPrimary({
   expanded,
   onToggle,
   accountDisplayMode,
+  t,
   statusTone = 'enabled',
   showSecondary = true,
 }: {
@@ -88,12 +92,38 @@ export function AccountSummaryPrimary({
   expanded: boolean;
   onToggle: () => void;
   accountDisplayMode: AccountDisplayMode;
+  t: TFunction;
   statusTone?: string;
   showSecondary?: boolean;
 }) {
   const accountDisplay = resolveAccountDisplayText(row, accountDisplayMode);
   const secondaryText = buildAccountSecondaryText(row);
   const accountSecondaryText = accountDisplay.secondary || secondaryText;
+  const planPresentations = Array.from(
+    new Map(
+      (row.planTypes ?? [])
+        .map((planType) =>
+          getPlanPresentation({
+            provider: row.provider,
+            planType,
+            t,
+          })
+        )
+        .filter(
+          (presentation): presentation is NonNullable<typeof presentation> => presentation !== null
+        )
+        .map((presentation) => [
+          presentation.canonicalPlanType ?? presentation.rawPlanType,
+          presentation,
+        ])
+    ).values()
+  );
+  const planShortLabels = planPresentations.map((presentation) => presentation.shortLabel);
+  const planShortLabel =
+    planShortLabels.length <= 2
+      ? planShortLabels.join(', ')
+      : `${planShortLabels.slice(0, 2).join(', ')} +${planShortLabels.length - 2}`;
+  const planFullLabel = planPresentations.map((presentation) => presentation.fullLabel).join(', ');
 
   return (
     <button
@@ -124,6 +154,11 @@ export function AccountSummaryPrimary({
       {showSecondary && accountSecondaryText ? (
         <small title={accountDisplay.fullAccount}>{accountSecondaryText}</small>
       ) : null}
+      {planShortLabel ? (
+        <small title={planFullLabel}>
+          {t('accounts.col_plan')}: {planShortLabel}
+        </small>
+      ) : null}
     </button>
   );
 }
@@ -146,6 +181,13 @@ function AccountQuotaPanel({
       ? quotaState.lastRefreshedAt
       : undefined;
   const singleQuotaEntry = quotaEntries.length === 1 ? quotaEntries[0] : null;
+  const singlePlanPresentation = singleQuotaEntry
+    ? getPlanPresentation({
+        provider: singleQuotaEntry.provider,
+        planType: singleQuotaEntry.planType,
+        t,
+      })
+    : null;
 
   const buildQuotaInfoRows = (entry: AccountQuotaEntry) => {
     const fromUsageHeaders = entry.observedFromUsageHeaders === true;
@@ -218,7 +260,7 @@ function AccountQuotaPanel({
               <span className={styles.quotaProgressBar} style={barStyle} />
             </div>
             <div className={styles.quotaWindowMeta}>
-              <small>{`${t('monitoring.account_quota_reset_at')}: ${window.resetLabel}`}</small>
+              <small>{`${t('monitoring.account_quota_reset_at')}: ${formatAccountQuotaResetDisplay(window.resetAtMs, window.resetLabel)}`}</small>
               {window.usageLabel ? <small>{window.usageLabel}</small> : null}
             </div>
           </div>
@@ -268,6 +310,11 @@ function AccountQuotaPanel({
       <div className={styles.quotaSectionHeader}>
         <div className={styles.quotaSectionTitleGroup}>
           <strong>{t('monitoring.account_quota_title')}</strong>
+          {singlePlanPresentation ? (
+            <small title={singlePlanPresentation.fullLabel}>
+              {t('accounts.col_plan')}: {singlePlanPresentation.shortLabel}
+            </small>
+          ) : null}
         </div>
         {renderRefreshButton()}
       </div>
@@ -318,13 +365,26 @@ function AccountQuotaPanel({
       ) : quotaEntries.length > 0 ? (
         <div className={styles.quotaEntryGrid}>
           {quotaEntries.map((entry) => {
-            const entryMetaText = `${entry.providerLabel} · ${entry.fileName}`;
+            const entryPlanPresentation = getPlanPresentation({
+              provider: entry.provider,
+              planType: entry.planType,
+              t,
+            });
+            const entryMetaText = [
+              entry.providerLabel,
+              entry.fileName,
+              entryPlanPresentation
+                ? `${t('accounts.col_plan')}: ${entryPlanPresentation.shortLabel}`
+                : '',
+            ]
+              .filter(Boolean)
+              .join(' · ');
             return (
               <div key={entry.key} className={styles.quotaEntryCard}>
                 <div className={styles.quotaEntryHeader}>
                   <div className={styles.quotaEntryMain}>
                     <strong>{entry.authLabel}</strong>
-                    <small>{entryMetaText}</small>
+                    <small title={entryPlanPresentation?.fullLabel}>{entryMetaText}</small>
                   </div>
                 </div>
 
@@ -593,6 +653,7 @@ function AccountModelUsageList({
           {visibleModels.map((model) => {
             const modelKey = `${row.id}-${model.model}`;
             const isModelExpanded = Boolean(expandedModels[modelKey]);
+            const cacheMetric = buildCacheTokenPresentation(model, t);
             return (
               <div key={modelKey} className={styles.accountModelItem}>
                 <button
@@ -651,14 +712,8 @@ function AccountModelUsageList({
                       <strong>{formatCompactNumber(model.outputTokens)}</strong>
                     </div>
                     <div className={styles.accountModelExpandedItem}>
-                      <small>
-                        {shortLabel(
-                          t,
-                          'monitoring.cached_tokens_short',
-                          'monitoring.cached_tokens'
-                        )}
-                      </small>
-                      <strong>{formatCompactNumber(model.cachedTokens)}</strong>
+                      <small title={cacheMetric.fullLabel}>{cacheMetric.label}</small>
+                      <strong>{cacheMetric.value}</strong>
                     </div>
                     <div className={styles.accountModelExpandedItem}>
                       <small>
@@ -741,25 +796,35 @@ export function AccountModelUsageTable({
             </tr>
           </thead>
           <tbody>
-            {visibleModels.map((model) => (
-              <tr key={`${row.id}-${model.model}`}>
-                <td>
-                  <span className={styles.accountModelName} title={model.model}>
-                    {model.model}
-                  </span>
-                </td>
-                <td>{formatCompactNumber(model.totalCalls)}</td>
-                <td className={getSuccessRateClassName(model.successRate)}>
-                  {formatPercent(model.successRate)}
-                </td>
-                <td>{formatCompactNumber(model.inputTokens)}</td>
-                <td>{formatCompactNumber(model.outputTokens)}</td>
-                <td>{formatCompactNumber(model.cachedTokens)}</td>
-                <td>{formatCompactNumber(model.totalTokens)}</td>
-                <td>{hasPrices ? formatUsd(model.totalCost) : '--'}</td>
-                <td>{formatDateTimeUtc8(model.lastSeenAt, locale, '', false)}</td>
-              </tr>
-            ))}
+            {visibleModels.map((model) => {
+              const cacheMetric = buildCacheTokenPresentation(model, t);
+              return (
+                <tr key={`${row.id}-${model.model}`}>
+                  <td>
+                    <span className={styles.accountModelName} title={model.model}>
+                      {model.model}
+                    </span>
+                  </td>
+                  <td>{formatCompactNumber(model.totalCalls)}</td>
+                  <td className={getSuccessRateClassName(model.successRate)}>
+                    {formatPercent(model.successRate)}
+                  </td>
+                  <td>{formatCompactNumber(model.inputTokens)}</td>
+                  <td>{formatCompactNumber(model.outputTokens)}</td>
+                  <td>
+                    <span title={cacheMetric.fullLabel}>
+                      {cacheMetric.label ===
+                      shortLabel(t, 'monitoring.cached_tokens_short', 'monitoring.cached_tokens')
+                        ? cacheMetric.value
+                        : `${cacheMetric.label} ${cacheMetric.value}`}
+                    </span>
+                  </td>
+                  <td>{formatCompactNumber(model.totalTokens)}</td>
+                  <td>{hasPrices ? formatUsd(model.totalCost) : '--'}</td>
+                  <td>{new Date(model.lastSeenAt).toLocaleString(locale)}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       ) : (
@@ -881,6 +946,7 @@ export function AccountOverviewCard({
             expanded={isExpanded}
             onToggle={onToggle}
             accountDisplayMode={accountDisplayMode}
+            t={t}
             statusTone={statusTone}
             showSecondary={false}
           />

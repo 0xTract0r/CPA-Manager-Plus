@@ -2,17 +2,21 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { TFunction } from 'i18next';
 import { AccountExpandedDetails, AccountOverviewCard } from './MonitoringCenterPage';
+import monitoringCenterPageSource from './MonitoringCenterPage.tsx?raw';
+import accountOverviewPanelSource from './components/AccountOverviewPanel.tsx?raw';
 import { MonitoringSummarySection } from '@/features/monitoring/components/MonitoringSummarySection';
 import {
   buildPrimarySummaryCards,
   buildSecondarySummaryCards,
 } from '@/features/monitoring/model/monitoringCenterPageModel';
+import { resolveMonitoringDimensionCounts } from '@/features/monitoring/model/monitoringAnalyticsModel';
 import type { MonitoringSummary } from '@/features/monitoring/hooks/useMonitoringData';
 import {
   buildEmptyMonitoringStatusData,
   type MonitoringAccountAuthState,
 } from '@/features/monitoring/accountOverviewState';
 import { buildRealtimeSourceDisplay } from '@/features/monitoring/realtimeSourceDisplay';
+import { buildCacheTokenPresentation } from '@/features/monitoring/components/accountOverviewPresentation';
 
 const t = ((key: string, options?: Record<string, unknown>) => {
   const copy: Record<string, string> = {
@@ -87,6 +91,82 @@ const t = ((key: string, options?: Record<string, unknown>) => {
 
 const createAuthState = (overrides: MonitoringAccountAuthState): MonitoringAccountAuthState =>
   overrides;
+
+describe('MonitoringCenterPage dimension counts', () => {
+  it('uses scoped rows for the active aggregate tab and selector counts elsewhere', () => {
+    expect(
+      resolveMonitoringDimensionCounts({
+        activeDataTab: 'accounts',
+        accountRowCount: 2,
+        apiKeyRowCount: 3,
+        accountSelectorCount: 9,
+        apiKeySelectorCount: 8,
+      })
+    ).toEqual({ accountCount: 2, apiKeyCount: 8 });
+    expect(
+      resolveMonitoringDimensionCounts({
+        activeDataTab: 'apiKeys',
+        accountRowCount: 2,
+        apiKeyRowCount: 3,
+        accountSelectorCount: 9,
+        apiKeySelectorCount: 8,
+      })
+    ).toEqual({ accountCount: 9, apiKeyCount: 3 });
+    expect(
+      resolveMonitoringDimensionCounts({
+        activeDataTab: 'realtime',
+        accountRowCount: 2,
+        apiKeyRowCount: 3,
+        accountSelectorCount: 9,
+        apiKeySelectorCount: 8,
+      })
+    ).toEqual({ accountCount: 9, apiKeyCount: 8 });
+  });
+});
+
+describe('MonitoringCenterPage quota refresh wiring', () => {
+  it('keeps account expansion separate from manual Provider quota refresh', () => {
+    const toggleStart = monitoringCenterPageSource.indexOf('const toggleAccountExpanded');
+    const focusStart = monitoringCenterPageSource.indexOf('const focusAccount', toggleStart);
+    const toggleSource = monitoringCenterPageSource.slice(toggleStart, focusStart);
+
+    expect(toggleStart).toBeGreaterThanOrEqual(0);
+    expect(focusStart).toBeGreaterThan(toggleStart);
+    expect(toggleSource).toContain('setExpandedAccounts');
+    expect(toggleSource).not.toContain('loadAccountQuota');
+    expect(monitoringCenterPageSource).toContain('onLoadAccountQuota={loadAccountQuota}');
+    expect(monitoringCenterPageSource).toContain('createKeyedSerialTaskQueue');
+    expect(monitoringCenterPageSource).toContain('accountQuotaRefreshQueue.run');
+    expect(monitoringCenterPageSource).toContain('runProviderCredentialTaskPlan');
+    expect(monitoringCenterPageSource).toContain(
+      'perProviderConcurrency: MAX_CONCURRENT_ACCOUNT_QUOTA_REQUESTS_PER_PROVIDER'
+    );
+    expect(monitoringCenterPageSource).not.toContain(
+      'targets.map((target) => requestAccountQuota(target, t))'
+    );
+    expect(monitoringCenterPageSource).toContain('useHeaderSnapshotsLoader({');
+    expect(monitoringCenterPageSource).toContain('const rowIds = new Set([');
+    expect(monitoringCenterPageSource).toContain('...accountQuotaTargetsByRowId.keys()');
+    expect(monitoringCenterPageSource).toContain(
+      'resolveMonitoringAccountFocusAction(focusedAccountId, row)'
+    );
+    expect(monitoringCenterPageSource).toContain('accountQuotaTargetsByRowId.get(rowId)');
+    expect(monitoringCenterPageSource).toContain('accountQuotaRequestIdsByRowIdRef.current[rowId]');
+    expect(monitoringCenterPageSource).toContain('commitAccountQuotaState(rowId, {');
+    expect(monitoringCenterPageSource).toContain(
+      '${accountQuotaContextKey}\\u0000${rowId}\\u0000${targetKey}'
+    );
+    expect(monitoringCenterPageSource).toContain('setFocusedAccountId(action.rowId)');
+    expect(monitoringCenterPageSource).not.toContain('focusedAccount === account');
+    expect(monitoringCenterPageSource).not.toContain('accountQuotaTargetsByAccount');
+    expect(accountOverviewPanelSource).toContain('expandedAccounts[row.id]');
+    expect(accountOverviewPanelSource).toContain('focusedAccountId === row.id');
+    expect(accountOverviewPanelSource).toContain('accountAuthStateByRowId.get(row.id)');
+    expect(accountOverviewPanelSource).toContain('accountQuotaStatesByRowId[row.id]');
+    expect(accountOverviewPanelSource).not.toContain('accountQuotaStates[row.account]');
+    expect(monitoringCenterPageSource).not.toContain('onResponse: (response) =>');
+  });
+});
 
 describe('MonitoringCenterPage summary cards', () => {
   it('renders all request monitoring summary metrics in one ordered grid with large values intact', () => {
@@ -261,9 +341,71 @@ describe('MonitoringCenterPage summary cards', () => {
 
     expect(cachedCard?.meta).toBe('Hit rate 27.3%');
   });
+
+  it('uses the normalized GPT-5.6 cache hit rate from analytics', () => {
+    const secondaryCards = buildSecondarySummaryCards(
+      {
+        totalCalls: 1,
+        successCalls: 1,
+        failureCalls: 0,
+        successRate: 1,
+        inputTokens: 152_600,
+        outputTokens: 385,
+        reasoningTokens: 238,
+        cachedTokens: 0,
+        cacheReadTokens: 151_000,
+        cacheCreationTokens: 1_000,
+        cacheHitRate: 151_000 / 152_600,
+        totalTokens: 153_223,
+        totalCost: 0,
+        averageLatencyMs: null,
+        rpm30m: 0,
+        tpm30m: 0,
+        avgDailyRequests: 0,
+        avgDailyTokens: 0,
+        approxTasks: 0,
+        approxTaskFailures: 0,
+        approxTaskSuccessRate: 0,
+        zeroTokenCalls: 0,
+        zeroTokenModels: [],
+      },
+      'en',
+      t
+    );
+    const cachedCard = secondaryCards.find((card) => card.label === 'Cached Tokens');
+
+    expect(cachedCard?.meta).toBe('Hit rate 99.0%');
+  });
 });
 
 describe('MonitoringCenterPage account card', () => {
+  it('formats legacy and fine-grained account cache metrics without changing the token slot', () => {
+    expect(
+      buildCacheTokenPresentation(
+        { cachedTokens: 12_500, cacheReadTokens: 0, cacheCreationTokens: 0 },
+        t
+      )
+    ).toMatchObject({ label: 'Cached Tokens', value: '12.5K' });
+    expect(
+      buildCacheTokenPresentation(
+        { cachedTokens: 0, cacheReadTokens: 1_200, cacheCreationTokens: 300 },
+        t
+      )
+    ).toMatchObject({ label: 'CR / CW', value: '1.2K / 300' });
+    expect(
+      buildCacheTokenPresentation(
+        { cachedTokens: 40, cacheReadTokens: 1_200, cacheCreationTokens: 300 },
+        t
+      )
+    ).toMatchObject({ label: 'C / CR / CW', value: '40 / 1.2K / 300' });
+    expect(
+      buildCacheTokenPresentation(
+        { cachedTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
+        t
+      )
+    ).toMatchObject({ label: 'Cached Tokens', value: '0' });
+  });
+
   it('prefers readable channel names in realtime source cells', () => {
     const display = buildRealtimeSourceDisplay(
       {
@@ -281,6 +423,25 @@ describe('MonitoringCenterPage account card', () => {
 
     expect(display.primary).toBe('Claude Relay');
     expect(display.meta).toBe('Provider: openai');
+  });
+
+  it('keeps the provider metadata line when it matches the realtime primary label', () => {
+    const display = buildRealtimeSourceDisplay(
+      {
+        account: '',
+        accountMasked: '',
+        authLabel: '',
+        channel: 'deepseek',
+        channelHost: '-',
+        provider: 'deepseek',
+        source: 'deepseek',
+        sourceMasked: 'deepseek',
+      },
+      t
+    );
+
+    expect(display.primary).toBe('deepseek');
+    expect(display.meta).toBe('Provider: deepseek');
   });
 
   it('shows one realtime source meta value by priority', () => {
@@ -349,11 +510,13 @@ describe('MonitoringCenterPage account card', () => {
     const row = {
       id: 'very-long-account-name@example.com',
       account: 'very-long-account-name@example.com',
+      provider: 'codex',
       displayAccount: 'very-long-account-name@example.com',
       accountMasked: 'ver***@example.com',
       authLabels: ['alpha'],
       authIndices: ['1'],
       channels: ['default'],
+      planTypes: ['self_serve_business_prolite', 'business_premium_5x'],
       totalCalls: 1,
       successCalls: 1,
       failureCalls: 0,
@@ -395,8 +558,12 @@ describe('MonitoringCenterPage account card', () => {
         />
       );
 
-    expect(renderCard('masked')).toContain('>ver***@example.com</span>');
-    expect(renderCard('masked')).toContain('very-long-account-name@example.com');
+    const maskedCard = renderCard('masked');
+    expect(maskedCard).toContain('>ver***@example.com</span>');
+    expect(maskedCard).toContain('very-long-account-name@example.com');
+    expect(maskedCard).toContain('Business 5x');
+    expect(maskedCard).toContain('title="Business Premium 5x"');
+    expect(maskedCard).not.toContain('self_serve_business_prolite');
     expect(renderCard('full')).toContain('>very-long-account-name@example.com</span>');
   });
 
@@ -674,7 +841,13 @@ describe('MonitoringCenterPage account card', () => {
           { key: 'total-tokens', label: 'Total Tokens', value: '35.1M' },
           { key: 'input-tokens', label: 'Input Tokens', value: '35.0M' },
           { key: 'output-tokens', label: 'Output Tokens', value: '68.5K' },
-          { key: 'cached-tokens', label: 'Cached Tokens', value: '33.9M' },
+          {
+            key: 'cached-tokens',
+            label: 'C / CR / CW',
+            fullLabel:
+              'Cached Tokens: 33.9M · Cache Read Tokens: 1.2M · Cache Creation Tokens: 340.0K',
+            value: '33.9M / 1.2M / 340.0K',
+          },
         ]}
         onRefreshQuota={() => {}}
         variant="table"
@@ -684,9 +857,8 @@ describe('MonitoringCenterPage account card', () => {
     expect(html).toContain('Token Structure');
     expect(html).toContain('Input Tokens');
     expect(html).toContain('Output Tokens');
-    expect(html).toContain('Cached Tokens');
-    expect(html).not.toContain('Cache Read Tokens');
-    expect(html).not.toContain('Cache Creation Tokens');
+    expect(html).toContain('C / CR / CW');
+    expect(html).toContain('33.9M / 1.2M / 340.0K');
     expect(html).toContain('Model Usage Top 2');
     expect(html).toContain('View All');
     expect(html).not.toContain('<th>Read</th>');
@@ -695,6 +867,7 @@ describe('MonitoringCenterPage account card', () => {
     expect(html).toContain('<th>Latest request</th>');
     expect(html).toContain('gpt-5.5');
     expect(html).toContain('codex-auto-review');
+    expect(html).toContain('C / CR / CW 32.5M / 1.1M / 300.0K');
     expect(html).not.toContain('long-tail-model');
   });
 

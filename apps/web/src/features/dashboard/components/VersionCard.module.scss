@@ -32,6 +32,10 @@
 
 .systemGrid {
   grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+
+  .item {
+    min-height: 84px;
+  }
 }
 
 .healthGrid {
@@ -43,7 +47,8 @@
   grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
 }
 
-.item, .healthItem {
+.item,
+.healthItem {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -60,17 +65,6 @@
     background: var(--app-accent-soft);
     border-color: var(--color-primary);
     transform: translateY(-1px);
-  }
-}
-
-.tapItem {
-  cursor: pointer;
-
-  &:focus-visible {
-    outline: none;
-    background: var(--focus-bg);
-    border-color: var(--focus-border);
-    box-shadow: inset 0 0 0 1px var(--focus-inset);
   }
 }
 
@@ -134,6 +128,10 @@
 }
 
 @media (max-width: 560px) {
+  .systemGrid .item {
+    min-height: 74px;
+  }
+
   .healthGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -187,6 +185,37 @@
     text-overflow: ellipsis;
   }
 
+  .versionLink {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    max-width: 100%;
+    color: var(--text-primary);
+    text-decoration: none;
+    border-radius: 4px;
+
+    .value {
+      min-width: 0;
+      color: inherit;
+    }
+
+    svg {
+      flex: 0 0 auto;
+    }
+
+    &:hover {
+      color: var(--focus-text);
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--focus-border);
+      outline-offset: 2px;
+    }
+  }
+
   .valueWrap {
     display: flex;
     align-items: center;
@@ -200,6 +229,7 @@
     justify-content: space-between;
     gap: 8px;
     min-width: 0;
+    min-height: 26px;
   }
 
   .versionAction {
@@ -223,10 +253,39 @@
     }
   }
 
-  .okText { color: #10b981; }
-  .warnText { color: #f59e0b; }
-  .errorText { color: #ef4444; }
-  .mutedText { color: var(--text-tertiary); }
+  .okText {
+    color: #10b981;
+  }
+  .warnText {
+    color: #f59e0b;
+  }
+  .errorText {
+    color: #ef4444;
+  }
+  .mutedText {
+    color: var(--text-tertiary);
+  }
+}
+
+.badge.managerUpdateBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 24px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: var(--app-accent-soft);
+  color: var(--color-primary);
+  text-decoration: none;
+
+  &:hover {
+    box-shadow: inset 0 0 0 1px var(--color-primary);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--focus-border);
+    outline-offset: 2px;
+  }
 }
 
 // 移动端(≤560px，含真机复验的 390 宽度)健康卡是 2 列布局(见上方同断点的
@@ -252,6 +311,7 @@
   border-radius: 4px;
   font-size: 10px;
   font-weight: 700;
+  text-decoration: none;
 
   &.badgeUpdate {
     background: var(--color-primary);

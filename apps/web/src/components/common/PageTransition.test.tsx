@@ -1,34 +1,74 @@
-import { useEffect } from 'react';
-import { act, create } from 'react-test-renderer';
-import { MemoryRouter, useNavigate, type NavigateFunction } from 'react-router-dom';
-import { expect, it } from 'vitest';
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PageTransition } from './PageTransition';
 
-it('updates query location without remounting the current page layer', async () => {
-  let navigate: NavigateFunction;
-  let renderer: ReturnType<typeof create>;
-  function Harness() {
-    const go = useNavigate();
-    useEffect(() => { navigate = go; }, [go]);
-    return <PageTransition render={(location) => <span data-query={location.search} />} />;
-  }
-  await act(async () => {
-    renderer = create(
-      <MemoryRouter initialEntries={['/usage-analytics?model=A']}>
-        <Harness />
-      </MemoryRouter>
-    );
+const mocks = vi.hoisted(() => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  return {
+    location: {
+      pathname: '/usage-maintenance',
+      key: 'preserved',
+      search: '',
+      hash: '',
+      state: null,
+    },
+  };
+});
+
+vi.mock('react-router-dom', () => ({ useLocation: () => mocks.location }));
+vi.mock('motion/mini', () => ({ animate: vi.fn() }));
+
+describe('PageTransition location identity', () => {
+  let renderer: ReactTestRenderer | undefined;
+  const render = () => (
+    <PageTransition
+      getTransitionVariant={() => 'none'}
+      render={(location) => <p>{location.pathname}</p>}
+    />
+  );
+
+  beforeEach(() => {
+    mocks.location = {
+      pathname: '/usage-maintenance',
+      key: 'preserved',
+      search: '',
+      hash: '',
+      state: null,
+    };
   });
-  expect(renderer!.root.findByType('span').props['data-query']).toBe('?model=A');
-  await act(async () => {
-    navigate!('/usage-analytics?model=all');
+
+  afterEach(async () => {
+    await act(async () => renderer?.unmount());
+    renderer = undefined;
   });
-  expect(renderer!.root.findByType('span').props['data-query']).toBe('?model=all');
-  await act(async () => {
-    navigate!(-1);
+
+  it('updates a hash navigation when the browser preserves the history state key', async () => {
+    await act(async () => {
+      renderer = create(render());
+    });
+    expect(renderer!.root.findByType('p').children).toEqual(['/usage-maintenance']);
+
+    mocks.location = { ...mocks.location, pathname: '/model-prices' };
+    await act(async () => {
+      renderer!.update(render());
+    });
+    expect(renderer!.root.findByType('p').children).toEqual(['/model-prices']);
+
+    mocks.location = { ...mocks.location, pathname: '/usage-maintenance' };
+    await act(async () => {
+      renderer!.update(render());
+    });
+    expect(renderer!.root.findByType('p').children).toEqual(['/usage-maintenance']);
   });
-  expect(renderer!.root.findByType('span').props['data-query']).toBe('?model=A');
-  await act(async () => {
-    renderer!.unmount();
+
+  it('continues to update ordinary router navigation with a new history key', async () => {
+    await act(async () => {
+      renderer = create(render());
+    });
+    mocks.location = { ...mocks.location, pathname: '/model-prices', key: 'next' };
+    await act(async () => {
+      renderer!.update(render());
+    });
+    expect(renderer!.root.findByType('p').children).toEqual(['/model-prices']);
   });
 });

@@ -10,6 +10,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { authFilesMock } = vi.hoisted(() => ({
   authFilesMock: {
     getAccountSettings: vi.fn(),
+    lookup: vi.fn(),
+    list: vi.fn(),
+    patchFieldsWithPluginSourceFallback: vi.fn(),
+    saveTextVerified: vi.fn(),
     downloadText: vi.fn(),
     updateAccountSettings: vi.fn(),
     patchFields: vi.fn(),
@@ -88,7 +92,12 @@ const mountHook = () => {
 const OLD_PROXY = 'socks5://user:pass@oldhost:1080';
 const NEW_PROXY = 'socks5://user:pass@newhost:1080';
 
-const authFile: AuthFileItem = { name: 'acct-claude.json', type: 'claude' } as AuthFileItem;
+const authFile: AuthFileItem = {
+  name: 'acct-claude.json',
+  id: 'runtime-claude',
+  auth_index: 'index-claude',
+  type: 'claude',
+} as AuthFileItem;
 
 const seedEditor = async (harness: ReturnType<typeof mountHook>) => {
   authFilesMock.getAccountSettings.mockResolvedValue({ proxy_url: OLD_PROXY, note: 'n' });
@@ -104,6 +113,10 @@ const seedEditor = async (harness: ReturnType<typeof mountHook>) => {
 };
 
 beforeEach(() => {
+  authFilesMock.lookup.mockReset().mockResolvedValue([authFile]);
+  authFilesMock.list.mockReset().mockResolvedValue({ files: [] });
+  authFilesMock.patchFieldsWithPluginSourceFallback.mockReset();
+  authFilesMock.saveTextVerified.mockReset();
   authFilesMock.getAccountSettings.mockReset();
   authFilesMock.downloadText.mockReset();
   authFilesMock.updateAccountSettings.mockReset();

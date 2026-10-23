@@ -6,8 +6,7 @@ export const padNumber = (value: number) => String(value).padStart(2, '0');
 
 // 图表按「天」分桶的 key，走全局时区（默认 UTC+8），使分桶/日轴标签与全站展示一致，
 // 不再跟随浏览器本地时区。格式仍为 `YYYY-MM-DD`（formatDayAxisUtc8 用 en-CA 保证顺序）。
-export const buildLocalDayKey = (timestampMs: number) =>
-  formatDayAxisUtc8(timestampMs) || '';
+export const buildLocalDayKey = (timestampMs: number) => formatDayAxisUtc8(timestampMs) || '';
 
 // 小时轴标签 `HH:00`，走全局时区（默认 UTC+8），替换手工 getHours（读浏览器本地时区）。
 export const buildHourLabel = (timestampMs: number) => {
@@ -22,9 +21,9 @@ const isValidCustomTimeRange = (
 ): range is MonitoringCustomTimeRange =>
   Boolean(
     range &&
-      Number.isFinite(range.startMs) &&
-      Number.isFinite(range.endMs) &&
-      range.startMs <= range.endMs
+    Number.isFinite(range.startMs) &&
+    Number.isFinite(range.endMs) &&
+    range.startMs <= range.endMs
   );
 
 // 委托给 shared/model/timeRange 统一计算，本函数只负责把监控页的 startMs/endMs

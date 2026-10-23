@@ -5,42 +5,62 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
+
+	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/usageidentity"
 )
 
 type Event struct {
-	Telemetry             *Telemetry `json:"telemetry,omitempty"`
-	RequestID             string     `json:"request_id,omitempty"`
-	EventHash             string     `json:"event_hash"`
-	TimestampMS           int64      `json:"timestamp_ms"`
-	Timestamp             string     `json:"timestamp"`
-	Provider              string     `json:"provider,omitempty"`
-	ExecutorType          string     `json:"executor_type,omitempty"`
-	Model                 string     `json:"model"`
-	RequestedModel        string     `json:"requested_model,omitempty"`
-	ResolvedModel         string     `json:"resolved_model,omitempty"`
-	Endpoint              string     `json:"endpoint,omitempty"`
-	Method                string     `json:"method,omitempty"`
-	Path                  string     `json:"path,omitempty"`
-	AuthType              string     `json:"auth_type,omitempty"`
-	AuthIndex             string     `json:"auth_index,omitempty"`
-	Source                string     `json:"source,omitempty"`
-	SourceHash            string     `json:"source_hash,omitempty"`
-	APIKeyHash            string     `json:"api_key_hash,omitempty"`
-	AccountSnapshot       string     `json:"account_snapshot,omitempty"`
-	AuthLabelSnapshot     string     `json:"auth_label_snapshot,omitempty"`
-	AuthFileSnapshot      string     `json:"auth_file_snapshot,omitempty"`
-	AuthProviderSnapshot  string     `json:"auth_provider_snapshot,omitempty"`
-	AuthProjectIDSnapshot string     `json:"auth_project_id_snapshot,omitempty"`
-	AuthSnapshotAtMS      int64      `json:"auth_snapshot_at_ms,omitempty"`
+	Telemetry         *Telemetry `json:"telemetry,omitempty"`
+	RequestID         string     `json:"request_id,omitempty"`
+	EventHash         string     `json:"event_hash"`
+	TimestampMS       int64      `json:"timestamp_ms"`
+	Timestamp         string     `json:"timestamp"`
+	Provider          string     `json:"provider,omitempty"`
+	ExecutorType      string     `json:"executor_type,omitempty"`
+	Model             string     `json:"model"`
+	AnalyticsModel    string     `json:"analytics_model,omitempty"`
+	RequestedModel    string     `json:"requested_model,omitempty"`
+	ResolvedModel     string     `json:"resolved_model,omitempty"`
+	ResponseModel     string     `json:"response_model,omitempty"`
+	SessionID         string     `json:"session_id,omitempty"`
+	ParentSessionID   string     `json:"parent_session_id,omitempty"`
+	AccessTokenSHA256 string     `json:"access_token_sha256,omitempty"`
+	Generate          *bool      `json:"generate,omitempty"`
+	Stream            *bool      `json:"stream,omitempty"`
+	Endpoint          string     `json:"endpoint,omitempty"`
+	Method            string     `json:"method,omitempty"`
+	Path              string     `json:"path,omitempty"`
+	// Downstream request metadata is available only to authenticated monitoring
+	// APIs. Compatible usage payloads and JSONL exports intentionally omit it.
+	ClientIP              string `json:"-"`
+	XForwardedFor         string `json:"-"`
+	UserAgent             string `json:"-"`
+	AuthType              string `json:"auth_type,omitempty"`
+	AuthIndex             string `json:"auth_index,omitempty"`
+	Source                string `json:"source,omitempty"`
+	SourceHash            string `json:"source_hash,omitempty"`
+	APIKeyHash            string `json:"api_key_hash,omitempty"`
+	AccountSnapshot       string `json:"account_snapshot,omitempty"`
+	AuthLabelSnapshot     string `json:"auth_label_snapshot,omitempty"`
+	AuthFileSnapshot      string `json:"auth_file_snapshot,omitempty"`
+	AuthProviderSnapshot  string `json:"auth_provider_snapshot,omitempty"`
+	AuthAccountIDSnapshot string `json:"auth_account_id_snapshot,omitempty"`
+	AuthProjectIDSnapshot string `json:"auth_project_id_snapshot,omitempty"`
+	AuthSnapshotAtMS      int64  `json:"auth_snapshot_at_ms,omitempty"`
 	// ReasoningEffort is the request-side effort setting added by CPA v7.1.18+.
 	// It is not the same as response-side tokens.reasoning_tokens usage.
 	ReasoningEffort     string `json:"reasoning_effort,omitempty"`
 	ServiceTier         string `json:"service_tier,omitempty"`
+	RequestServiceTier  string `json:"request_service_tier,omitempty"`
+	ResponseServiceTier string `json:"response_service_tier,omitempty"`
+	CacheInputMode      string `json:"cache_input_mode,omitempty"`
 	InputTokens         int64  `json:"input_tokens"`
 	OutputTokens        int64  `json:"output_tokens"`
 	ReasoningTokens     int64  `json:"reasoning_tokens"`
@@ -48,12 +68,22 @@ type Event struct {
 	CacheTokens         int64  `json:"cache_tokens"`
 	CacheReadTokens     int64  `json:"cache_read_tokens"`
 	CacheCreationTokens int64  `json:"cache_creation_tokens"`
-	TotalTokens         int64  `json:"total_tokens"`
-	LatencyMS           *int64 `json:"latency_ms,omitempty"`
-	TTFTMS              *int64 `json:"ttft_ms,omitempty"`
-	Failed              bool   `json:"failed"`
-	FailStatusCode      int    `json:"fail_status_code,omitempty"`
-	FailSummary         string `json:"fail_summary,omitempty"`
+	// Normalized token buckets are persisted for aggregation and billing but are
+	// not exposed in compatible usage payloads.
+	NormalizedUncachedInputTokens int64 `json:"-"`
+	NormalizedTotalInputTokens    int64 `json:"-"`
+	NormalizedCacheReadTokens     int64 `json:"-"`
+	NormalizedCacheCreationTokens int64 `json:"-"`
+	TotalTokens                   int64 `json:"total_tokens"`
+	// PreserveArchiveDerivedFields is set only after an internal archive record
+	// passes schema validation. It keeps persisted accounting and service-tier
+	// semantics stable when an archive is restored by a newer CPAMP version.
+	PreserveArchiveDerivedFields bool   `json:"-"`
+	LatencyMS                    *int64 `json:"latency_ms,omitempty"`
+	TTFTMS                       *int64 `json:"ttft_ms,omitempty"`
+	Failed                       bool   `json:"failed"`
+	FailStatusCode               int    `json:"fail_status_code,omitempty"`
+	FailSummary                  string `json:"fail_summary,omitempty"`
 	// FailBody is retained only in the local DB as a sensitive internal field.
 	// Public APIs, compatible payloads, and exports must use FailSummary instead.
 	FailBody               string                  `json:"-"`
@@ -91,6 +121,14 @@ type LongContextTokens struct {
 	LongCacheCreationTokens int64
 }
 
+// PricingBand identifies the exact price rule used to aggregate a request.
+// ContextThresholdTokens is zero only for legacy/unclassified aggregates;
+// classified base-rate requests use model.ModelPriceBaseContextThreshold.
+type PricingBand struct {
+	PricingModel           string
+	ContextThresholdTokens int64
+}
+
 func (tokens *LongContextTokens) AddIfLongContext(input, output, cached, cacheRead, cacheCreation int64) {
 	if tokens == nil || !IsLongContextInput(input) {
 		return
@@ -112,13 +150,24 @@ type Detail struct {
 	AuthLabelSnapshot     string                  `json:"auth_label_snapshot,omitempty"`
 	AuthFileSnapshot      string                  `json:"auth_file_snapshot,omitempty"`
 	AuthProviderSnapshot  string                  `json:"auth_provider_snapshot,omitempty"`
+	AuthAccountIDSnapshot string                  `json:"auth_account_id_snapshot,omitempty"`
 	AuthProjectIDSnapshot string                  `json:"auth_project_id_snapshot,omitempty"`
 	AuthSnapshotAtMS      int64                   `json:"auth_snapshot_at_ms,omitempty"`
 	LatencyMS             *int64                  `json:"latency_ms,omitempty"`
 	TTFTMS                *int64                  `json:"ttft_ms,omitempty"`
+	RequestedModel        string                  `json:"requested_model,omitempty"`
 	ResolvedModel         string                  `json:"resolved_model,omitempty"`
+	ResponseModel         string                  `json:"response_model,omitempty"`
+	SessionID             string                  `json:"session_id,omitempty"`
+	ParentSessionID       string                  `json:"parent_session_id,omitempty"`
+	AccessTokenSHA256     string                  `json:"access_token_sha256,omitempty"`
+	Generate              *bool                   `json:"generate,omitempty"`
+	Stream                *bool                   `json:"stream,omitempty"`
 	ReasoningEffort       string                  `json:"reasoning_effort,omitempty"`
 	ServiceTier           string                  `json:"service_tier,omitempty"`
+	RequestServiceTier    string                  `json:"request_service_tier,omitempty"`
+	ResponseServiceTier   string                  `json:"response_service_tier,omitempty"`
+	CacheInputMode        string                  `json:"cache_input_mode,omitempty"`
 	ExecutorType          string                  `json:"executor_type,omitempty"`
 	Tokens                Tokens                  `json:"tokens"`
 	Failed                bool                    `json:"failed"`
@@ -144,24 +193,531 @@ type Payload struct {
 }
 
 const (
-	maxFailSummaryBytes            = 4096
-	LongContextInputTokenThreshold = int64(272_000)
+	maxFailSummaryBytes                        = 4096
+	maxClientIPBytes                           = 64
+	maxXForwardedForBytes                      = 2048
+	maxUserAgentBytes                          = 1024
+	LongContextInputTokenThreshold             = int64(272_000)
+	CacheInputModeIncluded                     = "included_in_input"
+	CacheInputModeSeparate                     = "separate_from_input"
+	CacheInputModeReadIncludedCreationSeparate = "read_included_creation_separate"
 )
+
+type CacheAccounting struct {
+	Mode                string
+	UncachedInputTokens int64
+	TotalInputTokens    int64
+	CacheReadTokens     int64
+	CacheCreationTokens int64
+}
+
+type CacheInputContext struct {
+	ExplicitMode     string
+	ExecutorType     string
+	Provider         string
+	ProviderSnapshot string
+	AuthType         string
+	ResolvedModel    string
+	RequestedModel   string
+	DisplayModel     string
+}
+
+// EffectiveServiceTier returns the tier used for billing and aggregation.
+// Codex reports default/auto even when Fast Mode was requested, so Codex uses
+// the request tier. Other providers retain response-tier precedence.
+func EffectiveServiceTier(context CacheInputContext, requestTier, legacyTier, responseTier string) string {
+	identity := strings.ToLower(strings.Join([]string{
+		context.ExecutorType,
+		context.Provider,
+		context.ProviderSnapshot,
+		context.AuthType,
+	}, " "))
+	if strings.Contains(identity, "codex") {
+		if requestTier != "" {
+			return requestTier
+		}
+		if legacyTier != "" {
+			return legacyTier
+		}
+		return responseTier
+	}
+	if responseTier != "" {
+		return responseTier
+	}
+	if legacyTier != "" {
+		return legacyTier
+	}
+	return requestTier
+}
+
+type RawCacheAccountingHints struct {
+	ExplicitMode     string
+	ExplicitTotal    int64
+	HasExplicitTotal bool
+	ValidPayload     bool
+}
+
+const (
+	canonicalTokenAccountingSchemaVersion   int64 = 2
+	maxCanonicalJSONInteger                 int64 = (1 << 53) - 1
+	canonicalTokenAccountingQualityComplete       = "complete"
+)
+
+type canonicalTokenInputBreakdown struct {
+	TotalTokens      int64
+	UncachedTokens   int64
+	CacheReadTokens  int64
+	CacheWriteTokens int64
+}
+
+type canonicalTokenOutputBreakdown struct {
+	TotalTokens        int64
+	NonReasoningTokens int64
+	ReasoningTokens    int64
+}
+
+type canonicalTokenBreakdown struct {
+	TotalTokens int64
+	Input       canonicalTokenInputBreakdown
+	Output      canonicalTokenOutputBreakdown
+}
+
+func NormalizeCacheAccounting(context CacheInputContext, inputTokens, cachedTokens, cacheTokens, cacheReadTokens, cacheCreationTokens int64) CacheAccounting {
+	mode := InferCacheInputMode(context, cacheReadTokens, cacheCreationTokens)
+	input := maxInt64(inputTokens, 0)
+	cacheRead := CompatibleCachedTokens(cachedTokens, cacheTokens, cacheReadTokens, cacheCreationTokens) + maxInt64(cacheReadTokens, 0)
+	cacheCreation := maxInt64(cacheCreationTokens, 0)
+	accounting := CacheAccounting{
+		Mode:                mode,
+		CacheReadTokens:     cacheRead,
+		CacheCreationTokens: cacheCreation,
+	}
+	switch mode {
+	case CacheInputModeSeparate:
+		accounting.UncachedInputTokens = input
+		accounting.TotalInputTokens = input + cacheRead + cacheCreation
+	case CacheInputModeReadIncludedCreationSeparate:
+		accounting.UncachedInputTokens = maxInt64(input-cacheRead, 0)
+		accounting.TotalInputTokens = input + cacheCreation
+	default:
+		accounting.UncachedInputTokens = maxInt64(input-cacheRead-cacheCreation, 0)
+		accounting.TotalInputTokens = input
+	}
+	return accounting
+}
+
+func NormalizeCacheAccountingWithRawJSON(
+	context CacheInputContext,
+	raw string,
+	inputTokens, outputTokens, reasoningTokens, totalTokens int64,
+	cachedTokens, cacheTokens, cacheReadTokens, cacheCreationTokens int64,
+) CacheAccounting {
+	accounting := NormalizeCacheAccounting(
+		context,
+		inputTokens,
+		cachedTokens,
+		cacheTokens,
+		cacheReadTokens,
+		cacheCreationTokens,
+	)
+	// 完整且与原始计数自洽的 core v2 proof 优先于 provider/executor/model 推断。
+	// 无效或不完整 proof 继续沿用旧估算，并保留原始 JSON 供追溯。
+	breakdown, ok := canonicalTokenBreakdownFromJSON(raw)
+	if !ok {
+		return accounting
+	}
+	canonical, ok := canonicalCacheAccounting(
+		breakdown,
+		inputTokens,
+		outputTokens,
+		reasoningTokens,
+		totalTokens,
+		cachedTokens,
+		cacheTokens,
+		cacheReadTokens,
+		cacheCreationTokens,
+	)
+	if !ok {
+		return accounting
+	}
+	return canonical
+}
+
+func canonicalTokenBreakdownFromJSON(raw string) (canonicalTokenBreakdown, bool) {
+	if strings.TrimSpace(raw) == "" || !json.Valid([]byte(raw)) {
+		return canonicalTokenBreakdown{}, false
+	}
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.UseNumber()
+	var payload any
+	if err := decoder.Decode(&payload); err != nil {
+		return canonicalTokenBreakdown{}, false
+	}
+	record, ok := payload.(map[string]any)
+	if !ok {
+		return canonicalTokenBreakdown{}, false
+	}
+	accountingVersion, ok := canonicalJSONInt(record, "accounting_version")
+	if !ok || accountingVersion != canonicalTokenAccountingSchemaVersion {
+		return canonicalTokenBreakdown{}, false
+	}
+	breakdownRecord, ok := record["token_breakdown"].(map[string]any)
+	if !ok {
+		return canonicalTokenBreakdown{}, false
+	}
+	schemaVersion, ok := canonicalJSONInt(breakdownRecord, "schema_version")
+	if !ok || schemaVersion != canonicalTokenAccountingSchemaVersion {
+		return canonicalTokenBreakdown{}, false
+	}
+	quality, ok := breakdownRecord["quality"].(string)
+	if !ok || strings.TrimSpace(quality) != canonicalTokenAccountingQualityComplete {
+		return canonicalTokenBreakdown{}, false
+	}
+	unclassified, ok := canonicalJSONInt(breakdownRecord, "unclassified_tokens")
+	if !ok || unclassified != 0 {
+		return canonicalTokenBreakdown{}, false
+	}
+	total, ok := canonicalJSONInt(breakdownRecord, "total_tokens")
+	if !ok {
+		return canonicalTokenBreakdown{}, false
+	}
+	inputRecord, ok := breakdownRecord["input"].(map[string]any)
+	if !ok {
+		return canonicalTokenBreakdown{}, false
+	}
+	outputRecord, ok := breakdownRecord["output"].(map[string]any)
+	if !ok {
+		return canonicalTokenBreakdown{}, false
+	}
+
+	inputTotal, okInputTotal := canonicalJSONInt(inputRecord, "total_tokens")
+	uncached, okUncached := canonicalJSONInt(inputRecord, "uncached_tokens")
+	cacheRead, okCacheRead := canonicalJSONInt(inputRecord, "cache_read_tokens")
+	cacheWrite, okCacheWrite := canonicalJSONInt(inputRecord, "cache_write_tokens")
+	outputTotal, okOutputTotal := canonicalJSONInt(outputRecord, "total_tokens")
+	nonReasoning, okNonReasoning := canonicalJSONInt(outputRecord, "non_reasoning_tokens")
+	reasoning, okReasoning := canonicalJSONInt(outputRecord, "reasoning_tokens")
+	if !okInputTotal || !okUncached || !okCacheRead || !okCacheWrite ||
+		!okOutputTotal || !okNonReasoning || !okReasoning {
+		return canonicalTokenBreakdown{}, false
+	}
+	if inputTotal != uncached+cacheRead+cacheWrite ||
+		outputTotal != nonReasoning+reasoning ||
+		total != inputTotal+outputTotal {
+		return canonicalTokenBreakdown{}, false
+	}
+	return canonicalTokenBreakdown{
+		TotalTokens: total,
+		Input: canonicalTokenInputBreakdown{
+			TotalTokens:      inputTotal,
+			UncachedTokens:   uncached,
+			CacheReadTokens:  cacheRead,
+			CacheWriteTokens: cacheWrite,
+		},
+		Output: canonicalTokenOutputBreakdown{
+			TotalTokens:        outputTotal,
+			NonReasoningTokens: nonReasoning,
+			ReasoningTokens:    reasoning,
+		},
+	}, true
+}
+
+func canonicalJSONInt(record map[string]any, key string) (int64, bool) {
+	value, ok := record[key]
+	if !ok {
+		return 0, false
+	}
+	number, ok := value.(json.Number)
+	if !ok {
+		return 0, false
+	}
+	parsed, err := number.Int64()
+	if err != nil || parsed < 0 || parsed > maxCanonicalJSONInteger {
+		return 0, false
+	}
+	return parsed, true
+}
+
+func canonicalCacheAccounting(
+	breakdown canonicalTokenBreakdown,
+	inputTokens, outputTokens, reasoningTokens, totalTokens int64,
+	cachedTokens, cacheTokens, cacheReadTokens, cacheCreationTokens int64,
+) (CacheAccounting, bool) {
+	if inputTokens < 0 || outputTokens < 0 || reasoningTokens < 0 || totalTokens < 0 ||
+		cachedTokens < 0 || cacheTokens < 0 || cacheReadTokens < 0 || cacheCreationTokens < 0 {
+		return CacheAccounting{}, false
+	}
+	if totalTokens != breakdown.TotalTokens ||
+		reasoningTokens != breakdown.Output.ReasoningTokens ||
+		(outputTokens != breakdown.Output.TotalTokens &&
+			outputTokens != breakdown.Output.NonReasoningTokens) {
+		return CacheAccounting{}, false
+	}
+	if cacheReadTokens != breakdown.Input.CacheReadTokens ||
+		cacheCreationTokens != breakdown.Input.CacheWriteTokens {
+		return CacheAccounting{}, false
+	}
+	if CompatibleCachedTokens(cachedTokens, cacheTokens, cacheReadTokens, cacheCreationTokens) != 0 {
+		return CacheAccounting{}, false
+	}
+	if breakdown.Input.CacheReadTokens == 0 && breakdown.Input.CacheWriteTokens == 0 {
+		return CacheAccounting{}, false
+	}
+
+	mode := ""
+	switch {
+	case inputTokens == breakdown.Input.TotalTokens:
+		mode = CacheInputModeIncluded
+	case breakdown.Input.CacheReadTokens > 0 &&
+		breakdown.Input.CacheWriteTokens > 0 &&
+		inputTokens == breakdown.Input.UncachedTokens+breakdown.Input.CacheReadTokens:
+		mode = CacheInputModeReadIncludedCreationSeparate
+	case inputTokens == breakdown.Input.UncachedTokens:
+		mode = CacheInputModeSeparate
+	default:
+		return CacheAccounting{}, false
+	}
+	accounting := NormalizeCacheAccounting(
+		CacheInputContext{ExplicitMode: mode},
+		inputTokens,
+		cachedTokens,
+		cacheTokens,
+		cacheReadTokens,
+		cacheCreationTokens,
+	)
+	if accounting.UncachedInputTokens != breakdown.Input.UncachedTokens ||
+		accounting.TotalInputTokens != breakdown.Input.TotalTokens ||
+		accounting.CacheReadTokens != breakdown.Input.CacheReadTokens ||
+		accounting.CacheCreationTokens != breakdown.Input.CacheWriteTokens {
+		return CacheAccounting{}, false
+	}
+	return accounting, true
+}
+
+func ValidateArchiveDerivedFields(event Event) error {
+	if !event.PreserveArchiveDerivedFields {
+		return nil
+	}
+	mode := normalizeCacheInputMode(event.CacheInputMode)
+	if mode != CacheInputModeIncluded &&
+		mode != CacheInputModeSeparate &&
+		mode != CacheInputModeReadIncludedCreationSeparate {
+		return fmt.Errorf("archive cache input mode %q is invalid", event.CacheInputMode)
+	}
+	for _, field := range []struct {
+		name  string
+		value int64
+	}{
+		{name: "normalized_uncached_input_tokens", value: event.NormalizedUncachedInputTokens},
+		{name: "normalized_total_input_tokens", value: event.NormalizedTotalInputTokens},
+		{name: "normalized_cache_read_tokens", value: event.NormalizedCacheReadTokens},
+		{name: "normalized_cache_creation_tokens", value: event.NormalizedCacheCreationTokens},
+		{name: "total_tokens", value: event.TotalTokens},
+	} {
+		if field.value < 0 {
+			return fmt.Errorf("archive %s must not be negative", field.name)
+		}
+	}
+	return nil
+}
+
+func InferCacheInputMode(context CacheInputContext, cacheReadTokens, cacheCreationTokens int64) string {
+	if mode, ok := classifyCacheInputMode(context); ok {
+		return mode
+	}
+	if cacheReadTokens > 0 || cacheCreationTokens > 0 {
+		return CacheInputModeSeparate
+	}
+	return CacheInputModeIncluded
+}
+
+func classifyCacheInputMode(context CacheInputContext) (string, bool) {
+	mode := normalizeCacheInputMode(context.ExplicitMode)
+	if mode == CacheInputModeIncluded || mode == CacheInputModeSeparate || mode == CacheInputModeReadIncludedCreationSeparate {
+		return mode, true
+	}
+	if classified, ok := classifyExecutorCacheInputMode(context.ExecutorType); ok {
+		return classified, true
+	}
+	for _, provider := range []string{context.Provider, context.ProviderSnapshot} {
+		if classified, ok := classifyProviderCacheInputMode(provider); ok {
+			return classified, true
+		}
+	}
+	for _, model := range []string{context.ResolvedModel, context.RequestedModel, context.DisplayModel} {
+		if classified, ok := classifyModelCacheInputMode(model); ok {
+			return classified, true
+		}
+	}
+	return "", false
+}
+
+func normalizeCacheInputMode(mode string) string {
+	return strings.ToLower(strings.TrimSpace(mode))
+}
+
+func classifyExecutorCacheInputMode(executorType string) (string, bool) {
+	executor := strings.ToLower(strings.TrimSpace(executorType))
+	if executor == "" {
+		return "", false
+	}
+	if executor == "devinexecutor" {
+		return CacheInputModeReadIncludedCreationSeparate, true
+	}
+	if strings.Contains(executor, "claude") {
+		return CacheInputModeSeparate, true
+	}
+	for _, marker := range []string{
+		"openaicompat", "openai_compat", "openai-compat", "openai",
+		"codex", "gemini", "aistudio", "ai_studio", "ai-studio",
+		"antigravity", "xai", "kimi",
+	} {
+		if strings.Contains(executor, marker) {
+			return CacheInputModeIncluded, true
+		}
+	}
+	return "", false
+}
+
+func classifyProviderCacheInputMode(provider string) (string, bool) {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "" {
+		return "", false
+	}
+	if provider == "devin" || strings.HasPrefix(provider, "devin/") {
+		return CacheInputModeReadIncludedCreationSeparate, true
+	}
+	if strings.Contains(provider, "anthropic") || strings.Contains(provider, "claude") {
+		return CacheInputModeSeparate, true
+	}
+	for _, marker := range []string{
+		"openai", "codex", "gemini", "vertex", "aistudio", "ai_studio",
+		"ai-studio", "interaction", "antigravity", "xai", "kimi", "moonshot",
+	} {
+		if strings.Contains(provider, marker) {
+			return CacheInputModeIncluded, true
+		}
+	}
+	return "", false
+}
+
+func classifyModelCacheInputMode(model string) (string, bool) {
+	model = strings.ToLower(strings.TrimSpace(model))
+	if model == "" {
+		return "", false
+	}
+	if model == "devin" || strings.HasPrefix(model, "devin/") {
+		return CacheInputModeReadIncludedCreationSeparate, true
+	}
+	if strings.Contains(model, "anthropic") || strings.Contains(model, "claude") {
+		return CacheInputModeSeparate, true
+	}
+	for _, marker := range []string{
+		"gpt-", "openai", "codex", "gemini", "vertex", "aistudio",
+		"antigravity", "grok", "xai", "kimi", "moonshot",
+	} {
+		if strings.Contains(model, marker) {
+			return CacheInputModeIncluded, true
+		}
+	}
+	return "", false
+}
+
+func RawCacheAccountingHintsFromJSON(raw string) RawCacheAccountingHints {
+	return rawCacheAccountingHintsFromJSON(raw, 0)
+}
+
+func rawCacheAccountingHintsFromJSON(raw string, depth int) RawCacheAccountingHints {
+	if depth > 1 || strings.TrimSpace(raw) == "" {
+		return RawCacheAccountingHints{}
+	}
+	var payload any
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return RawCacheAccountingHints{}
+	}
+	record, ok := payload.(map[string]any)
+	if !ok {
+		return RawCacheAccountingHints{}
+	}
+	if detail, ok := record["detail"].(map[string]any); ok {
+		record = detail
+	}
+	hints := RawCacheAccountingHints{ExplicitMode: cacheInputModeFromRecord(record), ValidPayload: true}
+	if total, ok := explicitPositiveTotalFromRecord(record); ok {
+		hints.ExplicitTotal = total
+		hints.HasExplicitTotal = true
+	}
+	if nestedRaw := readString(record, "raw_json", "rawJson"); nestedRaw != "" {
+		nested := rawCacheAccountingHintsFromJSON(nestedRaw, depth+1)
+		if hints.ExplicitMode == "" {
+			hints.ExplicitMode = nested.ExplicitMode
+		}
+		if !hints.HasExplicitTotal && nested.HasExplicitTotal {
+			hints.ExplicitTotal = nested.ExplicitTotal
+			hints.HasExplicitTotal = true
+		}
+	}
+	return hints
+}
+
+func cacheInputModeFromRecord(record map[string]any) string {
+	for _, parent := range []string{"tokens", "usage"} {
+		mode := normalizeCacheInputMode(readStringFromNested(record, parent, "cache_input_mode", "cacheInputMode"))
+		if mode == CacheInputModeIncluded || mode == CacheInputModeSeparate || mode == CacheInputModeReadIncludedCreationSeparate {
+			return mode
+		}
+	}
+	mode := normalizeCacheInputMode(readString(record, "cache_input_mode", "cacheInputMode"))
+	if mode == CacheInputModeIncluded || mode == CacheInputModeSeparate || mode == CacheInputModeReadIncludedCreationSeparate {
+		return mode
+	}
+	return ""
+}
+
+func explicitPositiveTotalFromRecord(record map[string]any) (int64, bool) {
+	for _, parent := range []string{"tokens", "usage"} {
+		if nested, ok := record[parent].(map[string]any); ok {
+			if total, ok := positiveIntValue(first(nested, "total_tokens", "totalTokens", "total")); ok {
+				return total, true
+			}
+		}
+	}
+	return positiveIntValue(first(record, "total_tokens", "totalTokens", "total"))
+}
+
+func positiveIntValue(value any) (int64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		if typed > 0 {
+			return int64(typed), true
+		}
+	case json.Number:
+		if parsed, err := typed.Int64(); err == nil && parsed > 0 {
+			return parsed, true
+		}
+	case string:
+		if parsed, err := strconv.ParseInt(strings.TrimSpace(typed), 10, 64); err == nil && parsed > 0 {
+			return parsed, true
+		}
+	case int64:
+		if typed > 0 {
+			return typed, true
+		}
+	case int:
+		if typed > 0 {
+			return int64(typed), true
+		}
+	}
+	return 0, false
+}
 
 func IsLongContextInput(inputTokens int64) bool {
 	return inputTokens > LongContextInputTokenThreshold
 }
 
 var (
-	endpointPattern          = regexp.MustCompile(`^(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\s+(\S+)`)
-	authorizationHeaderRegex = regexp.MustCompile(`(?i)\b(authorization\s*[:=]\s*)(?:bearer\s+)?[^\s,"'{}]+`)
-	bearerTokenRegex         = regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}`)
-	apiKeyTokenRegex         = regexp.MustCompile(`(sk-proj-[A-Za-z0-9-_]{6,}|sk-ant-[A-Za-z0-9-_]{6,}|sk-[A-Za-z0-9-_]{6,}|sess-[A-Za-z0-9-_]{6,}|ghp_[A-Za-z0-9]{6,}|github_pat_[A-Za-z0-9_]{20,}|AIza[0-9A-Za-z-_]{8,}|hf_[A-Za-z0-9]{6,}|pk_[A-Za-z0-9]{6,}|rk_[A-Za-z0-9]{6,})`)
-	tokenFieldRegex          = regexp.MustCompile(`(?i)\b(access_token|refresh_token|id_token)\b(\s*["']?\s*[:=]\s*["']?)[^"',\s&}]+`)
-	apiKeyFieldRegex         = regexp.MustCompile(`(?i)\b(api[-_ ]?key|x-api-key)\b(\s*["']?\s*[:=]\s*["']?)[^"',\s&}]+`)
-	cookieJSONFieldRegex     = regexp.MustCompile(`(?i)("?(?:cookie|set-cookie)"?\s*:\s*")[^"]*(")`)
-	cookieHeaderRegex        = regexp.MustCompile(`(?i)\b(cookie|set-cookie)\s*:\s*[^,\r\n"}]+`)
-	emailRegex               = regexp.MustCompile(`([A-Za-z0-9._%+\-])([A-Za-z0-9._%+\-]*)(@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})`)
+	endpointPattern = regexp.MustCompile(`^(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\s+(\S+)`)
+	emailRegex      = regexp.MustCompile(`([A-Za-z0-9._%+\-])([A-Za-z0-9._%+\-]*)(@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})`)
 )
 
 // CompatibleCachedTokens returns the legacy cached_tokens value after removing
@@ -187,6 +743,35 @@ func CompatibleCachedTokens(cachedTokens, cacheTokens, cacheReadTokens, cacheCre
 		return 0
 	}
 	return cached - fineGrained
+}
+
+// CacheHitTotals computes a hit-rate numerator from normalized aggregate token
+// buckets. inputTokens must be the normalized total input produced by
+// NormalizeCacheAccounting or repository aggregation.
+func CacheHitTotals(modelName string, inputTokens, cachedTokens, cacheReadTokens, cacheCreationTokens int64) (int64, int64) {
+	_ = modelName
+	_ = cacheCreationTokens
+	input := maxInt64(inputTokens, 0)
+	cached := maxInt64(cachedTokens, 0)
+	cacheRead := maxInt64(cacheReadTokens, 0)
+	hitTokens := cached + cacheRead
+	return hitTokens, input
+}
+
+func CacheHitRate(modelName string, inputTokens, cachedTokens, cacheReadTokens, cacheCreationTokens int64) float64 {
+	hitTokens, totalInput := CacheHitTotals(modelName, inputTokens, cachedTokens, cacheReadTokens, cacheCreationTokens)
+	return CacheHitRateFromTotals(hitTokens, totalInput)
+}
+
+func CacheHitRateFromTotals(hitTokens, inputTokens int64) float64 {
+	if inputTokens <= 0 {
+		return 0
+	}
+	rate := float64(maxInt64(hitTokens, 0)) / float64(inputTokens)
+	if rate > 1 {
+		return 1
+	}
+	return rate
 }
 
 func NormalizeRaw(raw []byte) (Event, error) {
@@ -221,11 +806,6 @@ func NormalizeRaw(raw []byte) (Event, error) {
 	}
 
 	inputTokens, outputTokens, reasoningTokens, cachedTokens, cacheTokens, cacheReadTokens, cacheCreationTokens, totalTokens := readTokenFields(record)
-	if totalTokens <= 0 {
-		totalTokens = inputTokens + outputTokens + reasoningTokens +
-			CompatibleCachedTokens(cachedTokens, cacheTokens, cacheReadTokens, cacheCreationTokens) +
-			maxInt64(cacheReadTokens, 0) + maxInt64(cacheCreationTokens, 0)
-	}
 
 	latencyMS := readOptionalInt(record, "latency_ms", "latencyMs", "duration_ms", "durationMs", "elapsed_ms", "elapsedMs")
 	ttftMS := readOptionalInt(record, "ttft_ms", "ttftMs", "time_to_first_token_ms", "timeToFirstTokenMs")
@@ -239,58 +819,119 @@ func NormalizeRaw(raw []byte) (Event, error) {
 	apiKey := readString(record, "api_key", "apiKey", "key")
 	authIndex := readString(record, "auth_index", "authIndex", "AuthIndex")
 	requestedModel := readString(record, "alias", "requested_model", "requestedModel")
-	resolvedModel := readString(record, "model", "model_name", "modelName", "resolved_model", "resolvedModel")
+	resolvedModel := readString(record, "resolved_model", "resolvedModel", "model", "model_name", "modelName")
+	responseModel := readString(record, "response_model", "responseModel")
+	sessionID := readString(record, "session_id", "sessionId")
+	parentSessionID := readString(record, "parent_session_id", "parentSessionId")
+	accessTokenSHA256 := readString(record, "access_token_sha256", "accessTokenSHA256", "accessTokenSha256")
+	generate := readOptionalBool(record, "generate", "Generate")
+	stream := readOptionalBool(record, "stream", "Stream")
 	model := requestedModel
 	if model == "" {
 		model = resolvedModel
 	}
+	provider := readString(record, "provider", "type", "auth_type", "authType")
+	executorType := readString(record, "executor_type", "executorType")
+	authType := readString(record, "auth_type", "authType")
+	clientIP := readString(record, "client_ip", "clientIp")
+	xForwardedFor := readString(record, "x_forwarded_for", "xForwardedFor")
+	userAgent := readString(record, "user_agent", "userAgent")
+	requestServiceTier := readString(record, "request_service_tier", "requestServiceTier", "service_tier", "serviceTier")
+	responseServiceTier := readString(record, "response_service_tier", "responseServiceTier")
+	authProviderSnapshot := readString(record, "auth_provider_snapshot", "authProviderSnapshot")
+	usageContext := CacheInputContext{
+		ExplicitMode:     cacheInputModeFromRecord(record),
+		ExecutorType:     executorType,
+		Provider:         provider,
+		ProviderSnapshot: authProviderSnapshot,
+		AuthType:         authType,
+		ResolvedModel:    resolvedModel,
+		RequestedModel:   requestedModel,
+		DisplayModel:     model,
+	}
+	serviceTier := EffectiveServiceTier(usageContext, requestServiceTier, "", responseServiceTier)
+	cacheAccounting := NormalizeCacheAccountingWithRawJSON(
+		usageContext,
+		string(raw),
+		inputTokens,
+		outputTokens,
+		reasoningTokens,
+		totalTokens,
+		cachedTokens,
+		cacheTokens,
+		cacheReadTokens,
+		cacheCreationTokens,
+	)
+	if totalTokens <= 0 {
+		totalTokens = cacheAccounting.TotalInputTokens + maxInt64(outputTokens, 0) + maxInt64(reasoningTokens, 0)
+	}
 
 	event := Event{
-		Telemetry:             TelemetryFromRecord(record),
-		RequestID:             readString(record, "request_id", "requestId", "id"),
-		TimestampMS:           timestampMS,
-		Timestamp:             timestamp,
-		Provider:              readString(record, "provider", "type", "auth_type", "authType"),
-		ExecutorType:          readString(record, "executor_type", "executorType"),
-		Model:                 model,
-		RequestedModel:        requestedModel,
-		ResolvedModel:         resolvedModel,
-		Endpoint:              endpoint,
-		Method:                method,
-		Path:                  path,
-		AuthType:              readString(record, "auth_type", "authType"),
-		AuthIndex:             authIndex,
-		Source:                source,
-		SourceHash:            hashString(sourceRaw),
-		APIKeyHash:            hashString(apiKey),
-		AccountSnapshot:       readString(record, "account_snapshot", "accountSnapshot"),
-		AuthLabelSnapshot:     readString(record, "auth_label_snapshot", "authLabelSnapshot"),
-		AuthFileSnapshot:      readString(record, "auth_file_snapshot", "authFileSnapshot"),
-		AuthProviderSnapshot:  readString(record, "auth_provider_snapshot", "authProviderSnapshot"),
-		AuthProjectIDSnapshot: readString(record, "auth_project_id_snapshot", "authProjectIdSnapshot", "project_id", "projectId"),
-		AuthSnapshotAtMS:      readInt(record, "auth_snapshot_at_ms", "authSnapshotAtMs"),
-		ReasoningEffort:       readString(record, "reasoning_effort", "reasoningEffort"),
-		ServiceTier:           readString(record, "service_tier", "serviceTier"),
-		InputTokens:           inputTokens,
-		OutputTokens:          outputTokens,
-		ReasoningTokens:       reasoningTokens,
-		CachedTokens:          cachedTokens,
-		CacheTokens:           cacheTokens,
-		CacheReadTokens:       cacheReadTokens,
-		CacheCreationTokens:   cacheCreationTokens,
-		TotalTokens:           totalTokens,
-		LatencyMS:             latencyMS,
-		TTFTMS:                ttftMS,
-		Failed:                failed,
-		FailStatusCode:        int(failStatusCode),
-		FailSummary:           failSummary,
-		FailBody:              failBody,
-		RawJSON:               string(redactedJSON),
-		CreatedAtMS:           time.Now().UnixMilli(),
+		Telemetry:                     TelemetryFromRecord(record),
+		RequestID:                     readString(record, "request_id", "requestId", "id"),
+		TimestampMS:                   timestampMS,
+		Timestamp:                     timestamp,
+		Provider:                      provider,
+		ExecutorType:                  executorType,
+		Model:                         model,
+		AnalyticsModel:                usageidentity.AnalyticsModelForRequest(model, requestedModel),
+		RequestedModel:                requestedModel,
+		ResolvedModel:                 resolvedModel,
+		ResponseModel:                 responseModel,
+		SessionID:                     sessionID,
+		ParentSessionID:               parentSessionID,
+		AccessTokenSHA256:             accessTokenSHA256,
+		Generate:                      generate,
+		Stream:                        stream,
+		Endpoint:                      endpoint,
+		Method:                        method,
+		Path:                          path,
+		ClientIP:                      clientIP,
+		XForwardedFor:                 xForwardedFor,
+		UserAgent:                     userAgent,
+		AuthType:                      authType,
+		AuthIndex:                     authIndex,
+		Source:                        source,
+		SourceHash:                    hashString(sourceRaw),
+		APIKeyHash:                    hashString(apiKey),
+		AccountSnapshot:               readString(record, "account_snapshot", "accountSnapshot"),
+		AuthLabelSnapshot:             readString(record, "auth_label_snapshot", "authLabelSnapshot"),
+		AuthFileSnapshot:              readString(record, "auth_file_snapshot", "authFileSnapshot"),
+		AuthProviderSnapshot:          authProviderSnapshot,
+		AuthAccountIDSnapshot:         readString(record, "auth_account_id_snapshot", "authAccountIdSnapshot"),
+		AuthProjectIDSnapshot:         readString(record, "auth_project_id_snapshot", "authProjectIdSnapshot", "project_id", "projectId"),
+		AuthSnapshotAtMS:              readInt(record, "auth_snapshot_at_ms", "authSnapshotAtMs"),
+		ReasoningEffort:               readString(record, "reasoning_effort", "reasoningEffort"),
+		ServiceTier:                   serviceTier,
+		RequestServiceTier:            requestServiceTier,
+		ResponseServiceTier:           responseServiceTier,
+		CacheInputMode:                cacheAccounting.Mode,
+		InputTokens:                   inputTokens,
+		OutputTokens:                  outputTokens,
+		ReasoningTokens:               reasoningTokens,
+		CachedTokens:                  cachedTokens,
+		CacheTokens:                   cacheTokens,
+		CacheReadTokens:               cacheReadTokens,
+		CacheCreationTokens:           cacheCreationTokens,
+		NormalizedUncachedInputTokens: cacheAccounting.UncachedInputTokens,
+		NormalizedTotalInputTokens:    cacheAccounting.TotalInputTokens,
+		NormalizedCacheReadTokens:     cacheAccounting.CacheReadTokens,
+		NormalizedCacheCreationTokens: cacheAccounting.CacheCreationTokens,
+		TotalTokens:                   totalTokens,
+		LatencyMS:                     latencyMS,
+		TTFTMS:                        ttftMS,
+		Failed:                        failed,
+		FailStatusCode:                int(failStatusCode),
+		FailSummary:                   failSummary,
+		FailBody:                      failBody,
+		RawJSON:                       string(redactedJSON),
+		CreatedAtMS:                   time.Now().UnixMilli(),
 	}
 	if event.Model == "" {
 		event.Model = "-"
 	}
+	event.AnalyticsModel = usageidentity.AnalyticsModelForRequest(event.Model, event.RequestedModel)
+	NormalizeRequestMetadata(&event)
 	AttachResponseHeaderMetadata(&event, ResponseHeaderMetadataFromRecord(record, time.UnixMilli(timestampMS)))
 	event.EventHash = buildEventHash(event)
 	return event, nil
@@ -316,7 +957,7 @@ func BuildPayload(events []Event) Payload {
 			apiEntry = &APIAggregate{Models: map[string]*ModelAggregate{}}
 			payload.APIs[endpoint] = apiEntry
 		}
-		model := event.Model
+		model := usageidentity.AnalyticsModelForRequest(event.Model, event.RequestedModel)
 		if model == "" {
 			model = "-"
 		}
@@ -331,6 +972,10 @@ func BuildPayload(events []Event) Payload {
 			event.CacheReadTokens,
 			event.CacheCreationTokens,
 		)
+		requestedModel := event.RequestedModel
+		if requestedModel == "" {
+			requestedModel = event.Model
+		}
 		modelEntry.Details = append(modelEntry.Details, Detail{
 			Telemetry:             event.Telemetry,
 			Timestamp:             event.Timestamp,
@@ -341,13 +986,24 @@ func BuildPayload(events []Event) Payload {
 			AuthLabelSnapshot:     event.AuthLabelSnapshot,
 			AuthFileSnapshot:      event.AuthFileSnapshot,
 			AuthProviderSnapshot:  event.AuthProviderSnapshot,
+			AuthAccountIDSnapshot: event.AuthAccountIDSnapshot,
 			AuthProjectIDSnapshot: event.AuthProjectIDSnapshot,
 			AuthSnapshotAtMS:      event.AuthSnapshotAtMS,
 			LatencyMS:             event.LatencyMS,
 			TTFTMS:                event.TTFTMS,
+			RequestedModel:        requestedModel,
 			ResolvedModel:         event.ResolvedModel,
+			ResponseModel:         event.ResponseModel,
+			SessionID:             event.SessionID,
+			ParentSessionID:       event.ParentSessionID,
+			AccessTokenSHA256:     event.AccessTokenSHA256,
+			Generate:              event.Generate,
+			Stream:                event.Stream,
 			ReasoningEffort:       event.ReasoningEffort,
 			ServiceTier:           event.ServiceTier,
+			RequestServiceTier:    event.RequestServiceTier,
+			ResponseServiceTier:   event.ResponseServiceTier,
+			CacheInputMode:        event.CacheInputMode,
 			ExecutorType:          event.ExecutorType,
 			Failed:                event.Failed,
 			FailStatusCode:        event.FailStatusCode,
@@ -399,45 +1055,18 @@ func readTimestamp(record map[string]any) (int64, string) {
 }
 
 func readTokenFields(record map[string]any) (int64, int64, int64, int64, int64, int64, int64, int64) {
-	tokens := map[string]any{}
-	if nested, ok := first(record, "tokens", "usage").(map[string]any); ok {
-		tokens = nested
-	}
-	input := readIntFrom(tokens, "input_tokens", "inputTokens", "prompt_tokens", "promptTokens")
-	if input == 0 {
-		input = readInt(record, "input_tokens", "inputTokens", "prompt_tokens", "promptTokens")
-	}
-	output := readIntFrom(tokens, "output_tokens", "outputTokens", "completion_tokens", "completionTokens")
-	if output == 0 {
-		output = readInt(record, "output_tokens", "outputTokens", "completion_tokens", "completionTokens")
-	}
-	reasoning := readIntFrom(tokens, "reasoning_tokens", "reasoningTokens")
-	if reasoning == 0 {
-		reasoning = readInt(record, "reasoning_tokens", "reasoningTokens")
-	}
-	cached := readIntFrom(tokens, "cached_tokens", "cachedTokens")
-	if cached == 0 {
-		cached = readInt(record, "cached_tokens", "cachedTokens")
-	}
-	cache := readIntFrom(tokens, "cache_tokens", "cacheTokens")
-	if cache == 0 {
-		cache = readInt(record, "cache_tokens", "cacheTokens")
-	}
-	cacheRead := readFirstIntFrom(tokens,
+	input := readNestedThenTopInt(record, []string{"input_tokens", "inputTokens", "prompt_tokens", "promptTokens"})
+	output := readNestedThenTopInt(record, []string{"output_tokens", "outputTokens", "completion_tokens", "completionTokens"})
+	reasoning := readNestedThenTopInt(record, []string{"reasoning_tokens", "reasoningTokens"})
+	cached := readNestedThenTopInt(record, []string{"cached_tokens", "cachedTokens"})
+	cache := readNestedThenTopInt(record, []string{"cache_tokens", "cacheTokens"})
+	cacheRead := readNestedThenTopInt(record, []string{
 		"cache_read_tokens",
 		"cacheReadTokens",
 		"cache_read_input_tokens",
 		"cacheReadInputTokens",
-	)
-	if cacheRead == 0 {
-		cacheRead = readFirstIntFrom(record,
-			"cache_read_tokens",
-			"cacheReadTokens",
-			"cache_read_input_tokens",
-			"cacheReadInputTokens",
-		)
-	}
-	cacheCreation := readFirstIntFrom(tokens,
+	})
+	cacheCreation := readNestedThenTopInt(record, []string{
 		"cache_creation_tokens",
 		"cacheCreationTokens",
 		"cache_creation_input_tokens",
@@ -446,24 +1075,20 @@ func readTokenFields(record map[string]any) (int64, int64, int64, int64, int64, 
 		"cacheWriteTokens",
 		"cache_write_input_tokens",
 		"cacheWriteInputTokens",
-	)
-	if cacheCreation == 0 {
-		cacheCreation = readFirstIntFrom(record,
-			"cache_creation_tokens",
-			"cacheCreationTokens",
-			"cache_creation_input_tokens",
-			"cacheCreationInputTokens",
-			"cache_write_tokens",
-			"cacheWriteTokens",
-			"cache_write_input_tokens",
-			"cacheWriteInputTokens",
-		)
-	}
-	total := readIntFrom(tokens, "total_tokens", "totalTokens", "total")
-	if total == 0 {
-		total = readInt(record, "total_tokens", "totalTokens", "total")
-	}
+	})
+	total := readNestedThenTopInt(record, []string{"total_tokens", "totalTokens", "total"})
 	return input, output, reasoning, cached, cache, cacheRead, cacheCreation, total
+}
+
+func readNestedThenTopInt(record map[string]any, keys []string) int64 {
+	for _, parent := range []string{"tokens", "usage"} {
+		if nested, ok := record[parent].(map[string]any); ok {
+			if value := readFirstIntFrom(nested, keys...); value != 0 {
+				return value
+			}
+		}
+	}
+	return readFirstIntFrom(record, keys...)
 }
 
 func readFailed(record map[string]any) bool {
@@ -496,9 +1121,93 @@ func readFailFields(record map[string]any) (int64, string) {
 	return statusCode, body
 }
 
+func readOptionalBool(record map[string]any, keys ...string) *bool {
+	raw := first(record, keys...)
+	if raw == nil {
+		return nil
+	}
+	switch value := raw.(type) {
+	case bool:
+		v := value
+		return &v
+	case string:
+		trimmed := strings.ToLower(strings.TrimSpace(value))
+		if trimmed == "true" || trimmed == "1" {
+			v := true
+			return &v
+		}
+		if trimmed == "false" || trimmed == "0" {
+			v := false
+			return &v
+		}
+	case float64:
+		if value == 1 {
+			v := true
+			return &v
+		}
+		if value == 0 {
+			v := false
+			return &v
+		}
+	case int:
+		if value == 1 {
+			v := true
+			return &v
+		}
+		if value == 0 {
+			v := false
+			return &v
+		}
+	case int64:
+		if value == 1 {
+			v := true
+			return &v
+		}
+		if value == 0 {
+			v := false
+			return &v
+		}
+	case json.Number:
+		if n, err := value.Int64(); err == nil {
+			if n == 1 {
+				v := true
+				return &v
+			}
+			if n == 0 {
+				v := false
+				return &v
+			}
+		}
+	}
+	return nil
+}
+
 func readOptionalInt(record map[string]any, keys ...string) *int64 {
 	value := readInt(record, keys...)
 	if value == 0 && first(record, keys...) == nil {
+		return nil
+	}
+	return &value
+}
+
+func readOptionalFloat(record map[string]any, keys ...string) *float64 {
+	raw := first(record, keys...)
+	if raw == nil {
+		return nil
+	}
+	var value float64
+	var err error
+	switch number := raw.(type) {
+	case json.Number:
+		value, err = strconv.ParseFloat(number.String(), 64)
+	case float64:
+		value = number
+	case string:
+		value, err = strconv.ParseFloat(strings.TrimSpace(number), 64)
+	default:
+		return nil
+	}
+	if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
 		return nil
 	}
 	return &value
@@ -522,6 +1231,40 @@ func readString(record map[string]any, keys ...string) string {
 	default:
 		return strings.TrimSpace(fmt.Sprint(value))
 	}
+}
+
+// NormalizeRequestMetadata applies the storage limits and character policy for
+// downstream request metadata. Callers that construct Event values directly
+// must normalize again at their persistence boundary.
+func NormalizeRequestMetadata(event *Event) {
+	if event == nil {
+		return
+	}
+	event.ClientIP = sanitizeRequestMetadata(event.ClientIP, maxClientIPBytes)
+	event.XForwardedFor = sanitizeRequestMetadata(event.XForwardedFor, maxXForwardedForBytes)
+	event.UserAgent = sanitizeRequestMetadata(event.UserAgent, maxUserAgentBytes)
+}
+
+func sanitizeRequestMetadata(value string, maxBytes int) string {
+	cleaned := strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) || !unicode.IsGraphic(r) {
+			return ' '
+		}
+		return r
+	}, value)
+	cleaned = strings.Join(strings.Fields(cleaned), " ")
+	if maxBytes <= 0 || len(cleaned) <= maxBytes {
+		return cleaned
+	}
+	return truncateUTF8Bytes(cleaned, maxBytes)
+}
+
+func readStringFromNested(record map[string]any, parent string, keys ...string) string {
+	nested, ok := record[parent].(map[string]any)
+	if !ok {
+		return ""
+	}
+	return readString(nested, keys...)
 }
 
 func readInt(record map[string]any, keys ...string) int64 {
@@ -660,6 +1403,10 @@ func maskSource(value string) string {
 		}
 		return prefix + "***@" + parts[1]
 	}
+	if ContainsCredential(trimmed) {
+		sum := sha256.Sum256([]byte(trimmed))
+		return "h:" + hex.EncodeToString(sum[:])
+	}
 	if looksSecret(trimmed) {
 		if len(trimmed) <= 8 {
 			return "m:****"
@@ -681,35 +1428,24 @@ func FailSummaryFromBody(body string) string {
 	if summary == "" {
 		return ""
 	}
-	summary = authorizationHeaderRegex.ReplaceAllString(summary, `${1}[redacted]`)
-	summary = bearerTokenRegex.ReplaceAllString(summary, `Bearer [redacted]`)
-	summary = tokenFieldRegex.ReplaceAllString(summary, `${1}${2}[redacted]`)
-	summary = apiKeyFieldRegex.ReplaceAllString(summary, `${1}${2}[redacted]`)
-	summary = apiKeyTokenRegex.ReplaceAllString(summary, `[redacted]`)
-	summary = cookieJSONFieldRegex.ReplaceAllString(summary, `${1}[redacted]${2}`)
-	summary = cookieHeaderRegex.ReplaceAllString(summary, `${1}: [redacted]`)
+	summary = SanitizeCredentialText(summary)
 	summary = emailRegex.ReplaceAllString(summary, `${1}***${3}`)
 	return truncateUTF8Bytes(strings.TrimSpace(summary), maxFailSummaryBytes)
 }
 
 func SafeRawJSON(raw string) string {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return ""
-	}
-	var payload any
-	if err := json.Unmarshal([]byte(trimmed), &payload); err == nil {
-		redacted, err := json.Marshal(redactValue(payload))
-		if err == nil {
-			return string(redacted)
-		}
-	}
-	return FailSummaryFromBody(trimmed)
+	return SanitizeJSONForPersistence(raw)
 }
 
 func truncateUTF8Bytes(value string, maxBytes int) string {
 	if maxBytes <= 0 || len(value) <= maxBytes {
 		return value
+	}
+	limit := maxBytes
+	suffix := ""
+	if maxBytes > 3 {
+		limit = maxBytes - 3
+		suffix = "..."
 	}
 	var builder strings.Builder
 	for _, r := range value {
@@ -717,64 +1453,33 @@ func truncateUTF8Bytes(value string, maxBytes int) string {
 		if size < 0 {
 			size = len(string(r))
 		}
-		if builder.Len()+size > maxBytes {
+		if builder.Len()+size > limit {
 			break
 		}
 		builder.WriteRune(r)
 	}
-	return strings.TrimSpace(builder.String()) + "..."
+	return strings.TrimSpace(builder.String()) + suffix
 }
 
 func redactValue(value any) any {
-	return redactValueWithParent("", value)
-}
-
-func redactValueWithParent(parentKey string, value any) any {
-	switch item := value.(type) {
-	case map[string]any:
-		result := make(map[string]any, len(item))
-		for key, child := range item {
-			normalizedKey := normalizeSecretKey(key)
-			if isSecretKey(key) {
-				result[key] = "[redacted]"
-				continue
-			}
-			if normalizedKey == "fail_body" || (parentKey == "fail" && normalizedKey == "body") {
-				result[key] = FailSummaryFromBody(stringValue(child))
-				continue
-			}
-			result[key] = redactValueWithParent(normalizedKey, child)
-		}
-		return result
-	case []any:
-		result := make([]any, 0, len(item))
-		for _, child := range item {
-			result = append(result, redactValueWithParent(parentKey, child))
-		}
-		return result
-	default:
-		return value
-	}
+	return sanitizeJSONValue(value)
 }
 
 func isSecretKey(key string) bool {
-	normalized := normalizeSecretKey(key)
-	return normalized == "api_key" ||
-		normalized == "apikey" ||
-		normalized == "authorization" ||
-		normalized == "cookie" ||
-		normalized == "set_cookie" ||
-		normalized == "access_token" ||
-		normalized == "refresh_token" ||
-		normalized == "id_token" ||
-		normalized == "token" ||
-		strings.Contains(normalized, "secret")
+	return isSecretFieldKey(key)
 }
 
-func normalizeSecretKey(key string) string {
-	normalized := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(key), "-", "_"))
-	normalized = strings.ReplaceAll(normalized, " ", "_")
-	return normalized
+func requestMetadataMaxBytes(normalizedKey string) (int, bool) {
+	switch normalizedKey {
+	case "client_ip", "clientip":
+		return maxClientIPBytes, true
+	case "x_forwarded_for", "xforwardedfor":
+		return maxXForwardedForBytes, true
+	case "user_agent", "useragent":
+		return maxUserAgentBytes, true
+	default:
+		return 0, false
+	}
 }
 
 func stringValue(raw any) string {

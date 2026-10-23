@@ -11,9 +11,24 @@
  * （proxy_url / note / disabled / refresh_enabled / farm_enrolled /
  * extra_headers / transport_profile / tls_profile）。
  */
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { authFilesApi, type AuthFileFieldsPatch } from '@/services/api';
+import {
+  authFilesApi,
+  type AuthFileFieldsPatch,
+  type AuthFilesApiRequestScope,
+} from '@/services/api';
+import { getAuthFilePatchTarget } from '@/features/authFiles/model/credentialStatus';
+import {
+  lookupAuthFileMutationSnapshot,
+  getAuthFileSourceMemberKey,
+} from '@/features/authFiles/model/authFileMutationSnapshot';
+import { isCredentialIdentityVerified } from '@/utils/authFileCredentialIdentity';
+import {
+  readAuthFileStatusPhysicalName,
+  resolveAuthFileStatusMutationTarget,
+} from '@/utils/authFileStatusMutation';
+import { probeProxyConnectivity } from '@/services/api/proxyProbe';
 import { normalizeAuthIndex } from '@/utils/usage';
 import { findAccountsUsingProxy, runProxyPreflight } from '@/utils/proxyPreflight';
 import {
@@ -195,6 +210,7 @@ export type AccountSettingsEditorState = {
 
 export type UseAuthFilesAccountSettingsOptions = {
   disableControls: boolean;
+  requestScope?: AuthFilesApiRequestScope;
   loadFiles: () => Promise<void>;
   loadKeyStats: () => Promise<void>;
   /**
@@ -474,6 +490,73 @@ export function useAuthFilesAccountSettings(
   const [accountSettingsEditor, setAccountSettingsEditor] =
     useState<AccountSettingsEditorState | null>(null);
 
+  type EditorSession = {
+    generation: number;
+    scopeKey: string;
+    requestScope?: AuthFilesApiRequestScope;
+    target: ReturnType<typeof getAuthFilePatchTarget>;
+    fileIdentity: string;
+    identityVerified: boolean;
+    rawText: string;
+  };
+  const generationRef = useRef(0);
+  const sessionRef = useRef<EditorSession | null>(null);
+  const saveLock = useRef<EditorSession | null>(null);
+  const draftVersion = useRef(0);
+  const blurVersion = useRef(0);
+  const editorRef = useRef(accountSettingsEditor);
+  editorRef.current = accountSettingsEditor;
+  const scopeKey = JSON.stringify(options.requestScope ?? null);
+  const controlsRef = useRef({ disableControls, scopeKey, accounts });
+  controlsRef.current = { disableControls, scopeKey, accounts };
+  const isCurrent = (session: EditorSession | null): session is EditorSession =>
+    Boolean(
+      session &&
+      sessionRef.current === session &&
+      session.scopeKey === controlsRef.current.scopeKey &&
+      session.generation === generationRef.current &&
+      !controlsRef.current.disableControls
+    );
+  const assertCurrent = (session: EditorSession) => {
+    if (!isCurrent(session)) throw new Error('Auth file editor target changed');
+  };
+  useEffect(() => {
+    sessionRef.current = null;
+    generationRef.current += 1;
+    setAccountSettingsEditor(null);
+    return () => {
+      sessionRef.current = null;
+      generationRef.current += 1;
+    };
+  }, [scopeKey, disableControls]);
+  const verifyTarget = async (session: EditorSession) => {
+    assertCurrent(session);
+    if (!session.identityVerified)
+      throw new Error('Auth file identity is not verified; refresh and reopen');
+    const files = await lookupAuthFileMutationSnapshot(session.target, (target) =>
+      authFilesApi.lookup(target, session.requestScope)
+    );
+    assertCurrent(session);
+    const result = resolveAuthFileStatusMutationTarget(files, session.target);
+    if (
+      !result.target ||
+      result.failure !== null ||
+      (result.scope !== 'credential' && result.scope !== 'expanded-child')
+    )
+      throw new Error('Auth file patch target changed');
+    const physicalName = readAuthFileStatusPhysicalName(result.target);
+    return {
+      target: getAuthFilePatchTarget(result.target),
+      sourceIdentities: files
+        .filter((file) => readAuthFileStatusPhysicalName(file) === physicalName)
+        .map(getAuthFilePatchTarget),
+    };
+  };
+  const duplicateAccounts = (session: EditorSession) =>
+    controlsRef.current.accounts
+      .filter((file) => getAuthFileSourceMemberKey(file) !== session.fileIdentity)
+      .map(toProxyOwnerAccount);
+
   const accountSettingsUpdatedText = (() => {
     if (!accountSettingsEditor) return '';
     const { request, error } = buildPatchRequest(accountSettingsEditor);
@@ -496,6 +579,9 @@ export function useAuthFilesAccountSettings(
       (hasRawFieldsPatch(accountSettingsEditor) || isRawJsonDirty(accountSettingsEditor)));
 
   const closeAccountSettingsEditor = () => {
+    sessionRef.current = null;
+    generationRef.current += 1;
+    draftVersion.current += 1;
     setAccountSettingsEditor(null);
   };
 
@@ -509,9 +595,7 @@ export function useAuthFilesAccountSettings(
     const normalizedRequest = normalizeSettings(name, settings, provider);
     const { object: rawObject, text: rawJsonText } = parseRawAuthJson(rawText ?? '');
     const providerKey = normalizeProviderKey(
-      String(
-        rawObject?.type ?? rawObject?.provider ?? file.type ?? file.provider ?? provider ?? ''
-      )
+      String(rawObject?.type ?? rawObject?.provider ?? file.type ?? file.provider ?? provider ?? '')
     );
     const rawFields = deriveRawEditableFields(rawObject, providerKey);
     setAccountSettingsEditor({
@@ -573,10 +657,20 @@ export function useAuthFilesAccountSettings(
 
     if (disableControls) return;
     if (accountSettingsEditor?.fileName === name) {
-      setAccountSettingsEditor(null);
+      closeAccountSettingsEditor();
       return;
     }
 
+    const session: EditorSession = {
+      generation: ++generationRef.current,
+      scopeKey,
+      requestScope: options.requestScope ? { ...options.requestScope } : undefined,
+      target: getAuthFilePatchTarget(file),
+      fileIdentity: getAuthFileSourceMemberKey(file),
+      identityVerified: isCredentialIdentityVerified(file),
+      rawText: '',
+    };
+    sessionRef.current = session;
     const inlineSettings = file.account_settings || file.accountSettings || null;
     setAccountSettingsEditor({
       fileName: name,
@@ -640,10 +734,15 @@ export function useAuthFilesAccountSettings(
     // websockets 结构化编辑与整份 JSON 危险编辑，失败不阻断账号设置本身（降级为
     // 不可结构化编辑原始字段）。
     const [settingsResult, rawResult] = await Promise.allSettled([
-      authFilesApi.getAccountSettings(name),
-      authFilesApi.downloadText(name),
+      authFilesApi.getAccountSettings(
+        String(session.target.runtimeId ?? '').trim() || name,
+        session.requestScope
+      ),
+      authFilesApi.downloadText(name, session.requestScope),
     ]);
+    if (!isCurrent(session)) return;
     const rawText = rawResult.status === 'fulfilled' ? rawResult.value : '';
+    session.rawText = rawText;
 
     if (settingsResult.status === 'fulfilled') {
       hydrateEditor(name, file, settingsResult.value, rawText);
@@ -668,6 +767,7 @@ export function useAuthFilesAccountSettings(
     field: AccountSettingsEditorField,
     value: AccountSettingsEditorFieldValue
   ) => {
+    draftVersion.current += 1;
     setAccountSettingsEditor((prev) => {
       if (!prev) return prev;
       if (field === 'proxyUrl') {
@@ -753,7 +853,13 @@ export function useAuthFilesAccountSettings(
   // 值仍一致时写回，避免旧探针覆盖用户已改动的新输入。
   const handleAccountSettingsProxyBlur = async () => {
     const editor = accountSettingsEditor;
-    if (!editor) return;
+    const session = sessionRef.current;
+    if (!editor || !isCurrent(session)) return;
+    const validationVersion = ++blurVersion.current;
+    const isValidationCurrent = () =>
+      isCurrent(session) &&
+      blurVersion.current === validationVersion &&
+      editorRef.current?.proxyUrl.trim() === trimmed;
     const fileName = editor.fileName;
     const trimmed = editor.proxyUrl.trim();
     const baseline = (editor.proxyUrlBaseline || '').trim();
@@ -812,66 +918,150 @@ export function useAuthFilesAccountSettings(
       translate: (reason) => t(`proxy_preflight.reason_${reason}`),
       // 查重排除自身（编辑自身账号代理不算与自己重复）。
       checkDuplicate: (value) =>
-        findAccountsUsingProxy(value, accounts.map(toProxyOwnerAccount), {
-          excludeName: fileName,
+        findAccountsUsingProxy(value, duplicateAccounts(session), {
           provider: editor.providerKey || editor.provider,
         }),
+      probe: (value) =>
+        isValidationCurrent()
+          ? probeProxyConnectivity(value, session.requestScope)
+          : Promise.resolve({ ok: false, exitIp: '', reason: 'probe_failed' }),
       duplicateMessage: (list) =>
         t('proxy_preflight.duplicate_account', { accounts: list.join('、') }),
       onStage: (stage) =>
         setAccountSettingsEditor((prev) => {
-          if (!prev || prev.fileName !== fileName || prev.proxyUrl.trim() !== trimmed) return prev;
+          if (
+            !isValidationCurrent() ||
+            !prev ||
+            prev.fileName !== fileName ||
+            prev.proxyUrl.trim() !== trimmed
+          )
+            return prev;
           if (prev.proxyInline?.phase !== 'checking') return prev;
           return { ...prev, proxyInline: { ...prev.proxyInline, stage, checkedValue: trimmed } };
         }),
     });
     setAccountSettingsEditor((prev) => {
-      if (!prev || prev.fileName !== fileName || prev.proxyUrl.trim() !== trimmed) return prev;
+      if (
+        !isValidationCurrent() ||
+        !prev ||
+        prev.fileName !== fileName ||
+        prev.proxyUrl.trim() !== trimmed
+      )
+        return prev;
       return { ...prev, proxyInline: result };
     });
   };
 
-  // 危险路径：手工编辑整份原始 auth JSON 后整份覆写（走 upload，不经账号设置白名单）。
-  const performRawJsonOverwrite = async (name: string, rawJsonText: string) => {
-    setAccountSettingsEditor((prev) =>
-      prev && prev.fileName === name ? { ...prev, saving: true } : prev
-    );
+  const refreshAfterSave = async (session: EditorSession, name: string) => {
+    assertCurrent(session);
+    showNotification(t('auth_files.prefix_proxy_saved_success', { name }), 'success');
     try {
-      await authFilesApi.saveText(name, rawJsonText);
-      showNotification(t('auth_files.prefix_proxy_saved_success', { name }), 'success');
       await loadFiles();
+      if (!isCurrent(session)) return;
       await loadKeyStats();
-      setAccountSettingsEditor(null);
-    } catch (err: unknown) {
-      const rawMessage = err instanceof Error ? err.message : '';
-      showNotification(`${t('notification.upload_failed')}: ${rawMessage}`, 'error');
-      setAccountSettingsEditor((prev) =>
-        prev && prev.fileName === name ? { ...prev, saving: false } : prev
+      if (!isCurrent(session)) return;
+      closeAccountSettingsEditor();
+    } catch (error: unknown) {
+      if (!isCurrent(session)) return;
+      showNotification(
+        t('auth_files.account_settings_saved_refresh_failed', {
+          defaultValue: '保存成功，但刷新失败，请手动刷新。',
+        }),
+        'warning'
+      );
+      setAccountSettingsEditor((previous) =>
+        previous ? { ...previous, saving: false } : previous
       );
     }
   };
 
-  const handleAccountSettingsSave = async () => {
-    if (!accountSettingsEditor || !accountSettingsDirty) return;
-    const editor = accountSettingsEditor;
+  const performRawJsonOverwrite = async (
+    editor: AccountSettingsEditorState,
+    session: EditorSession,
+    version: number
+  ) => {
+    if (
+      !isCurrent(session) ||
+      saveLock.current === session ||
+      version !== draftVersion.current ||
+      editorRef.current?.loading ||
+      editorRef.current?.saving ||
+      editorRef.current?.error
+    )
+      return;
+    saveLock.current = session;
+    const check = () => {
+      assertCurrent(session);
+      if (version !== draftVersion.current) throw new Error('Auth file draft changed');
+    };
+    setAccountSettingsEditor((previous) => (previous ? { ...previous, saving: true } : previous));
+    try {
+      const verified = await verifyTarget(session);
+      check();
+      await authFilesApi.saveTextVerified(
+        verified.target,
+        editor.rawJsonText,
+        verified.sourceIdentities,
+        session.rawText,
+        session.requestScope,
+        check
+      );
+      check();
+      session.rawText = editor.rawJsonText;
+      setAccountSettingsEditor((previous) =>
+        previous
+          ? { ...previous, rawJsonBaseline: editor.rawJsonText, rawJsonTouched: false }
+          : previous
+      );
+      await refreshAfterSave(session, editor.fileName);
+    } catch (error: unknown) {
+      if (!isCurrent(session)) return;
+      showNotification(
+        `${t('notification.upload_failed')}: ${error instanceof Error ? error.message : ''}`,
+        'error'
+      );
+      setAccountSettingsEditor((previous) =>
+        previous ? { ...previous, saving: false } : previous
+      );
+    } finally {
+      if (saveLock.current === session) saveLock.current = null;
+    }
+  };
 
-    // 危险路径优先：手工改过整份原始 JSON —— 只校验 JSON 合法性 + 二次确认 + 整份覆写，
-    // 不再叠加账号设置白名单 / 字段补丁（原始 JSON 已是完整真源）。
+  const handleAccountSettingsSave = async () => {
+    const editor = editorRef.current;
+    const session = sessionRef.current;
+    if (
+      !editor ||
+      !isCurrent(session) ||
+      editor.loading ||
+      editor.saving ||
+      editor.error ||
+      saveLock.current === session ||
+      !accountSettingsDirty
+    )
+      return;
+    if (!session.identityVerified) {
+      showNotification(
+        t('auth_files.status_mutation_scope_ambiguous', { name: editor.fileName }),
+        'error'
+      );
+      return;
+    }
+    const version = draftVersion.current;
     if (isRawJsonDirty(editor)) {
       let validObject = false;
       try {
         validObject = isRecordObject(JSON.parse(editor.rawJsonText.trim()));
       } catch {
-        validObject = false;
+        /* 保留非法草稿供修正。 */
       }
       if (!validObject) {
         const message = t('auth_files.account_settings_raw_json_invalid_object', {
           defaultValue: 'Auth JSON must be a single JSON object.',
         });
-        setAccountSettingsEditor((prev) =>
-          prev && prev.fileName === editor.fileName
-            ? { ...prev, rawJsonError: message }
-            : prev
+        setAccountSettingsEditor((previous) =>
+          previous ? { ...previous, rawJsonError: message } : previous
         );
         showNotification(message, 'error');
         return;
@@ -889,31 +1079,23 @@ export function useAuthFilesAccountSettings(
         }),
         cancelText: t('common.cancel'),
         variant: 'danger',
-        onConfirm: () => {
-          void performRawJsonOverwrite(editor.fileName, editor.rawJsonText);
-        },
+        onConfirm: () => performRawJsonOverwrite(editor, session, version),
       });
       return;
     }
-
-    // proxy_url 必填 + 格式校验：为空或非法时前端拦截，不提交（T041：core#26/#27 服务端守卫呼应）。
     const proxyError = computeProxyUrlError(editor.proxyUrl);
     if (proxyError) {
-      setAccountSettingsEditor((prev) =>
-        prev ? { ...prev, proxyUrlError: proxyError } : prev
+      setAccountSettingsEditor((previous) =>
+        previous ? { ...previous, proxyUrlError: proxyError } : previous
       );
       showNotification(t(proxyUrlErrorKey(proxyError)), 'error');
       return;
     }
-
-    // 提交门控：主校验路径已在失焦（blur）时跑过，这里只读内联校验状态做最后确认门。
     const trimmedProxyValue = editor.proxyUrl.trim();
-    // 正在校验 → 拦住并提示「代理验证中，请稍候」，不落库。
     if (isProxyInlineChecking(editor.proxyInline, trimmedProxyValue)) {
       showNotification(t('proxy_preflight.validating_wait'), 'error');
       return;
     }
-    // 已校验失败（同值）→ 拦住（错误已就地展示），不落库、也不重跑探针。
     if (isProxyInlineInvalid(editor.proxyInline, trimmedProxyValue)) {
       showNotification(
         editor.proxyInline?.message || t('auth_files.proxy_url_invalid_error'),
@@ -921,123 +1103,125 @@ export function useAuthFilesAccountSettings(
       );
       return;
     }
-    // 已校验通过（同值）→ 直接放行，不再隐藏地重跑查重 / 探针。否则（未校验 / 值变更后未重验，
-    // 例如未经 blur 直接调用保存）→ 就地补跑完整校验作为最后确认门（fail-closed）。
-    if (!isProxyInlineValidatedOk(editor.proxyInline, trimmedProxyValue)) {
-      // L2 查重（本地秒级，先于慢的连通性探针 fail-fast）：仅当代理相对基线发生变更（或新填）时
-      // 才查重——未变更=账号自身既有值，不算重复，直接放行。命中其它现有账号占用即阻断，不进探针、
-      // 不落库（两个账号共用同一出口会 IP 聚类被关联）。excludeName 排除自身作纵深防御。
-      const trimmedProxy = editor.proxyUrl.trim();
-      const baselineProxy = (editor.proxyUrlBaseline || '').trim();
-      if (trimmedProxy && trimmedProxy !== baselineProxy) {
+    const { request, error } = buildPatchRequest(editor);
+    if (!request) {
+      showNotification(
+        error?.startsWith('auth_files.') ? t(error) : error || 'Invalid format',
+        'error'
+      );
+      return;
+    }
+    const fieldsPatch = buildRawFieldsPatch(editor);
+    const shouldPatchFields = editor.rawJsonAvailable && Object.keys(fieldsPatch).length > 0;
+    const shouldPatchSettings =
+      JSON.stringify(request, null, 2) !== editor.originalSerializedRequest;
+    const check = () => {
+      assertCurrent(session);
+      if (version !== draftVersion.current) throw new Error('Auth file draft changed');
+    };
+    saveLock.current = session;
+    setAccountSettingsEditor((previous) => (previous ? { ...previous, saving: true } : previous));
+    try {
+      if (trimmedProxyValue !== editor.proxyUrlBaseline.trim()) {
+        // 失焦成功不能代替保存时的最新账号排重；同源兄弟也不能按文件名排除。
+        const inventory = await authFilesApi.list(session.requestScope);
+        check();
         const conflicts = findAccountsUsingProxy(
           editor.proxyUrl,
-          accounts.map(toProxyOwnerAccount),
-          { excludeName: editor.fileName, provider: editor.providerKey || editor.provider }
+          (inventory.files || [])
+            .filter((file) => getAuthFileSourceMemberKey(file) !== session.fileIdentity)
+            .map(toProxyOwnerAccount),
+          { provider: editor.providerKey || editor.provider }
         );
-        if (conflicts.length > 0) {
+        if (conflicts.length) {
           const message = t('proxy_preflight.duplicate_account', {
             accounts: conflicts.join('、'),
           });
-          setAccountSettingsEditor((prev) =>
-            prev && prev.fileName === editor.fileName
-              ? { ...prev, proxyUrlDuplicateError: message }
-              : prev
+          setAccountSettingsEditor((previous) =>
+            previous ? { ...previous, proxyUrlDuplicateError: message } : previous
           );
-          showNotification(message, 'error');
-          return;
+          throw new Error(message);
         }
       }
-
-      // 格式过后再做后端连通性探针：不通就不落库（fail-closed），把 proxy_url 标红并提示；
-      // 通了展示出口 IP 再继续保存。探测期间置 saving，禁用保存/关闭按钮防重复提交。
-      // 仅当 proxy_url 相对打开时的原值发生变更（或新填）时才探针：未变更（逐字符相同）直接放行，
-      // 避免用户只改其它字段时被临时不通的旧代理阻断（该值此前已校验/已落库，后端仍兜底）。
-      setAccountSettingsEditor((prev) =>
-        prev && prev.fileName === editor.fileName ? { ...prev, saving: true } : prev
-      );
-      const preflight = await runProxyPreflight(editor.proxyUrl, {
-        formatValidator: () => ({ valid: true }),
-        translate: (reason) => t(`proxy_preflight.reason_${reason}`),
-        previousProxyUrl: editor.proxyUrlBaseline,
-      });
-      if (!preflight.ok) {
-        setAccountSettingsEditor((prev) =>
-          prev && prev.fileName === editor.fileName
-            ? { ...prev, saving: false, proxyUrlError: 'invalid' }
-            : prev
-        );
-        showNotification(preflight.message, 'error');
-        return;
+      if (!isProxyInlineValidatedOk(editor.proxyInline, trimmedProxyValue)) {
+        const preflight = await runProxyPreflight(editor.proxyUrl, {
+          formatValidator: () => ({ valid: true }),
+          translate: (reason) => t(`proxy_preflight.reason_${reason}`),
+          previousProxyUrl: editor.proxyUrlBaseline,
+          probe: (value) => {
+            check();
+            return probeProxyConnectivity(value, session.requestScope);
+          },
+        });
+        check();
+        if (!preflight.ok) {
+          setAccountSettingsEditor((previous) =>
+            previous ? { ...previous, proxyUrlError: 'invalid' } : previous
+          );
+          throw new Error(preflight.message);
+        }
+        if (preflight.exitIp)
+          showNotification(
+            t('proxy_preflight.connected_with_ip', { ip: preflight.exitIp }),
+            'success'
+          );
       }
-      // 未变更放行时不做探针、无出口 IP，跳过「已连通(出口 IP)」提示；只有真正探针成功才展示。
-      if (preflight.exitIp) {
-        showNotification(
-          t('proxy_preflight.connected_with_ip', { ip: preflight.exitIp }),
-          'success'
+      if (shouldPatchSettings) {
+        const verified = await verifyTarget(session);
+        check();
+        await authFilesApi.updateAccountSettings(request, verified.target, session.requestScope);
+        check();
+        // 第一段已提交；后续字段失败仍保留字段草稿，不重放已成功的白名单写入。
+        setAccountSettingsEditor((previous) =>
+          previous
+            ? {
+                ...previous,
+                originalSerializedRequest: JSON.stringify(request, null, 2),
+                proxyUrlBaseline: request.proxy_url ?? previous.proxyUrlBaseline,
+              }
+            : previous
         );
-      }
-    }
-
-    const { request, error } = buildPatchRequest(editor);
-    if (!request) {
-      const errorMessage = error?.startsWith('auth_files.') ? t(error) : error || 'Invalid format';
-      // 探针阶段已置 saving=true，这里失败要复位，避免保存按钮永久 loading。
-      setAccountSettingsEditor((prev) =>
-        prev && prev.fileName === editor.fileName ? { ...prev, saving: false } : prev
-      );
-      showNotification(errorMessage, 'error');
-      return;
-    }
-
-    // prefix / priority / websockets 走 `/auth-files/fields` 原始 JSON 补丁；只在真正
-    // 改动时追加一次请求（与账号设置白名单 PATCH 的字段不重叠，顺序执行不冲突）。
-    const fieldsPatch = buildRawFieldsPatch(editor);
-    const shouldPatchFields = editor.rawJsonAvailable && Object.keys(fieldsPatch).length > 0;
-
-    setAccountSettingsEditor((prev) => {
-      if (!prev) return prev;
-      return { ...prev, saving: true };
-    });
-
-    try {
-      // 账号设置白名单未改动（仅改了原始字段）时可省略该请求，避免无谓写回。
-      if (accountSettingsWhitelistDirty) {
-        await authFilesApi.updateAccountSettings(request);
       }
       if (shouldPatchFields) {
-        await authFilesApi.patchFields(editor.fileName, fieldsPatch);
-      }
-      showNotification(
-        t('auth_files.prefix_proxy_saved_success', { name: request.name }),
-        'success'
-      );
-      await loadFiles();
-      await loadKeyStats();
-      setAccountSettingsEditor(null);
-    } catch (err: unknown) {
-      const statusCode =
-        err && typeof err === 'object' && 'status' in err
-          ? (err as { status?: number }).status
-          : undefined;
-      const rawMessage = err instanceof Error ? err.message : '';
-      // core#26/#27：proxy_url 为空/非法时服务端返回 400。展示可读错误而非吞掉/崩溃，
-      // 并在编辑器内把 proxy_url 标红，提示用户补填合法住宅代理。
-      if (statusCode === 400) {
-        setAccountSettingsEditor((prev) =>
-          prev ? { ...prev, saving: false, proxyUrlError: prev.proxyUrlError ?? 'invalid' } : prev
+        const verified = await verifyTarget(session);
+        check();
+        await authFilesApi.patchFieldsWithPluginSourceFallback(
+          verified.target,
+          fieldsPatch,
+          verified.sourceIdentities,
+          session.requestScope,
+          check
         );
-        const detail = rawMessage
-          ? `${t('auth_files.proxy_url_invalid_error')} (${rawMessage})`
-          : t('auth_files.proxy_url_invalid_error');
-        showNotification(detail, 'error');
-        return;
+        check();
+        setAccountSettingsEditor((previous) =>
+          previous
+            ? { ...previous, rawJsonObject: { ...previous.rawJsonObject, ...fieldsPatch } }
+            : previous
+        );
       }
-      showNotification(`${t('notification.upload_failed')}: ${rawMessage}`, 'error');
-      setAccountSettingsEditor((prev) => {
-        if (!prev) return prev;
-        return { ...prev, saving: false };
-      });
+      await refreshAfterSave(session, editor.fileName);
+    } catch (error: unknown) {
+      if (!isCurrent(session)) return;
+      const status =
+        error && typeof error === 'object' && 'status' in error ? error.status : undefined;
+      const detail = error instanceof Error ? error.message : '';
+      showNotification(
+        `${t(status === 400 ? 'auth_files.proxy_url_invalid_error' : 'notification.upload_failed')}: ${detail}`,
+        'error'
+      );
+      setAccountSettingsEditor((previous) =>
+        previous
+          ? {
+              ...previous,
+              saving: false,
+              ...(status === 400
+                ? { proxyUrlError: previous.proxyUrlError ?? ('invalid' as const) }
+                : {}),
+            }
+          : previous
+      );
+    } finally {
+      if (saveLock.current === session) saveLock.current = null;
     }
   };
 

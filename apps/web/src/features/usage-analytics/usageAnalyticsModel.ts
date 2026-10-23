@@ -1,6 +1,7 @@
 import type {
   MonitoringAnalyticsAnomalyPoint,
   MonitoringAnalyticsApiKeyStatRow,
+  MonitoringAnalyticsApiKeyTimelinePoint,
   MonitoringAnalyticsChannelShareRow,
   MonitoringAnalyticsCredentialStatRow,
   MonitoringAnalyticsCredentialTimelinePoint,
@@ -25,8 +26,26 @@ import { getRangeBounds as getSharedRangeBounds } from '@/shared/model/timeRange
 import type { CredentialInfo } from '@/types/sourceInfo';
 import { formatInUtc8, getUtc8Parts } from '@/utils/datetime';
 import { buildSourceInfoMap } from '@/utils/sourceResolver';
-import { formatCompactNumber, formatUsd } from '@/utils/usage';
 import { maskAccountEmail, readEmailLike, resolveAccountIdentity } from '@/utils/accountIdentity';
+import {
+  calculateCacheHitRateFromTotals,
+  formatCompactNumber,
+  formatUsd,
+  normalizeAnalyticsModel,
+} from '@/utils/usage';
+
+const CODEX_ACCOUNT_ID_SNAPSHOT_PREFIX = 'codex-account-id:v1:';
+const projectIdForDisplay = (provider: unknown, projectId: unknown): string | undefined => {
+  const value = typeof projectId === 'string' ? projectId.trim() : '';
+  const normalizedProvider = typeof provider === 'string' ? provider.trim().toLowerCase() : '';
+  if (
+    normalizedProvider.replace(/_/g, '-') === 'codex' &&
+    value.startsWith(CODEX_ACCOUNT_ID_SNAPSHOT_PREFIX)
+  ) {
+    return undefined;
+  }
+  return value || undefined;
+};
 
 export type UsageAnalyticsTab =
   | 'performance'
@@ -47,6 +66,11 @@ export type UsageAnalyticsCacheStatus = 'all' | 'hit' | 'miss';
 export type UsageAnalyticsCustomRange = {
   startMs: number;
   endMs: number;
+};
+
+export type UsageAnalyticsRangeBounds = {
+  fromMs: number;
+  toMs: number;
 };
 
 export type UsageAnalyticsFiltersState = {
@@ -120,6 +144,7 @@ export type UsageSummaryMetrics = {
   cachedTokens: number;
   cacheReadTokens: number;
   cacheCreationTokens: number;
+  cacheHitRate?: number;
   estimatedCost: number;
   averageCostPerCall: number;
   successRate: number;
@@ -165,6 +190,7 @@ export type UsageRankRow = {
   label: string;
   model?: string;
   apiKeyHash?: string;
+  apiKeyCopyValue?: string;
   provider?: string;
   authFile?: string;
   authIndex?: string;
@@ -185,6 +211,9 @@ export type UsageRankRow = {
   cachedTokens: number;
   cacheReadTokens: number;
   cacheCreationTokens: number;
+  cacheHitTokens?: number;
+  cacheHitInputTokens?: number;
+  cacheHitRate?: number;
   estimatedCost: number;
   averageLatencyMs: number | null;
   lastSeenMs?: number;
@@ -225,6 +254,15 @@ export type UsageEntityTrendSeries = {
 export type UsageCredentialTimelinePoint = {
   id: string;
   label: string;
+  bucketMs: number;
+  bucketLabel: string;
+  requestCount: number;
+  totalTokens: number;
+  estimatedCost: number;
+};
+
+export type UsageApiKeyTimelinePoint = {
+  apiKeyHash: string;
   bucketMs: number;
   bucketLabel: string;
   requestCount: number;
@@ -408,6 +446,7 @@ export type UsageDrilldownEvent = {
   apiKeyLabel: string;
   source: string;
   authIndex: string;
+  provider: string;
   endpoint: string;
   totalTokens: number;
   estimatedCost: number;
@@ -631,6 +670,35 @@ export const formatLocalBucketLabel = (
 export const formatLocalDateTime = (timestampMs: number, locale: string) =>
   formatInUtc8(timestampMs, { dateStyle: 'medium', timeStyle: 'short' }, locale);
 
+const localDayStartMs = (timestampMs: number) => {
+  const value = new Date(timestampMs);
+  value.setHours(0, 0, 0, 0);
+  return value.getTime();
+};
+
+const getLocalBucketStartMs = (
+  timestampMs: number,
+  granularity: UsageAnalyticsResolvedGranularity
+) => {
+  if (granularity === 'day') return localDayStartMs(timestampMs);
+  const date = new Date(timestampMs);
+  date.setMinutes(0, 0, 0);
+  return date.getTime();
+};
+
+const getNextUsageBucketStartMs = (
+  bucketMs: number,
+  granularity: UsageAnalyticsResolvedGranularity
+) => {
+  const date = new Date(bucketMs);
+  if (granularity === 'hour') {
+    date.setHours(date.getHours() + 1, 0, 0, 0);
+    return date.getTime();
+  }
+  date.setDate(date.getDate() + 1);
+  return date.getTime();
+};
+
 // 分析页时间范围计算委托给 shared/model/timeRange，与监控页共用同一套口径。
 // 分析页此前的 24h/today/yesterday/7d/30d 语义（滚动窗口 vs 自然日锚定）与共享模块
 // 完全一致，迁移不改变任何已发布档位的计算结果或视觉表现；'7d' 仍是未知/兜底档位。
@@ -643,6 +711,24 @@ export const getUsageRangeBounds = (
     nowMs,
     customRange: filters.customRange,
   });
+
+// Rolling ranges change their exact timestamps on refresh, but the visible query
+// scope remains the same until the user changes filters. Calendar-day ranges
+// intentionally change scope at midnight.
+export const getUsagePresentationRangeScopeKey = (
+  filters: Pick<UsageAnalyticsFiltersState, 'timeRange'>,
+  bounds: UsageAnalyticsRangeBounds | null
+): string => {
+  switch (filters.timeRange) {
+    case 'today':
+    case 'yesterday':
+      return `${filters.timeRange}:${bounds?.fromMs ?? 'unavailable'}`;
+    case 'custom':
+      return `custom:${bounds?.fromMs ?? 'unavailable'}:${bounds?.toMs ?? 'unavailable'}`;
+    default:
+      return filters.timeRange;
+  }
+};
 
 export const resolveUsageGranularity = (
   filters: Pick<UsageAnalyticsFiltersState, 'timeRange' | 'customRange' | 'granularity'>,
@@ -690,7 +776,8 @@ export const buildUsageAnalyticsFilters = (
   const provider = filters.provider ?? 'all';
   const authFile = filters.authFile ?? 'all';
   if (isActiveSelectValue(model)) {
-    if (filters.performanceView === 'fast' && model.startsWith('unresolved:')) payload.unresolved_models = [model.slice('unresolved:'.length)];
+    if (filters.performanceView === 'fast' && model.startsWith('unresolved:'))
+      payload.unresolved_models = [model.slice('unresolved:'.length)];
     else payload.models = [model.trim()];
   }
   if (apiKeyHash) {
@@ -725,6 +812,7 @@ export const buildUsageAnalyticsInclude = (
 ): MonitoringAnalyticsInclude => {
   const include: MonitoringAnalyticsInclude = {
     summary: true,
+    summary_profile: 'compact',
     granularity,
   };
 
@@ -735,6 +823,7 @@ export const buildUsageAnalyticsInclude = (
       break;
     case 'overview':
       Object.assign(include, {
+        summary_percentiles: true,
         summary_comparison: true,
         timeline: true,
         model_stats: true,
@@ -764,7 +853,6 @@ export const buildUsageAnalyticsInclude = (
       break;
     case 'credentials':
       include.credential_stats = true;
-      include.credential_timeline = true;
       break;
     case 'heatmap':
       include.heatmap = true;
@@ -796,6 +884,10 @@ export const buildUsageSummary = (
   cachedTokens: toNumber(summary?.cached_tokens),
   cacheReadTokens: toNumber(summary?.cache_read_tokens),
   cacheCreationTokens: toNumber(summary?.cache_creation_tokens),
+  cacheHitRate:
+    typeof summary?.cache_hit_rate === 'number' && Number.isFinite(summary.cache_hit_rate)
+      ? Math.min(1, Math.max(0, summary.cache_hit_rate))
+      : undefined,
   estimatedCost: toNumber(summary?.total_cost),
   averageCostPerCall: toNumber(summary?.average_cost_per_call),
   successRate: toNumber(summary?.success_rate),
@@ -810,41 +902,100 @@ export const buildUsageSummary = (
 const getBucketSizeMs = (granularity: UsageAnalyticsResolvedGranularity) =>
   granularity === 'day' ? DAY_MS : HOUR_MS;
 
-// Anthropic/Claude 系上报的 input_tokens 不含缓存，cache_read/cache_creation 是独立叠加的
-// bucket；OpenAI 系（含 gpt-5.6-* 等）上报的 input_tokens 本身已经是包含缓存命中的超集，
-// cache_read 只是重复披露同一批已在 input 里的 token，不能再叠加进分母，否则会把命中率
-// 腰斩（真实案例：gpt-5.6-sol 单条 input=55406/cache_read=54784 应≈98.9%，误加 cache_read
-// 到分母后被算成 49.7%）。判据对齐后端 pricing/cost.go 的 isAnthropicModel：先剥掉 model
-// 里的 provider/ 前缀（取最后一个 '/' 之后的部分），再判断是否以 claude/anthropic 开头，
-// 与 monitoring 侧 monitoringCenterPageModel.ts 的 isAnthropicModelSlug 保持一致。
-const isAnthropicModelSlug = (model?: string | null): boolean => {
-  if (!model) return false;
-  const trimmed = model.trim().toLowerCase();
-  const index = trimmed.lastIndexOf('/');
-  const slug = index >= 0 ? trimmed.slice(index + 1) : trimmed;
-  return slug.startsWith('claude') || slug.startsWith('anthropic');
-};
-
-// 缓存命中率口径（单行/汇总共用），按 provider 区分分母：
-// 分子：cache_read 优先，否则回退 cached（避免 Anthropic 把 cache_read 镜像进 cached 造成双计）。
-// - Anthropic 系（input 不含缓存）：分母 = inputTokens + cacheReadTokens + cacheCreationTokens
-// - OpenAI/默认系（input 含缓存）：分母 = max(inputTokens, 命中 tokens) + cacheCreationTokens
-//   （不再额外加 cache_read，因为它已经包含在 inputTokens 里）
-// model 缺省（例如跨模型聚合的 timeline/summary，没有单一 provider）时按 OpenAI/默认系口径
-// 计算，与该函数此前的行为保持一致。分母 <= 0 时返回 0（沿用既有调用方对 number 的约定）。
+// 仅旧raw调用兼容；server DTO必须走显式normalized helper，不按模型名重复推断。
 export const computeCacheHitRate = (tokens: {
   inputTokens: number;
   cacheReadTokens: number;
   cacheCreationTokens: number;
   cachedTokens: number;
   model?: string | null;
+  modelName?: string;
+  cacheHitRate?: number;
 }): number => {
-  const cacheHitTokens = tokens.cacheReadTokens > 0 ? tokens.cacheReadTokens : tokens.cachedTokens;
-  const inputSideTokens = isAnthropicModelSlug(tokens.model)
-    ? tokens.inputTokens + tokens.cacheReadTokens + tokens.cacheCreationTokens
-    : Math.max(tokens.inputTokens, cacheHitTokens) + tokens.cacheCreationTokens;
-  if (inputSideTokens <= 0) return 0;
-  return Math.min(1, cacheHitTokens / inputSideTokens);
+  if (typeof tokens.cacheHitRate === 'number' && Number.isFinite(tokens.cacheHitRate))
+    return Math.min(1, Math.max(0, tokens.cacheHitRate));
+  const hit = tokens.cacheReadTokens > 0 ? tokens.cacheReadTokens : tokens.cachedTokens;
+  const slug = (tokens.model ?? tokens.modelName ?? '').trim().toLowerCase().split('/').pop() ?? '';
+  const input =
+    slug.startsWith('claude') || slug.startsWith('anthropic')
+      ? tokens.inputTokens + tokens.cacheReadTokens + tokens.cacheCreationTokens
+      : Math.max(tokens.inputTokens, hit) + tokens.cacheCreationTokens;
+  return calculateCacheHitRateFromTotals(hit, input);
+};
+
+export const computeNormalizedCacheHitRate = (tokens: {
+  modelName?: string;
+  inputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  cachedTokens: number;
+  model?: string | null;
+  cacheHitRate?: number;
+}): number => {
+  if (typeof tokens.cacheHitRate === 'number' && Number.isFinite(tokens.cacheHitRate)) {
+    return Math.min(1, Math.max(0, tokens.cacheHitRate));
+  }
+  return calculateCacheHitRateFromTotals(
+    tokens.cacheReadTokens > 0
+      ? tokens.cacheReadTokens
+      : Math.max(tokens.cachedTokens - tokens.cacheCreationTokens, 0),
+    tokens.inputTokens
+  );
+};
+
+export const getUsageCacheTokens = (tokens: {
+  cachedTokens: unknown;
+  cacheReadTokens: unknown;
+  cacheCreationTokens: unknown;
+}): number =>
+  Math.max(toNumber(tokens.cachedTokens), 0) +
+  Math.max(toNumber(tokens.cacheReadTokens), 0) +
+  Math.max(toNumber(tokens.cacheCreationTokens), 0);
+
+// monitoring service.go的displayCachedTokens已聚合总缓存；仅缺该字段时回退已知桶。
+export const getNormalizedUsageCacheTokens = (tokens: {
+  cachedTokens?: unknown;
+  cacheReadTokens: unknown;
+  cacheCreationTokens: unknown;
+}): number =>
+  tokens.cachedTokens === undefined || tokens.cachedTokens === null
+    ? Math.max(toNumber(tokens.cacheReadTokens), 0) +
+      Math.max(toNumber(tokens.cacheCreationTokens), 0)
+    : Math.max(toNumber(tokens.cachedTokens), 0);
+
+const getRowCacheHitTotals = (row: UsageRankRow) => {
+  const hasExplicitTotals =
+    typeof row.cacheHitTokens === 'number' &&
+    Number.isFinite(row.cacheHitTokens) &&
+    typeof row.cacheHitInputTokens === 'number' &&
+    Number.isFinite(row.cacheHitInputTokens);
+  return hasExplicitTotals
+    ? { hitTokens: row.cacheHitTokens ?? 0, inputTokens: row.cacheHitInputTokens ?? 0 }
+    : typeof row.cacheHitRate === 'number' && Number.isFinite(row.cacheHitRate)
+      ? {
+          hitTokens: Math.max(row.inputTokens, 0) * Math.min(1, Math.max(row.cacheHitRate, 0)),
+          inputTokens: Math.max(row.inputTokens, 0),
+        }
+      : {
+          hitTokens:
+            row.cacheReadTokens > 0
+              ? row.cacheReadTokens
+              : Math.max(row.cachedTokens - row.cacheCreationTokens, 0),
+          inputTokens: row.inputTokens,
+        };
+};
+
+const computeRowsCacheHitRate = (rows: UsageRankRow[]): number => {
+  const totals = rows.reduce(
+    (current, row) => {
+      const rowTotals = getRowCacheHitTotals(row);
+      current.hitTokens += rowTotals.hitTokens;
+      current.inputTokens += rowTotals.inputTokens;
+      return current;
+    },
+    { hitTokens: 0, inputTokens: 0 }
+  );
+  return calculateCacheHitRateFromTotals(totals.hitTokens, totals.inputTokens);
 };
 
 export const buildUsageTimeline = (
@@ -867,7 +1018,11 @@ export const buildUsageTimeline = (
       totalTokens,
       inputTokens,
       outputTokens: toNumber(point.output_tokens),
-      cachedTokens: toNumber(point.cached_tokens),
+      cachedTokens: getNormalizedUsageCacheTokens({
+        cachedTokens: point.cached_tokens,
+        cacheReadTokens: point.cache_read_tokens,
+        cacheCreationTokens: point.cache_creation_tokens,
+      }),
       cacheReadTokens,
       cacheCreationTokens: toNumber(point.cache_creation_tokens),
       reasoningTokens: toNumber(point.reasoning_tokens),
@@ -881,15 +1036,97 @@ export const buildUsageTimeline = (
       averageLatencyMs: toNullableNumber(point.average_latency_ms),
       p95LatencyMs: toNullableNumber(point.p95_latency_ms),
       p95TtftMs: toNullableNumber(point.p95_ttft_ms),
-      cacheHitRate: computeCacheHitRate({
+      cacheHitRate: computeNormalizedCacheHitRate({
         inputTokens,
         cacheReadTokens,
         cacheCreationTokens: toNumber(point.cache_creation_tokens),
-        cachedTokens: toNumber(point.cached_tokens),
+        cachedTokens: getNormalizedUsageCacheTokens({
+          cachedTokens: point.cached_tokens,
+          cacheReadTokens: point.cache_read_tokens,
+          cacheCreationTokens: point.cache_creation_tokens,
+        }),
+        cacheHitRate: point.cache_hit_rate,
       }),
       averageTokensPerRequest: requestCount > 0 ? totalTokens / requestCount : 0,
     };
   });
+
+const sortUsageTimeline = (timeline: UsageTimelinePoint[]) =>
+  timeline.slice().sort((left, right) => left.bucketMs - right.bucketMs);
+
+const buildEmptyUsageTimelinePoint = (
+  bucketMs: number,
+  granularity: UsageAnalyticsResolvedGranularity
+): UsageTimelinePoint => ({
+  bucketMs,
+  bucketEndMs: bucketMs + getBucketSizeMs(granularity),
+  label: formatLocalBucketLabel(bucketMs, granularity),
+  requestCount: 0,
+  totalTokens: 0,
+  inputTokens: 0,
+  outputTokens: 0,
+  cachedTokens: 0,
+  cacheReadTokens: 0,
+  cacheCreationTokens: 0,
+  reasoningTokens: 0,
+  estimatedCost: 0,
+  successCount: 0,
+  failureCount: 0,
+  successRate: 0,
+  failureRate: 0,
+  averageLatencyMs: null,
+  p95LatencyMs: null,
+  p95TtftMs: null,
+  cacheHitRate: 0,
+  averageTokensPerRequest: 0,
+});
+
+export const fillUsageTimelineBuckets = (
+  timeline: UsageTimelinePoint[] = [],
+  bounds: UsageAnalyticsRangeBounds | null | undefined,
+  granularity: UsageAnalyticsResolvedGranularity
+): UsageTimelinePoint[] => {
+  const sortedTimeline = sortUsageTimeline(timeline);
+  if (sortedTimeline.length === 0) {
+    return sortedTimeline;
+  }
+  if (
+    !bounds ||
+    !Number.isFinite(bounds.fromMs) ||
+    !Number.isFinite(bounds.toMs) ||
+    bounds.fromMs >= bounds.toMs
+  ) {
+    return sortedTimeline;
+  }
+
+  const pointsByBucket = new Map<number, UsageTimelinePoint[]>();
+  timeline.forEach((point) => {
+    const bucketKey = getLocalBucketStartMs(point.bucketMs, granularity);
+    const points = pointsByBucket.get(bucketKey);
+    if (points) {
+      points.push(point);
+    } else {
+      pointsByBucket.set(bucketKey, [point]);
+    }
+  });
+
+  const filledTimeline: UsageTimelinePoint[] = [];
+  const firstBucketMs = getLocalBucketStartMs(bounds.fromMs, granularity);
+  for (
+    let bucketMs = firstBucketMs;
+    bucketMs < bounds.toMs;
+    bucketMs = getNextUsageBucketStartMs(bucketMs, granularity)
+  ) {
+    const points = pointsByBucket.get(bucketMs);
+    if (points) {
+      filledTimeline.push(...points);
+    } else {
+      filledTimeline.push(buildEmptyUsageTimelinePoint(bucketMs, granularity));
+    }
+  }
+
+  return sortUsageTimeline(filledTimeline);
+};
 
 export const buildUsageCredentialTimeline = (
   timeline: MonitoringAnalyticsCredentialTimelinePoint[] = [],
@@ -902,6 +1139,22 @@ export const buildUsageCredentialTimeline = (
     return {
       id: point.id || point.auth_file_snapshot || point.auth_index || point.source_hash || '-',
       label: display.label,
+      bucketMs,
+      bucketLabel: point.bucket_label || formatLocalBucketLabel(bucketMs, granularity),
+      requestCount: toNumber(point.calls),
+      totalTokens: toNumber(point.total_tokens ?? point.tokens),
+      estimatedCost: toNumber(point.cost),
+    };
+  });
+
+export const buildUsageApiKeyTimeline = (
+  timeline: MonitoringAnalyticsApiKeyTimelinePoint[] = [],
+  granularity: UsageAnalyticsResolvedGranularity
+): UsageApiKeyTimelinePoint[] =>
+  timeline.map((point) => {
+    const bucketMs = toNumber(point.bucket_ms);
+    return {
+      apiKeyHash: normalizeApiKeyHash(point.api_key_hash),
       bucketMs,
       bucketLabel: point.bucket_label || formatLocalBucketLabel(bucketMs, granularity),
       requestCount: toNumber(point.calls),
@@ -1187,6 +1440,9 @@ export const buildModelRows = (
       cachedTokens: toNumber(row.cached_tokens),
       cacheReadTokens: toNumber(row.cache_read_tokens),
       cacheCreationTokens: toNumber(row.cache_creation_tokens),
+      cacheHitTokens: row.cache_hit_tokens,
+      cacheHitInputTokens: row.cache_hit_input_tokens,
+      cacheHitRate: row.cache_hit_rate,
       estimatedCost: rowTotalCost(row),
       averageLatencyMs: null,
       share:
@@ -1370,6 +1626,9 @@ const buildModelSpendRows = (
     cachedTokens: toNumber(row.cached_tokens),
     cacheReadTokens: toNumber(row.cache_read_tokens),
     cacheCreationTokens: toNumber(row.cache_creation_tokens),
+    cacheHitTokens: row.cache_hit_tokens,
+    cacheHitInputTokens: row.cache_hit_input_tokens,
+    cacheHitRate: row.cache_hit_rate,
     estimatedCost: rowTotalCost(row),
     averageLatencyMs: null,
     lastSeenMs: row.last_seen_ms,
@@ -1435,6 +1694,7 @@ export const buildApiKeyRows = (
         id: hash || row.id || '-',
         label: resolveUsageApiKeyLabel(hash, apiKeyDisplayMap),
         apiKeyHash: hash,
+        apiKeyCopyValue: apiKeyDisplayMap?.get(hash)?.copyValue,
         provider: row.auth_provider_snapshot,
         authIndex: row.auth_indices?.[0],
         source: row.sources?.[0],
@@ -1495,7 +1755,7 @@ export const buildCredentialRows = (
         accountEmail: display.accountEmail,
         accountMasked: display.accountMasked,
         accountNote: display.accountNote,
-        projectId: row.auth_project_id_snapshot,
+        projectId: projectIdForDisplay(row.auth_provider_snapshot, row.auth_project_id_snapshot),
         requestCount: toNumber(row.calls),
         successCount: toNumber(row.success_calls),
         failureCount: toNumber(row.failure_calls),
@@ -1546,6 +1806,8 @@ const buildProviderModelsFromEntities = (
         modelMap.set(key, { ...model, id: key, label: key, model: key });
         return;
       }
+      const existingCacheTotals = getRowCacheHitTotals(existing);
+      const modelCacheTotals = getRowCacheHitTotals(model);
       existing.requestCount += model.requestCount;
       existing.successCount += model.successCount;
       existing.failureCount += model.failureCount;
@@ -1556,6 +1818,12 @@ const buildProviderModelsFromEntities = (
       existing.cachedTokens += model.cachedTokens;
       existing.cacheReadTokens += model.cacheReadTokens;
       existing.cacheCreationTokens += model.cacheCreationTokens;
+      existing.cacheHitTokens = existingCacheTotals.hitTokens + modelCacheTotals.hitTokens;
+      existing.cacheHitInputTokens = existingCacheTotals.inputTokens + modelCacheTotals.inputTokens;
+      existing.cacheHitRate = calculateCacheHitRateFromTotals(
+        existing.cacheHitTokens,
+        existing.cacheHitInputTokens
+      );
       existing.estimatedCost += model.estimatedCost;
       existing.lastSeenMs = Math.max(existing.lastSeenMs ?? 0, model.lastSeenMs ?? 0);
     });
@@ -1573,6 +1841,7 @@ export const buildProviderRows = (
     apiKeyRows.some((row) => row.models?.length) ? apiKeyRows : credentialRows
   );
   const grouped = new Map<string, UsageProviderRow>();
+  const fallbackRows = new Map<string, UsageRankRow[]>();
   rows.forEach((row) => {
     const label = normalizeProviderLabel(row.auth_provider_snapshot);
     const current =
@@ -1636,7 +1905,7 @@ export const buildProviderRows = (
       current.failureCount += row.failureCount;
       current.totalTokens += row.totalTokens;
       current.estimatedCost += row.estimatedCost;
-      current.cacheRate += computeCacheHitRate(row);
+      fallbackRows.set(label, [...(fallbackRows.get(label) ?? []), row]);
       grouped.set(label, current);
     });
   }
@@ -1663,16 +1932,8 @@ export const buildProviderRows = (
         successRate: safeShare(row.successCount, row.requestCount),
         cacheRate:
           models.length > 0
-            ? computeCacheHitRate({
-                inputTokens: models.reduce((sum, model) => sum + model.inputTokens, 0),
-                cacheReadTokens: models.reduce((sum, model) => sum + model.cacheReadTokens, 0),
-                cacheCreationTokens: models.reduce(
-                  (sum, model) => sum + model.cacheCreationTokens,
-                  0
-                ),
-                cachedTokens: models.reduce((sum, model) => sum + model.cachedTokens, 0),
-              })
-            : row.cacheRate,
+            ? computeRowsCacheHitRate(models)
+            : computeRowsCacheHitRate(fallbackRows.get(row.label) ?? []),
         requestShare,
         costShare: safeShare(row.estimatedCost, totalCost),
         tokenShare: safeShare(row.totalTokens, totalTokens),
@@ -1822,6 +2083,58 @@ export const buildEntityTrendSeries = (
     });
 };
 
+const usageApiKeyTimelineMetricValue = (
+  point: UsageApiKeyTimelinePoint,
+  metric: UsageTrendMetricKey
+) => {
+  if (metric === 'estimatedCost') return point.estimatedCost;
+  if (metric === 'totalTokens') return point.totalTokens;
+  return point.requestCount;
+};
+
+export const buildApiKeyTrendSeries = (
+  rows: UsageRankRow[],
+  timeline: UsageTimelinePoint[],
+  apiKeyTimeline: UsageApiKeyTimelinePoint[],
+  metric: UsageTrendMetricKey,
+  limit = 4
+): UsageEntityTrendSeries[] => {
+  const valuesByAPIKey = new Map<string, Map<number, UsageApiKeyTimelinePoint>>();
+  apiKeyTimeline.forEach((point) => {
+    if (!point.apiKeyHash) return;
+    let valuesByBucket = valuesByAPIKey.get(point.apiKeyHash);
+    if (!valuesByBucket) {
+      valuesByBucket = new Map();
+      valuesByAPIKey.set(point.apiKeyHash, valuesByBucket);
+    }
+    valuesByBucket.set(point.bucketMs, point);
+  });
+  const colors = ['#2563eb', '#0ea5a7', '#f59e0b', '#ef4444', '#64748b'];
+  return rows
+    .filter((row) => {
+      const apiKeyHash = normalizeApiKeyHash(row.apiKeyHash || row.id);
+      return apiKeyHash !== '' && usageRankMetricValue(row, metric) > 0;
+    })
+    .slice(0, limit)
+    .map((row, index) => {
+      const apiKeyHash = normalizeApiKeyHash(row.apiKeyHash || row.id);
+      const valuesByBucket = valuesByAPIKey.get(apiKeyHash);
+      return {
+        id: apiKeyHash,
+        label: row.label,
+        color: colors[index % colors.length],
+        points: timeline.map((timelinePoint) => {
+          const value = valuesByBucket?.get(timelinePoint.bucketMs);
+          return {
+            bucketMs: timelinePoint.bucketMs,
+            label: timelinePoint.label,
+            value: value ? usageApiKeyTimelineMetricValue(value, metric) : 0,
+          };
+        }),
+      };
+    });
+};
+
 const usageCredentialTimelineMetricValue = (
   point: UsageCredentialTimelinePoint,
   metric: UsageTrendMetricKey
@@ -1889,14 +2202,11 @@ export const buildSelectedCredentialTrendSeries = (
   ];
 };
 
-export const computeRowCacheHitRate = (row: UsageRankRow): number =>
-  computeCacheHitRate({
-    inputTokens: row.inputTokens,
-    cacheReadTokens: row.cacheReadTokens,
-    cacheCreationTokens: row.cacheCreationTokens,
-    cachedTokens: row.cachedTokens,
-    model: row.model,
-  });
+export const computeRowCacheHitRate = (row: UsageRankRow): number => {
+  if (row.models?.length) return computeRowsCacheHitRate(row.models);
+  const totals = getRowCacheHitTotals(row);
+  return calculateCacheHitRateFromTotals(totals.hitTokens, totals.inputTokens);
+};
 
 export const computeRowAverageCostPerCall = (row: UsageRankRow): number =>
   row.requestCount > 0 ? row.estimatedCost / row.requestCount : 0;
@@ -2068,7 +2378,7 @@ export const buildUsageInsights = ({
       actionTab: 'heatmap',
     });
   }
-  if (summary.inputTokens > 0 && computeCacheHitRate(summary) < 0.08) {
+  if (summary.inputTokens > 0 && computeNormalizedCacheHitRate(summary) < 0.08) {
     insights.push({
       id: 'cache-room',
       tone: 'info',
@@ -2276,7 +2586,9 @@ export const buildDrilldownPreview = (
     ])
   );
   return rows.map((row) => {
-    const model = row.model || row.resolved_model || '-';
+    const requestedModel = row.requested_model || row.model;
+    const model =
+      row.analytics_model || normalizeAnalyticsModel(requestedModel) || row.resolved_model || '-';
     const totalTokens = toNumber(row.total_tokens);
     const costPerToken = modelCostPerToken.get(model) ?? 0;
     return {
@@ -2288,6 +2600,7 @@ export const buildDrilldownPreview = (
       apiKeyLabel: resolveUsageApiKeyLabel(row.api_key_hash || '', apiKeyDisplayMap),
       source: row.source || '',
       authIndex: row.auth_index || '',
+      provider: row.auth_provider_snapshot || row.source || '',
       endpoint: row.endpoint || row.path || '',
       totalTokens,
       estimatedCost: totalTokens * costPerToken,
@@ -2311,10 +2624,14 @@ export const adaptUsageAnalyticsData = (
   granularity: UsageAnalyticsResolvedGranularity,
   keyword = '',
   apiKeyDisplayMap?: UsageApiKeyDisplayMap,
-  credentialDisplayContext?: UsageCredentialDisplayContext
+  credentialDisplayContext?: UsageCredentialDisplayContext,
+  timelineBounds?: UsageAnalyticsRangeBounds | null
 ) => {
   const summary = buildUsageSummary(data?.summary);
-  const timeline = buildUsageTimeline(data?.timeline ?? [], granularity);
+  const mappedTimeline = buildUsageTimeline(data?.timeline ?? [], granularity);
+  const timeline = data
+    ? fillUsageTimelineBuckets(mappedTimeline, timelineBounds, granularity)
+    : mappedTimeline;
   const credentialTimeline = buildUsageCredentialTimeline(
     data?.credential_timeline ?? [],
     granularity,
@@ -2340,6 +2657,7 @@ export const adaptUsageAnalyticsData = (
     summary
   );
   return {
+    coverage: data?.coverage,
     summary,
     summaryComparison: data?.summary_comparison,
     timeline,
@@ -2407,26 +2725,37 @@ export const analyzeUsageBucket = (
   if (index < 0) return null;
   const point = timeline[index];
   const previousPoint = index > 0 ? timeline[index - 1] : null;
+  const comparisonPoint =
+    previousPoint && previousPoint.requestCount > 0 && point.requestCount > 0
+      ? previousPoint
+      : null;
   const changes = {
     requestCount: previousPoint ? percentChange(point.requestCount, previousPoint.requestCount) : 0,
     totalTokens: previousPoint ? percentChange(point.totalTokens, previousPoint.totalTokens) : 0,
     inputTokens: previousPoint ? percentChange(point.inputTokens, previousPoint.inputTokens) : 0,
     outputTokens: previousPoint ? percentChange(point.outputTokens, previousPoint.outputTokens) : 0,
-    cachedTokens: previousPoint ? percentChange(point.cachedTokens, previousPoint.cachedTokens) : 0,
+    cachedTokens: previousPoint
+      ? percentChange(
+          getNormalizedUsageCacheTokens(point),
+          getNormalizedUsageCacheTokens(previousPoint)
+        )
+      : 0,
     cacheCreationTokens: previousPoint
       ? percentChange(point.cacheCreationTokens, previousPoint.cacheCreationTokens)
       : 0,
     estimatedCost: previousPoint
       ? percentChange(point.estimatedCost, previousPoint.estimatedCost)
       : 0,
-    cacheHitRate: previousPoint ? point.cacheHitRate - previousPoint.cacheHitRate : 0,
-    averageTokensPerRequest: previousPoint
-      ? percentChange(point.averageTokensPerRequest, previousPoint.averageTokensPerRequest)
+    cacheHitRate: comparisonPoint ? point.cacheHitRate - comparisonPoint.cacheHitRate : 0,
+    averageTokensPerRequest: comparisonPoint
+      ? percentChange(point.averageTokensPerRequest, comparisonPoint.averageTokensPerRequest)
       : 0,
-    failureRate: previousPoint ? point.failureRate - previousPoint.failureRate : 0,
+    failureRate: comparisonPoint ? point.failureRate - comparisonPoint.failureRate : 0,
     averageLatencyMs:
-      previousPoint && previousPoint.averageLatencyMs !== null && point.averageLatencyMs !== null
-        ? percentChange(point.averageLatencyMs, previousPoint.averageLatencyMs)
+      comparisonPoint &&
+      comparisonPoint.averageLatencyMs !== null &&
+      point.averageLatencyMs !== null
+        ? percentChange(point.averageLatencyMs, comparisonPoint.averageLatencyMs)
         : 0,
   };
   const anomalies: UsageAnomaly[] = [];

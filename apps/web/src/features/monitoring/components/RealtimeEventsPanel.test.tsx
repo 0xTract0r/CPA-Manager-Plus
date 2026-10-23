@@ -16,6 +16,8 @@ const t = ((key: string, options?: Record<string, unknown>) => {
   const messages: Record<string, string> = {
     'common.loading': 'Loading',
     'common.copy': 'Copy',
+    'common.yes': 'Yes (i18n)',
+    'common.no': 'No (i18n)',
     'monitoring.account_overview_account_display_masked': 'Masked',
     'monitoring.account_overview_account_display_full': 'Full',
     'monitoring.account_overview_show_full_accounts_hint': 'Show full accounts',
@@ -30,6 +32,7 @@ const t = ((key: string, options?: Record<string, unknown>) => {
     'monitoring.column_output_tps': 'TPS',
     'monitoring.column_source_api_key': 'Source / API Key',
     'monitoring.column_success_rate': 'Success',
+    'monitoring.column_success_rate_short': 'Success Rate',
     'monitoring.column_time': 'Time',
     'monitoring.column_type': 'Type',
     'monitoring.filter_low_cache_hit_rate': 'Low Cache Hit Only',
@@ -46,9 +49,24 @@ const t = ((key: string, options?: Record<string, unknown>) => {
     'monitoring.elapsed_short': 'Elapsed',
     'monitoring.executor_type_short': 'Executor',
     'monitoring.fail_status_code_short': 'HTTP',
+    'monitoring.header_should_retry': 'Should retry',
     'monitoring.filter_account': 'Account',
     'monitoring.filter_status_failed': 'Failed only',
     'monitoring.filter_provider': 'Provider',
+    'monitoring.client_ip': 'Client IP',
+    'monitoring.x_forwarded_for_unverified': 'Forwarded chain (unverified)',
+    'monitoring.user_agent': 'User-Agent',
+    'monitoring.request_metadata': 'Request metadata',
+    'monitoring.cached_tokens': 'Cached Tokens',
+    'monitoring.cache_read_tokens': 'Cache Read Tokens',
+    'monitoring.cache_creation_tokens': 'Cache Creation Tokens',
+    'monitoring.realtime_usage_total_label': 'Total',
+    'monitoring.realtime_usage_input_label': 'Input',
+    'monitoring.realtime_usage_output_label': 'Output',
+    'monitoring.realtime_usage_reasoning_label': 'Reasoning',
+    'monitoring.realtime_usage_cached_label': 'Cached',
+    'monitoring.realtime_usage_cache_read_label': 'Cache Read',
+    'monitoring.realtime_usage_cache_creation_label': 'Cache Creation',
     'monitoring.load_more_events': 'Load more',
     'monitoring.log_rows': 'Rows',
     'monitoring.no_more_events': 'No more events',
@@ -63,13 +81,15 @@ const t = ((key: string, options?: Record<string, unknown>) => {
     'monitoring.codex_fast_outbound_account': 'Fast outbound · CPA',
     'monitoring.codex_fast_outbound_both': 'Fast outbound · Both',
     'monitoring.codex_fast_outbound_unknown': 'Fast outbound',
-    'monitoring.codex_fast_outbound_hint': 'Sent with priority tier. This does not guarantee faster output. Source: {{source}}.',
+    'monitoring.codex_fast_outbound_hint':
+      'Sent with priority tier. This does not guarantee faster output. Source: {{source}}.',
     'monitoring.codex_fast_blocked': 'Standard request',
     'monitoring.codex_fast_blocked_hint': 'Client Fast was changed to default.',
     'monitoring.reasoning_tier_hint':
       'Line 1, "Reasoning: xxx", is the reasoning effort; line 2, "Service: xxx", is the requested service tier. Missing values show as "—".',
     'monitoring.recent_failures': 'Failures',
     'monitoring.recent_status': 'Recent',
+    'monitoring.recent_status_short': 'Recent Status',
     'monitoring.realtime_api_key_hash': 'API Key hash',
     'monitoring.realtime_api_key_label': 'API Key',
     'monitoring.realtime_api_key_masked': 'Masked key',
@@ -88,13 +108,33 @@ const t = ((key: string, options?: Record<string, unknown>) => {
     'monitoring.request_status': 'Status',
     'monitoring.result_failed': 'Failed',
     'monitoring.result_success': 'Success',
+    'monitoring.provider_usage_xai_exhausted': 'xAI included free usage exhausted',
+    'monitoring.provider_usage_remaining': 'Remaining',
+    'monitoring.provider_usage_overage': 'Overage',
+    'monitoring.provider_usage_rolling_24h': 'Rolling 24-hour window',
+    'monitoring.provider_usage_estimated_recovery': 'Estimated recovery',
+    'monitoring.provider_rate_limit': 'API rate limit',
+    'monitoring.provider_rate_limit_requests': 'Requests',
+    'monitoring.provider_rate_limit_tokens': 'Tokens',
+    'monitoring.provider_data_policy': 'Data policy',
+    'monitoring.provider_zero_retention': 'Zero retention',
     'monitoring.service_tier_short': 'Tier',
+    'monitoring.request_service_tier_short': 'Requested tier',
+    'monitoring.response_service_tier_short': 'Reported tier',
     'monitoring.this_call_cost': 'Cost',
     'monitoring.this_call_usage': 'Usage',
     'monitoring.ttft_short': 'TTFT',
     'performance.traceTitle': 'Request trace and streaming',
     'usage_stats.export_csv': 'Export CSV',
     'usage_stats.export_json': 'Export JSON',
+    'monitoring.model_mismatch': 'Model mismatch',
+    'monitoring.requested_model': 'Requested model',
+    'monitoring.resolved_model': 'Routed model',
+    'monitoring.response_model': 'Response model',
+    'monitoring.session_id': 'Session ID (i18n)',
+    'monitoring.parent_session_id': 'Parent session ID (i18n)',
+    'monitoring.generate': 'Generate (i18n)',
+    'monitoring.stream': 'Stream (i18n)',
   };
   let message = messages[key] ?? key;
   if (options) {
@@ -115,6 +155,7 @@ type PanelRow = MonitoringEventRow & {
 };
 
 type PanelOverrides = {
+  hasPrices?: boolean;
   accountDisplayMode?: AccountDisplayMode;
   eventsHasMore?: boolean;
   eventsLoadingMore?: boolean;
@@ -157,7 +198,7 @@ const baseRow = (overrides: Partial<PanelRow> = {}): PanelRow => ({
   statsIncluded: true,
   latencyMs: 1500,
   ttftMs: 500,
-  tokensPerSecond: 20,
+  tokensPerSecond: 13.3,
   inputTokens: 10,
   outputTokens: 20,
   reasoningTokens: 3,
@@ -198,7 +239,7 @@ const renderPanel = (row: PanelRow, overrides: PanelOverrides = {}) =>
       eventsTotalCount={overrides.eventsTotalCount ?? 1}
       eventsLoadedCount={overrides.eventsLoadedCount ?? 1}
       overallLoading={false}
-      hasPrices={false}
+      hasPrices={overrides.hasPrices ?? false}
       accountDisplayMode={overrides.accountDisplayMode ?? 'masked'}
       locale="en-US"
       emptyState={<span>empty</span>}
@@ -285,6 +326,8 @@ describe('RealtimeEventsPanel', () => {
         executorType: 'codex',
         reasoningEffort: 'medium',
         serviceTier: 'priority',
+        requestServiceTier: 'priority',
+        responseServiceTier: 'default',
         cacheReadTokens: 4,
         cacheCreationTokens: 1,
         failStatusCode: 429,
@@ -298,8 +341,16 @@ describe('RealtimeEventsPanel', () => {
       /<th><span class="[^"]*tableHeaderWithInfo[^"]*"><span>Reasoning \/ Tier<\/span>/
     );
     expect(markup).toContain('>TPS</th>');
+    expect(markup).toContain(styles.realtimeNumericColumn);
+    expect(markup).toContain(styles.realtimeLatencyColumn);
+    expect(markup).toContain(styles.realtimeTimeColumn);
+    expect(markup.match(new RegExp(styles.realtimeNumericColumn, 'g'))).toHaveLength(10);
+    expect(markup).not.toContain(styles.realtimeSettingsColumn);
+    expect(markup).toContain('>Recent Status</th>');
+    expect(markup).toContain('Success Rate');
+    expect(markup).toContain(styles.tableHeaderWithInfo);
     expect(markup).toContain('Source / API Key');
-    expect(markup).not.toContain('>Executor: codex<');
+    expect(markup).not.toContain('<small>Executor: codex</small>');
     expect(markup).not.toContain('Executor: codex');
     // 两行都带标签、都恒显："思考: medium" / "服务: priority"（仿上游 formatOptionalText）。
     // 单元格原生 title 兜底仍显示 "Effort: x · Tier: y"(固定英文标签，与显示标签无关)。
@@ -318,7 +369,8 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).not.toContain('Resolved');
     expect(markup).not.toContain('POST /v1/chat/completions');
     expect(markup).toContain('Failed');
-    expect(markup).toMatch(/TTFT<\/span><span class="[^"]+">｜<\/span><span class="[^"]+">Elapsed/);
+    expect(markup).toContain('Elapsed');
+    expect(markup).toContain('>TTFT</span><span class=');
     expect(markup).toContain('500 ms');
     expect(markup).toContain('Elapsed');
     expect(markup).toContain('1.5 s');
@@ -409,6 +461,12 @@ describe('RealtimeEventsPanel', () => {
     // 因此这里只针对失败态诊断做负向断言，不再笼统否定 role="tooltip" / aria-describedby。
     expect(markup).not.toContain(styles.realtimeFailureTooltip);
     expect(markup).not.toContain('HTTP');
+  });
+
+  it('keeps realtime request estimated cost at three decimal places', () => {
+    const markup = renderPanel(baseRow({ totalCost: 0.1264 }), { hasPrices: true });
+
+    expect(markup).toContain('$0.126');
   });
 
   it('renders API key alias inside the source cell without adding another column', () => {
@@ -634,7 +692,7 @@ describe('RealtimeEventsPanel', () => {
     const markup = renderPanel(baseRow());
 
     // 来源/账号是首列扫描锚点，时间作为辅助上下文放在较窄的第 2 列。
-    const timeHeaderIdx = markup.indexOf('<th>Time</th>');
+    const timeHeaderIdx = markup.indexOf('>Time</th>');
     const sourceHeaderIdx = markup.indexOf('<th>Source / API Key</th>');
     expect(sourceHeaderIdx).toBeGreaterThanOrEqual(0);
     expect(timeHeaderIdx).toBeGreaterThan(sourceHeaderIdx);
@@ -648,6 +706,204 @@ describe('RealtimeEventsPanel', () => {
     // 成功率/调用/TPS/缓存命中率/花费 5 个数字列统一右对齐：单行渲染下表头 + 数据格
     // 各贡献一次，共 10 次命中。
     expect(markup.match(new RegExp(styles.realtimeNumericColumn, 'g'))?.length).toBe(10);
+  });
+
+  it('renders the requested model first and the upstream resolved model second', () => {
+    const markup = renderPanel(
+      baseRow({
+        model: 'deepseek-v4-flash',
+        requestedModel: 'deepseek-v4-flash(max)',
+        resolvedModel: 'resolved-deepseek-v4-flash',
+      })
+    );
+
+    expect(markup).toContain(
+      'aria-label="Requested model: deepseek-v4-flash(max)\nRouted model: resolved-deepseek-v4-flash"'
+    );
+    expect(markup.indexOf('>deepseek-v4-flash(max)</span>')).toBeLessThan(
+      markup.indexOf('>→ resolved-deepseek-v4-flash</small>')
+    );
+    expect(markup).not.toContain('>deepseek-v4-flash</span>');
+  });
+
+  it('does not duplicate an unchanged requested and resolved model', () => {
+    const model = 'deepseek-chat(region-us)';
+    const markup = renderPanel(
+      baseRow({
+        model,
+        requestedModel: model,
+        resolvedModel: model,
+      })
+    );
+
+    expect(markup).toContain(`aria-label="Requested model: ${model}"`);
+    expect(markup).toContain(`>${model}</span>`);
+    expect(markup).not.toContain('realtimeModelRoutedText');
+  });
+
+  describe('model column presentation states (Section 31 & Case A-D)', () => {
+    it('State 1 / Case A: requested == resolved == response', () => {
+      const markup = renderPanel(
+        baseRow({
+          model: 'gpt-4o',
+          requestedModel: 'gpt-4o',
+          resolvedModel: 'gpt-4o',
+          responseModel: 'gpt-4o',
+        })
+      );
+      expect(markup).toContain('aria-label="Requested model: gpt-4o"');
+      expect(markup).toContain('>gpt-4o</span>');
+      expect(markup).not.toContain('realtimeModelRoutedText');
+      expect(markup).not.toContain('realtimeModelResponseLine');
+      expect(markup).not.toContain('realtimeModelMismatchBadge');
+      expect(markup).not.toContain('Model mismatch');
+    });
+
+    it('State 2: requested and resolved model differ, responseModel empty', () => {
+      const markup = renderPanel(
+        baseRow({
+          model: 'gpt-4o',
+          requestedModel: 'gpt-4o',
+          resolvedModel: 'gpt-4o-2024-08-06',
+        })
+      );
+      expect(markup).toContain(
+        'aria-label="Requested model: gpt-4o\nRouted model: gpt-4o-2024-08-06"'
+      );
+      expect(markup).toContain('>gpt-4o</span>');
+      expect(markup).toContain('>→ gpt-4o-2024-08-06</small>');
+      expect(markup).not.toContain('realtimeModelResponseLine');
+      expect(markup).not.toContain('realtimeModelMismatchBadge');
+    });
+
+    it('State 3 / Case C: all three models differ (requested != resolved != response)', () => {
+      const markup = renderPanel(
+        baseRow({
+          model: 'gpt-4o',
+          requestedModel: 'gpt-4o',
+          resolvedModel: 'gpt-4o-2024-08-06',
+          responseModel: 'gpt-4o-mini',
+        })
+      );
+      expect(markup).toContain(
+        'aria-label="Requested model: gpt-4o\nRouted model: gpt-4o-2024-08-06\nResponse model: gpt-4o-mini\nModel mismatch"'
+      );
+      expect(markup).toContain('>gpt-4o</span>');
+      expect(markup).toContain('>→ gpt-4o-2024-08-06</small>');
+      expect(markup).toContain('>↳ gpt-4o-mini</small>');
+      expect(markup).toContain('realtimeModelMismatchBadge');
+      expect(markup).toContain('Model mismatch');
+    });
+
+    it('State 4: requested == resolved, but responseModel differs (mismatch without routed line)', () => {
+      const markup = renderPanel(
+        baseRow({
+          model: 'claude-3-5-sonnet',
+          requestedModel: 'claude-3-5-sonnet',
+          resolvedModel: 'claude-3-5-sonnet',
+          responseModel: 'claude-3-haiku',
+        })
+      );
+      expect(markup).toContain(
+        'aria-label="Requested model: claude-3-5-sonnet\nResponse model: claude-3-haiku\nModel mismatch"'
+      );
+      expect(markup).toContain('>claude-3-5-sonnet</span>');
+      expect(markup).not.toContain('realtimeModelRoutedText');
+      expect(markup).toContain('>↳ claude-3-haiku</small>');
+      expect(markup).toContain('realtimeModelMismatchBadge');
+    });
+
+    it('State 5 / Case B: requested != resolved, but responseModel matches resolved (no mismatch)', () => {
+      const markup = renderPanel(
+        baseRow({
+          model: 'gpt-4o',
+          requestedModel: 'gpt-4o',
+          resolvedModel: 'gpt-4o-2024-08-06',
+          responseModel: 'gpt-4o-2024-08-06',
+        })
+      );
+      expect(markup).toContain(
+        'aria-label="Requested model: gpt-4o\nRouted model: gpt-4o-2024-08-06"'
+      );
+      expect(markup).toContain('>gpt-4o</span>');
+      expect(markup).toContain('>→ gpt-4o-2024-08-06</small>');
+      expect(markup).not.toContain('realtimeModelResponseLine');
+      expect(markup).not.toContain('realtimeModelMismatchBadge');
+      expect(markup).not.toContain('Model mismatch');
+    });
+
+    it('State 6: requested == responseModel != resolved (resolved diverted, response reverted)', () => {
+      const markup = renderPanel(
+        baseRow({
+          model: 'gpt-4o',
+          requestedModel: 'gpt-4o',
+          resolvedModel: 'gpt-4o-azure',
+          responseModel: 'gpt-4o',
+        })
+      );
+      expect(markup).toContain(
+        'aria-label="Requested model: gpt-4o\nRouted model: gpt-4o-azure\nResponse model: gpt-4o\nModel mismatch"'
+      );
+      expect(markup).toContain('>gpt-4o</span>');
+      expect(markup).toContain('>→ gpt-4o-azure</small>');
+      expect(markup).toContain('>↳ gpt-4o</small>');
+      expect(markup).toContain('realtimeModelMismatchBadge');
+    });
+
+    it('State 7: failed request orthogonal styling with model mismatch badge', () => {
+      const markup = renderPanel(
+        baseRow({
+          model: 'deepseek-chat',
+          requestedModel: 'deepseek-chat',
+          resolvedModel: 'deepseek-v3',
+          responseModel: 'deepseek-v2.5',
+          failed: true,
+        })
+      );
+      expect(markup).toContain('logRowFailed');
+      expect(markup).toContain('realtimeModelMismatchBadge');
+      expect(markup).toContain('>↳ deepseek-v2.5</small>');
+      expect(markup).toContain(
+        'aria-label="Requested model: deepseek-chat\nRouted model: deepseek-v3\nResponse model: deepseek-v2.5\nModel mismatch"'
+      );
+    });
+
+    it('State 8: legacy payload with missing responseModel degrades cleanly', () => {
+      const markup = renderPanel(
+        baseRow({
+          model: 'gpt-3.5-turbo',
+          requestedModel: 'gpt-3.5-turbo',
+          resolvedModel: 'gpt-3.5-turbo-0125',
+          responseModel: undefined,
+        })
+      );
+      expect(markup).toContain(
+        'aria-label="Requested model: gpt-3.5-turbo\nRouted model: gpt-3.5-turbo-0125"'
+      );
+      expect(markup).toContain('>gpt-3.5-turbo</span>');
+      expect(markup).toContain('>→ gpt-3.5-turbo-0125</small>');
+      expect(markup).not.toContain('realtimeModelResponseLine');
+      expect(markup).not.toContain('realtimeModelMismatchBadge');
+    });
+
+    it('Case D: resolved is empty and response is present (diagnostic response in tooltip, no mismatch)', () => {
+      const markup = renderPanel(
+        baseRow({
+          model: 'gpt-5.6-sol',
+          requestedModel: 'gpt-5.6-sol',
+          resolvedModel: '',
+          responseModel: 'gpt-5.6-sol',
+        })
+      );
+      expect(markup).toContain(
+        'aria-label="Requested model: gpt-5.6-sol\nResponse model: gpt-5.6-sol"'
+      );
+      expect(markup).toContain('>gpt-5.6-sol</span>');
+      expect(markup).not.toContain('realtimeModelRoutedText');
+      expect(markup).not.toContain('realtimeModelResponseLine');
+      expect(markup).not.toContain('realtimeModelMismatchBadge');
+      expect(markup).not.toContain('Model mismatch');
+    });
   });
 
   it('switches realtime source labels between masked and full display', () => {
@@ -692,16 +948,58 @@ describe('RealtimeEventsPanel', () => {
     expect(fullMarkup).not.toContain('<small>Account: visible-user@example.com</small>');
   });
 
+  it('exposes request metadata through a keyboard-expandable disclosure only in full mode', () => {
+    const row = baseRow({
+      clientIp: '192.0.2.10',
+      xForwardedFor: '203.0.113.5, 198.51.100.8',
+      userAgent: 'test-client/1.0',
+    });
+    const maskedMarkup = renderPanel(row);
+    const fullMarkup = renderPanel(row, { accountDisplayMode: 'full' });
+
+    for (const value of ['192.0.2.10', '203.0.113.5', 'test-client/1.0']) {
+      expect(maskedMarkup).not.toContain(value);
+      expect(fullMarkup).toContain(value);
+    }
+    expect(maskedMarkup).not.toContain('Request metadata');
+    expect(fullMarkup).toContain(`<details class="${styles.realtimeRequestMetadata}">`);
+    expect(fullMarkup).toContain('<summary>Request metadata</summary>');
+    expect(fullMarkup).toContain('Client IP: 192.0.2.10');
+    expect(fullMarkup).toContain('Forwarded chain (unverified): 203.0.113.5, 198.51.100.8');
+    expect(fullMarkup).toContain('User-Agent: test-client/1.0');
+  });
+
+  it('formats request metadata fields using i18n translation functions in full mode', () => {
+    const row = baseRow({
+      clientIp: '192.0.2.10',
+      sessionId: 'sess-98765',
+      parentSessionId: 'parent-sess-43210',
+      generate: true,
+      stream: false,
+    });
+    const maskedMarkup = renderPanel(row);
+    const fullMarkup = renderPanel(row, { accountDisplayMode: 'full' });
+
+    expect(maskedMarkup).not.toContain('sess-98765');
+    expect(maskedMarkup).not.toContain('parent-sess-43210');
+
+    expect(fullMarkup).toContain('Session ID (i18n): sess-98765');
+    expect(fullMarkup).toContain('Parent session ID (i18n): parent-sess-43210');
+    expect(fullMarkup).toContain('Generate (i18n): Yes (i18n)');
+    expect(fullMarkup).toContain('Stream (i18n): No (i18n)');
+  });
+
   it('renders a ttft placeholder when ttft is missing', () => {
     const markup = renderPanel(baseRow({ ttftMs: null }));
 
     expect(markup).toContain('>TPS</th>');
-    expect(markup).toMatch(/TTFT<\/span><span class="[^"]+">｜<\/span><span class="[^"]+">Elapsed/);
+    expect(markup).toContain('Elapsed');
     expect(markup).not.toContain('500 ms');
     expect(markup).toContain('1.5 s');
-    expect(markup).toMatch(
-      /--<\/span><span class="[^"]+">｜<\/span><span class="[^"]*realtimeMetricText[^"]*realtimeMetricRight[^"]*">1\.5 s<\/span>/
-    );
+    expect(markup).toContain('>TTFT</span><span class=');
+    expect(markup).toContain('>--</span>');
+    expect(markup).toContain('>Elapsed</span><span class=');
+    expect(markup).toContain('>1.5 s</span>');
   });
 
   it('keeps latency warning and error tone classes on plain text metrics', () => {
@@ -715,12 +1013,8 @@ describe('RealtimeEventsPanel', () => {
   it('colors normal millisecond and second metrics green for both ttft and elapsed time', () => {
     const markup = renderPanel(baseRow({ latencyMs: 470, ttftMs: 120 }));
 
-    expect(markup).toMatch(
-      /class="[^"]*realtimeMetricText[^"]*realtimeMetricLeft[^"]*goodText[^"]*">120 ms/
-    );
-    expect(markup).toMatch(
-      /class="[^"]*realtimeMetricText[^"]*realtimeMetricRight[^"]*goodText[^"]*">470 ms/
-    );
+    expect(markup).toMatch(/class="[^"]*realtimeMetricText[^"]*goodText[^"]*">120 ms/);
+    expect(markup).toMatch(/class="[^"]*realtimeMetricText[^"]*goodText[^"]*">470 ms/);
   });
 
   it('omits the semantically empty legacy "C" token once cache read/creation are broken out', () => {

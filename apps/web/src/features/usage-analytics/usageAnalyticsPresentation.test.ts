@@ -7,8 +7,10 @@ import type {
   UsageTimelinePoint,
 } from './usageAnalyticsModel';
 import {
+  buildCredentialDetailCards,
   buildUsageApiKeySummaryCards,
   buildUsageEntitySummaryCards,
+  buildUsageHeatmapSummaryCards,
   buildUsageModelSummaryCards,
   buildUsageOverviewSummaryCards,
   buildUsageTrendSummaryCards,
@@ -28,7 +30,8 @@ const summary: UsageSummaryMetrics = {
   totalTokens: 120000,
   inputTokens: 70000,
   outputTokens: 42000,
-  cachedTokens: 3000,
+  // 服务端 displayCachedTokens 已聚合 legacy3000 + read4000 + create1000。
+  cachedTokens: 8000,
   cacheReadTokens: 4000,
   cacheCreationTokens: 1000,
   estimatedCost: 18.75,
@@ -110,6 +113,57 @@ describe('usageAnalyticsPresentation', () => {
     });
     expect(cards[4].meta).toContain('usage_analytics.metric_reasoning_tokens');
     expect(cards[7].meta).toContain('usage_analytics.cache_read_rate');
+    expect(cards[7]).toMatchObject({ value: '8.0K', valueTitle: '8,000' });
+
+    const attentionCards = cards.filter((card) => card.showModelPriceAttention);
+    expect(attentionCards).toHaveLength(1);
+    expect(attentionCards[0].label).toBe('usage_analytics.metric_estimated_cost');
+  });
+
+  it('keeps large overview costs compact with the full amount available in the tooltip', () => {
+    const cards = buildUsageOverviewSummaryCards({
+      anomalyCount: 3,
+      locale: 'en',
+      reasoningTokens: 1200,
+      summary: { ...summary, estimatedCost: 7647.298318482321 },
+      summaryDelta,
+      t,
+    });
+    expect(cards.find((card) => card.icon === 'cost')).toMatchObject({
+      value: '$7.65K',
+      valueTitle: '$7,647.30',
+    });
+  });
+
+  it('shows fine-grained cache buckets in credential detail cache totals', () => {
+    const cards = buildCredentialDetailCards({
+      locale: 'en',
+      row: {
+        id: 'credential-a',
+        label: 'credential-a',
+        requestCount: 10,
+        successCount: 10,
+        failureCount: 0,
+        successRate: 1,
+        totalTokens: 1000,
+        inputTokens: 700,
+        outputTokens: 300,
+        // 服务端已将 read80/create20 聚合为 cached100。
+        cachedTokens: 100,
+        cacheReadTokens: 80,
+        cacheCreationTokens: 20,
+        estimatedCost: 1,
+        averageLatencyMs: 200,
+        share: 1,
+      },
+      t,
+    });
+
+    expect(cards[3].meta).toBe('usage_analytics.metric_cached_tokens 100');
+
+    const attentionCards = cards.filter((card) => card.showModelPriceAttention);
+    expect(attentionCards).toHaveLength(1);
+    expect(attentionCards[0].label).toBe('usage_analytics.average_cost');
   });
 
   it('缓存 token 卡片直接取后端权威 cachedTokens，不叠加 read/creation（防双计翻倍）', () => {
@@ -169,6 +223,10 @@ describe('usageAnalyticsPresentation', () => {
     expect(cards[2].value).toBe('+12.0%');
     expect(cards[5]).toMatchObject({ tone: 'bad', value: '20.0%' });
     expect(cards[6].value).toBe('102.2s');
+
+    const attentionCards = cards.filter((card) => card.showModelPriceAttention);
+    expect(attentionCards).toHaveLength(1);
+    expect(attentionCards[0].label).toBe('usage_analytics.trend_cost_change');
   });
 
   it('uses entity-specific anomaly labels for entity summaries', () => {
@@ -198,6 +256,10 @@ describe('usageAnalyticsPresentation', () => {
       tone: 'bad',
       value: '2',
     });
+
+    const attentionCards = cards.filter((card) => card.showModelPriceAttention);
+    expect(attentionCards).toHaveLength(1);
+    expect(attentionCards[0].label).toBe('usage_analytics.metric_estimated_cost');
   });
 
   it('builds model summary cards from model-dimension stats', () => {
@@ -242,6 +304,17 @@ describe('usageAnalyticsPresentation', () => {
     // glm-5 has zero requests, so the lowest-success slot falls to gpt-5.4-mini.
     expect(cards[2]).toMatchObject({ meta: 'gpt-5.4-mini', tone: 'bad', value: '71.0%' });
     expect(cards[3].value).toBe('10.0%');
+
+    const attentionCards = cards.filter((card) => card.showModelPriceAttention);
+    expect(attentionCards).toHaveLength(1);
+    expect(attentionCards[0].label).toBe('usage_analytics.metric_estimated_cost');
+    expect(
+      cards.find((c) => c.label === 'usage_analytics.model_top_cost_share')?.showModelPriceAttention
+    ).not.toBe(true);
+    expect(
+      cards.find((c) => c.label === 'usage_analytics.metric_estimated_cost')
+        ?.showModelPriceAttention
+    ).toBe(true);
 
     // A 100% top share is trivially true with a single costed model — no warn tone.
     const singleCostedCards = buildUsageModelSummaryCards({
@@ -302,6 +375,18 @@ describe('usageAnalyticsPresentation', () => {
     expect(cards[2]).toMatchObject({ meta: 'sk-****0002', tone: 'bad', value: '71.0%' });
     expect(cards[4]).toMatchObject({ tone: 'bad', value: '2' });
 
+    const attentionCards = cards.filter((card) => card.showModelPriceAttention);
+    expect(attentionCards).toHaveLength(1);
+    expect(attentionCards[0].label).toBe('usage_analytics.metric_average_cost_per_call');
+    expect(
+      cards.find((c) => c.label === 'usage_analytics.api_key_top_cost_share')
+        ?.showModelPriceAttention
+    ).not.toBe(true);
+    expect(
+      cards.find((c) => c.label === 'usage_analytics.metric_average_cost_per_call')
+        ?.showModelPriceAttention
+    ).toBe(true);
+
     // A 100% top share is trivially true with a single costed key — no warn tone.
     const singleCostedCards = buildUsageApiKeySummaryCards({
       apiKeyRows: [
@@ -316,5 +401,17 @@ describe('usageAnalyticsPresentation', () => {
     expect(singleCostedCards[1].tone).toBeUndefined();
     expect(singleCostedCards[1].value).toBe('100.0%');
     expect(singleCostedCards[4].tone).toBeUndefined();
+  });
+
+  it('builds heatmap summary cards with exactly one attention owner on estimated cost', () => {
+    const cards = buildUsageHeatmapSummaryCards({
+      locale: 'en',
+      summary,
+      t,
+    });
+
+    const attentionCards = cards.filter((card) => card.showModelPriceAttention);
+    expect(attentionCards).toHaveLength(1);
+    expect(attentionCards[0].label).toBe('usage_analytics.metric_estimated_cost');
   });
 });

@@ -20,7 +20,11 @@ import {
   resolveSourceDisplay,
   resolveSourceIdentityKey,
 } from '@/utils/sourceResolver';
-import { normalizeAuthIndex, type UsageDetailWithEndpoint } from '@/utils/usage';
+import {
+  normalizeAnalyticsModel,
+  normalizeAuthIndex,
+  type UsageDetailWithEndpoint,
+} from '@/utils/usage';
 import {
   formatApiKeyHashLabel,
   joinUnique,
@@ -29,6 +33,7 @@ import {
   readString,
 } from './base';
 import { sanitizeApiKeyDisplayText, type ApiKeyDisplayInfo } from './apiKeys';
+import { buildMonitoringAccountRowId, normalizeMonitoringProvider } from './accountIdentity';
 import { buildDayLabel, buildHourLabel, buildLocalDayKey, padNumber } from './range';
 import { buildMonitoringSourceDisplay } from './sourceDisplay';
 import type {
@@ -102,6 +107,7 @@ const ACCOUNT_FILTER_PREFIXES = {
   source: 'source:',
   apiKey: 'api-key:',
   account: 'account:',
+  accountProvider: 'account-provider:',
 } as const;
 
 const NO_MATCH_FILTER_VALUE = '__no_matching_filter_value__';
@@ -111,6 +117,7 @@ export type MonitoringAccountFilterCriteria = {
   authIndices: string[];
   sourceHashes: string[];
   apiKeyHashes: string[];
+  provider?: string;
 };
 
 const normalizeAccountFilterValues = (values: Array<string | null | undefined> = []) =>
@@ -151,11 +158,13 @@ const buildAccountFilterToken = (prefix: string, values: string[]) =>
 
 export const buildMonitoringAccountFilterValue = ({
   account,
+  provider,
   authIndices,
   sourceHashes,
   apiKeyHashes,
 }: {
   account?: string | null;
+  provider?: string | null;
   authIndices?: Array<string | null | undefined>;
   sourceHashes?: Array<string | null | undefined>;
   apiKeyHashes?: Array<string | null | undefined>;
@@ -175,7 +184,11 @@ export const buildMonitoringAccountFilterValue = ({
     return buildAccountFilterToken(ACCOUNT_FILTER_PREFIXES.apiKey, normalizedApiKeyHashes);
   }
 
+  const normalizedProvider = normalizeMonitoringProvider(provider);
   const normalizedAccounts = normalizeAccountFilterValues([account]);
+  if (normalizedProvider && normalizedAccounts.length > 0) {
+    return `${ACCOUNT_FILTER_PREFIXES.accountProvider}${encodeURIComponent(normalizedProvider)}|${encodeAccountFilterValues(normalizedAccounts)}`;
+  }
   return buildAccountFilterToken(ACCOUNT_FILTER_PREFIXES.account, normalizedAccounts);
 };
 
@@ -215,6 +228,19 @@ export const parseMonitoringAccountFilterValue = (
       apiKeyHashes: normalizeApiKeyHashValues(
         decodeAccountFilterValues(text.slice(ACCOUNT_FILTER_PREFIXES.apiKey.length))
       ),
+    };
+  }
+
+  if (text.startsWith(ACCOUNT_FILTER_PREFIXES.accountProvider)) {
+    const body = text.slice(ACCOUNT_FILTER_PREFIXES.accountProvider.length);
+    const delimiter = body.indexOf('|');
+    const providerPart = delimiter >= 0 ? body.slice(0, delimiter) : '';
+    const accountPart = delimiter >= 0 ? body.slice(delimiter + 1) : body;
+    const provider = decodeAccountFilterValue(providerPart);
+    return {
+      ...emptyCriteria,
+      accounts: normalizeAccountFilterValues([decodeAccountFilterValue(accountPart)]),
+      provider: readString(provider),
     };
   }
 
@@ -336,6 +362,9 @@ export const buildAnalyticsFilters = (
   }
 
   let authIndices: Set<string> | null = null;
+  if (isActiveFilterValue(scopeFilters.authIndex)) {
+    authIndices = addAuthIndexConstraint(authIndices, [scopeFilters.authIndex!.trim()]);
+  }
   if (isActiveFilterValue(scopeFilters.account)) {
     const account = scopeFilters.account!.trim();
     const accountCriteria = parseMonitoringAccountFilterValue(account);
@@ -355,15 +384,25 @@ export const buildAnalyticsFilters = (
       accountCriteria.sourceHashes.length === 0 &&
       accountCriteria.apiKeyHashes.length === 0
     ) {
-      const legacyAccount = accountCriteria.accounts[0] || account;
-      const normalizedAccount = normalizeFilterText(legacyAccount);
-      const accountAuthIndices = Array.from(authMetaMap.entries())
-        .filter(([, meta]) => normalizeFilterText(meta.account) === normalizedAccount)
-        .map(([authIndex]) => authIndex);
-      authIndices = addAuthIndexConstraint(authIndices, accountAuthIndices);
-      if (accountAuthIndices.length === 0) {
+      if (accountCriteria.provider) {
+        // Provider-scoped logical account selector (account-provider:...).
+        // Query persisted data directly; do not re-interpret through current
+        // auth metadata, whose auth indices may differ from historical events.
         filters.accounts =
           accountCriteria.accounts.length > 0 ? accountCriteria.accounts : [account];
+        filters.providers = [accountCriteria.provider];
+      } else {
+        // Legacy account selector (account:...) keeps authMeta-based expansion.
+        const legacyAccount = accountCriteria.accounts[0] || account;
+        const normalizedAccount = normalizeFilterText(legacyAccount);
+        const accountAuthIndices = Array.from(authMetaMap.entries())
+          .filter(([, meta]) => normalizeFilterText(meta.account) === normalizedAccount)
+          .map(([authIndex]) => authIndex);
+        authIndices = addAuthIndexConstraint(authIndices, accountAuthIndices);
+        if (accountAuthIndices.length === 0) {
+          filters.accounts =
+            accountCriteria.accounts.length > 0 ? accountCriteria.accounts : [account];
+        }
       }
     }
   }
@@ -418,6 +457,7 @@ export const buildSummaryFromAnalytics = (
   cachedTokens: summary.cached_tokens,
   cacheReadTokens: summary.cache_read_tokens ?? 0,
   cacheCreationTokens: summary.cache_creation_tokens ?? 0,
+  cacheHitRate: summary.cache_hit_rate,
   totalTokens: summary.total_tokens,
   totalCost: summary.total_cost,
   averageLatencyMs: summary.average_latency_ms,
@@ -618,8 +658,17 @@ export const buildAccountRowsFromAnalytics = (
         { authMetaMap, authFileMap, sourceInfoMap, channelByAuthIndex }
       );
       const account = firstReadableValue(display.account, row.account_snapshot, row.id);
+      const provider = normalizeMonitoringProvider(
+        firstReadableValue(row.auth_provider_snapshot, display.provider)
+      );
       const accountNote = firstReadableValue(...authMetas.map((meta) => meta.note));
-      const displayAccount = firstReadableValue(accountNote, account, display.primary);
+      const displayAccount = firstReadableValue(accountNote, display.primary, account);
+      const filterAccount = firstReadableValue(
+        row.account_snapshot,
+        row.auth_label_snapshot,
+        row.sources?.[0],
+        account
+      );
       const authLabels = uniqueReadableValues([
         ...authMetas.map((meta) => meta.label),
         row.auth_label_snapshot,
@@ -634,14 +683,25 @@ export const buildAccountRowsFromAnalytics = (
       );
 
       return {
-        id: account || row.id,
+        id:
+          firstReadableValue(row.id) ||
+          buildMonitoringAccountRowId({
+            provider,
+            account: row.account_snapshot,
+            authLabel: row.auth_label_snapshot,
+            source: row.sources?.[0],
+            authIndex,
+            sourceHash: row.source_hashes?.[0],
+          }),
         account,
+        provider,
         displayAccount,
         accountMasked: display.accountMasked || maskEmailLike(account),
         authLabels,
         authIndices: uniqueReadableValues(row.auth_indices),
         sourceKeys,
         channels,
+        planTypes: uniqueReadableValues(authMetas.map((meta) => meta.planType)),
         totalCalls: row.calls,
         successCalls: row.success_calls,
         failureCalls: row.failure_calls,
@@ -658,7 +718,8 @@ export const buildAccountRowsFromAnalytics = (
         recentPattern: [],
         filterValue:
           buildMonitoringAccountFilterValue({
-            account,
+            account: filterAccount,
+            provider,
             authIndices: row.auth_indices,
             sourceHashes: row.source_hashes,
           }) || account,
@@ -722,6 +783,7 @@ export const buildApiKeyRowsFromAnalytics = (
         apiKeyHash,
         apiKeyLabel: isUnknown ? '' : apiKeyLabel,
         apiKeyMasked: isUnknown ? '' : apiKeyMasked,
+        apiKeyCopyValue: isUnknown ? undefined : apiKeyDisplay?.copyValue,
         isUnknown,
         authLabels: uniqueReadableValues([
           ...authMetas.map((meta) => meta.label),
@@ -775,40 +837,121 @@ export const buildFilterOptionsFromAnalytics = (
   const resolveAuthIndex = (value: string | undefined) => normalizeAuthIndex(value) ?? value ?? '';
   const resolveAuthMeta = (value: string | undefined) => authMetaMap.get(resolveAuthIndex(value));
   const channelRows = options.channel_share || [];
+  const accountRows = buildAccountRowsFromAnalytics(
+    options.account_stats || [],
+    authMetaMap,
+    authFileMap,
+    sourceInfoMap,
+    channelByAuthIndex
+  );
+  const knownAccounts = new Set(accountRows.map((row) => normalizeFilterText(row.account)));
+  const accountSelectorRows = uniqueReadableValues(options.accounts || [])
+    .filter((account) => !knownAccounts.has(normalizeFilterText(account)))
+    .map(
+      (account): MonitoringAccountRow => ({
+        id: `selector:${normalizeFilterText(account)}`,
+        account,
+        provider: '',
+        filterValue: buildMonitoringAccountFilterValue({ account }) || account,
+        displayAccount: account,
+        accountMasked: maskEmailLike(account),
+        authLabels: [],
+        authIndices: [],
+        sourceKeys: [],
+        channels: [],
+        totalCalls: 0,
+        successCalls: 0,
+        failureCalls: 0,
+        successRate: 1,
+        inputTokens: 0,
+        outputTokens: 0,
+        cachedTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        totalTokens: 0,
+        totalCost: 0,
+        averageLatencyMs: null,
+        lastSeenAt: 0,
+        recentPattern: [],
+        models: [],
+      })
+    );
+  const apiKeyRows = buildApiKeyRowsFromAnalytics(
+    options.api_key_stats || [],
+    authMetaMap,
+    authFileMap,
+    sourceInfoMap,
+    channelByAuthIndex,
+    apiKeyDisplayMap
+  );
+  const knownApiKeyHashes = new Set(apiKeyRows.map((row) => row.apiKeyHash));
+  const apiKeySelectorRows = uniqueReadableValues(options.api_key_hashes || [])
+    .map((value) => value.toLowerCase())
+    .filter((apiKeyHash) => !knownApiKeyHashes.has(apiKeyHash))
+    .map((apiKeyHash): MonitoringApiKeyRow => {
+      const apiKeyDisplay = apiKeyDisplayMap.get(apiKeyHash);
+      const fallbackLabel = formatApiKeyHashLabel(apiKeyHash);
+      const apiKeyLabel = sanitizeApiKeyDisplayText(
+        apiKeyDisplay?.label || fallbackLabel,
+        fallbackLabel
+      );
+      const apiKeyMasked = sanitizeApiKeyDisplayText(
+        apiKeyDisplay?.masked || apiKeyLabel,
+        apiKeyLabel
+      );
+      return {
+        id: apiKeyHash,
+        apiKeyHash,
+        apiKeyLabel,
+        apiKeyMasked,
+        apiKeyCopyValue: apiKeyDisplay?.copyValue,
+        isUnknown: false,
+        authLabels: [],
+        sourceLabels: [],
+        channels: [],
+        totalCalls: 0,
+        successCalls: 0,
+        failureCalls: 0,
+        successRate: 1,
+        inputTokens: 0,
+        outputTokens: 0,
+        cachedTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        totalTokens: 0,
+        totalCost: 0,
+        averageLatencyMs: null,
+        lastSeenAt: 0,
+        models: [],
+      };
+    });
 
   return {
-    accountRows: buildAccountRowsFromAnalytics(
-      options.account_stats || [],
-      authMetaMap,
-      authFileMap,
-      sourceInfoMap,
-      channelByAuthIndex
-    ),
-    apiKeyRows: buildApiKeyRowsFromAnalytics(
-      options.api_key_stats || [],
-      authMetaMap,
-      authFileMap,
-      sourceInfoMap,
-      channelByAuthIndex,
-      apiKeyDisplayMap
-    ),
+    accountRows: [...accountRows, ...accountSelectorRows],
+    apiKeyRows: [...apiKeyRows, ...apiKeySelectorRows],
     providers: uniqueReadableValues([
+      ...(options.providers || []),
       ...channelRows.map((row) => resolveAuthMeta(row.auth_index)?.provider),
       ...channelRows.map((row) => row.auth_provider_snapshot),
       ...(options.account_stats || []).map((row) => row.auth_provider_snapshot),
       ...(options.api_key_stats || []).map((row) => row.auth_provider_snapshot),
     ]),
-    models: uniqueReadableValues((options.model_stats || []).map((row) => row.model)),
-    channels: uniqueReadableValues(
-      channelRows.map((row) => {
+    models: uniqueReadableValues([
+      ...(options.models || []),
+      ...(options.model_stats || []).map((row) => row.model),
+    ]),
+    channels: uniqueReadableValues([
+      ...channelRows.map((row) => {
         const authIndex = resolveAuthIndex(row.auth_index);
         return (
           channelByAuthIndex.get(authIndex)?.name ||
           resolveAuthMeta(row.auth_index)?.provider ||
           row.auth_provider_snapshot
         );
-      })
-    ),
+      }),
+      ...Array.from(channelByAuthIndex.values()).map((channel) => channel.name),
+      ...(options.providers || []),
+    ]),
     headerTraceIds: uniqueReadableValues(options.header_trace_ids || []),
   };
 };
@@ -914,47 +1057,68 @@ export const mergeAnalyticsEventItems = (
 export const buildUsageDetailsFromAnalyticsEvents = (
   items: MonitoringAnalyticsEventRow[] = []
 ): UsageDetailWithEndpoint[] =>
-  items.map((item) => ({
-    timestamp: new Date(item.timestamp_ms).toISOString(),
-    source: readString(item.source),
-    auth_index: item.auth_index || null,
-    api_key_hash: readString(item.api_key_hash),
-    account_snapshot: readString(item.account_snapshot),
-    auth_label_snapshot: readString(item.auth_label_snapshot),
-    auth_file_snapshot: readString(item.auth_file_snapshot),
-    auth_provider_snapshot: readString(item.auth_provider_snapshot),
-    auth_project_id_snapshot: readString(item.auth_project_id_snapshot),
-    reasoning_effort: readString(item.reasoning_effort),
-    service_tier: readString(item.service_tier),
-    executor_type: readString(item.executor_type),
-    telemetry: item.telemetry,
-    latency_ms: item.latency_ms ?? undefined,
-    ttft_ms: item.ttft_ms ?? undefined,
-    tokens: {
-      input_tokens: item.input_tokens,
-      output_tokens: item.output_tokens,
-      reasoning_tokens: item.reasoning_tokens,
-      cached_tokens: item.cached_tokens,
-      cache_read_tokens: item.cache_read_tokens ?? 0,
-      cache_creation_tokens: item.cache_creation_tokens ?? 0,
-      total_tokens: item.total_tokens,
-    },
-    failed: item.failed === true,
-    fail_status_code: item.fail_status_code ?? null,
-    fail_summary: readString(item.fail_summary),
-    response_metadata: item.response_metadata,
-    header_quota_recover_at_ms: item.header_quota_recover_at_ms ?? null,
-    header_quota_used_percent: item.header_quota_used_percent ?? null,
-    header_quota_plan_type: readString(item.header_quota_plan_type),
-    header_error_kind: readString(item.header_error_kind),
-    header_error_code: readString(item.header_error_code),
-    header_trace_id: readString(item.header_trace_id),
-    request_id: readString(item.request_id) || undefined,
-    __modelName: item.model,
-    __resolvedModel: readString(item.resolved_model),
-    __endpoint: item.endpoint || `${item.method} ${item.path}`.trim(),
-    __endpointMethod: item.method,
-    __endpointPath: item.path,
-    __timestampMs: item.timestamp_ms,
-    __eventHash: readString(item.event_hash) || undefined,
-  }));
+  items.map((item) => {
+    const requestedModel = readString(item.requested_model) || item.model;
+    const analyticsModel =
+      readString(item.analytics_model) || normalizeAnalyticsModel(requestedModel);
+    return {
+      timestamp: new Date(item.timestamp_ms).toISOString(),
+      source: readString(item.source),
+      source_hash: readString(item.source_hash),
+      auth_index: item.auth_index || null,
+      api_key_hash: readString(item.api_key_hash),
+      account_snapshot: readString(item.account_snapshot),
+      auth_label_snapshot: readString(item.auth_label_snapshot),
+      auth_file_snapshot: readString(item.auth_file_snapshot),
+      auth_provider_snapshot: readString(item.auth_provider_snapshot),
+      auth_account_id_snapshot: readString(item.auth_account_id_snapshot),
+      auth_project_id_snapshot: readString(item.auth_project_id_snapshot),
+      client_ip: readString(item.client_ip),
+      x_forwarded_for: readString(item.x_forwarded_for),
+      user_agent: readString(item.user_agent),
+      reasoning_effort: readString(item.reasoning_effort),
+      service_tier: readString(item.service_tier),
+      executor_type: readString(item.executor_type),
+      telemetry: item.telemetry,
+      request_id: readString(item.request_id) || undefined,
+      latency_ms: item.latency_ms ?? undefined,
+      ttft_ms: item.ttft_ms ?? undefined,
+      tokens: {
+        input_tokens: item.input_tokens,
+        output_tokens: item.output_tokens,
+        reasoning_tokens: item.reasoning_tokens,
+        cached_tokens: item.cached_tokens,
+        cache_read_tokens: item.cache_read_tokens ?? 0,
+        cache_creation_tokens: item.cache_creation_tokens ?? 0,
+        total_tokens: item.total_tokens,
+      },
+      failed: item.failed === true,
+      fail_status_code: item.fail_status_code ?? null,
+      fail_summary: readString(item.fail_summary),
+      response_metadata: item.response_metadata,
+      header_quota_recover_at_ms: item.header_quota_recover_at_ms ?? null,
+      header_quota_used_percent: item.header_quota_used_percent ?? null,
+      header_quota_plan_type: readString(item.header_quota_plan_type),
+      header_error_kind: readString(item.header_error_kind),
+      header_error_code: readString(item.header_error_code),
+      header_trace_id: readString(item.header_trace_id),
+      analytics_model: analyticsModel,
+      requested_model: requestedModel,
+      resolved_model: readString(item.resolved_model),
+      response_model: readString(item.response_model),
+      session_id: readString(item.session_id),
+      parent_session_id: readString(item.parent_session_id),
+      access_token_sha256: readString(item.access_token_sha256),
+      generate: typeof item.generate === 'boolean' ? item.generate : undefined,
+      stream: typeof item.stream === 'boolean' ? item.stream : undefined,
+      __modelName: analyticsModel,
+      __requestedModel: requestedModel,
+      __resolvedModel: readString(item.resolved_model),
+      __responseModel: readString(item.response_model),
+      __endpoint: item.endpoint || `${item.method} ${item.path}`.trim(),
+      __endpointMethod: item.method,
+      __endpointPath: item.path,
+      __timestampMs: item.timestamp_ms,
+      __eventHash: readString(item.event_hash) || undefined,
+    };
+  });

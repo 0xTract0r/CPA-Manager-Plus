@@ -1,33 +1,21 @@
-/**
- * Generic hook for quota data fetching and management.
- */
-
-import { useCallback, useRef } from 'react';
+/** 旧配额页使用与 accounts 相同的刷新生命周期，并捕获连接和凭据身份。 */
+import { useCallback, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { AuthFileItem } from '@/types';
 import { useQuotaStore } from '@/stores';
-import { getStatusFromError } from '@/utils/quota';
-import {
-  buildQuotaFailureState,
-  getQuotaStoreKey,
-  getScopedQuotaState,
-  type QuotaConfig,
-} from './quotaConfigs';
+import { useAuthStore } from '@/stores/useAuthStore';
+import { resolveCredentialIdentity } from '@/utils/authFileCredentialIdentity';
+import { getQuotaStoreKey, getScopedQuotaState, type LegacyQuotaConfig as QuotaConfig } from './quotaConfigs';
+import { refreshQuotaWithConfig, type QuotaSetter } from './quotaRefresh';
 
 type QuotaScope = 'page' | 'all';
 
-type QuotaUpdater<T> = T | ((prev: T) => T);
-
-type QuotaSetter<T> = (updater: QuotaUpdater<T>) => void;
-
-interface LoadQuotaResult<TData> {
-  storeKey: string;
-  file: AuthFileItem;
-  status: 'success' | 'error';
-  data?: TData;
-  error?: string;
-  errorStatus?: number;
-}
+// store key 允许复用 auth_index；请求边界还必须核对 runtime/account，防同索引换号。
+const credentialFingerprint = (file: AuthFileItem) => {
+  const identity = resolveCredentialIdentity(file);
+  return JSON.stringify([identity.physicalName, identity.runtimeId, identity.authIndex,
+    identity.provider, identity.accountId, identity.accountSnapshot]);
+};
 
 const DEFAULT_QUOTA_REFRESH_CONCURRENCY = 4;
 
@@ -55,88 +43,86 @@ async function runWithConcurrencyLimit<TInput, TOutput>(
   return results;
 }
 
-export function useQuotaLoader<TState, TData>(config: QuotaConfig<TState, TData>) {
+export function useQuotaLoader<TState, TData>(config: QuotaConfig<TState, TData>, files: AuthFileItem[]) {
   const { t } = useTranslation();
   const quota = useQuotaStore(config.storeSelector);
-  const setQuota = useQuotaStore((state) => state[config.storeSetter]) as QuotaSetter<
-    Record<string, TState>
-  >;
-
-  const loadingRef = useRef(false);
+  const setQuota = useQuotaStore((state) => state[config.storeSetter]) as QuotaSetter<TState>;
+  const filesRef = useRef(files);
+  filesRef.current = files;
+  const identities = new Map(files.map((file) => [getQuotaStoreKey(config, file), credentialFingerprint(file)]));
+  const previousIdentities = useRef(identities);
+  const replacedKeys = new Set([...identities].filter(([key, identity]) => previousIdentities.current.has(key) && previousIdentities.current.get(key) !== identity).map(([key]) => key));
+  // 同索引换号先从本次 render 隐去旧证据，再清理对应缓存；避免一帧显示旧账号额度。
+  const visibleQuota = replacedKeys.size ? Object.fromEntries(Object.entries(quota).filter(([key]) => !replacedKeys.has(key))) : quota;
+  useEffect(() => {
+    previousIdentities.current = identities;
+    if (!replacedKeys.size) return;
+    setQuota((previous) => Object.fromEntries(Object.entries(previous).filter(([key]) => !replacedKeys.has(key))));
+  }, [config, files, setQuota]);
+  const mountedRef = useRef(true);
+  const connectionGeneration = useRef(0);
   const requestIdRef = useRef(0);
+  const loadingRef = useRef(false);
+  const loadingCallback = useRef<((loading: boolean) => void) | null>(null);
 
-  const loadQuota = useCallback(
-    async (
-      targets: AuthFileItem[],
-      scope: QuotaScope,
-      setLoading: (loading: boolean, scope?: QuotaScope | null) => void
-    ) => {
-      if (loadingRef.current) return;
-      loadingRef.current = true;
-      const requestId = ++requestIdRef.current;
-      setLoading(true, scope);
+  useEffect(() => {
+    mountedRef.current = true;
+    const unsubscribe = useAuthStore.subscribe((state, previous) => {
+      if (state.apiBase === previous.apiBase && state.managementKey === previous.managementKey) return;
+      connectionGeneration.current += 1;
+      requestIdRef.current += 1;
+      loadingRef.current = false;
+      loadingCallback.current?.(false);
+    });
+    return () => {
+      mountedRef.current = false;
+      connectionGeneration.current += 1;
+      requestIdRef.current += 1;
+      unsubscribe();
+    };
+  }, []);
 
-      try {
-        if (targets.length === 0) return;
+  const captureRequest = useCallback((file: AuthFileItem) => {
+    const { apiBase, managementKey } = useAuthStore.getState();
+    const generation = connectionGeneration.current;
+    const identity = credentialFingerprint(file);
+    const matchesIdentity = (candidate: AuthFileItem) => credentialFingerprint(candidate) === identity;
+    const isCurrent = () => {
+      const current = useAuthStore.getState();
+      const matches = filesRef.current.filter(matchesIdentity);
+      return mountedRef.current && connectionGeneration.current === generation &&
+        current.apiBase === apiBase && current.managementKey === managementKey &&
+        matches.length === 1 && !matches[0].disabled;
+    };
+    return {requestScope: {apiBase, managementKey}, isCurrent, generation, matchesIdentity};
+  }, []);
 
-        const previousStateByStoreKey = new Map<string, TState | undefined>();
-        setQuota((prev) => {
-          const nextState = { ...prev };
-          targets.forEach((file) => {
-            const storeKey = getQuotaStoreKey(config, file);
-            previousStateByStoreKey.set(storeKey, getScopedQuotaState(config, prev, file));
-            nextState[storeKey] = config.buildLoadingState(file);
-          });
-          return nextState;
+  const loadQuota = useCallback(async (
+    targets: AuthFileItem[], scope: QuotaScope,
+    setLoading: (loading: boolean, scope?: QuotaScope | null) => void
+  ) => {
+    if (loadingRef.current) return;
+    loadingRef.current = true;
+    const requestId = ++requestIdRef.current;
+    loadingCallback.current = setLoading;
+    const requests = targets.map((file) => ({file, ...captureRequest(file)}));
+    setLoading(true, scope);
+    try {
+      await runWithConcurrencyLimit(requests, DEFAULT_QUOTA_REFRESH_CONCURRENCY, async (request) => {
+        if (requestId !== requestIdRef.current || !request.isCurrent()) return;
+        return refreshQuotaWithConfig({config, file: request.file, setQuota, t,
+          requestScope: request.requestScope,
+          isCurrent: () => requestId === requestIdRef.current && request.isCurrent(),
+          currentState: getScopedQuotaState(config, config.storeSelector(useQuotaStore.getState()), request.file),
         });
-
-        const results = await runWithConcurrencyLimit(
-          targets,
-          DEFAULT_QUOTA_REFRESH_CONCURRENCY,
-          async (file): Promise<LoadQuotaResult<TData>> => {
-            const storeKey = getQuotaStoreKey(config, file);
-            try {
-              const data = await config.fetchQuota(file, t);
-              return { storeKey, file, status: 'success', data };
-            } catch (err: unknown) {
-              const message = err instanceof Error ? err.message : t('common.unknown_error');
-              const errorStatus = getStatusFromError(err);
-              return { storeKey, file, status: 'error', error: message, errorStatus };
-            }
-          }
-        );
-
-        if (requestId !== requestIdRef.current) return;
-
-        setQuota((prev) => {
-          const nextState = { ...prev };
-          results.forEach((result) => {
-            if (result.status === 'success') {
-              nextState[result.storeKey] = config.buildSuccessState(
-                result.data as TData,
-                result.file
-              );
-            } else {
-              nextState[result.storeKey] = buildQuotaFailureState(
-                config,
-                result.error || t('common.unknown_error'),
-                result.errorStatus,
-                result.file,
-                previousStateByStoreKey.get(result.storeKey)
-              );
-            }
-          });
-          return nextState;
-        });
-      } finally {
-        if (requestId === requestIdRef.current) {
-          setLoading(false);
-          loadingRef.current = false;
-        }
+      });
+    } finally {
+      if (mountedRef.current && requestId === requestIdRef.current) {
+        setLoading(false);
+        loadingRef.current = false;
+        loadingCallback.current = null;
       }
-    },
-    [config, setQuota, t]
-  );
-
-  return { quota, loadQuota };
+    }
+  }, [captureRequest, config, setQuota, t]);
+  return {quota: visibleQuota, loadQuota, captureRequest};
 }
