@@ -4506,7 +4506,7 @@
       "telemetryAlive_openAria": "Открыть телеметрию контейнера (сейчас {{state}})",
       "timeColumn": "Время аккаунта",
       "timeCreated": "Создан",
-      "timeFirstLogin": "Первый вход",
+      "timeFirstLogin": "Текущая идентичность",
       "timeAlive": "Время жизни",
       "timeBanned": "Бан",
       "timeEstimateBadge": "Оценка",

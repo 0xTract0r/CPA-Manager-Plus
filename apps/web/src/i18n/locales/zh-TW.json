@@ -4519,7 +4519,7 @@
       "telemetryAlive_openAria": "查看該容器遙測詳情（目前 {{state}}）",
       "timeColumn": "帳號時間",
       "timeCreated": "建立",
-      "timeFirstLogin": "首次登入",
+      "timeFirstLogin": "目前身分",
       "timeAlive": "存活",
       "timeBanned": "封禁",
       "timeEstimateBadge": "估算",

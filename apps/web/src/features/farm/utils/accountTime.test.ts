@@ -11,6 +11,64 @@ import { deriveFarmAccountTimeLabels } from './accountTime';
 describe('deriveFarmAccountTimeLabels', () => {
   const NOW = Date.parse('2026-08-18T00:00:00Z');
 
+  it('首投起点跨服务重启和身份轮换保持不变，注册与身份展示各自保留', () => {
+    const common = {
+      registeredAt: '2026-06-01T00:00:00Z',
+      firstProductionAt: '2026-07-01T00:00:00Z',
+      impaired: false,
+      nowMs: NOW,
+    };
+    const before = deriveFarmAccountTimeLabels({
+      ...common,
+      createdAt: '2026-06-30T00:00:00Z',
+      firstIdentityAt: '2026-06-30T00:00:00Z',
+    });
+    const after = deriveFarmAccountTimeLabels({
+      ...common,
+      createdAt: '2026-08-18T00:00:00Z',
+      firstIdentityAt: '2026-08-17T00:00:00Z',
+    });
+    expect(after.aliveMs).toBe(NOW - Date.parse(common.firstProductionAt));
+    expect(after.aliveMs).toBe(before.aliveMs);
+    expect(after.createdAtDate?.toISOString()).toBe(common.registeredAt.replace('Z', '.000Z'));
+    expect(after.firstIdentityDate?.toISOString()).toBe('2026-08-17T00:00:00.000Z');
+  });
+
+  it('首投起算仍钉到封禁终点，不随当前时间继续累计', () => {
+    const result = deriveFarmAccountTimeLabels({
+      firstProductionAt: '2026-08-01T00:00:00Z',
+      firstIdentityAt: '2026-08-17T00:00:00Z',
+      bannedAt: '2026-08-16T00:00:00Z',
+      impaired: true,
+      nowMs: NOW,
+    });
+    expect(result.aliveMs).toBe(15 * 24 * 60 * 60 * 1000);
+    expect(result.aliveEstimated).toBe(false);
+  });
+
+  it.each(['0001-01-01T00:00:00Z', 'invalid', undefined])(
+    '无有效首投时兼容旧版回退：%s',
+    (firstProductionAt) => {
+      const result = deriveFarmAccountTimeLabels({
+        firstProductionAt,
+        firstIdentityAt: '2026-08-10T00:00:00Z',
+        impaired: false,
+        nowMs: NOW,
+      });
+      expect(result.aliveMs).toBe(8 * 24 * 60 * 60 * 1000);
+    }
+  );
+
+  it('首投晚于封禁时不伪造存活时长', () => {
+    const result = deriveFarmAccountTimeLabels({
+      firstProductionAt: '2026-08-17T00:00:00Z',
+      bannedAt: '2026-08-16T00:00:00Z',
+      impaired: true,
+      nowMs: NOW,
+    });
+    expect(result.aliveMs).toBeNull();
+  });
+
   it('归零 Go 零时间输入 → 创建/首登为 null、存活无法计算（渲染成 —）', () => {
     const result = deriveFarmAccountTimeLabels({
       createdAt: '0001-01-01T00:00:00Z',
