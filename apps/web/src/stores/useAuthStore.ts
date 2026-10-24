@@ -67,7 +67,8 @@ type PendingLegacyAuthSnapshot = {
  */
 let deferAuthPersistence = false;
 let pendingLegacyAuthSnapshot: PendingLegacyAuthSnapshot | null = null;
-let pendingLegacyRestoreInFlight = false;
+let pendingLegacyRestoreGeneration: number | null = null;
+let authGeneration = 0;
 
 function captureLegacyAuthSnapshot(): PendingLegacyAuthSnapshot {
   try {
@@ -241,8 +242,9 @@ export const useAuthStore = create<AuthStoreState>()(
 
           if (wasLoggedIn && resolvedBase && resolvedKey) {
             const isLegacyRestore = pendingLegacyAuthSnapshot !== null;
+            const restoreGeneration = authGeneration + 1;
             if (isLegacyRestore) {
-              pendingLegacyRestoreInFlight = true;
+              pendingLegacyRestoreGeneration = restoreGeneration;
             }
             try {
               const restoredSessionMode = options?.expectedMode ?? (sessionMode || undefined);
@@ -258,6 +260,7 @@ export const useAuthStore = create<AuthStoreState>()(
               }
               return result.recoveryMode ? result : {};
             } catch (error) {
+              if (authGeneration !== restoreGeneration) return false;
               console.warn('Auto login failed:', error);
 
               const status =
@@ -300,7 +303,9 @@ export const useAuthStore = create<AuthStoreState>()(
 
               return false;
             } finally {
-              pendingLegacyRestoreInFlight = false;
+              if (pendingLegacyRestoreGeneration === restoreGeneration) {
+                pendingLegacyRestoreGeneration = null;
+              }
             }
           }
 
@@ -312,6 +317,9 @@ export const useAuthStore = create<AuthStoreState>()(
 
       // 登录
       login: async (credentials) => {
+        const loginGeneration = ++authGeneration;
+        const isCurrentLogin = () => authGeneration === loginGeneration;
+        const staleResult = () => ({ stale: true }) as LoginResult & { stale?: boolean };
         const apiBase = normalizeApiBase(credentials.apiBase);
         const managementKey = credentials.managementKey.trim();
         const rememberPassword = credentials.rememberPassword ?? get().rememberPassword ?? false;
@@ -325,7 +333,9 @@ export const useAuthStore = create<AuthStoreState>()(
           result: LoginResult = {},
           onAccepted?: () => void
         ) => {
-          if (pendingLegacyRestoreInFlight) {
+          // 只有当前登录代际可以提交，旧恢复不能覆盖新登录或显式退出。
+          if (!isCurrentLogin()) return staleResult();
+          if (pendingLegacyRestoreGeneration === loginGeneration) {
             if (
               pendingLegacyAuthSnapshot &&
               !legacyAuthSnapshotMatches(pendingLegacyAuthSnapshot)
@@ -388,6 +398,7 @@ export const useAuthStore = create<AuthStoreState>()(
           try {
             await useConfigStore.getState().fetchConfig(undefined, true);
           } catch (error) {
+            if (!isCurrentLogin()) return staleResult();
             if (sessionMode !== 'manager_embedded') {
               throw error;
             }
@@ -413,6 +424,7 @@ export const useAuthStore = create<AuthStoreState>()(
           // 登录成功
           return markAuthenticated();
         } catch (error: unknown) {
+          if (!isCurrentLogin()) return staleResult();
           const message =
             error instanceof Error
               ? error.message
@@ -430,7 +442,8 @@ export const useAuthStore = create<AuthStoreState>()(
 
       // 登出
       logout: () => {
-        pendingLegacyRestoreInFlight = false;
+        ++authGeneration;
+        pendingLegacyRestoreGeneration = null;
         pendingLegacyAuthSnapshot = null;
         deferAuthPersistence = false;
         clearLegacyAuthKeys();
