@@ -5173,7 +5173,7 @@
       "telemetryAlive_openAria": "查看该容器遥测详情（当前 {{state}}）",
       "timeColumn": "账号时间",
       "timeCreated": "创建",
-      "timeFirstLogin": "首次登录",
+      "timeFirstLogin": "当前身份",
       "timeAlive": "存活",
       "timeBanned": "封禁",
       "timeEstimateBadge": "估算",

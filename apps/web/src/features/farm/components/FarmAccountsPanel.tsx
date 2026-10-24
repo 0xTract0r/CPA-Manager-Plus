@@ -860,6 +860,7 @@ export function FarmAccountsPanel({
                 registeredAt: account.account_registered_at,
                 createdAt: account.created_at,
                 firstIdentityAt: account.first_identity_at,
+                firstProductionAt: account.first_production_at,
                 bannedAt: account.refresh_disabled_at,
                 failureAt:
                   authState === 'auto_quarantined' ? account.quarantined_at : undefined,
@@ -1488,7 +1489,7 @@ export function FarmAccountsPanel({
                             <div className={styles.timeRow}>
                               <dt className={styles.timeLabel}>
                                 {t('farm.accountHealth.timeFirstLogin', {
-                                  defaultValue: '首次登录',
+                                  defaultValue: '当前身份',
                                 })}
                               </dt>
                               <dd

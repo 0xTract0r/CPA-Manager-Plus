@@ -5135,7 +5135,7 @@
       "telemetryAlive_openAria": "View this container's telemetry (currently {{state}})",
       "timeColumn": "Account timeline",
       "timeCreated": "Created",
-      "timeFirstLogin": "First login",
+      "timeFirstLogin": "Current identity",
       "timeAlive": "Alive",
       "timeBanned": "Banned",
       "timeEstimateBadge": "Est.",
