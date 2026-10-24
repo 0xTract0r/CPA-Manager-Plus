@@ -17,7 +17,8 @@ import { parseCoreQuotaTimestamp } from '@/services/api/quotaSnapshots';
  *  - 创建展示优先真实注册时间 `account_registered_at`（Wave1 起编排器透传的
  *    Anthropic 真实注册时刻），缺失才降级到 `created_at`（core 装载近似值）；
  *    降级时 `createdAtIsFallback=true`，供 UI 标注「装载近似·非真实注册」。
- *  - 存活「起点」= 首次登录 `first_identity_at`（缺失时降级到创建展示时刻，
+ *  - 存活「起点」优先持久化首投 `first_production_at`，不随重启/身份轮换重置；
+ *    旧后端缺失时沿用 `first_identity_at`（缺失时降级到创建展示时刻，
  *    避免完全无法计算）；「终点」优先真实封禁 `refresh_disabled_at`，其次隔离
  *    精确失效时刻 `quarantined_at`（仅 auto_quarantined），都缺失才退回 now。
  *    修复点：needs_reauth 死号此前无 `quarantined_at` → 终点一路退回 now、存活
@@ -34,8 +35,10 @@ export interface FarmAccountTimeInput {
    * 降级展示来源。
    */
   createdAt?: string | null;
-  /** 首次登录时刻（runtime_identity.current.created_at）。存活起算点。 */
+  /** 当前身份创建时间；仅在首投字段缺失时作为旧版存活起点回退。 */
   firstIdentityAt?: string | null;
+  /** 持久化首次成功服务时刻（只读）；区别于会随身份轮换刷新的当前身份时间。 */
+  firstProductionAt?: string | null;
   /**
    * 真实封禁时刻（`refresh_disabled_at`，账号级）。存活终点的首选值——有值即钉死
    * 终点，不再退回 now 虚涨。缺失（未封禁或后端未投影）时按无终点处理。
@@ -78,7 +81,16 @@ export interface FarmAccountTimeLabels {
 }
 
 export function deriveFarmAccountTimeLabels(input: FarmAccountTimeInput): FarmAccountTimeLabels {
-  const { registeredAt, createdAt, firstIdentityAt, bannedAt, failureAt, impaired, nowMs } = input;
+  const {
+    registeredAt,
+    createdAt,
+    firstIdentityAt,
+    firstProductionAt,
+    bannedAt,
+    failureAt,
+    impaired,
+    nowMs,
+  } = input;
 
   const registeredAtDate = parseCoreQuotaTimestamp(registeredAt);
   const createdAtRawDate = parseCoreQuotaTimestamp(createdAt);
@@ -92,8 +104,10 @@ export function deriveFarmAccountTimeLabels(input: FarmAccountTimeInput): FarmAc
 
   // 存活终点优先级：真实封禁时刻 > 隔离精确失效时刻 > now（无精确终点时估算）。
   const preciseEndDate = bannedAtDate ?? failureDate;
-  // 存活起点：首次登录优先；缺失时降级到创建展示时刻（避免完全无法计算）。
-  const startDate = firstIdentityDate ?? createdAtDate;
+  // 首投时间是持久化锚点；当前身份与进程装载时间都可能在运行态变化后刷新。
+  // 旧编排器缺少首投字段时保留原有回退，不修改任何调度状态。
+  const startDate =
+    parseCoreQuotaTimestamp(firstProductionAt) ?? firstIdentityDate ?? createdAtDate;
 
   let aliveMs: number | null = null;
   let aliveEstimated = false;
