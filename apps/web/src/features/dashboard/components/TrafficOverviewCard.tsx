@@ -9,12 +9,14 @@ import type {
 } from 'echarts/components';
 import type { ComposeOption } from 'echarts/core';
 import { EChartsView } from '@/components/charts/EChartsView';
+import { useThemeStore } from '@/stores';
 import type {
   DashboardTodayRequestHealthTimeline,
   DashboardTodayRequestHealthTimelinePoint,
   DashboardTokenMixSegment,
   DashboardTrafficPoint,
 } from '@/services/api/usageService';
+import { getDataPalette, hexToRgba, type DataPalette } from '@/utils/dataPalette';
 import { formatCompactNumber } from '@/utils/usage';
 import { formatInUtc8 } from '@/utils/datetime';
 import { buildVisibleTrafficTimeline, isCurrentTrafficBucket } from './trafficOverviewChartModel';
@@ -53,12 +55,12 @@ const tokenLabelMap: Record<string, string> = {
   reasoning: 'dashboard.token_mix_reasoning',
 };
 
-const tokenColorMap: Record<string, string> = {
-  input: '#3b82f6',
-  cached: '#f59e0b',
-  output: '#10b981',
-  reasoning: '#8b5cf6',
-};
+const buildTokenColorMap = (dataPalette: DataPalette): Record<string, string> => ({
+  input: dataPalette.blue,
+  cached: dataPalette.amber,
+  output: dataPalette.emerald,
+  reasoning: dataPalette.violet,
+});
 
 const visibleTokenMixKeys = new Set(['input', 'cached', 'output', 'reasoning']);
 
@@ -91,11 +93,13 @@ const buildHealthTitle = (
 };
 
 const buildTrafficTrendOption = ({
+  dataPalette,
   locale,
   nowMs,
   t,
   timeline,
 }: {
+  dataPalette: DataPalette;
   locale: string;
   nowMs?: number | null;
   t: (key: string) => string;
@@ -103,7 +107,7 @@ const buildTrafficTrendOption = ({
 }): TrafficTrendChartOption => ({
   animationDuration: 260,
   backgroundColor: 'transparent',
-  color: ['#3b82f6', '#10b981'],
+  color: [dataPalette.blue, dataPalette.emerald],
   dataZoom:
     timeline.length > 12
       ? [
@@ -129,17 +133,17 @@ const buildTrafficTrendOption = ({
   tooltip: {
     appendToBody: true,
     axisPointer: {
-      lineStyle: { color: '#94a3b8', type: 'dashed', width: 1 },
+      lineStyle: { color: dataPalette.surface.axisPointer, type: 'dashed', width: 1 },
       snap: true,
       type: 'line',
     },
-    backgroundColor: 'rgba(255,255,255,0.96)',
-    borderColor: '#dbe3ef',
+    backgroundColor: dataPalette.surface.tooltipBackground,
+    borderColor: dataPalette.surface.tooltipBorder,
     borderRadius: 10,
     borderWidth: 1,
     className: styles.echartsTooltipWrapper,
     confine: true,
-    extraCssText: 'box-shadow: 0 16px 36px rgba(15,23,42,0.14);',
+    extraCssText: dataPalette.surface.tooltipShadow,
     formatter: (params: unknown) => {
       const items = Array.isArray(params) ? params : [params];
       const first = items[0] as { dataIndex?: number } | undefined;
@@ -163,12 +167,12 @@ const buildTrafficTrendOption = ({
   },
   xAxis: {
     axisLabel: {
-      color: '#64748b',
+      color: dataPalette.surface.axisLabel,
       fontSize: 10,
       hideOverlap: true,
       margin: 10,
     },
-    axisLine: { lineStyle: { color: '#e2e8f0' } },
+    axisLine: { lineStyle: { color: dataPalette.surface.axisLine } },
     axisTick: { show: false },
     data: timeline.map((point) => formatHour(point.bucket_ms, locale)),
     type: 'category',
@@ -176,18 +180,18 @@ const buildTrafficTrendOption = ({
   yAxis: [
     {
       axisLabel: {
-        color: '#64748b',
+        color: dataPalette.surface.axisLabel,
         formatter: (value: number) => formatCompactNumber(value),
         fontSize: 10,
       },
-      nameTextStyle: { color: '#64748b' },
+      nameTextStyle: { color: dataPalette.surface.axisLabel },
       scale: true,
-      splitLine: { lineStyle: { color: '#e8edf5', type: 'dashed' } },
+      splitLine: { lineStyle: { color: dataPalette.surface.splitLine, type: 'dashed' } },
       type: 'value',
     },
     {
       axisLabel: {
-        color: '#3b82f6',
+        color: dataPalette.blue,
         formatter: (value: number) => formatCompactNumber(value),
         fontSize: 10,
       },
@@ -208,7 +212,7 @@ const buildTrafficTrendOption = ({
       })),
       itemStyle: {
         borderRadius: [4, 4, 0, 0],
-        color: '#10b981',
+        color: dataPalette.emerald,
       },
       name: t('dashboard.traffic_tokens'),
       type: 'bar',
@@ -218,8 +222,8 @@ const buildTrafficTrendOption = ({
       areaStyle: {
         color: {
           colorStops: [
-            { color: 'rgba(59,130,246,0.18)', offset: 0 },
-            { color: 'rgba(59,130,246,0)', offset: 1 },
+            { color: hexToRgba(dataPalette.blue, 0.18), offset: 0 },
+            { color: hexToRgba(dataPalette.blue, 0), offset: 1 },
           ],
           x: 0,
           x2: 0,
@@ -229,7 +233,7 @@ const buildTrafficTrendOption = ({
         },
       },
       data: timeline.map((point) => point.calls),
-      lineStyle: { color: '#3b82f6', width: 2.4 },
+      lineStyle: { color: dataPalette.blue, width: 2.4 },
       name: t('dashboard.traffic_calls'),
       showSymbol: timeline.length <= 24,
       smooth: 0.22,
@@ -249,6 +253,9 @@ export function TrafficOverviewCard({
   loading,
 }: TrafficOverviewCardProps) {
   const { t, i18n } = useTranslation();
+  const resolvedTheme = useThemeStore((state) => state.resolvedTheme);
+  const dataPalette = getDataPalette(resolvedTheme);
+  const tokenColorMap = buildTokenColorMap(dataPalette);
   const [activeTokenSegment, setActiveTokenSegment] = useState<DashboardTokenMixSegment | null>(null);
   const visibleTimeline = buildVisibleTrafficTimeline(timeline, trafficNowMs);
   const hasData = visibleTimeline.some((point) => point.calls > 0 || point.tokens > 0);
@@ -270,12 +277,13 @@ export function TrafficOverviewCard({
   const trafficTrendOption = useMemo(
     () =>
       buildTrafficTrendOption({
+        dataPalette,
         locale: i18n.language,
         nowMs: trafficNowMs,
         t,
         timeline: visibleTimeline,
       }),
-    [i18n.language, t, trafficNowMs, visibleTimeline]
+    [dataPalette, i18n.language, t, trafficNowMs, visibleTimeline]
   );
 
   return (
@@ -286,11 +294,11 @@ export function TrafficOverviewCard({
           <h3>{t('dashboard.traffic_trend_today')}</h3>
           <div className={styles.legend}>
             <span className={styles.legendItem}>
-              <span className={styles.dot} style={{ background: '#3b82f6' }} />{' '}
+              <span className={styles.dot} style={{ background: dataPalette.blue }} />{' '}
               {t('dashboard.traffic_calls')}
             </span>
             <span className={styles.legendItem}>
-              <span className={styles.dot} style={{ background: '#10b981' }} />{' '}
+              <span className={styles.dot} style={{ background: dataPalette.emerald }} />{' '}
               {t('dashboard.traffic_tokens')}
             </span>
           </div>
@@ -415,7 +423,7 @@ export function TrafficOverviewCard({
                     <span className={styles.tokenRankIdentity}>
                       <i
                         className={styles.tokenRankSwatch}
-                        style={{ background: tokenColorMap[segment.key] || '#ccc' }}
+                        style={{ background: tokenColorMap[segment.key] || dataPalette.slateMuted }}
                         aria-hidden="true"
                       />
                       <span>{t(tokenLabelMap[segment.key] || segment.key)}</span>
@@ -431,7 +439,7 @@ export function TrafficOverviewCard({
                       style={
                         {
                           '--rank-share': maxTokenMixTokens > 0 ? segment.tokens / maxTokenMixTokens : 0,
-                          '--rank-color': tokenColorMap[segment.key] || '#ccc',
+                          '--rank-color': tokenColorMap[segment.key] || dataPalette.slateMuted,
                         } as TokenRankStyle
                       }
                     />

@@ -3,8 +3,40 @@ import i18n from '@/i18n';
 import { maskApiKey } from './format';
 import { normalizeAuthIndex } from './authIndex';
 import { parseTimestampMs } from './timestamp';
+import { normalizeAnalyticsModel } from './analyticsModel';
+import { sha256Hex } from './apiKeyHash';
 
 export { normalizeAuthIndex };
+export { normalizeAnalyticsModel } from './analyticsModel';
+
+export interface ModelPriceContextTier {
+  thresholdTokens: number;
+  prompt: number;
+  completion: number;
+  cache: number;
+  cacheRead?: number;
+  cacheCreation?: number;
+  promptConfigured?: boolean;
+  completionConfigured?: boolean;
+  cacheConfigured?: boolean;
+  cacheReadConfigured?: boolean;
+  cacheCreationConfigured?: boolean;
+}
+
+export interface ModelPriceServiceTier {
+  mode: string;
+  serviceTier: string;
+  prompt: number;
+  completion: number;
+  cache: number;
+  cacheRead?: number;
+  cacheCreation?: number;
+  promptConfigured?: boolean;
+  completionConfigured?: boolean;
+  cacheConfigured?: boolean;
+  cacheReadConfigured?: boolean;
+  cacheCreationConfigured?: boolean;
+}
 
 export interface ModelPrice {
   prompt: number;
@@ -19,6 +51,8 @@ export interface ModelPrice {
   source?: string;
   sourceModelId?: string;
   rawJson?: string;
+  contextTiers?: ModelPriceContextTier[];
+  serviceTiers?: ModelPriceServiceTier[];
   updatedAtMs?: number;
   syncedAtMs?: number;
 }
@@ -40,7 +74,14 @@ export interface UsageTokens {
   cache_write_input_tokens?: number;
   cacheWriteInputTokens?: number;
   total_tokens?: number;
+  cache_input_mode?: CacheInputMode | string;
+  cacheInputMode?: CacheInputMode | string;
 }
+
+export type CacheInputMode =
+  | 'included_in_input'
+  | 'separate_from_input'
+  | 'read_included_creation_separate';
 
 export interface UsageResponseHeaderQuotaWindow {
   used_percent?: number;
@@ -72,6 +113,7 @@ export interface UsageResponseHeaderMetadata {
     retry_after_seconds?: number;
     retry_after_recover_at_ms?: number;
     rate_limit_bypass?: string;
+    should_retry?: boolean;
   };
   trace?: {
     primary_trace_id?: string;
@@ -83,6 +125,7 @@ export interface UsageResponseHeaderMetadata {
     cloud_ai_companion_trace_id?: string;
     client_request_id?: string;
     zeabur_request_id?: string;
+    traceparent?: string;
   };
   routing?: {
     openai_proxy_wasm?: string;
@@ -109,12 +152,39 @@ export interface UsageResponseHeaderMetadata {
     cloudflare_ray?: string;
     cloudflare_cache_status?: string;
   };
+  rate_limit?: {
+    requests?: { limit?: number; remaining?: number };
+    tokens?: { limit?: number; remaining?: number };
+  };
+  data_policy?: {
+    retention_mode?: string;
+    zero_retention?: boolean;
+  };
+  provider_usage?: {
+    provider?: string;
+    kind?: string;
+    state?: string;
+    code?: string;
+    model?: string;
+    unit?: string;
+    actual?: number;
+    limit?: number;
+    remaining?: number;
+    overage?: number;
+    window_kind?: string;
+    observed_at_ms?: number;
+    recover_at_ms?: number;
+    recover_at_estimated?: boolean;
+    source?: string;
+  };
 }
 
 export interface UsageDetail {
   telemetry?: RequestTelemetry;
   timestamp: string;
   source: string;
+  source_hash?: string;
+  sourceHash?: string;
   auth_index: string | number | null;
   api_key_hash?: string;
   apiKeyHash?: string;
@@ -126,16 +196,49 @@ export interface UsageDetail {
   authFileSnapshot?: string;
   auth_provider_snapshot?: string;
   authProviderSnapshot?: string;
+  auth_account_id_snapshot?: string;
+  authAccountIdSnapshot?: string;
   auth_project_id_snapshot?: string;
   authProjectIdSnapshot?: string;
   auth_snapshot_at_ms?: number;
   authSnapshotAtMs?: number;
+  auth_type?: string;
+  authType?: string;
+  client_ip?: string;
+  clientIp?: string;
+  x_forwarded_for?: string;
+  xForwardedFor?: string;
+  user_agent?: string;
+  userAgent?: string;
   reasoning_effort?: string;
   reasoningEffort?: string;
   service_tier?: string;
   serviceTier?: string;
+  request_service_tier?: string;
+  requestServiceTier?: string;
+  response_service_tier?: string;
+  responseServiceTier?: string;
+  cache_input_mode?: CacheInputMode | string;
+  cacheInputMode?: CacheInputMode | string;
   executor_type?: string;
   executorType?: string;
+  provider?: string;
+  analytics_model?: string;
+  analyticsModel?: string;
+  requested_model?: string;
+  requestedModel?: string;
+  resolved_model?: string;
+  resolvedModel?: string;
+  response_model?: string;
+  responseModel?: string;
+  session_id?: string;
+  sessionId?: string;
+  parent_session_id?: string;
+  parentSessionId?: string;
+  access_token_sha256?: string;
+  accessTokenSha256?: string;
+  generate?: boolean;
+  stream?: boolean;
   latency_ms?: number;
   ttft_ms?: number;
   tokens: UsageTokens;
@@ -163,7 +266,9 @@ export interface UsageDetail {
   /** core 侧稳定 request_id（用于按 id 取回原始请求日志，见 downloadRequestLogById）。 */
   request_id?: string;
   __modelName?: string;
+  __requestedModel?: string;
   __resolvedModel?: string;
+  __responseModel?: string;
   __timestampMs?: number;
   /** 稳定事件标识(优先取后端 event_hash)，用于列表渲染的稳定 key，避免自动刷新时整表 flush/闪屏。 */
   __eventHash?: string;
@@ -186,9 +291,12 @@ export interface DurationFormatOptions {
 const TOKENS_PER_PRICE_UNIT = 1_000_000;
 const MODEL_PRICE_STORAGE_KEY = 'cli-proxy-model-prices-v2';
 const USAGE_ENDPOINT_METHOD_REGEX = /^(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\s+(\S+)/i;
-const USAGE_SOURCE_PREFIX_KEY = 'k:';
-const USAGE_SOURCE_PREFIX_MASKED = 'm:';
-const USAGE_SOURCE_PREFIX_TEXT = 't:';
+export const USAGE_SOURCE_PREFIX_KEY = 'k:';
+export const USAGE_SOURCE_PREFIX_HASH = 'h:';
+export const USAGE_SOURCE_PREFIX_MASKED = 'm:';
+export const USAGE_SOURCE_PREFIX_TEXT = 't:';
+const CANONICAL_HASHED_SOURCE_REGEX = /^h:[0-9a-fA-F]{64}$/;
+const FNV_KEY_SOURCE_REGEX = /^k:[0-9a-fA-F]{16}$/;
 const KEY_LIKE_TOKEN_REGEX =
   /(sk-proj-[A-Za-z0-9-_]{6,}|sk-ant-[A-Za-z0-9-_]{6,}|sk-[A-Za-z0-9-_]{6,}|sess-[A-Za-z0-9-_]{6,}|ghp_[A-Za-z0-9]{6,}|github_pat_[A-Za-z0-9_]{20,}|AIza[0-9A-Za-z-_]{8,}|hf_[A-Za-z0-9]{6,}|pk_[A-Za-z0-9]{6,}|rk_[A-Za-z0-9]{6,})/;
 const MASKED_TOKEN_HINT_REGEX = /^[^\s]{1,24}(\*{2,}|\.{3})[^\s]{1,24}$/;
@@ -267,6 +375,18 @@ const isModelFamily = (modelName: string, family: string): boolean => {
 
 const isGpt56Model = (modelName: string): boolean => isModelFamily(modelName, 'gpt-5.6');
 
+const supportsLongContextPremium = (modelName: string): boolean => {
+  const slug = normalizedModelSlug(modelName);
+  if (isGpt56Model(slug)) return true;
+  if (slug === 'gpt-5.5' || slug.startsWith('gpt-5.5-20')) return true;
+  return (
+    slug === 'gpt-5.4' ||
+    slug.startsWith('gpt-5.4-20') ||
+    slug === 'gpt-5.4-pro' ||
+    slug.startsWith('gpt-5.4-pro-20')
+  );
+};
+
 const isConfiguredPriceValue = (value: unknown, configured?: boolean): boolean => {
   const parsed = Number(value);
   return configured === true || (Number.isFinite(parsed) && parsed > 0);
@@ -319,6 +439,7 @@ export function getServiceTierMultiplier(modelName: string, serviceTier?: string
   const tier = String(serviceTier ?? '')
     .trim()
     .toLowerCase();
+  if (tier === 'flex' || tier === 'batch') return 0.5;
   if (tier !== 'priority' && tier !== 'fast') return 1;
 
   const normalizedModel = String(modelName ?? '')
@@ -349,6 +470,204 @@ export const compatibleCachedTokens = (
   const fineGrained =
     Math.max(toFiniteNumber(cacheReadTokens), 0) + Math.max(toFiniteNumber(cacheCreationTokens), 0);
   return Math.max(cached - fineGrained, 0);
+};
+
+export interface CacheInputContext {
+  explicitMode?: unknown;
+  executorType?: unknown;
+  provider?: unknown;
+  providerSnapshot?: unknown;
+  resolvedModel?: unknown;
+  requestedModel?: unknown;
+  displayModel?: unknown;
+}
+
+const normalizeCacheIdentity = (value: unknown): string =>
+  String(value ?? '')
+    .trim()
+    .toLowerCase();
+
+const classifyExecutorCacheInputMode = (value: unknown): CacheInputMode | undefined => {
+  const executor = normalizeCacheIdentity(value);
+  if (!executor) return undefined;
+  if (executor === 'devinexecutor') return 'read_included_creation_separate';
+  if (executor.includes('claude')) return 'separate_from_input';
+  if (
+    [
+      'openaicompat',
+      'openai_compat',
+      'openai-compat',
+      'openai',
+      'codex',
+      'gemini',
+      'aistudio',
+      'ai_studio',
+      'ai-studio',
+      'antigravity',
+      'xai',
+      'kimi',
+    ].some((marker) => executor.includes(marker))
+  ) {
+    return 'included_in_input';
+  }
+  return undefined;
+};
+
+const classifyProviderCacheInputMode = (value: unknown): CacheInputMode | undefined => {
+  const provider = normalizeCacheIdentity(value);
+  if (!provider) return undefined;
+  if (provider === 'devin' || provider.startsWith('devin/')) {
+    return 'read_included_creation_separate';
+  }
+  if (provider.includes('anthropic') || provider.includes('claude')) {
+    return 'separate_from_input';
+  }
+  if (
+    [
+      'openai',
+      'codex',
+      'gemini',
+      'vertex',
+      'aistudio',
+      'ai_studio',
+      'ai-studio',
+      'interaction',
+      'antigravity',
+      'xai',
+      'kimi',
+      'moonshot',
+    ].some((marker) => provider.includes(marker))
+  ) {
+    return 'included_in_input';
+  }
+  return undefined;
+};
+
+const classifyModelCacheInputMode = (value: unknown): CacheInputMode | undefined => {
+  const model = normalizeCacheIdentity(value);
+  if (!model) return undefined;
+  if (model === 'devin' || model.startsWith('devin/')) {
+    return 'read_included_creation_separate';
+  }
+  if (model.includes('anthropic') || model.includes('claude')) {
+    return 'separate_from_input';
+  }
+  if (
+    [
+      'gpt-',
+      'openai',
+      'codex',
+      'gemini',
+      'vertex',
+      'aistudio',
+      'antigravity',
+      'grok',
+      'xai',
+      'kimi',
+      'moonshot',
+    ].some((marker) => model.includes(marker))
+  ) {
+    return 'included_in_input';
+  }
+  return undefined;
+};
+
+export const inferCacheInputMode = (
+  context: CacheInputContext,
+  cacheReadTokens: number,
+  cacheCreationTokens: number
+): CacheInputMode => {
+  const normalizedMode = normalizeCacheIdentity(context.explicitMode);
+  if (normalizedMode === 'separate_from_input') return 'separate_from_input';
+  if (normalizedMode === 'included_in_input') return 'included_in_input';
+  if (normalizedMode === 'read_included_creation_separate') return 'read_included_creation_separate';
+  const executorMode = classifyExecutorCacheInputMode(context.executorType);
+  if (executorMode) return executorMode;
+  for (const provider of [context.provider, context.providerSnapshot]) {
+    const providerMode = classifyProviderCacheInputMode(provider);
+    if (providerMode) return providerMode;
+  }
+  for (const model of [context.resolvedModel, context.requestedModel, context.displayModel]) {
+    const modelMode = classifyModelCacheInputMode(model);
+    if (modelMode) return modelMode;
+  }
+  return cacheReadTokens > 0 || cacheCreationTokens > 0
+    ? 'separate_from_input'
+    : 'included_in_input';
+};
+
+export const normalizeCacheAccounting = (input: {
+  context: CacheInputContext;
+  inputTokens: unknown;
+  cachedTokens: unknown;
+  cacheTokens: unknown;
+  cacheReadTokens: unknown;
+  cacheCreationTokens: unknown;
+}) => {
+  const rawInput = Math.max(toFiniteNumber(input.inputTokens), 0);
+  const rawRead = Math.max(toFiniteNumber(input.cacheReadTokens), 0);
+  const creation = Math.max(toFiniteNumber(input.cacheCreationTokens), 0);
+  const legacyRead = compatibleCachedTokens(
+    input.cachedTokens,
+    input.cacheTokens,
+    rawRead,
+    creation
+  );
+  const read = legacyRead + rawRead;
+  const mode = inferCacheInputMode(input.context, rawRead, creation);
+  let totalInputTokens = rawInput;
+  let uncachedInputTokens = Math.max(rawInput - read - creation, 0);
+  if (mode === 'separate_from_input') {
+    totalInputTokens = rawInput + read + creation;
+    uncachedInputTokens = rawInput;
+  } else if (mode === 'read_included_creation_separate') {
+    totalInputTokens = rawInput + creation;
+    uncachedInputTokens = Math.max(rawInput - read, 0);
+  }
+  return {
+    mode,
+    legacyRead,
+    cacheReadTokens: rawRead,
+    cacheCreationTokens: creation,
+    totalInputTokens,
+    uncachedInputTokens,
+  };
+};
+
+export type CacheHitMetricsInput = {
+  modelName?: string;
+  inputTokens: unknown;
+  cachedTokens: unknown;
+  cacheReadTokens: unknown;
+  cacheCreationTokens: unknown;
+};
+
+export const getCacheHitTotals = ({
+  inputTokens,
+  cachedTokens,
+  cacheReadTokens,
+}: CacheHitMetricsInput): { hitTokens: number; inputTokens: number } => {
+  const input = Math.max(toFiniteNumber(inputTokens), 0);
+  const cached = Math.max(toFiniteNumber(cachedTokens), 0);
+  const cacheRead = Math.max(toFiniteNumber(cacheReadTokens), 0);
+  return {
+    hitTokens: cached + cacheRead,
+    inputTokens: input,
+  };
+};
+
+export const calculateCacheHitRate = (input: CacheHitMetricsInput): number => {
+  const totals = getCacheHitTotals(input);
+  return calculateCacheHitRateFromTotals(totals.hitTokens, totals.inputTokens);
+};
+
+export const calculateCacheHitRateFromTotals = (
+  hitTokens: unknown,
+  inputTokens: unknown
+): number => {
+  const normalizedInput = Math.max(toFiniteNumber(inputTokens), 0);
+  if (normalizedInput <= 0) return 0;
+  return Math.min(1, Math.max(toFiniteNumber(hitTokens), 0) / normalizedInput);
 };
 
 const getApisRecord = (usageData: unknown): Record<string, unknown> | null => {
@@ -422,6 +741,21 @@ export function maskUsageSecretSource(secret: string): string {
   return `${trimmed.slice(0, 4)}...${trimmed.slice(-4)}`;
 }
 
+export function isOpaqueUsageSourceId(value: unknown): boolean {
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  if (CANONICAL_HASHED_SOURCE_REGEX.test(trimmed)) return true;
+  if (FNV_KEY_SOURCE_REGEX.test(trimmed)) return true;
+  if (
+    trimmed.startsWith(USAGE_SOURCE_PREFIX_MASKED) &&
+    trimmed.length > USAGE_SOURCE_PREFIX_MASKED.length
+  ) {
+    return true;
+  }
+  return false;
+}
+
 export function normalizeUsageSourceId(
   value: unknown,
   masker: (val: string) => string = maskApiKey
@@ -430,6 +764,9 @@ export function normalizeUsageSourceId(
     typeof value === 'string' ? value : value === null || value === undefined ? '' : String(value);
   const trimmed = raw.trim();
   if (!trimmed) return '';
+  if (CANONICAL_HASHED_SOURCE_REGEX.test(trimmed)) {
+    return `${USAGE_SOURCE_PREFIX_HASH}${trimmed.slice(USAGE_SOURCE_PREFIX_HASH.length).toLowerCase()}`;
+  }
   if (trimmed.startsWith(USAGE_SOURCE_PREFIX_KEY)) return trimmed;
   if (trimmed.startsWith(USAGE_SOURCE_PREFIX_MASKED)) {
     if (BACKEND_MASKED_SOURCE_REGEX.test(trimmed)) return trimmed;
@@ -462,6 +799,10 @@ export function buildCandidateUsageSourceIds(input: {
   const apiKey = input.apiKey?.trim();
   if (apiKey) {
     result.push(normalizeUsageSourceId(apiKey));
+    const hashed = sha256Hex(apiKey);
+    if (hashed) {
+      result.push(`${USAGE_SOURCE_PREFIX_HASH}${hashed.toLowerCase()}`);
+    }
     result.push(`${USAGE_SOURCE_PREFIX_MASKED}${maskUsageSecretSource(apiKey)}`);
     result.push(`${USAGE_SOURCE_PREFIX_MASKED}${maskApiKey(apiKey)}`);
     result.push(`${USAGE_SOURCE_PREFIX_TEXT}${maskApiKey(apiKey)}`);
@@ -504,35 +845,42 @@ export function extractTTFTMs(detail: unknown): number | null {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 
-const readTokens = (detail: Record<string, unknown>): UsageTokens => {
+const readTokens = (detail: Record<string, unknown>, modelName: string): UsageTokens => {
   const tokensRaw = isRecord(detail.tokens) ? detail.tokens : {};
   const cacheReadTokens = readFirstTokenNumber(tokensRaw, CACHE_READ_TOKEN_KEYS);
   const cacheCreationTokens = readFirstTokenNumber(tokensRaw, CACHE_CREATION_TOKEN_KEYS);
-  const cachedTokens = compatibleCachedTokens(
-    tokensRaw.cached_tokens ?? tokensRaw.cachedTokens,
-    tokensRaw.cache_tokens ?? tokensRaw.cacheTokens,
+  const accounting = normalizeCacheAccounting({
+    context: {
+      explicitMode:
+        tokensRaw.cache_input_mode ??
+        tokensRaw.cacheInputMode ??
+        detail.cache_input_mode ??
+        detail.cacheInputMode,
+      executorType: detail.executor_type ?? detail.executorType,
+      provider: detail.provider,
+      providerSnapshot: detail.auth_provider_snapshot ?? detail.authProviderSnapshot,
+      resolvedModel: detail.resolved_model ?? detail.resolvedModel,
+      requestedModel: detail.requested_model ?? detail.requestedModel ?? detail.alias,
+      displayModel: modelName,
+    },
+    inputTokens: tokensRaw.input_tokens ?? tokensRaw.inputTokens,
+    cachedTokens: tokensRaw.cached_tokens ?? tokensRaw.cachedTokens,
+    cacheTokens: tokensRaw.cache_tokens ?? tokensRaw.cacheTokens,
     cacheReadTokens,
-    cacheCreationTokens
-  );
-  const inputTokens = toFiniteNumber(tokensRaw.input_tokens ?? tokensRaw.inputTokens);
+    cacheCreationTokens,
+  });
+  const inputTokens = accounting.totalInputTokens;
   const outputTokens = toFiniteNumber(tokensRaw.output_tokens ?? tokensRaw.outputTokens);
   const reasoningTokens = toFiniteNumber(tokensRaw.reasoning_tokens ?? tokensRaw.reasoningTokens);
   const explicitTotalTokens = toFiniteNumber(tokensRaw.total_tokens ?? tokensRaw.totalTokens);
   const totalTokens =
-    explicitTotalTokens > 0
-      ? explicitTotalTokens
-      : inputTokens +
-        outputTokens +
-        reasoningTokens +
-        cachedTokens +
-        cacheReadTokens +
-        cacheCreationTokens;
+    explicitTotalTokens > 0 ? explicitTotalTokens : inputTokens + outputTokens + reasoningTokens;
   return {
     input_tokens: inputTokens,
     output_tokens: outputTokens,
     reasoning_tokens: reasoningTokens,
-    cached_tokens: cachedTokens,
-    cache_tokens: cachedTokens,
+    cached_tokens: accounting.legacyRead,
+    cache_tokens: accounting.legacyRead,
     cache_read_tokens: cacheReadTokens,
     cache_creation_tokens: cacheCreationTokens,
     total_tokens: totalTokens,
@@ -582,6 +930,11 @@ export function collectUsageDetails(usageData: unknown): UsageDetail[] {
         const latencyMs = extractLatencyMs(detailRaw);
         const ttftMs = extractTTFTMs(detailRaw);
         const failRaw = isRecord(detailRaw.fail) ? detailRaw.fail : {};
+        const requestedModel =
+          readDetailString(
+            detailRaw.requested_model ?? detailRaw.requestedModel ?? detailRaw.alias
+          ) || modelName;
+        const analyticsModel = normalizeAnalyticsModel(requestedModel);
         details.push({
           timestamp,
           source: normalizeSourceWithCache(sourceCache, detailRaw.source),
@@ -602,20 +955,39 @@ export function collectUsageDetails(usageData: unknown): UsageDetail[] {
           auth_provider_snapshot: readDetailString(
             detailRaw.auth_provider_snapshot ?? detailRaw.authProviderSnapshot
           ),
+          auth_account_id_snapshot: readDetailString(
+            detailRaw.auth_account_id_snapshot ?? detailRaw.authAccountIdSnapshot
+          ),
           auth_project_id_snapshot: readDetailString(
             detailRaw.auth_project_id_snapshot ?? detailRaw.authProjectIdSnapshot
           ),
           auth_snapshot_at_ms: toPositiveNumber(
             detailRaw.auth_snapshot_at_ms ?? detailRaw.authSnapshotAtMs
           ),
+          auth_type: readDetailString(detailRaw.auth_type ?? detailRaw.authType),
           reasoning_effort: readDetailString(
             detailRaw.reasoning_effort ?? detailRaw.reasoningEffort
           ),
           service_tier: readDetailString(detailRaw.service_tier ?? detailRaw.serviceTier),
           executor_type: readDetailString(detailRaw.executor_type ?? detailRaw.executorType),
+          provider: readDetailString(
+            detailRaw.provider ?? detailRaw.type ?? detailRaw.auth_type ?? detailRaw.authType
+          ),
+          analytics_model: analyticsModel,
+          requested_model: requestedModel,
+          resolved_model: readDetailString(detailRaw.resolved_model ?? detailRaw.resolvedModel),
           latency_ms: latencyMs ?? undefined,
           ttft_ms: ttftMs ?? undefined,
-          tokens: readTokens(detailRaw),
+          request_service_tier: readDetailString(
+            detailRaw.request_service_tier ?? detailRaw.requestServiceTier
+          ),
+          response_service_tier: readDetailString(
+            detailRaw.response_service_tier ?? detailRaw.responseServiceTier
+          ),
+          cache_input_mode: readDetailString(
+            detailRaw.cache_input_mode ?? detailRaw.cacheInputMode
+          ),
+          tokens: readTokens(detailRaw, modelName),
           failed: detailRaw.failed === true,
           fail_status_code:
             toOptionalNumber(
@@ -647,7 +1019,8 @@ export function collectUsageDetails(usageData: unknown): UsageDetail[] {
           ),
           header_trace_id: readDetailString(detailRaw.header_trace_id ?? detailRaw.headerTraceId),
           fail_body: readDetailString(detailRaw.fail_body ?? detailRaw.failBody ?? failRaw.body),
-          __modelName: modelName,
+          __modelName: analyticsModel,
+          __requestedModel: requestedModel,
           __resolvedModel: readDetailString(detailRaw.resolved_model ?? detailRaw.resolvedModel),
           __timestampMs: Number.isNaN(timestampMs) ? 0 : timestampMs,
         });
@@ -692,6 +1065,11 @@ export function collectUsageDetailsWithEndpoint(usageData: unknown): UsageDetail
         const latencyMs = extractLatencyMs(detailRaw);
         const ttftMs = extractTTFTMs(detailRaw);
         const failRaw = isRecord(detailRaw.fail) ? detailRaw.fail : {};
+        const requestedModel =
+          readDetailString(
+            detailRaw.requested_model ?? detailRaw.requestedModel ?? detailRaw.alias
+          ) || modelName;
+        const analyticsModel = normalizeAnalyticsModel(requestedModel);
         details.push({
           timestamp,
           source: normalizeSourceWithCache(sourceCache, detailRaw.source),
@@ -712,20 +1090,39 @@ export function collectUsageDetailsWithEndpoint(usageData: unknown): UsageDetail
           auth_provider_snapshot: readDetailString(
             detailRaw.auth_provider_snapshot ?? detailRaw.authProviderSnapshot
           ),
+          auth_account_id_snapshot: readDetailString(
+            detailRaw.auth_account_id_snapshot ?? detailRaw.authAccountIdSnapshot
+          ),
           auth_project_id_snapshot: readDetailString(
             detailRaw.auth_project_id_snapshot ?? detailRaw.authProjectIdSnapshot
           ),
           auth_snapshot_at_ms: toPositiveNumber(
             detailRaw.auth_snapshot_at_ms ?? detailRaw.authSnapshotAtMs
           ),
+          auth_type: readDetailString(detailRaw.auth_type ?? detailRaw.authType),
           reasoning_effort: readDetailString(
             detailRaw.reasoning_effort ?? detailRaw.reasoningEffort
           ),
           service_tier: readDetailString(detailRaw.service_tier ?? detailRaw.serviceTier),
           executor_type: readDetailString(detailRaw.executor_type ?? detailRaw.executorType),
+          provider: readDetailString(
+            detailRaw.provider ?? detailRaw.type ?? detailRaw.auth_type ?? detailRaw.authType
+          ),
+          analytics_model: analyticsModel,
+          requested_model: requestedModel,
+          resolved_model: readDetailString(detailRaw.resolved_model ?? detailRaw.resolvedModel),
+          request_service_tier: readDetailString(
+            detailRaw.request_service_tier ?? detailRaw.requestServiceTier
+          ),
+          response_service_tier: readDetailString(
+            detailRaw.response_service_tier ?? detailRaw.responseServiceTier
+          ),
+          cache_input_mode: readDetailString(
+            detailRaw.cache_input_mode ?? detailRaw.cacheInputMode
+          ),
           latency_ms: latencyMs ?? undefined,
           ttft_ms: ttftMs ?? undefined,
-          tokens: readTokens(detailRaw),
+          tokens: readTokens(detailRaw, modelName),
           failed: detailRaw.failed === true,
           fail_status_code:
             toOptionalNumber(
@@ -757,8 +1154,16 @@ export function collectUsageDetailsWithEndpoint(usageData: unknown): UsageDetail
           ),
           header_trace_id: readDetailString(detailRaw.header_trace_id ?? detailRaw.headerTraceId),
           fail_body: readDetailString(detailRaw.fail_body ?? detailRaw.failBody ?? failRaw.body),
-          __modelName: modelName,
+          response_model: readDetailString(detailRaw.response_model ?? detailRaw.responseModel),
+          session_id: readDetailString(detailRaw.session_id ?? detailRaw.sessionId),
+          parent_session_id: readDetailString(detailRaw.parent_session_id ?? detailRaw.parentSessionId),
+          access_token_sha256: readDetailString(detailRaw.access_token_sha256 ?? detailRaw.accessTokenSHA256 ?? detailRaw.accessTokenSha256),
+          generate: typeof detailRaw.generate === 'boolean' ? detailRaw.generate : undefined,
+          stream: typeof detailRaw.stream === 'boolean' ? detailRaw.stream : undefined,
+          __modelName: analyticsModel,
+          __requestedModel: requestedModel,
           __resolvedModel: readDetailString(detailRaw.resolved_model ?? detailRaw.resolvedModel),
+          __responseModel: readDetailString(detailRaw.response_model ?? detailRaw.responseModel),
           __endpoint: endpoint,
           __endpointMethod: endpointMethod,
           __endpointPath: endpointPath,
@@ -803,26 +1208,43 @@ export function extractTotalTokens(detail: unknown): number {
 export function calculateCost(
   detail: Pick<
     UsageDetail,
-    'tokens' | '__modelName' | '__resolvedModel' | 'service_tier' | 'serviceTier'
+    | 'tokens'
+    | '__modelName'
+    | '__requestedModel'
+    | '__resolvedModel'
+    | 'service_tier'
+    | 'serviceTier'
+    | 'request_service_tier'
+    | 'requestServiceTier'
+    | 'response_service_tier'
+    | 'responseServiceTier'
+    | 'executor_type'
+    | 'executorType'
+    | 'provider'
+    | 'auth_provider_snapshot'
+    | 'authProviderSnapshot'
+    | 'auth_type'
+    | 'authType'
   >,
   modelPrices: Record<string, ModelPrice>
 ): number {
   const resolvedModel = detail.__resolvedModel || '';
-  const requestedModel = detail.__modelName || '';
+  const analyticsModel = detail.__modelName || '';
+  const requestedModel = detail.__requestedModel || analyticsModel;
   const resolvedPrice = resolvedModel ? modelPrices[resolvedModel] : undefined;
+  const analyticsPrice = analyticsModel ? modelPrices[analyticsModel] : undefined;
   const requestedPrice = requestedModel ? modelPrices[requestedModel] : undefined;
-  const behaviorModel = resolvedModel || requestedModel;
+  const behaviorModel = resolvedModel || analyticsModel || requestedModel;
   const behaviorFallback = getOfficialGpt56Price(behaviorModel);
   const officialCandidatePrice =
-    getOfficialGpt56Price(resolvedModel) || getOfficialGpt56Price(requestedModel);
-  const configuredPrice = resolvedPrice || requestedPrice;
-  const price = configuredPrice
+    getOfficialGpt56Price(resolvedModel) ||
+    getOfficialGpt56Price(analyticsModel) ||
+    getOfficialGpt56Price(requestedModel);
+  const configuredPrice = resolvedPrice || analyticsPrice || requestedPrice;
+  const basePrice = configuredPrice
     ? {
         ...configuredPrice,
-        prompt: isConfiguredPriceValue(
-          configuredPrice.prompt,
-          configuredPrice.promptConfigured
-        )
+        prompt: isConfiguredPriceValue(configuredPrice.prompt, configuredPrice.promptConfigured)
           ? Number(configuredPrice.prompt)
           : (behaviorFallback?.prompt ?? 0),
         completion: isConfiguredPriceValue(
@@ -833,7 +1255,33 @@ export function calculateCost(
           : (behaviorFallback?.completion ?? 0),
       }
     : officialCandidatePrice;
-  if (!price) return 0;
+  if (!basePrice) return 0;
+
+  const identity = [
+    detail.executor_type,
+    detail.executorType,
+    detail.provider,
+    detail.auth_provider_snapshot,
+    detail.authProviderSnapshot,
+    detail.auth_type,
+    detail.authType,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  const serviceTier = identity.includes('codex')
+    ? detail.request_service_tier ||
+      detail.requestServiceTier ||
+      detail.service_tier ||
+      detail.serviceTier ||
+      detail.response_service_tier ||
+      detail.responseServiceTier
+    : detail.response_service_tier ||
+      detail.responseServiceTier ||
+      detail.service_tier ||
+      detail.serviceTier ||
+      detail.request_service_tier ||
+      detail.requestServiceTier;
 
   const inputTokens = Math.max(toFiniteNumber(detail.tokens.input_tokens), 0);
   const completionTokens = Math.max(toFiniteNumber(detail.tokens.output_tokens), 0);
@@ -843,57 +1291,211 @@ export function calculateCost(
   );
   const cacheReadTokens = Math.max(toFiniteNumber(detail.tokens.cache_read_tokens), 0);
   const cacheCreationTokens = Math.max(toFiniteNumber(detail.tokens.cache_creation_tokens), 0);
+  const hasContextPricing = Boolean(basePrice.contextTiers?.length);
+  const contextTier = selectContextTierPrice(basePrice, inputTokens);
+  const longContext =
+    !hasContextPricing && supportsLongContextPremium(behaviorModel) && inputTokens > 272_000;
+  const normalizedServiceTier = String(serviceTier ?? '')
+    .trim()
+    .toLowerCase();
+  const longContextOverridesServiceTier =
+    longContext && (normalizedServiceTier === 'priority' || normalizedServiceTier === 'fast');
+  const serviceTierPrice =
+    !contextTier && !longContextOverridesServiceTier
+      ? selectServiceTierPrice(basePrice, serviceTier)
+      : undefined;
+  const price = contextTier
+    ? applyContextTierPrice(basePrice, contextTier)
+    : serviceTierPrice
+      ? applyServiceTierPrice(basePrice, serviceTierPrice)
+      : basePrice;
   const promptPrice = Number(price.prompt) || 0;
   const completionPrice = Number(price.completion) || 0;
-  let standardCost = 0;
-  if (isGpt56Model(behaviorModel)) {
-    const configuredCacheReadPrice = Number(price.cacheRead) || 0;
-    const cacheReadPrice = isConfiguredPriceValue(
-      configuredCacheReadPrice,
-      price.cacheReadConfigured
-    )
-      ? configuredCacheReadPrice
-      : promptPrice * 0.1;
-    const configuredCacheCreationPrice = Number(price.cacheCreation) || 0;
-    const cacheCreationPrice = isConfiguredPriceValue(
-      configuredCacheCreationPrice,
-      price.cacheCreationConfigured
-    )
-      ? configuredCacheCreationPrice
-      : promptPrice * 1.25;
-    const readTokens = cachedTokens + cacheReadTokens;
-    const promptTokens = Math.max(inputTokens - readTokens - cacheCreationTokens, 0);
-    const longContext = inputTokens > 272_000;
-    const inputMultiplier = longContext ? 2 : 1;
-    const outputMultiplier = longContext ? 1.5 : 1;
-    standardCost =
-      ((promptTokens / TOKENS_PER_PRICE_UNIT) * promptPrice +
-        (readTokens / TOKENS_PER_PRICE_UNIT) * cacheReadPrice +
-        (cacheCreationTokens / TOKENS_PER_PRICE_UNIT) * cacheCreationPrice) *
-        inputMultiplier +
-      (completionTokens / TOKENS_PER_PRICE_UNIT) * completionPrice * outputMultiplier;
-  } else if (cacheReadTokens > 0 || cacheCreationTokens > 0) {
-    const cacheReadPrice = Number(price.cacheRead) || Number(price.cache) || 0;
-    const cacheCreationPrice = Number(price.cacheCreation) || promptPrice;
-    const promptTokens = Math.max(inputTokens - cachedTokens, 0);
-    standardCost =
-      (promptTokens / TOKENS_PER_PRICE_UNIT) * promptPrice +
-      (completionTokens / TOKENS_PER_PRICE_UNIT) * completionPrice +
+  const configuredCacheReadPrice = Number(price.cacheRead) || 0;
+  const cacheReadPrice = isConfiguredPriceValue(configuredCacheReadPrice, price.cacheReadConfigured)
+    ? configuredCacheReadPrice
+    : isGpt56Model(behaviorModel)
+      ? promptPrice * 0.1
+      : Number(price.cache) || 0;
+  const configuredCacheCreationPrice = Number(price.cacheCreation) || 0;
+  const cacheCreationPrice = isConfiguredPriceValue(
+    configuredCacheCreationPrice,
+    price.cacheCreationConfigured
+  )
+    ? configuredCacheCreationPrice
+    : promptPrice * (isGpt56Model(behaviorModel) ? 1.25 : 1);
+  const readTokens = cachedTokens + cacheReadTokens;
+  const promptTokens = Math.max(inputTokens - readTokens - cacheCreationTokens, 0);
+  const inputMultiplier = longContext ? 2 : 1;
+  const outputMultiplier = longContext ? 1.5 : 1;
+  const standardCost =
+    ((promptTokens / TOKENS_PER_PRICE_UNIT) * promptPrice +
       (cachedTokens / TOKENS_PER_PRICE_UNIT) * (Number(price.cache) || 0) +
       (cacheReadTokens / TOKENS_PER_PRICE_UNIT) * cacheReadPrice +
-      (cacheCreationTokens / TOKENS_PER_PRICE_UNIT) * cacheCreationPrice;
-  } else {
-    const promptTokens = Math.max(inputTokens - cachedTokens, 0);
-    const promptCost = (promptTokens / TOKENS_PER_PRICE_UNIT) * promptPrice;
-    const completionCost = (completionTokens / TOKENS_PER_PRICE_UNIT) * completionPrice;
-    const cachedCost = (cachedTokens / TOKENS_PER_PRICE_UNIT) * (Number(price.cache) || 0);
-    standardCost = promptCost + cachedCost + completionCost;
-  }
+      (cacheCreationTokens / TOKENS_PER_PRICE_UNIT) * cacheCreationPrice) *
+      inputMultiplier +
+    (completionTokens / TOKENS_PER_PRICE_UNIT) * completionPrice * outputMultiplier;
 
-  const serviceTier = detail.service_tier ?? detail.serviceTier;
-  const multiplier = getServiceTierMultiplier(behaviorModel, serviceTier);
+  const multiplier =
+    longContextOverridesServiceTier || contextTier || serviceTierPrice
+      ? 1
+      : getServiceTierMultiplier(behaviorModel, serviceTier);
   const total = standardCost * multiplier;
   return Number.isFinite(total) && total > 0 ? total : 0;
+}
+
+function selectContextTierPrice(
+  price: ModelPrice,
+  inputTokens: number
+): ModelPriceContextTier | undefined {
+  return (price.contextTiers ?? []).reduce<ModelPriceContextTier | undefined>(
+    (selected, candidate) =>
+      inputTokens > candidate.thresholdTokens &&
+      (!selected || candidate.thresholdTokens > selected.thresholdTokens)
+        ? candidate
+        : selected,
+    undefined
+  );
+}
+
+function applyContextTierPrice(price: ModelPrice, tier: ModelPriceContextTier): ModelPrice {
+  return {
+    ...price,
+    prompt: tier.promptConfigured ? tier.prompt : price.prompt,
+    completion: tier.completionConfigured ? tier.completion : price.completion,
+    cache: tier.cacheConfigured ? tier.cache : price.cache,
+    cacheRead: tier.cacheReadConfigured ? tier.cacheRead : price.cacheRead,
+    cacheCreation: tier.cacheCreationConfigured ? tier.cacheCreation : price.cacheCreation,
+    promptConfigured: tier.promptConfigured ? true : price.promptConfigured,
+    completionConfigured: tier.completionConfigured ? true : price.completionConfigured,
+    cacheReadConfigured: tier.cacheReadConfigured ? true : price.cacheReadConfigured,
+    cacheCreationConfigured: tier.cacheCreationConfigured ? true : price.cacheCreationConfigured,
+  };
+}
+
+function selectServiceTierPrice(
+  price: ModelPrice,
+  serviceTier: string | undefined
+): ModelPriceServiceTier | undefined {
+  const normalized = String(serviceTier ?? '')
+    .trim()
+    .toLowerCase();
+  if (!normalized) return undefined;
+  return (price.serviceTiers ?? []).find(
+    (tier) => normalized === tier.mode || normalized === tier.serviceTier
+  );
+}
+
+function applyServiceTierPrice(price: ModelPrice, tier: ModelPriceServiceTier): ModelPrice {
+  return {
+    ...price,
+    prompt: tier.promptConfigured ? tier.prompt : price.prompt,
+    completion: tier.completionConfigured ? tier.completion : price.completion,
+    cache: tier.cacheConfigured ? tier.cache : price.cache,
+    cacheRead: tier.cacheReadConfigured ? tier.cacheRead : price.cacheRead,
+    cacheCreation: tier.cacheCreationConfigured ? tier.cacheCreation : price.cacheCreation,
+    promptConfigured: tier.promptConfigured ? true : price.promptConfigured,
+    completionConfigured: tier.completionConfigured ? true : price.completionConfigured,
+    cacheReadConfigured: tier.cacheReadConfigured ? true : price.cacheReadConfigured,
+    cacheCreationConfigured: tier.cacheCreationConfigured ? true : price.cacheCreationConfigured,
+  };
+}
+
+function normalizeContextTiers(value: unknown): ModelPriceContextTier[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const tiers: ModelPriceContextTier[] = [];
+  const thresholds = new Set<number>();
+  for (const item of value) {
+    if (!isRecord(item)) return undefined;
+    const thresholdTokens = Number(item.thresholdTokens);
+    if (
+      !Number.isSafeInteger(thresholdTokens) ||
+      thresholdTokens <= 0 ||
+      thresholds.has(thresholdTokens)
+    ) {
+      return undefined;
+    }
+    const prompt = toFiniteNumber(item.prompt);
+    const completion = toFiniteNumber(item.completion);
+    const cache = toFiniteNumber(item.cache);
+    const cacheRead = toFiniteNumber(item.cacheRead);
+    const cacheCreation = toFiniteNumber(item.cacheCreation);
+    if ([prompt, completion, cache, cacheRead, cacheCreation].some((rate) => rate < 0)) {
+      return undefined;
+    }
+    thresholds.add(thresholdTokens);
+    tiers.push({
+      thresholdTokens,
+      prompt,
+      completion,
+      cache,
+      cacheRead,
+      cacheCreation,
+      promptConfigured: item.promptConfigured === true,
+      completionConfigured: item.completionConfigured === true,
+      cacheConfigured: item.cacheConfigured === true,
+      cacheReadConfigured: item.cacheReadConfigured === true,
+      cacheCreationConfigured: item.cacheCreationConfigured === true,
+    });
+  }
+  return tiers.sort((left, right) => left.thresholdTokens - right.thresholdTokens);
+}
+
+function normalizeServiceTiers(value: unknown): ModelPriceServiceTier[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const tiers: ModelPriceServiceTier[] = [];
+  const identifiers = new Set<string>();
+  for (const item of value) {
+    if (!isRecord(item)) return undefined;
+    const mode = typeof item.mode === 'string' ? item.mode.trim().toLowerCase() : '';
+    const serviceTier =
+      typeof item.serviceTier === 'string' ? item.serviceTier.trim().toLowerCase() : '';
+    if (!mode || !serviceTier || identifiers.has(mode) || identifiers.has(serviceTier)) {
+      return undefined;
+    }
+    const prompt = toFiniteNumber(item.prompt);
+    const completion = toFiniteNumber(item.completion);
+    const cache = toFiniteNumber(item.cache);
+    const cacheRead = toFiniteNumber(item.cacheRead);
+    const cacheCreation = toFiniteNumber(item.cacheCreation);
+    if ([prompt, completion, cache, cacheRead, cacheCreation].some((rate) => rate < 0)) {
+      return undefined;
+    }
+    const promptConfigured = item.promptConfigured === true;
+    const completionConfigured = item.completionConfigured === true;
+    const cacheConfigured = item.cacheConfigured === true;
+    const cacheReadConfigured = item.cacheReadConfigured === true;
+    const cacheCreationConfigured = item.cacheCreationConfigured === true;
+    if (
+      !promptConfigured &&
+      !completionConfigured &&
+      !cacheConfigured &&
+      !cacheReadConfigured &&
+      !cacheCreationConfigured
+    ) {
+      return undefined;
+    }
+    identifiers.add(mode);
+    identifiers.add(serviceTier);
+    tiers.push({
+      mode,
+      serviceTier,
+      prompt,
+      completion,
+      cache,
+      cacheRead,
+      cacheCreation,
+      promptConfigured,
+      completionConfigured,
+      cacheConfigured,
+      cacheReadConfigured,
+      cacheCreationConfigured,
+    });
+  }
+  return tiers.sort(
+    (left, right) =>
+      left.mode.localeCompare(right.mode) || left.serviceTier.localeCompare(right.serviceTier)
+  );
 }
 
 export function loadModelPrices(): Record<string, ModelPrice> {
@@ -926,9 +1528,15 @@ export function loadModelPrices(): Record<string, ModelPrice> {
         cache,
         cacheRead,
         cacheCreation,
+        promptConfigured: price.promptConfigured === true,
+        completionConfigured: price.completionConfigured === true,
+        cacheReadConfigured: price.cacheReadConfigured === true,
+        cacheCreationConfigured: price.cacheCreationConfigured === true,
         source: readDetailString(price.source),
         sourceModelId: readDetailString(price.sourceModelId),
         rawJson: readDetailString(price.rawJson),
+        contextTiers: normalizeContextTiers(price.contextTiers),
+        serviceTiers: normalizeServiceTiers(price.serviceTiers),
         updatedAtMs: toPositiveNumber(price.updatedAtMs),
         syncedAtMs: toPositiveNumber(price.syncedAtMs),
       };
@@ -958,24 +1566,25 @@ export function clearModelPrices(): void {
   }
 }
 
+const COMPACT_NUMBER_UNITS = [
+  { threshold: 1_000_000_000_000_000, suffix: 'P' },
+  { threshold: 1_000_000_000_000, suffix: 'T' },
+  { threshold: 1_000_000_000, suffix: 'B' },
+  { threshold: 1_000_000, suffix: 'M' },
+  { threshold: 1_000, suffix: 'K' },
+];
+
 export function formatCompactNumber(value: number): string {
   const num = Number(value);
   if (!Number.isFinite(num)) return '0';
 
   const abs = Math.abs(num);
   if (abs === 0) return '0';
-  const units = [
-    { threshold: 1_000_000_000_000_000, suffix: 'P' },
-    { threshold: 1_000_000_000_000, suffix: 'T' },
-    { threshold: 1_000_000_000, suffix: 'B' },
-    { threshold: 1_000_000, suffix: 'M' },
-    { threshold: 1_000, suffix: 'K' },
-  ];
-  const unit = units.find((item) => abs >= item.threshold);
+  const unit = COMPACT_NUMBER_UNITS.find((item) => abs >= item.threshold);
 
   if (unit) {
     const formatted = (num / unit.threshold).toFixed(1);
-    const nextUnit = units[units.indexOf(unit) - 1];
+    const nextUnit = COMPACT_NUMBER_UNITS[COMPACT_NUMBER_UNITS.indexOf(unit) - 1];
     if (nextUnit && Math.abs(Number(formatted)) >= 1000) {
       return `${(num / nextUnit.threshold).toFixed(1)}${nextUnit.suffix}`;
     }
@@ -985,16 +1594,36 @@ export function formatCompactNumber(value: number): string {
   return abs >= 1 ? num.toFixed(0) : num.toFixed(2);
 }
 
-export function formatUsd(value: number): string {
+export function formatUsd(value: number, fractionDigits = 2): string {
+  const num = Number(value);
+  const digits = Number.isInteger(fractionDigits) ? Math.max(0, Math.min(6, fractionDigits)) : 2;
+  if (!Number.isFinite(num)) return `$${(0).toFixed(digits)}`;
+
+  const fixed = num.toFixed(digits);
+  const parts = Number(fixed).toLocaleString(undefined, {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+  return `$${parts}`;
+}
+
+export function formatCompactUsd(value: number): string {
   const num = Number(value);
   if (!Number.isFinite(num)) return '$0.00';
 
-  const fixed = num.toFixed(2);
-  const parts = Number(fixed).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-  return `$${parts}`;
+  const rounded = Number(num.toFixed(2));
+  const roundedAbs = Math.abs(rounded);
+  if (roundedAbs < 1_000) return formatUsd(num);
+
+  const unit = COMPACT_NUMBER_UNITS.find((item) => roundedAbs >= item.threshold);
+  if (!unit) return formatUsd(num);
+
+  const formatted = (num / unit.threshold).toFixed(2);
+  const nextUnit = COMPACT_NUMBER_UNITS[COMPACT_NUMBER_UNITS.indexOf(unit) - 1];
+  if (nextUnit && Math.abs(Number(formatted)) >= 1000) {
+    return `${formatUsd(num / nextUnit.threshold)}${nextUnit.suffix}`;
+  }
+  return `${formatUsd(num / unit.threshold)}${unit.suffix}`;
 }
 
 const resolveDurationLocale = (locale?: string): string | undefined =>

@@ -74,6 +74,11 @@ func TelemetryFromJSON(raw string) *Telemetry {
 	return &t
 }
 func TelemetryFromRecord(record map[string]any) *Telemetry {
+	if _, present := record["telemetry"]; !present {
+		if raw, ok := record["telemetry_json"].(string); ok {
+			return TelemetryFromJSON(raw)
+		}
+	}
 	b, err := json.Marshal(record["telemetry"])
 	if err != nil {
 		return nil

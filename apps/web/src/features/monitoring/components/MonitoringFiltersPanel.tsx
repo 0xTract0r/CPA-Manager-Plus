@@ -66,6 +66,7 @@ const QUICK_TIME_RANGE_OPTIONS: ReadonlyArray<{ value: MonitoringTimeRange; labe
   { value: 'today', labelKey: 'monitoring.range_today' },
   { value: 'yesterday', labelKey: 'monitoring.range_yesterday' },
   { value: '7d', labelKey: 'monitoring.range_7d' },
+  { value: '14d', labelKey: 'monitoring.range_14d' },
   { value: '30d', labelKey: 'monitoring.range_30d' },
   { value: 'all', labelKey: 'monitoring.range_all' },
 ];

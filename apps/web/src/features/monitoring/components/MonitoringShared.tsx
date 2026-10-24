@@ -2,6 +2,7 @@ import {
   useEffect,
   useId,
   useState,
+  type CSSProperties,
   type ComponentType,
   type KeyboardEvent,
   type ReactNode,
@@ -12,11 +13,21 @@ import { Select } from '@/components/ui/Select';
 import {
   IconArrowDownToLine,
   IconArrowUpFromLine,
+  IconBan,
   IconBinary,
+  IconChartLine,
   IconCheck,
+  IconCircleHelp,
   IconDatabaseZap,
   IconDollarSign,
   IconInbox,
+  IconKey,
+  IconPercentCircle,
+  IconRefreshCw,
+  IconShield,
+  IconShieldCheck,
+  IconTrash2,
+  IconTriangleAlert,
   IconX,
   type IconProps,
 } from '@/components/ui/icons';
@@ -31,7 +42,19 @@ export type SummaryCardIcon =
   | 'tokens'
   | 'input'
   | 'output'
-  | 'cache';
+  | 'cache'
+  | 'probe'
+  | 'sampled'
+  | 'delete'
+  | 'disable'
+  | 'enable'
+  | 'reauth'
+  | 'credential'
+  | 'available'
+  | 'attention'
+  | 'quota-risk'
+  | 'disabled'
+  | 'unconfirmed';
 
 export type SummaryCardAccent =
   | 'blue'
@@ -41,7 +64,8 @@ export type SummaryCardAccent =
   | 'indigo'
   | 'cyan'
   | 'violet'
-  | 'teal';
+  | 'teal'
+  | 'neutral';
 
 export type SummaryCardProps = {
   label: string;
@@ -91,6 +115,18 @@ const summaryIconMap: Record<SummaryCardIcon, ComponentType<IconProps>> = {
   input: IconArrowDownToLine,
   output: IconArrowUpFromLine,
   cache: IconDatabaseZap,
+  probe: IconInbox,
+  sampled: IconChartLine,
+  delete: IconTrash2,
+  disable: IconShield,
+  enable: IconCheck,
+  reauth: IconRefreshCw,
+  credential: IconKey,
+  available: IconShieldCheck,
+  attention: IconTriangleAlert,
+  'quota-risk': IconPercentCircle,
+  disabled: IconBan,
+  unconfirmed: IconCircleHelp,
 };
 
 const summaryAccentClassMap: Record<SummaryCardAccent, string> = {
@@ -102,6 +138,7 @@ const summaryAccentClassMap: Record<SummaryCardAccent, string> = {
   cyan: styles.summaryAccentCyan,
   violet: styles.summaryAccentViolet,
   teal: styles.summaryAccentTeal,
+  neutral: '',
 };
 
 export function SummaryCard({
@@ -120,6 +157,10 @@ export function SummaryCard({
   const tooltipValue = valueTitle ?? value;
   const resolvedLabel = fullLabel ?? label;
   const hasValueTooltip = tooltipValue !== value;
+  const cardStyle =
+    accent === 'neutral'
+      ? ({ '--summary-accent': 'var(--data-slate-base)' } as CSSProperties)
+      : undefined;
   const cardClassName = [
     'card',
     styles.summaryCard,
@@ -130,7 +171,7 @@ export function SummaryCard({
     .join(' ');
 
   return (
-    <div className={cardClassName}>
+    <div className={cardClassName} style={cardStyle} data-summary-icon={icon}>
       <div className={styles.summaryCardHeader}>
         {Icon ? (
           <span className={styles.summaryIcon}>

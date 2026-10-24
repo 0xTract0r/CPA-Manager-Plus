@@ -3,11 +3,16 @@ import type { PerformanceData, RequestTelemetry } from '@/features/performance/t
 import axios from 'axios';
 import type { UsagePayload } from '@/features/monitoring/hooks/useUsageData';
 import {
+  createDemoUsageArchive,
+  cancelDemoUsageArchive,
+  deleteDemoUsageArchive,
   getDemoAccountActionCandidates,
+  getDemoAccountHistory,
+  getDemoAccountWindowUsage,
   getDemoAccountProcessingPolicy,
   getDemoApiKeyAliases,
+  getDemoAuthFiles,
   getDemoCodexInspectionRun,
-  getDemoCodexInspectionRuns,
   getDemoDashboardSummary,
   getDemoHeaderSnapshots,
   getDemoManagerConfig,
@@ -15,12 +20,26 @@ import {
   getDemoModelPrices,
   getDemoMonitoringAnalytics,
   getDemoQuotaCooldowns,
+  getDemoRuntimeModelPricingStatus,
+  getDemoUsageArchive,
+  getDemoUsageArchives,
+  getDemoUsageMaintenance,
   getDemoUsagePayload,
   getDemoUsageServiceInfo,
   getDemoUsageServiceStatus,
+  previewDemoUsageArchive,
+  resumeDemoUsageArchive,
+  verifyDemoUsageArchive,
 } from '@/features/demo/demoFixtures';
 import { isDemoMode } from '@/features/demo/demoMode';
+import { hasCodexInspectionStableIdentity } from '@/features/monitoring/model/codexInspectionOwnership';
+import type { AuthFileItem, QuotaModelScope } from '@/types';
 import { normalizeApiBase } from '@/utils/connection';
+import {
+  getAuthFileStatusIdentityKey,
+  readAuthFileStatusPhysicalName,
+  resolveAuthFileStatusMutationTarget,
+} from '@/utils/authFileStatusMutation';
 import type { ModelPrice } from '@/utils/usage';
 import type { FarmEnv } from '@/types/farm';
 
@@ -44,10 +63,32 @@ const USAGE_SERVICE_ERROR_CODES = new Set([
   'api_key_aliases_required',
   'api_key_alias_duplicate',
   'model_price_sync_failed',
+  'model_price_structure_locked_by_usage_archive',
   'method_not_allowed',
   'account_processing_policy_env_locked',
   'cpa_core_connection_not_configured',
   'cpa_core_usage_export_failed',
+  'usage_import_session_invalid_request',
+  'usage_import_session_not_found',
+  'usage_import_session_conflict',
+  'usage_import_session_too_large',
+  'usage_import_session_quota_exceeded',
+  'usage_import_session_limit_exceeded',
+  'usage_import_session_file_mismatch',
+  'usage_import_session_unavailable',
+  'usage_archive_invalid_id',
+  'usage_archive_invalid_request',
+  'usage_archive_request_too_large',
+  'usage_archive_no_events',
+  'usage_archive_maintenance_locked',
+  'usage_archive_invalid_state',
+  'usage_archive_cancel_unsafe',
+  'usage_archive_cancel_published',
+  'usage_archive_cancel_cleanup_failed',
+  'usage_archive_coverage_incomplete',
+  'usage_archive_delete_unavailable',
+  'usage_archive_not_found',
+  'usage_archive_unavailable',
 ]);
 
 export interface UsageServiceApiError extends Error {
@@ -87,13 +128,53 @@ export interface UsageServiceCollectorStatus {
   lastError?: string;
 }
 
+export interface UsageServiceCheckpointStatus {
+  mode?: string;
+  busy?: number;
+  logFrames?: number;
+  checkpointedFrames?: number;
+  executedAtMs?: number;
+  durationMs?: number;
+  lastTruncateAttemptAtMs?: number;
+  error?: string;
+}
+
+export interface UsageServiceDatabaseStatus {
+  databaseBytes?: number;
+  walBytes?: number;
+  shmBytes?: number;
+  totalBytes?: number;
+  journalSizeLimitBytes?: number;
+  checkpoint?: UsageServiceCheckpointStatus;
+}
+
+export type UsageServiceDatabaseMaintenanceReason =
+  | 'deferred_indexes'
+  | 'offline_derived_cleanup'
+  | 'offline_quota_snapshot_migration'
+  | 'legacy_index_replacement'
+  | string;
+
+export interface UsageServiceDatabaseMaintenanceStatus {
+  required: boolean;
+  performanceDegraded: boolean;
+  deferredIndexes: number;
+  offlineJobs: number;
+  reasons: UsageServiceDatabaseMaintenanceReason[];
+  command?: string;
+}
+
 export interface UsageServiceStatus {
   service?: string;
   dbPath?: string;
   events?: number;
   deadLetters?: number;
   collector?: UsageServiceCollectorStatus;
+  database?: UsageServiceDatabaseStatus;
+  databaseMaintenance?: UsageServiceDatabaseMaintenanceStatus;
 }
+
+export type UsageServiceStatusScope = 'database-maintenance';
 
 export interface AccountPolicyCapability {
   enabled: boolean;
@@ -122,15 +203,29 @@ export interface AccountProcessingPolicyPatch {
 export interface QuotaCooldownInfo {
   authFileName: string;
   authIndex?: string;
+  accountSnapshot?: string;
   provider?: string;
   owner?: string;
+  reasonCode?: string;
+  windowKind?: 'five_hour' | 'weekly' | 'monthly' | 'rolling_24h' | 'unknown' | string;
   recoverAtMs: number;
   disabledAtMs?: number;
   createdAtMs?: number;
+  evidence?: ProviderUsageMetadata;
 }
 
 export interface QuotaCooldownsResponse {
   items: QuotaCooldownInfo[];
+}
+
+export interface QuotaCooldownRecoveryRequest {
+  authFileName: string;
+  authIndex: string;
+  provider: 'codex';
+}
+
+export interface QuotaCooldownRecoveryResponse {
+  recovered: boolean;
 }
 
 export interface UsageServiceSetupRequest {
@@ -150,6 +245,8 @@ export interface UsageServiceSetupRequest {
 
 export interface ManagerCPAConnectionConfig {
   cpaBaseUrl: string;
+  managementKeyConfigured?: boolean;
+  /** Write-only. Responses never include the saved CPA Management Key. */
   managementKey?: string;
 }
 
@@ -182,15 +279,21 @@ export interface ManagerCodexInspectionScheduleConfig {
 export interface ManagerCodexInspectionConfig {
   enabled?: boolean;
   schedule?: ManagerCodexInspectionScheduleConfig;
+  targetTypes?: string[];
   targetType?: string;
   workers?: number;
   deleteWorkers?: number;
   timeout?: number;
   retries?: number;
   userAgent?: string;
+  xaiInferenceUserAgent?: string;
+  xaiInferenceEnabled?: boolean;
+  xaiInferenceModel?: string;
+  xaiInferencePrompt?: string;
   usedPercentThreshold?: number;
   sampleSize?: number;
   autoActionMode?: ManagerCodexInspectionAutoActionMode | string;
+  autoRecoverEnabled?: boolean;
 }
 
 export interface ManagerConfig {
@@ -234,6 +337,8 @@ export interface CodexInspectionRun {
   settings?: ManagerCodexInspectionConfig;
   createdAtMs: number;
   updatedAtMs: number;
+  active?: boolean;
+  cancellable?: boolean;
 }
 
 export interface CodexInspectionQuotaWindow {
@@ -242,7 +347,11 @@ export interface CodexInspectionQuotaWindow {
   labelParams?: Record<string, string | number>;
   usedPercent?: number | null;
   resetLabel?: string;
+  resetAtMs?: number | null;
+  resetAccuracy?: 'exact' | 'derived' | 'estimated' | 'unknown';
   limitWindowSeconds?: number | null;
+  modelScope?: QuotaModelScope;
+  providerWindowAliases?: string[];
 }
 
 export interface CodexInspectionResult {
@@ -251,6 +360,8 @@ export interface CodexInspectionResult {
   accountKey: string;
   fileName: string;
   displayAccount: string;
+  runtimeId?: string;
+  accountSnapshot?: string;
   authIndex?: string;
   accountId?: string;
   provider: string;
@@ -265,9 +376,11 @@ export interface CodexInspectionResult {
   statusCode?: number;
   usedPercent?: number;
   isQuota: boolean;
+  autoRecoverEligible?: boolean;
   error?: string;
   planType?: string | null;
   quotaWindows?: CodexInspectionQuotaWindow[];
+  quotaInventoryObserved?: boolean;
   errorKind?: string;
   errorDetail?: string;
   createdAtMs: number;
@@ -308,6 +421,11 @@ export interface CodexInspectionActionsResponse {
   detail: CodexInspectionRunDetail;
 }
 
+export interface CodexInspectionActionOverride {
+  resultId: number;
+  action: 'delete';
+}
+
 export interface ModelPricesResponse {
   prices: Record<string, ModelPrice>;
 }
@@ -345,6 +463,11 @@ export interface ModelPriceSyncSourceResult {
   error?: string;
 }
 
+export interface ModelPriceSyncRequest {
+  models?: string[];
+  includeRuntimeModels?: boolean;
+}
+
 export interface ModelPriceSyncResponse extends ModelPricesResponse {
   source?: string;
   sources?: string[];
@@ -353,8 +476,18 @@ export interface ModelPriceSyncResponse extends ModelPricesResponse {
   matched?: Record<string, ModelPrice>;
   candidates?: ModelPriceSyncCandidateSet[];
   unmatched?: string[];
+  preserved?: string[];
   proxyUsed?: boolean;
   sourceResults?: ModelPriceSyncSourceResult[];
+  runtimeModelCount?: number;
+  runtimeModelDiscoveryError?: string;
+}
+
+export interface RuntimeModelPricingStatusResponse {
+  models: string[];
+  unpricedModels: string[];
+  count: number;
+  unpricedCount: number;
 }
 
 export interface ApiKeyAlias {
@@ -380,7 +513,10 @@ export interface AccountActionCandidate {
   accountSnapshot?: string;
   accountIdSnapshot?: string;
   authLabel?: string;
+  reasonCode?: string;
   reason: string;
+  autoDisableEligible?: boolean;
+  autoDisabledAtMs?: number;
   evidence?: unknown;
   lastError?: string;
   firstSeenAtMs: number;
@@ -408,6 +544,278 @@ export interface UsageImportResponse {
   unsupported?: number;
   warnings?: string[];
 }
+
+export type UsageImportSessionStatus =
+  | 'uploading'
+  | 'ready'
+  | 'processing'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
+export interface UsageImportSession {
+  id: string;
+  filename: string;
+  status: UsageImportSessionStatus;
+  size_bytes: number;
+  received_bytes: number;
+  received_prefix_sha256?: string;
+  chunk_size_bytes: number;
+  created_at_ms: number;
+  updated_at_ms: number;
+  expires_at_ms: number;
+  retryable?: boolean;
+  has_error?: boolean;
+  error?: string;
+  error_code?: string;
+  result?: UsageImportResponse;
+}
+
+export interface UsageImportSessionListOptions {
+  status?: UsageImportSessionStatus;
+  limit?: number;
+  cursor?: string;
+}
+
+export interface UsageImportSessionList {
+  sessions: UsageImportSession[];
+  total: number;
+  status_counts: Partial<Record<UsageImportSessionStatus, number>>;
+  next_cursor?: string;
+  active_sessions: number;
+  max_sessions: number;
+  chunk_size_bytes: number;
+  disk_quota_bytes: number;
+  ttl_seconds: number;
+}
+
+export type UsageArchiveRunStatus =
+  | 'previewed'
+  | 'archiving'
+  | 'archived'
+  | 'verifying'
+  | 'verified'
+  | 'deleting'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | string;
+
+export type UsageArchiveResumeStage = 'archiving' | 'verifying' | 'deleting';
+
+export type UsageArchiveActionOptions =
+  | { background?: boolean; wait?: never }
+  | { background?: never; wait?: boolean };
+
+export interface UsageArchiveListOptions {
+  status?: UsageArchiveRunStatus;
+  mode?: 'manual' | 'retention';
+  limit?: number;
+  cursor?: string;
+}
+
+export interface UsageArchivePreview {
+  cutoff_timestamp_ms: number;
+  target_event_id: number;
+  event_count: number;
+  estimated_bytes: number;
+  min_timestamp_ms?: number;
+  max_timestamp_ms?: number;
+}
+
+// Public archive DTO. Deliberately excludes archive paths, formats, digests,
+// schema metadata, and raw internal errors.
+export interface UsageArchiveProgress {
+  phase: string;
+  current: number;
+  total: number;
+  unit?: string;
+  updated_at_ms?: number;
+}
+
+export interface UsageArchiveRunSummary {
+  id: string;
+  mode: 'manual' | 'retention' | string;
+  status: UsageArchiveRunStatus;
+  resume_status?: UsageArchiveRunStatus;
+  requested_stage?: UsageArchiveResumeStage;
+  progress?: UsageArchiveProgress;
+  cutoff_timestamp_ms: number;
+  target_event_id: number;
+  event_count: number;
+  estimated_bytes: number;
+  last_archived_event_id: number;
+  archived_event_count: number;
+  archived_uncompressed_bytes: number;
+  archived_compressed_bytes: number;
+  last_deleted_event_id: number;
+  deleted_event_count: number;
+  created_at_ms: number;
+  updated_at_ms: number;
+  started_at_ms?: number;
+  archived_at_ms?: number;
+  verified_at_ms?: number;
+  delete_started_at_ms?: number;
+  completed_at_ms?: number;
+  has_error: boolean;
+}
+
+export interface UsageArchiveSegmentSummary {
+  run_id: string;
+  sequence: number;
+  status: string;
+  first_event_id: number;
+  last_event_id: number;
+  min_timestamp_ms: number;
+  max_timestamp_ms: number;
+  event_count: number;
+  uncompressed_bytes: number;
+  compressed_bytes: number;
+  created_at_ms: number;
+  verified_at_ms?: number;
+}
+
+export interface UsageArchiveStatus {
+  run: UsageArchiveRunSummary;
+  segments: UsageArchiveSegmentSummary[];
+}
+
+export interface UsageArchiveList {
+  runs: UsageArchiveRunSummary[];
+  total?: number;
+  status_counts?: Record<string, number>;
+  next_cursor?: string;
+}
+
+export interface UsageMaintenanceLock {
+  run_id: string;
+  operation: string;
+  acquired_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface UsageMaintenanceStatus {
+  raw_event_count: number;
+  raw_min_timestamp_ms?: number;
+  raw_max_timestamp_ms?: number;
+  raw_archived_event_count?: number;
+  raw_deleted_event_count: number;
+  active_run?: UsageArchiveRunSummary;
+  active_lock?: UsageMaintenanceLock;
+  migration: {
+    name: string;
+    status: string;
+    last_event_id: number;
+    target_event_id: number;
+    processed_rows: number;
+    changed_rows: number;
+    updated_at_ms: number;
+  };
+  hourly_aggregate: {
+    name: string;
+    schema_version: number;
+    status: string;
+    coverage_event_id: number;
+    target_event_id: number;
+    updated_at_ms: number;
+  };
+  readiness: {
+    migration_ready: boolean;
+    hourly_aggregate_ready: boolean;
+    archive_delete_enabled: boolean;
+  };
+  migration_coverage?: {
+    status: string;
+    watermark_event_id: number;
+    target_event_id: number;
+    complete: boolean;
+  };
+  hourly_aggregate_coverage?: {
+    status: string;
+    watermark_event_id: number;
+    target_event_id: number;
+    complete: boolean;
+  };
+  storage: {
+    page_size: number;
+    page_count: number;
+    freelist_count: number;
+    reclaimable_bytes: number;
+    database_bytes: number;
+    wal_bytes: number;
+    shm_bytes: number;
+    total_bytes: number;
+  };
+  compact_requires_stopped_server: true;
+}
+
+const demoUsageImportSessions = new Map<string, UsageImportSession>();
+let demoUsageImportSessionSequence = 0;
+
+const cloneUsageImportSession = (session: UsageImportSession): UsageImportSession => ({
+  ...session,
+  result: session.result
+    ? { ...session.result, warnings: [...(session.result.warnings ?? [])] }
+    : undefined,
+});
+
+const getDemoUsageImportSession = (sessionId: string): UsageImportSession => {
+  const session = demoUsageImportSessions.get(sessionId);
+  if (!session) {
+    const error = new Error('usage import session not found') as UsageServiceApiError;
+    error.code = 'usage_import_session_not_found';
+    throw error;
+  }
+  return cloneUsageImportSession(session);
+};
+
+const createDemoUsageImportSession = (filename: string, sizeBytes: number): UsageImportSession => {
+  const now = Date.now();
+  const id = `demo-usage-import-${++demoUsageImportSessionSequence}`;
+  const session: UsageImportSession = {
+    id,
+    filename,
+    status: 'uploading',
+    size_bytes: sizeBytes,
+    received_bytes: 0,
+    chunk_size_bytes: Math.min(4 * 1024 * 1024, sizeBytes),
+    created_at_ms: now,
+    updated_at_ms: now,
+    expires_at_ms: now + 24 * 60 * 60 * 1000,
+  };
+  demoUsageImportSessions.set(id, session);
+  return cloneUsageImportSession(session);
+};
+
+const uploadDemoUsageImportSessionChunk = (
+  sessionId: string,
+  offset: number,
+  chunkSize: number
+): UsageImportSession => {
+  const session = getDemoUsageImportSession(sessionId);
+  session.received_bytes = Math.min(session.size_bytes, offset + chunkSize);
+  session.status = session.received_bytes === session.size_bytes ? 'ready' : 'uploading';
+  session.updated_at_ms = Date.now();
+  demoUsageImportSessions.set(sessionId, session);
+  return cloneUsageImportSession(session);
+};
+
+const completeDemoUsageImportSession = (sessionId: string): UsageImportSession => {
+  const session = getDemoUsageImportSession(sessionId);
+  session.status = 'completed';
+  session.updated_at_ms = Date.now();
+  session.result = { format: 'jsonl', added: 12, skipped: 0, total: 12, failed: 0 };
+  demoUsageImportSessions.set(sessionId, session);
+  return cloneUsageImportSession(session);
+};
+
+const cancelDemoUsageImportSession = (sessionId: string): UsageImportSession => {
+  const session = getDemoUsageImportSession(sessionId);
+  session.status = 'cancelled';
+  session.updated_at_ms = Date.now();
+  demoUsageImportSessions.set(sessionId, session);
+  return cloneUsageImportSession(session);
+};
 
 export interface UsageExportResponse {
   blob: Blob;
@@ -600,6 +1008,7 @@ export interface DashboardRecentFailure {
   account_snapshot?: string;
   auth_label_snapshot?: string;
   auth_provider_snapshot?: string;
+  auth_account_id_snapshot?: string;
   auth_project_id_snapshot?: string;
   endpoint: string;
   duration_ms: number | null;
@@ -638,12 +1047,13 @@ export interface DashboardSummaryParams {
 }
 
 export interface MonitoringAnalyticsFilters {
- unresolved_models?: string[];
+  unresolved_models?: string[];
   resolved_models?: string[];
   request_ids?: string[];
   models?: string[];
   providers?: string[];
   accounts?: string[];
+  credential_ids?: string[];
   auth_files?: string[];
   auth_indices?: string[];
   /** 与 search_query 取 OR，用于把实时备注/完整邮箱匹配扩展到历史 auth_index 事件。 */
@@ -681,6 +1091,8 @@ export interface MonitoringAnalyticsInclude {
   fast_impact?: boolean;
   performance?: boolean;
   summary?: boolean;
+  summary_profile?: 'full' | 'compact';
+  summary_percentiles?: boolean;
   summary_comparison?: boolean;
   timeline?: boolean;
   hourly_distribution?: boolean;
@@ -691,6 +1103,7 @@ export interface MonitoringAnalyticsInclude {
   account_stats?: boolean;
   credential_stats?: boolean;
   credential_timeline?: boolean;
+  api_key_timeline?: boolean;
   api_key_stats?: boolean;
   filter_options?: boolean;
   filter_selectors?: boolean;
@@ -715,6 +1128,418 @@ export interface MonitoringAnalyticsRequest {
   include?: MonitoringAnalyticsInclude;
 }
 
+export interface MonitoringAccountHistoryTarget {
+  row_key: string;
+  account_key?: string;
+  account_snapshot?: string;
+  auth_label_snapshot?: string;
+  auth_file_snapshot?: string;
+  auth_provider_snapshot?: string;
+  auth_account_id_snapshot?: string;
+  auth_project_id_snapshot?: string;
+  auth_index?: string;
+  source?: string;
+}
+
+export interface MonitoringAccountHistoryRequest {
+  accounts: MonitoringAccountHistoryTarget[];
+  catch_up?: boolean;
+}
+
+export interface MonitoringAccountHistoryCheckpoint {
+  last_event_id: number;
+  latest_id: number;
+  pending: boolean;
+  processed: number;
+}
+
+export interface MonitoringAccountLatestRequest {
+  timestamp_ms: number;
+  failed: boolean;
+  fail_status_code?: number | null;
+  fail_summary?: string;
+  header_error_kind?: string;
+  header_error_code?: string;
+  header_trace_id?: string;
+}
+
+export interface MonitoringAccountHistoryItem {
+  row_key: string;
+  account_key: string;
+  generated_at_ms?: number;
+  matched: boolean;
+  total_requests: number;
+  success_calls: number;
+  failure_calls: number;
+  total_tokens: number;
+  total_cost: number | null;
+  success_rate: number | null;
+  first_seen_ms: number | null;
+  last_seen_ms: number | null;
+  latest_request?: MonitoringAccountLatestRequest | null;
+  recent_requests?: MonitoringAccountLatestRequest[];
+  sync_status: 'ready' | 'pending' | 'empty' | string;
+}
+
+export interface MonitoringAccountHistoryResponse {
+  generated_at_ms: number;
+  checkpoint: MonitoringAccountHistoryCheckpoint;
+  items: MonitoringAccountHistoryItem[];
+}
+
+export interface MonitoringAccountWindowUsageTarget {
+  request_key?: string;
+  row_key: string;
+  window_key?: string;
+  provider_window_id?: string;
+  period?: 'current' | 'previous' | 'previous_equal_range';
+  from_ms: number;
+  to_ms: number;
+  model_scope?: MonitoringAccountWindowModelScope;
+  account_snapshot?: string;
+  auth_label_snapshot?: string;
+  auth_file_snapshot?: string;
+  auth_provider_snapshot?: string;
+  auth_account_id_snapshot?: string;
+  auth_project_id_snapshot?: string;
+  auth_index?: string;
+  source?: string;
+}
+
+export interface MonitoringAccountWindowModelScope {
+  kind: 'all' | 'family' | 'models' | 'product' | 'feature';
+  key?: string;
+  models?: string[];
+  complete?: boolean;
+}
+
+export interface MonitoringAccountWindowUsageRequest {
+  windows: MonitoringAccountWindowUsageTarget[];
+}
+
+export interface MonitoringAccountWindowUsageItem {
+  request_key?: string;
+  row_key: string;
+  window_key?: string;
+  provider_window_id?: string;
+  period?: 'current' | 'previous' | 'previous_equal_range';
+  from_ms: number;
+  to_ms: number;
+  matched: boolean;
+  total_requests: number;
+  success_calls: number;
+  failure_calls: number;
+  total_tokens: number;
+  total_cost: number;
+  success_rate: number | null;
+  last_seen_ms: number | null;
+  sync_status: 'ready' | 'empty' | string;
+  scope_match_status?: 'complete' | 'partial' | 'unmatched' | string;
+  unmatched_requests?: number;
+}
+
+export interface MonitoringAccountWindowUsageResponse {
+  generated_at_ms: number;
+  items: MonitoringAccountWindowUsageItem[];
+}
+
+export type AccountQuotaSnapshotWindowMode =
+  | 'fixed'
+  | 'calendar'
+  | 'rolling'
+  | 'non_window'
+  | 'unknown';
+export type AccountQuotaSnapshotSource =
+  | 'api_query'
+  | 'response_header'
+  | 'response_body'
+  | 'inspection';
+export type AccountQuotaSnapshotBoundaryAccuracy = 'exact' | 'derived' | 'estimated' | 'unknown';
+export type AccountQuotaSnapshotInventoryMode = 'complete' | 'partial' | 'delta';
+
+export interface AccountQuotaSnapshotTarget {
+  account_snapshot?: string;
+  auth_label_snapshot?: string;
+  auth_file_snapshot?: string;
+  auth_provider_snapshot?: string;
+  auth_account_id_snapshot?: string;
+  auth_project_id_snapshot?: string;
+  auth_index?: string;
+  source?: string;
+}
+
+export interface AccountQuotaSnapshotResetCredit {
+  id: string;
+  expires_at_ms: number;
+}
+
+export interface AccountQuotaSnapshotObservationInput {
+  source: AccountQuotaSnapshotSource;
+  source_observation_id?: string;
+  observed_at_ms?: number;
+  inventory_scope_key: string;
+  inventory_mode: AccountQuotaSnapshotInventoryMode;
+}
+
+export interface AccountQuotaSnapshotRemovedWindowInput {
+  provider_window_id: string;
+  window_kind?: string;
+  model_scope_kind?: MonitoringAccountWindowModelScope['kind'];
+  model_scope_key?: string;
+  model_ids?: string[];
+}
+
+export interface AccountQuotaSnapshotWindowInput {
+  provider_window_id: string;
+  provider_window_aliases?: string[];
+  window_kind: string;
+  window_mode: AccountQuotaSnapshotWindowMode;
+  model_scope_kind: MonitoringAccountWindowModelScope['kind'];
+  model_scope_key?: string;
+  model_ids?: string[];
+  source: AccountQuotaSnapshotSource;
+  source_observation_id?: string;
+  observed_at_ms: number;
+  boundary_accuracy: AccountQuotaSnapshotBoundaryAccuracy;
+  cycle_start_ms?: number;
+  cycle_end_ms?: number;
+  duration_seconds?: number;
+  used_percent?: number;
+  remaining_percent?: number;
+  used_value?: number;
+  limit_value?: number;
+  quota_unit?: string;
+  reset_credits_available?: number;
+  reset_credits?: AccountQuotaSnapshotResetCredit[];
+  plan_type?: string;
+  relationship_kind?: string;
+  container_provider_window_id?: string;
+}
+
+export interface AccountQuotaSnapshotWriteEntry {
+  row_key?: string;
+  provider: string;
+  account: AccountQuotaSnapshotTarget;
+  observation?: AccountQuotaSnapshotObservationInput;
+  windows: AccountQuotaSnapshotWindowInput[];
+  removed_windows?: AccountQuotaSnapshotRemovedWindowInput[];
+}
+
+export interface AccountQuotaSnapshotWriteResponse {
+  observed_at_ms: number;
+  items: Array<{
+    row_key?: string;
+    account_key: string;
+    provider: string;
+    inserted_count: number;
+  }>;
+}
+
+export interface AccountQuotaSnapshotCycle {
+  id: number;
+  activation_id: number;
+  state: string;
+  scheduled_start_ms?: number;
+  scheduled_end_ms?: number;
+  actual_start_ms: number;
+  actual_end_ms?: number;
+  duration_seconds?: number;
+  boundary_accuracy: AccountQuotaSnapshotBoundaryAccuracy;
+  end_reason?: string;
+  parent_cycle_id?: number;
+  forecast_eligible: boolean;
+}
+
+export interface AccountQuotaSnapshotWindow extends AccountQuotaSnapshotWindowInput {
+  stale: boolean;
+  field_sources?: Record<string, { source: AccountQuotaSnapshotSource; observed_at_ms: number }>;
+  logical_window_id?: number;
+  activation_generation?: number;
+  availability?: string;
+  first_seen_at_ms?: number;
+  last_seen_at_ms?: number;
+  missing_since_ms?: number;
+  deactivated_at_ms?: number;
+  current_cycle?: AccountQuotaSnapshotCycle;
+  previous_cycle?: AccountQuotaSnapshotCycle;
+}
+
+export interface AccountQuotaSnapshotQueryAccount {
+  row_key: string;
+  provider: string;
+  account: AccountQuotaSnapshotTarget;
+}
+
+export interface AccountQuotaSnapshotQueryResponse {
+  generated_at_ms: number;
+  items: Array<{
+    row_key: string;
+    account_key: string;
+    provider: string;
+    windows: AccountQuotaSnapshotWindow[];
+  }>;
+}
+
+const buildDemoAccountQuotaSnapshotWindows = (
+  account: AccountQuotaSnapshotQueryAccount,
+  nowMs: number
+): AccountQuotaSnapshotWindow[] => {
+  if (account.provider === 'codex' && account.account.auth_index === 'codex-team-01') {
+    const fiveHourDuration = 5 * 60 * 60;
+    const weeklyDuration = 7 * 24 * 60 * 60;
+    const fiveHourEndMs = nowMs + 2 * 60 * 60 * 1000 + 18 * 60 * 1000;
+    const fiveHourStartMs = fiveHourEndMs - fiveHourDuration * 1000;
+    const weeklyEndMs = nowMs + (3 * 24 * 60 * 60 + 8 * 60 * 60) * 1000;
+    const weeklyStartMs = weeklyEndMs - weeklyDuration * 1000;
+    const observedAtMs = nowMs - 8 * 60 * 1000;
+    return [
+      {
+        provider_window_id: 'five-hour',
+        window_kind: 'five_hour',
+        window_mode: 'fixed',
+        model_scope_kind: 'all',
+        source: 'api_query',
+        observed_at_ms: observedAtMs,
+        boundary_accuracy: 'exact',
+        cycle_start_ms: fiveHourStartMs,
+        cycle_end_ms: fiveHourEndMs,
+        duration_seconds: fiveHourDuration,
+        used_percent: 55,
+        remaining_percent: 45,
+        relationship_kind: 'concurrent_subwindow',
+        container_provider_window_id: 'weekly',
+        stale: false,
+        logical_window_id: 101,
+        activation_generation: 2,
+        availability: 'active',
+        first_seen_at_ms: weeklyStartMs - weeklyDuration * 1000,
+        last_seen_at_ms: observedAtMs,
+        current_cycle: {
+          id: 301,
+          activation_id: 201,
+          state: 'active',
+          scheduled_start_ms: fiveHourStartMs,
+          scheduled_end_ms: fiveHourEndMs,
+          actual_start_ms: fiveHourStartMs,
+          duration_seconds: fiveHourDuration,
+          boundary_accuracy: 'exact',
+          parent_cycle_id: 302,
+          forecast_eligible: true,
+        },
+        previous_cycle: {
+          id: 299,
+          activation_id: 201,
+          state: 'closed',
+          scheduled_start_ms: fiveHourStartMs - fiveHourDuration * 1000,
+          scheduled_end_ms: fiveHourStartMs,
+          actual_start_ms: fiveHourStartMs - fiveHourDuration * 1000,
+          actual_end_ms: fiveHourStartMs,
+          duration_seconds: fiveHourDuration,
+          boundary_accuracy: 'exact',
+          end_reason: 'scheduled',
+          parent_cycle_id: 298,
+          forecast_eligible: true,
+        },
+      },
+      {
+        provider_window_id: 'weekly',
+        window_kind: 'weekly',
+        window_mode: 'fixed',
+        model_scope_kind: 'all',
+        source: 'api_query',
+        observed_at_ms: observedAtMs,
+        boundary_accuracy: 'exact',
+        cycle_start_ms: weeklyStartMs,
+        cycle_end_ms: weeklyEndMs,
+        duration_seconds: weeklyDuration,
+        used_percent: 9,
+        remaining_percent: 91,
+        stale: false,
+        logical_window_id: 102,
+        activation_generation: 1,
+        availability: 'active',
+        first_seen_at_ms: weeklyStartMs - weeklyDuration * 1000,
+        last_seen_at_ms: observedAtMs,
+        current_cycle: {
+          id: 302,
+          activation_id: 202,
+          state: 'active',
+          scheduled_start_ms: weeklyStartMs,
+          scheduled_end_ms: weeklyEndMs,
+          actual_start_ms: weeklyStartMs,
+          duration_seconds: weeklyDuration,
+          boundary_accuracy: 'exact',
+          forecast_eligible: true,
+        },
+        previous_cycle: {
+          id: 300,
+          activation_id: 202,
+          state: 'closed',
+          scheduled_start_ms: weeklyStartMs - weeklyDuration * 1000,
+          scheduled_end_ms: weeklyStartMs + 3 * 24 * 60 * 60 * 1000,
+          actual_start_ms: weeklyStartMs - 3 * 24 * 60 * 60 * 1000,
+          actual_end_ms: weeklyStartMs,
+          duration_seconds: weeklyDuration,
+          boundary_accuracy: 'exact',
+          end_reason: 'early_reset',
+          forecast_eligible: false,
+        },
+      },
+      {
+        provider_window_id: 'monthly',
+        window_kind: 'monthly',
+        window_mode: 'fixed',
+        model_scope_kind: 'all',
+        source: 'inspection',
+        observed_at_ms: nowMs - 5 * 24 * 60 * 60 * 1000,
+        boundary_accuracy: 'exact',
+        cycle_start_ms: nowMs - 20 * 24 * 60 * 60 * 1000,
+        cycle_end_ms: nowMs + 10 * 24 * 60 * 60 * 1000,
+        duration_seconds: 30 * 24 * 60 * 60,
+        used_percent: 12,
+        remaining_percent: 88,
+        stale: true,
+        logical_window_id: 103,
+        activation_generation: 1,
+        availability: 'inactive',
+        first_seen_at_ms: nowMs - 20 * 24 * 60 * 60 * 1000,
+        last_seen_at_ms: nowMs - 5 * 24 * 60 * 60 * 1000,
+        missing_since_ms: nowMs - 4 * 24 * 60 * 60 * 1000,
+        deactivated_at_ms: nowMs - 4 * 24 * 60 * 60 * 1000,
+      },
+    ];
+  }
+  if (account.provider !== 'xai' || account.account.auth_index !== 'xai-ops-01') return [];
+  const observedAtMs = nowMs - 60_000;
+  return [
+    {
+      provider_window_id: 'included-free-rolling-24h',
+      window_kind: 'rolling_24h',
+      window_mode: 'rolling',
+      model_scope_kind: 'models',
+      model_scope_key: 'grok-4.5-build-free',
+      model_ids: ['grok-4.5-build-free'],
+      source: 'response_body',
+      source_observation_id: 'demo-xai-free-usage-429',
+      observed_at_ms: observedAtMs,
+      boundary_accuracy: 'estimated',
+      cycle_end_ms: observedAtMs + 24 * 60 * 60 * 1000,
+      duration_seconds: 24 * 60 * 60,
+      used_percent: 100,
+      remaining_percent: 0,
+      used_value: 1_024_413,
+      limit_value: 1_000_000,
+      quota_unit: 'tokens',
+      stale: false,
+      logical_window_id: 201,
+      activation_generation: 1,
+      availability: 'active',
+      first_seen_at_ms: observedAtMs,
+      last_seen_at_ms: observedAtMs,
+    },
+  ];
+};
+
 export interface MonitoringAnalyticsSummary {
   total_calls: number;
   success_calls: number;
@@ -725,6 +1550,7 @@ export interface MonitoringAnalyticsSummary {
   cached_tokens: number;
   cache_read_tokens: number;
   cache_creation_tokens: number;
+  cache_hit_rate?: number;
   reasoning_tokens: number;
   total_tokens: number;
   total_cost: number;
@@ -767,6 +1593,7 @@ export interface MonitoringAnalyticsTimelinePoint {
   cached_tokens?: number;
   cache_read_tokens?: number;
   cache_creation_tokens?: number;
+  cache_hit_rate?: number;
   reasoning_tokens?: number;
   total_tokens?: number;
   cost?: number;
@@ -847,6 +1674,9 @@ export interface MonitoringAnalyticsModelStat {
   cached_tokens: number;
   cache_read_tokens: number;
   cache_creation_tokens: number;
+  cache_hit_tokens?: number;
+  cache_hit_input_tokens?: number;
+  cache_hit_rate?: number;
   total_tokens: number;
   cost: number;
 }
@@ -889,6 +1719,9 @@ export interface MonitoringAnalyticsAccountModelStatRow {
   cached_tokens: number;
   cache_read_tokens: number;
   cache_creation_tokens: number;
+  cache_hit_tokens?: number;
+  cache_hit_input_tokens?: number;
+  cache_hit_rate?: number;
   total_tokens: number;
   cost: number;
   last_seen_ms: number;
@@ -927,6 +1760,7 @@ export interface MonitoringAnalyticsCredentialStatRow {
   account_snapshot?: string;
   auth_label_snapshot?: string;
   auth_provider_snapshot?: string;
+  auth_account_id_snapshot?: string;
   auth_project_id_snapshot?: string;
   calls: number;
   success_calls: number;
@@ -954,7 +1788,29 @@ export interface MonitoringAnalyticsCredentialTimelinePoint {
   account_snapshot?: string;
   auth_label_snapshot?: string;
   auth_provider_snapshot?: string;
+  auth_account_id_snapshot?: string;
   auth_project_id_snapshot?: string;
+  bucket_ms: number;
+  bucket_label?: string;
+  calls: number;
+  tokens: number;
+  success: number;
+  failure: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  cached_tokens?: number;
+  cache_read_tokens?: number;
+  cache_creation_tokens?: number;
+  reasoning_tokens?: number;
+  total_tokens?: number;
+  cost?: number;
+  average_latency_ms?: number | null;
+  success_rate?: number;
+  failure_rate?: number;
+}
+
+export interface MonitoringAnalyticsApiKeyTimelinePoint {
+  api_key_hash: string;
   bucket_ms: number;
   bucket_label?: string;
   calls: number;
@@ -1028,6 +1884,9 @@ export interface MonitoringAnalyticsFilterOptions {
   api_key_hashes?: string[];
   providers?: string[];
   auth_files?: string[];
+  accounts?: string[];
+  account_count?: number;
+  api_key_count?: number;
   project_ids?: string[];
   request_types?: string[];
   header_error_kinds?: string[];
@@ -1092,6 +1951,7 @@ export interface ResponseHeaderErrorMetadata {
   retry_after_seconds?: number;
   retry_after_recover_at_ms?: number;
   rate_limit_bypass?: string;
+  should_retry?: boolean;
 }
 
 export interface ResponseHeaderTraceMetadata {
@@ -1104,6 +1964,7 @@ export interface ResponseHeaderTraceMetadata {
   cloud_ai_companion_trace_id?: string;
   client_request_id?: string;
   zeabur_request_id?: string;
+  traceparent?: string;
 }
 
 export interface ResponseHeaderRoutingMetadata {
@@ -1134,6 +1995,39 @@ export interface ResponseHeaderProviderMetadata {
   cloudflare_cache_status?: string;
 }
 
+export interface ResponseHeaderRateLimitBucket {
+  limit?: number;
+  remaining?: number;
+}
+
+export interface ResponseHeaderRateLimitMetadata {
+  requests?: ResponseHeaderRateLimitBucket;
+  tokens?: ResponseHeaderRateLimitBucket;
+}
+
+export interface ResponseHeaderDataPolicyMetadata {
+  retention_mode?: string;
+  zero_retention?: boolean;
+}
+
+export interface ProviderUsageMetadata {
+  provider?: string;
+  kind?: string;
+  state?: string;
+  code?: string;
+  model?: string;
+  unit?: string;
+  actual?: number;
+  limit?: number;
+  remaining?: number;
+  overage?: number;
+  window_kind?: string;
+  observed_at_ms?: number;
+  recover_at_ms?: number;
+  recover_at_estimated?: boolean;
+  source?: string;
+}
+
 export interface ResponseHeaderMetadata {
   quota?: ResponseHeaderQuotaMetadata;
   errors?: ResponseHeaderErrorMetadata;
@@ -1141,16 +2035,24 @@ export interface ResponseHeaderMetadata {
   routing?: ResponseHeaderRoutingMetadata;
   response?: ResponseHeaderResponseMetadata;
   providers?: ResponseHeaderProviderMetadata;
+  rate_limit?: ResponseHeaderRateLimitMetadata;
+  data_policy?: ResponseHeaderDataPolicyMetadata;
+  provider_usage?: ProviderUsageMetadata;
 }
 
 export interface UsageHeaderSnapshot {
   event_hash: string;
   timestamp_ms: number;
+  model?: string;
+  analytics_model?: string;
+  requested_model?: string;
+  resolved_model?: string;
   auth_file_snapshot?: string;
   auth_index?: string;
   account_snapshot?: string;
   auth_label_snapshot?: string;
   auth_provider_snapshot?: string;
+  auth_account_id_snapshot?: string;
   auth_project_id_snapshot?: string;
   source?: string;
   source_hash?: string;
@@ -1180,6 +2082,7 @@ export interface MonitoringAnalyticsRecentFailure {
   account_snapshot?: string;
   auth_label_snapshot?: string;
   auth_provider_snapshot?: string;
+  auth_account_id_snapshot?: string;
   auth_project_id_snapshot?: string;
   endpoint: string;
   duration_ms: number | null;
@@ -1200,9 +2103,14 @@ export interface MonitoringAnalyticsEventRow {
   event_hash: string;
   timestamp_ms: number;
   model: string;
+  analytics_model?: string;
+  requested_model?: string;
   endpoint: string;
   method: string;
   path: string;
+  client_ip?: string;
+  x_forwarded_for?: string;
+  user_agent?: string;
   auth_index: string;
   source: string;
   source_hash: string;
@@ -1211,8 +2119,15 @@ export interface MonitoringAnalyticsEventRow {
   auth_label_snapshot: string;
   auth_file_snapshot?: string;
   auth_provider_snapshot: string;
+  auth_account_id_snapshot?: string;
   auth_project_id_snapshot?: string;
   resolved_model?: string;
+  response_model?: string;
+  session_id?: string;
+  parent_session_id?: string;
+  access_token_sha256?: string;
+  generate?: boolean;
+  stream?: boolean;
   reasoning_effort?: string;
   service_tier?: string;
   executor_type?: string;
@@ -1245,11 +2160,39 @@ export interface MonitoringAnalyticsEventsResponse {
   total_count?: number;
 }
 
+export interface MonitoringAnalyticsCoverageRange {
+  scope: 'rolling_30m' | 'drilldown_preview' | string;
+  from_ms: number;
+  to_ms: number;
+  raw_event_count?: number;
+  raw_deleted_event_count: number;
+  min_deleted_timestamp_ms?: number;
+  max_deleted_timestamp_ms?: number;
+}
+
+export interface MonitoringAnalyticsCoverage {
+  scope: 'time_range' | string;
+  mode: 'raw' | 'mixed' | 'aggregate_only' | string;
+  raw_complete: boolean;
+  core_aggregate_used: boolean;
+  raw_event_count?: number;
+  raw_deleted_event_count: number;
+  min_deleted_timestamp_ms: number;
+  max_deleted_timestamp_ms: number;
+  comparison_raw_event_count?: number;
+  comparison_raw_deleted_event_count?: number;
+  comparison_min_deleted_timestamp_ms?: number;
+  comparison_max_deleted_timestamp_ms?: number;
+  auxiliary_ranges?: MonitoringAnalyticsCoverageRange[];
+  fidelity_limitations: string[];
+}
+
 export interface MonitoringAnalyticsResponse {
   fast_impact?: FastImpact;
   performance?: PerformanceData;
   generated_at_ms: number;
   granularity: 'hour' | 'day' | string;
+  coverage?: MonitoringAnalyticsCoverage;
   summary?: MonitoringAnalyticsSummary;
   summary_comparison?: MonitoringAnalyticsSummaryComparison;
   timeline?: MonitoringAnalyticsTimelinePoint[];
@@ -1263,6 +2206,7 @@ export interface MonitoringAnalyticsResponse {
   account_stats?: MonitoringAnalyticsAccountStatRow[];
   credential_stats?: MonitoringAnalyticsCredentialStatRow[];
   credential_timeline?: MonitoringAnalyticsCredentialTimelinePoint[];
+  api_key_timeline?: MonitoringAnalyticsApiKeyTimelinePoint[];
   api_key_stats?: MonitoringAnalyticsApiKeyStatRow[];
   filter_options?: MonitoringAnalyticsFilterOptions;
   task_buckets?: MonitoringAnalyticsTaskBucketRow[];
@@ -1273,6 +2217,8 @@ export interface MonitoringAnalyticsResponse {
 
 const USAGE_SERVICE_TIMEOUT_MS = 30 * 1000;
 const USAGE_SERVICE_TRANSFER_TIMEOUT_MS = 60 * 1000;
+const USAGE_IMPORT_CHUNK_TIMEOUT_MS = 5 * 60 * 1000;
+const USAGE_ARCHIVE_OPERATION_TIMEOUT_MS = 0;
 const CODEX_INSPECTION_RUN_TIMEOUT_MS = 10 * 60 * 1000;
 export const USAGE_SERVICE_ID = 'cpa-manager-plus';
 export const LEGACY_USAGE_SERVICE_ID = 'cpa-manager';
@@ -1452,24 +2398,491 @@ const getDemoPatchedAccountProcessingPolicy = (
   };
 };
 
+const createDemoCodexInspectionError = (message: string, status: number): UsageServiceApiError => {
+  const details = { error: message, code: 'request_failed' };
+  const error = new Error(message) as UsageServiceApiError;
+  error.name = 'UsageServiceApiError';
+  error.status = status;
+  error.code = 'request_failed';
+  error.details = details;
+  error.data = details;
+  return error;
+};
+
+const cloneDemoCodexInspectionDetail = (
+  detail: CodexInspectionRunDetail
+): CodexInspectionRunDetail => JSON.parse(JSON.stringify(detail)) as CodexInspectionRunDetail;
+
+export const isDemoCodexInspectionStatusMutationAmbiguous = (
+  _results: Array<Pick<CodexInspectionResult, 'accountKey' | 'fileName'>>,
+  result: Pick<
+    CodexInspectionResult,
+    | 'accountKey'
+    | 'fileName'
+    | 'action'
+    | 'authIndex'
+    | 'accountId'
+    | 'provider'
+    | 'accountSnapshot'
+  >,
+  authFiles = getDemoAuthFiles().files
+): boolean => {
+  if (result.action !== 'disable' && result.action !== 'enable') return false;
+  const fileName = result.fileName.trim();
+  if (!fileName) return true;
+  const accountSnapshot = result.accountSnapshot?.trim() ?? '';
+  const resolution = resolveAuthFileStatusMutationTarget(authFiles, {
+    name: fileName,
+    authIndex: result.authIndex,
+    provider: result.provider,
+    accountId: result.accountId,
+    accountSnapshot: accountSnapshot && accountSnapshot !== fileName ? accountSnapshot : null,
+  });
+  return (
+    resolution.failure !== null ||
+    resolution.scope === 'ambiguous' ||
+    resolution.scope === 'expanded-child'
+  );
+};
+
+type DemoSourceFileStatusActionPlan = {
+  canonicalResultId: number;
+  action: 'disable' | 'enable';
+  memberResultIds: Set<number>;
+};
+
+export const buildDemoCodexInspectionSourceFileStatusActionPlans = (
+  results: CodexInspectionResult[],
+  authFiles: AuthFileItem[] = getDemoAuthFiles().files
+): Map<string, DemoSourceFileStatusActionPlan> => {
+  const plans = new Map<string, DemoSourceFileStatusActionPlan>();
+  const filesByName = new Map<string, AuthFileItem[]>();
+  authFiles.forEach((file) => {
+    const fileName = readAuthFileStatusPhysicalName(file);
+    if (!fileName) return;
+    const siblings = filesByName.get(fileName) ?? [];
+    siblings.push(file);
+    filesByName.set(fileName, siblings);
+  });
+
+  const resolved = results.flatMap((result) => {
+    if (result.action !== 'disable' && result.action !== 'enable') return [];
+    const accountSnapshot = result.accountSnapshot?.trim() ?? '';
+    const resolution = resolveAuthFileStatusMutationTarget(authFiles, {
+      name: result.fileName,
+      authIndex: result.authIndex,
+      provider: result.provider,
+      accountId: result.accountId,
+      accountSnapshot:
+        accountSnapshot && accountSnapshot !== result.fileName.trim() ? accountSnapshot : null,
+    });
+    if (!resolution.target || resolution.failure !== null) return [];
+    return [{ result, resolution }];
+  });
+
+  filesByName.forEach((currentFiles, fileName) => {
+    if (currentFiles.length <= 1) return;
+    const entries = resolved.filter(
+      (entry) => readAuthFileStatusPhysicalName(entry.resolution.target!) === fileName
+    );
+    const matchedEntries: typeof entries = [];
+    const members: number[] = [];
+    let action: 'disable' | 'enable' | null = null;
+    for (const currentFile of currentFiles) {
+      const matches = entries.filter((entry) => entry.resolution.target === currentFile);
+      if (matches.length !== 1) return;
+      const matchedAction = matches[0].result.action;
+      if (matchedAction !== 'disable' && matchedAction !== 'enable') return;
+      if (action === null) action = matchedAction;
+      if (matchedAction !== action) return;
+      matchedEntries.push(matches[0]);
+      members.push(matches[0].result.id);
+    }
+    const sourceEntries = matchedEntries.filter(
+      (entry) => entry.resolution.scope === 'source-file'
+    );
+    if (!action || sourceEntries.length > 1) return;
+    const canonicalEntry = sourceEntries[0] ?? matchedEntries[0];
+    if (!canonicalEntry) return;
+    plans.set(fileName, {
+      canonicalResultId: canonicalEntry.result.id,
+      action,
+      memberResultIds: new Set(members),
+    });
+  });
+  return plans;
+};
+
+export const getDemoCodexInspectionActionIdentityKey = (
+  item: Pick<
+    CodexInspectionResult,
+    'fileName' | 'provider' | 'authIndex' | 'accountId' | 'accountSnapshot' | 'displayAccount'
+  >
+): string => {
+  const fileName = item.fileName.trim();
+  const accountSnapshot = item.accountSnapshot?.trim() ?? '';
+  return getAuthFileStatusIdentityKey({
+    name: fileName,
+    provider: item.provider,
+    authIndex: item.authIndex,
+    accountId: item.accountId,
+    accountSnapshot: accountSnapshot && accountSnapshot !== fileName ? accountSnapshot : null,
+  });
+};
+
+let demoCodexInspectionRunState: CodexInspectionRunDetail | null = null;
+
+export const resetDemoCodexInspectionRunState = () => {
+  demoCodexInspectionRunState = null;
+};
+
+const readDemoCodexInspectionRunState = (): CodexInspectionRunDetail => {
+  if (!demoCodexInspectionRunState) {
+    demoCodexInspectionRunState = getDemoCodexInspectionRun();
+  }
+  return cloneDemoCodexInspectionDetail(demoCodexInspectionRunState);
+};
+
+const replaceDemoCodexInspectionRunState = (
+  detail: CodexInspectionRunDetail
+): CodexInspectionRunDetail => {
+  demoCodexInspectionRunState = cloneDemoCodexInspectionDetail(detail);
+  return cloneDemoCodexInspectionDetail(demoCodexInspectionRunState);
+};
+
 const getDemoCodexInspectionActionsResponse = (
-  resultIds: number[]
+  runId: number,
+  resultIds: number[],
+  actionOverrides: CodexInspectionActionOverride[] = []
 ): CodexInspectionActionsResponse => {
-  const detail = getDemoCodexInspectionRun();
-  const selected = resultIds.length
-    ? detail.results.filter((result) => resultIds.includes(result.id))
-    : detail.results;
-  return {
-    outcomes: selected.map((result) => ({
-      resultId: result.id,
-      accountKey: result.accountKey,
-      fileName: result.fileName,
-      displayAccount: result.displayAccount,
-      action: result.action,
-      status: 'done',
+  const requestedIDs = new Set(resultIds.filter((resultId) => resultId > 0));
+  if (requestedIDs.size === 0) {
+    throw createDemoCodexInspectionError('codex inspection action result ids are required', 400);
+  }
+
+  const detail = readDemoCodexInspectionRunState();
+  if (runId !== detail.run.id) {
+    throw createDemoCodexInspectionError('codex inspection run not found', 404);
+  }
+
+  const completedAt = Date.now();
+  const overrideByID = new Map<number, 'delete'>();
+  actionOverrides.forEach((item) => {
+    const result = detail.results.find((candidate) => candidate.id === item.resultId);
+    if (
+      item.resultId <= 0 ||
+      item.action !== 'delete' ||
+      !requestedIDs.has(item.resultId) ||
+      result?.action !== 'reauth'
+    ) {
+      throw createDemoCodexInspectionError('codex inspection action override is invalid', 400);
+    }
+    overrideByID.set(item.resultId, item.action);
+  });
+
+  const manualResults = detail.results.map((result) => {
+    const action = overrideByID.get(result.id);
+    return action ? { ...result, action } : result;
+  });
+  const selected = manualResults.filter((result) => requestedIDs.has(result.id));
+  if (selected.length === 0) {
+    throw createDemoCodexInspectionError('codex inspection has no actionable results', 400);
+  }
+  const executableActions = new Set(['delete', 'disable', 'enable']);
+  const normalizeActionStatus = (result: CodexInspectionResult): string => {
+    switch (result.actionStatus) {
+      case 'none':
+      case 'pending':
+      case 'success':
+      case 'failed':
+      case 'skipped':
+      case 'needs_review':
+        return result.actionStatus;
+      default:
+        return executableActions.has(result.action) ? 'pending' : 'none';
+    }
+  };
+  const sourceFilePlans = buildDemoCodexInspectionSourceFileStatusActionPlans(
+    selected.filter((result) => {
+      const status = normalizeActionStatus(result);
+      return status !== 'success' && status !== 'skipped' && status !== 'needs_review';
+    })
+  );
+  type DemoActionGroup = { key: string; items: CodexInspectionResult[]; mixed: boolean };
+  const itemsByFileName = new Map<string, CodexInspectionResult[]>();
+  manualResults.forEach((result) => {
+    const fileName = result.fileName.trim();
+    if (!fileName) return;
+    const fileItems = itemsByFileName.get(fileName) ?? [];
+    fileItems.push(result);
+    itemsByFileName.set(fileName, fileItems);
+  });
+  const groupByResultID = new Map<number, DemoActionGroup>();
+  itemsByFileName.forEach((allFileItems, fileName) => {
+    const fileItems = allFileItems.filter((item) => executableActions.has(item.action));
+    if (fileItems.length === 0) return;
+    if (fileItems.some((item) => item.action === 'delete')) {
+      const group = {
+        key: `file:${fileName}`,
+        items: fileItems,
+        mixed: allFileItems.some((item) => item.action !== 'delete'),
+      };
+      fileItems.forEach((item) => groupByResultID.set(item.id, group));
+      return;
+    }
+    const identityGroups = new Map<string, DemoActionGroup>();
+    fileItems.forEach((item) => {
+      const identityKey = getDemoCodexInspectionActionIdentityKey(item);
+      const group = identityGroups.get(identityKey) ?? {
+        key: `credential:${identityKey}`,
+        items: [],
+        mixed: false,
+      };
+      if (group.items.length > 0 && group.items[0].action !== item.action) group.mixed = true;
+      group.items.push(item);
+      identityGroups.set(identityKey, group);
+      groupByResultID.set(item.id, group);
+    });
+  });
+  const seenGroupKeys = new Set<string>();
+  const plannedOutcomes = selected.map((result) => {
+    const action = result.action;
+    const currentStatus = normalizeActionStatus(result);
+    if (!executableActions.has(action)) {
+      return {
+        result,
+        action,
+        status: 'skipped',
+        success: true,
+        error: '该巡检结果不是可执行动作',
+      };
+    }
+    if (currentStatus === 'success') {
+      return {
+        result,
+        action,
+        status: 'skipped',
+        success: true,
+        error: '该建议动作已执行成功',
+      };
+    }
+    if (currentStatus === 'skipped') {
+      return {
+        result,
+        action,
+        status: 'skipped',
+        success: true,
+        error: '该建议动作已跳过',
+      };
+    }
+    if (currentStatus === 'needs_review') {
+      return {
+        result,
+        action,
+        status: 'needs_review',
+        success: true,
+        error: '该建议动作需要到凭证管理中人工处理',
+      };
+    }
+    const fileName = result.fileName.trim();
+    if (!fileName) {
+      return {
+        result,
+        action,
+        status: 'failed',
+        success: false,
+        error: '认证文件名为空，无法执行',
+      };
+    }
+    if (
+      !hasCodexInspectionStableIdentity({
+        fileName: result.fileName,
+        runtimeId: result.runtimeId,
+        provider: result.provider,
+        authIndex: result.authIndex,
+        accountId: result.accountId,
+        accountSnapshot: result.accountSnapshot,
+      })
+    ) {
+      return {
+        result,
+        action,
+        status: 'needs_review',
+        success: true,
+        error: '巡检结果缺少稳定账号标识，已阻止处理，请人工确认',
+      };
+    }
+    const sourceFilePlan = sourceFilePlans.get(fileName);
+    if (
+      sourceFilePlan?.memberResultIds.has(result.id) &&
+      sourceFilePlan.canonicalResultId !== result.id
+    ) {
+      return {
+        result,
+        action,
+        status: 'skipped',
+        success: true,
+        error: '该认证目标已由另一条结果处理',
+      };
+    }
+    if (
+      sourceFilePlan?.canonicalResultId !== result.id &&
+      isDemoCodexInspectionStatusMutationAmbiguous(manualResults, result)
+    ) {
+      return {
+        result,
+        action,
+        status: 'needs_review',
+        success: true,
+        error:
+          '认证凭证缺少唯一 runtime ID，或 runtime ID 与物理文件选择器冲突，已阻止状态修改，请人工确认',
+      };
+    }
+    const group = groupByResultID.get(result.id) ?? {
+      key: `credential:${result.id}`,
+      items: [result],
+      mixed: false,
+    };
+    if (group.mixed) {
+      return {
+        result,
+        action,
+        status: 'needs_review',
+        success: true,
+        error: '同一认证文件下存在多个不同建议动作，文件级处理已阻止，请到凭证管理中手动处理',
+      };
+    }
+    if (seenGroupKeys.has(group.key)) {
+      return {
+        result,
+        action,
+        status: 'skipped',
+        success: true,
+        error: '该认证目标已由另一条结果处理',
+      };
+    }
+    seenGroupKeys.add(group.key);
+    return {
+      result,
+      action,
+      status: 'success',
       success: true,
+      error: '',
+    };
+  });
+  const outcomeByID = new Map(plannedOutcomes.map((outcome) => [outcome.result.id, outcome]));
+  const actionCount = plannedOutcomes.filter((outcome) => outcome.status === 'success').length;
+  let nextLogID = detail.logs.reduce((maximum, entry) => Math.max(maximum, entry.id), 0) + 1;
+  const createLog = (level: string, message: string, logDetail: unknown) => ({
+    id: nextLogID++,
+    runId: detail.run.id,
+    level,
+    message,
+    detail: logDetail,
+    createdAtMs: completedAt,
+  });
+
+  detail.logs.push(
+    createLog('info', '手动处理账号开始', {
+      requestedCount: resultIds.length,
+      actionCount,
+    })
+  );
+  plannedOutcomes
+    .filter((outcome) => outcome.status !== 'success')
+    .forEach((outcome) => {
+      const failed = outcome.status === 'failed' || !outcome.success;
+      detail.logs.push(
+        createLog(
+          failed ? 'error' : outcome.status === 'needs_review' ? 'warning' : 'info',
+          failed ? '手动处理账号失败' : '手动处理账号跳过',
+          {
+            fileName: outcome.result.fileName,
+            displayAccount: outcome.result.displayAccount,
+            action: outcome.action,
+            status: outcome.status,
+            reason: outcome.error,
+          }
+        )
+      );
+    });
+  detail.results = detail.results.map((result) => {
+    const outcome = outcomeByID.get(result.id);
+    if (!outcome) return result;
+    if (normalizeActionStatus(result) === 'success' && outcome.status === 'skipped') {
+      return result;
+    }
+    if (outcome.status !== 'success') {
+      return {
+        ...result,
+        actionStatus: outcome.status,
+        executedAction: undefined,
+        actionError: outcome.error,
+      };
+    }
+    return {
+      ...result,
+      disabled:
+        outcome.action === 'disable' ? true : outcome.action === 'enable' ? false : result.disabled,
+      actionStatus: 'success',
+      executedAction: outcome.action,
+      actionError: undefined,
+    };
+  });
+  plannedOutcomes
+    .filter((outcome) => outcome.status === 'success')
+    .forEach((outcome) => {
+      detail.logs.push(
+        createLog('success', '手动处理账号成功', {
+          fileName: outcome.result.fileName,
+          displayAccount: outcome.result.displayAccount,
+          action: outcome.action,
+        })
+      );
+    });
+  const outcomeSummary = plannedOutcomes.reduce(
+    (summary, outcome) => {
+      if (outcome.status === 'success') summary.success += 1;
+      else if (outcome.status === 'skipped') summary.skipped += 1;
+      else if (outcome.status === 'needs_review') summary.needsReview += 1;
+      else summary.failed += 1;
+      return summary;
+    },
+    { success: 0, failed: 0, skipped: 0, needsReview: 0 }
+  );
+  detail.logs.push(
+    createLog(
+      outcomeSummary.failed > 0 || outcomeSummary.needsReview > 0 ? 'warning' : 'success',
+      '手动处理账号完成',
+      {
+        successCount: outcomeSummary.success,
+        failedCount: outcomeSummary.failed,
+        skippedCount: outcomeSummary.skipped,
+        needsReviewCount: outcomeSummary.needsReview,
+        resultWriteFailedCount: 0,
+      }
+    )
+  );
+  detail.run.disabledCount = detail.results.filter((result) => result.disabled).length;
+  detail.run.enabledCount = detail.results.length - detail.run.disabledCount;
+  detail.run.error =
+    outcomeSummary.failed > 0
+      ? `${outcomeSummary.failed} 个手动处理动作执行失败，详见巡检日志`
+      : undefined;
+  detail.run.updatedAtMs = completedAt;
+  const nextDetail = replaceDemoCodexInspectionRunState(detail);
+  return {
+    outcomes: plannedOutcomes.map((outcome) => ({
+      resultId: outcome.result.id,
+      accountKey: outcome.result.accountKey,
+      fileName: outcome.result.fileName,
+      displayAccount: outcome.result.displayAccount,
+      action: outcome.action,
+      status: outcome.status,
+      success: outcome.success,
+      ...(outcome.error ? { error: outcome.error } : {}),
     })),
-    detail,
+    detail: nextDetail,
   };
 };
 
@@ -1494,6 +2907,33 @@ const getDemoModelPriceSyncResponse = (models?: string[]): ModelPriceSyncRespons
     sourceResults: [{ source: 'demo', models: Object.keys(selectedPrices).length, skipped: 0 }],
   };
 };
+
+const runUsageArchiveAction = async (
+  base: string,
+  runId: string,
+  action: 'resume' | 'verify' | 'delete' | 'cancel',
+  managementKey?: string,
+  signal?: AbortSignal,
+  expectedStage?: UsageArchiveResumeStage,
+  options: UsageArchiveActionOptions = {}
+): Promise<UsageArchiveStatus> =>
+  withUsageServiceError(async () => {
+    const response = await axios.post<UsageArchiveStatus>(
+      buildUrl(base, `/v0/management/usage/archives/${encodeURIComponent(runId)}/${action}`),
+      undefined,
+      {
+        timeout: USAGE_ARCHIVE_OPERATION_TIMEOUT_MS,
+        headers: authHeaders(managementKey),
+        params: {
+          ...(expectedStage ? { expected_stage: expectedStage } : {}),
+          ...(options.background !== undefined ? { background: options.background } : {}),
+          ...(options.wait !== undefined ? { wait: options.wait } : {}),
+        },
+        signal,
+      }
+    );
+    return response.data;
+  });
 
 export const usageServiceApi = {
   getInfo: async (base: string): Promise<UsageServiceInfo> => {
@@ -1552,7 +2992,20 @@ export const usageServiceApi = {
     managementKey?: string
   ): Promise<ManagerConfigResponse> => {
     if (__DEMO_SITE__ && isDemoMode()) {
-      return { ...getDemoManagerConfig(), config, source: 'db' };
+      const submittedKey = config.cpaConnection.managementKey?.trim();
+      return {
+        ...getDemoManagerConfig(),
+        config: {
+          ...config,
+          cpaConnection: {
+            cpaBaseUrl: config.cpaConnection.cpaBaseUrl,
+            managementKeyConfigured: Boolean(
+              submittedKey || config.cpaConnection.managementKeyConfigured
+            ),
+          },
+        },
+        source: 'db',
+      };
     }
 
     return withUsageServiceError(async () => {
@@ -1574,8 +3027,8 @@ export const usageServiceApi = {
     limit = 20
   ): Promise<CodexInspectionRunsResponse> => {
     if (__DEMO_SITE__ && isDemoMode()) {
-      const response = getDemoCodexInspectionRuns();
-      return { items: response.items.slice(0, limit) };
+      const detail = readDemoCodexInspectionRunState();
+      return { items: [detail.run].slice(0, limit) };
     }
 
     return withUsageServiceError(async () => {
@@ -1597,7 +3050,11 @@ export const usageServiceApi = {
     id: number
   ): Promise<CodexInspectionRunDetail> => {
     if (__DEMO_SITE__ && isDemoMode()) {
-      return getDemoCodexInspectionRun();
+      const detail = readDemoCodexInspectionRunState();
+      if (id !== detail.run.id) {
+        throw createDemoCodexInspectionError('codex inspection run not found', 404);
+      }
+      return detail;
     }
 
     return withUsageServiceError(async () => {
@@ -1617,7 +3074,7 @@ export const usageServiceApi = {
     managementKey?: string
   ): Promise<CodexInspectionRunDetail> => {
     if (__DEMO_SITE__ && isDemoMode()) {
-      return getDemoCodexInspectionRun();
+      return replaceDemoCodexInspectionRunState(getDemoCodexInspectionRun());
     }
 
     return withUsageServiceError(async () => {
@@ -1633,20 +3090,68 @@ export const usageServiceApi = {
     });
   },
 
+  cancelCodexInspectionRun: async (
+    base: string,
+    managementKey: string | undefined,
+    runId: number
+  ): Promise<CodexInspectionRunDetail> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      const detail = readDemoCodexInspectionRunState();
+      if (runId !== detail.run.id) {
+        throw createDemoCodexInspectionError('codex inspection run not found', 404);
+      }
+      if (detail.run.status === 'cancelled') {
+        return detail;
+      }
+      if (detail.run.status !== 'running' && detail.run.status !== 'cancelling') {
+        throw createDemoCodexInspectionError('codex inspection run cannot be cancelled', 409);
+      }
+      const completedAt = Date.now();
+      detail.run.status = 'cancelled';
+      detail.run.active = false;
+      detail.run.cancellable = false;
+      detail.run.finishedAtMs = completedAt;
+      detail.run.updatedAtMs = completedAt;
+      detail.run.error = '用户主动取消巡检';
+      detail.logs.push({
+        id: detail.logs.reduce((maximum, entry) => Math.max(maximum, entry.id), 0) + 1,
+        runId,
+        level: 'warning',
+        message: '凭证健康巡检已取消',
+        detail: { status: 'cancelled' },
+        createdAtMs: completedAt,
+      });
+      return replaceDemoCodexInspectionRunState(detail);
+    }
+
+    return withUsageServiceError(async () => {
+      const response = await axios.post<CodexInspectionRunDetail>(
+        buildUrl(base, `/v0/management/codex-inspection/runs/${runId}/cancel`),
+        undefined,
+        {
+          timeout: USAGE_SERVICE_TIMEOUT_MS,
+          headers: authHeaders(managementKey),
+        }
+      );
+      return response.data;
+    });
+  },
+
   executeCodexInspectionActions: async (
     base: string,
     managementKey: string | undefined,
     runId: number,
-    resultIds: number[]
+    resultIds: number[],
+    actionOverrides: CodexInspectionActionOverride[] = []
   ): Promise<CodexInspectionActionsResponse> => {
     if (__DEMO_SITE__ && isDemoMode()) {
-      return getDemoCodexInspectionActionsResponse(resultIds);
+      return getDemoCodexInspectionActionsResponse(runId, resultIds, actionOverrides);
     }
 
     return withUsageServiceError(async () => {
       const response = await axios.post<CodexInspectionActionsResponse>(
         buildUrl(base, `/v0/management/codex-inspection/runs/${runId}/actions`),
-        { resultIds },
+        { resultIds, actionOverrides },
         {
           timeout: CODEX_INSPECTION_RUN_TIMEOUT_MS,
           headers: authHeaders(managementKey),
@@ -1656,13 +3161,19 @@ export const usageServiceApi = {
     });
   },
 
-  getStatus: async (base: string, managementKey?: string): Promise<UsageServiceStatus> => {
+  getStatus: async (
+    base: string,
+    managementKey?: string,
+    scope?: UsageServiceStatusScope
+  ): Promise<UsageServiceStatus> => {
     if (__DEMO_SITE__ && isDemoMode()) {
       return getDemoUsageServiceStatus();
     }
 
     return withUsageServiceError(async () => {
-      const response = await axios.get<UsageServiceStatus>(buildUrl(base, '/status'), {
+      const statusPath =
+        scope === 'database-maintenance' ? '/status?scope=database-maintenance' : '/status';
+      const response = await axios.get<UsageServiceStatus>(buildUrl(base, statusPath), {
         timeout: USAGE_SERVICE_TIMEOUT_MS,
         headers: authHeaders(managementKey),
       });
@@ -1707,6 +3218,28 @@ export const usageServiceApi = {
         }
       );
       return response.data.items ?? [];
+    });
+  },
+
+  recoverQuotaCooldown: async (
+    base: string,
+    managementKey: string,
+    request: QuotaCooldownRecoveryRequest
+  ): Promise<QuotaCooldownRecoveryResponse> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return { recovered: false };
+    }
+
+    return withUsageServiceError(async () => {
+      const response = await axios.post<QuotaCooldownRecoveryResponse>(
+        buildUrl(base, '/usage-service/quota-cooldowns/recover'),
+        request,
+        {
+          timeout: USAGE_SERVICE_TIMEOUT_MS,
+          headers: authHeaders(managementKey),
+        }
+      );
+      return response.data;
     });
   },
 
@@ -1775,6 +3308,28 @@ export const usageServiceApi = {
     return withUsageServiceError(async () => {
       const response = await axios.get<ModelPriceUsageSummaryResponse>(
         buildUrl(base, '/v0/management/model-prices/usage-summary'),
+        {
+          timeout: USAGE_SERVICE_TIMEOUT_MS,
+          headers: authHeaders(managementKey),
+          signal,
+        }
+      );
+      return response.data;
+    });
+  },
+
+  getRuntimeModelPricingStatus: async (
+    base: string,
+    managementKey?: string,
+    signal?: AbortSignal
+  ): Promise<RuntimeModelPricingStatusResponse> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return getDemoRuntimeModelPricingStatus();
+    }
+
+    return withUsageServiceError(async () => {
+      const response = await axios.get<RuntimeModelPricingStatusResponse>(
+        buildUrl(base, '/v0/management/model-prices/runtime-models'),
         {
           timeout: USAGE_SERVICE_TIMEOUT_MS,
           headers: authHeaders(managementKey),
@@ -2007,18 +3562,33 @@ export const usageServiceApi = {
   syncModelPrices: async (
     base: string,
     managementKey?: string,
-    models?: string[]
+    modelsOrRequest?: string[] | ModelPriceSyncRequest,
+    options?: { includeRuntimeModels?: boolean }
   ): Promise<ModelPriceSyncResponse> => {
+    let payload: ModelPriceSyncRequest = {};
+    if (Array.isArray(modelsOrRequest)) {
+      payload = {
+        models: modelsOrRequest,
+        ...(options?.includeRuntimeModels !== undefined
+          ? { includeRuntimeModels: options.includeRuntimeModels }
+          : {}),
+      };
+    } else if (modelsOrRequest) {
+      payload = modelsOrRequest;
+    } else if (options?.includeRuntimeModels !== undefined) {
+      payload = { includeRuntimeModels: options.includeRuntimeModels };
+    }
+
     if (__DEMO_SITE__ && isDemoMode()) {
-      return getDemoModelPriceSyncResponse(models);
+      return getDemoModelPriceSyncResponse(payload.models);
     }
 
     return withUsageServiceError(async () => {
       const response = await axios.post<ModelPriceSyncResponse>(
         buildUrl(base, '/v0/management/model-prices/sync'),
-        models ? { models } : {},
+        payload,
         {
-          timeout: 30 * 1000,
+          timeout: 45 * 1000,
           headers: authHeaders(managementKey),
         }
       );
@@ -2136,6 +3706,449 @@ export const usageServiceApi = {
       return response.data;
     });
   },
+
+  createUsageImportSession: async (
+    base: string,
+    filename: string,
+    sizeBytes: number,
+    managementKey?: string,
+    resumeKey?: string,
+    signal?: AbortSignal
+  ): Promise<UsageImportSession> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return createDemoUsageImportSession(filename, sizeBytes);
+    }
+
+    return withUsageServiceError(async () => {
+      const response = await axios.post<UsageImportSession>(
+        buildUrl(base, '/v0/management/usage/import-sessions'),
+        {
+          filename,
+          size_bytes: sizeBytes,
+          ...(resumeKey ? { resume_key: resumeKey } : {}),
+        },
+        {
+          timeout: USAGE_SERVICE_TIMEOUT_MS,
+
+          headers: authHeaders(managementKey),
+          signal,
+        }
+      );
+      return response.data;
+    });
+  },
+
+  getUsageImportSession: async (
+    base: string,
+    sessionId: string,
+    managementKey?: string,
+    signal?: AbortSignal
+  ): Promise<UsageImportSession> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return getDemoUsageImportSession(sessionId);
+    }
+
+    return withUsageServiceError(async () => {
+      const response = await axios.get<UsageImportSession>(
+        buildUrl(base, `/v0/management/usage/import-sessions/${encodeURIComponent(sessionId)}`),
+        {
+          timeout: USAGE_SERVICE_TIMEOUT_MS,
+          headers: authHeaders(managementKey),
+          signal,
+        }
+      );
+      return response.data;
+    });
+  },
+
+  listUsageImportSessions: async (
+    base: string,
+    managementKey?: string,
+    options: UsageImportSessionListOptions = {},
+    signal?: AbortSignal
+  ): Promise<UsageImportSessionList> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      const sessions = [...demoUsageImportSessions.values()]
+        .filter((session) => !options.status || session.status === options.status)
+        .sort(
+          (left, right) =>
+            right.updated_at_ms - left.updated_at_ms || right.id.localeCompare(left.id)
+        );
+      const limit = options.limit ?? 20;
+      const offset = Math.max(0, Number.parseInt(options.cursor ?? '0', 10) || 0);
+      const page = sessions.slice(offset, offset + limit).map(cloneUsageImportSession);
+      const statusCounts = [...demoUsageImportSessions.values()].reduce<
+        Partial<Record<UsageImportSessionStatus, number>>
+      >((counts, session) => {
+        counts[session.status] = (counts[session.status] ?? 0) + 1;
+        return counts;
+      }, {});
+      const activeSessions = [...demoUsageImportSessions.values()].filter(
+        (session) =>
+          ['uploading', 'ready', 'processing'].includes(session.status) ||
+          (session.status === 'failed' && session.retryable === true)
+      ).length;
+      return {
+        sessions: page,
+        total: sessions.length,
+        status_counts: statusCounts,
+        next_cursor:
+          offset + page.length < sessions.length ? String(offset + page.length) : undefined,
+        active_sessions: activeSessions,
+        max_sessions: 4,
+        chunk_size_bytes: 4 * 1024 * 1024,
+        disk_quota_bytes: 512 * 1024 * 1024,
+        ttl_seconds: 24 * 60 * 60,
+      };
+    }
+
+    return withUsageServiceError(async () => {
+      const response = await axios.get<UsageImportSessionList>(
+        buildUrl(base, '/v0/management/usage/import-sessions'),
+        {
+          timeout: USAGE_SERVICE_TIMEOUT_MS,
+          headers: authHeaders(managementKey),
+          params: {
+            ...(options.status ? { status: options.status } : {}),
+            limit: options.limit ?? 20,
+            ...(options.cursor ? { cursor: options.cursor } : {}),
+          },
+          signal,
+        }
+      );
+      return response.data;
+    });
+  },
+
+  uploadUsageImportSessionChunk: async (
+    base: string,
+    sessionId: string,
+    offset: number,
+    chunk: Blob,
+    managementKey?: string,
+    signal?: AbortSignal,
+    prefixSha256?: string
+  ): Promise<UsageImportSession> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return uploadDemoUsageImportSessionChunk(sessionId, offset, chunk.size);
+    }
+
+    return withUsageServiceError(async () => {
+      const response = await axios.put<UsageImportSession>(
+        buildUrl(
+          base,
+          `/v0/management/usage/import-sessions/${encodeURIComponent(sessionId)}/chunk?offset=${offset}`
+        ),
+        chunk,
+        {
+          timeout: USAGE_IMPORT_CHUNK_TIMEOUT_MS,
+          headers: {
+            ...(authHeaders(managementKey) ?? {}),
+            'Content-Type': 'application/octet-stream',
+            ...(prefixSha256 ? { 'X-Usage-Import-Prefix-SHA256': prefixSha256 } : {}),
+          },
+          signal,
+        }
+      );
+      return response.data;
+    });
+  },
+
+  validateUsageImportSessionPrefix: async (
+    base: string,
+    sessionId: string,
+    prefixSha256: string,
+    managementKey?: string,
+    signal?: AbortSignal
+  ): Promise<UsageImportSession> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return getDemoUsageImportSession(sessionId);
+    }
+
+    return withUsageServiceError(async () => {
+      const response = await axios.post<UsageImportSession>(
+        buildUrl(
+          base,
+          `/v0/management/usage/import-sessions/${encodeURIComponent(sessionId)}/validate`
+        ),
+        { prefix_sha256: prefixSha256 },
+        {
+          timeout: USAGE_SERVICE_TIMEOUT_MS,
+          headers: authHeaders(managementKey),
+          signal,
+        }
+      );
+      return response.data;
+    });
+  },
+
+  completeUsageImportSession: async (
+    base: string,
+    sessionId: string,
+    managementKey?: string,
+    signal?: AbortSignal
+  ): Promise<UsageImportSession> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return completeDemoUsageImportSession(sessionId);
+    }
+
+    return withUsageServiceError(async () => {
+      const response = await axios.post<UsageImportSession>(
+        buildUrl(
+          base,
+          `/v0/management/usage/import-sessions/${encodeURIComponent(sessionId)}/complete`
+        ),
+        undefined,
+        {
+          timeout: USAGE_SERVICE_TIMEOUT_MS,
+          headers: authHeaders(managementKey),
+          signal,
+        }
+      );
+      return response.data;
+    });
+  },
+
+  cancelUsageImportSession: async (
+    base: string,
+    sessionId: string,
+    managementKey?: string
+  ): Promise<UsageImportSession> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return cancelDemoUsageImportSession(sessionId);
+    }
+
+    return withUsageServiceError(async () => {
+      const response = await axios.delete<UsageImportSession>(
+        buildUrl(base, `/v0/management/usage/import-sessions/${encodeURIComponent(sessionId)}`),
+
+        {
+          timeout: USAGE_SERVICE_TIMEOUT_MS,
+          headers: authHeaders(managementKey),
+        }
+      );
+      return response.data;
+    });
+  },
+
+  previewUsageArchive: async (
+    base: string,
+    cutoffTimestampMs: number,
+    managementKey?: string,
+    signal?: AbortSignal
+  ): Promise<UsageArchivePreview> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return previewDemoUsageArchive(cutoffTimestampMs);
+    }
+    return withUsageServiceError(async () => {
+      const response = await axios.post<UsageArchivePreview>(
+        buildUrl(base, '/v0/management/usage/archives/preview'),
+        { cutoff_timestamp_ms: cutoffTimestampMs },
+        {
+          timeout: USAGE_ARCHIVE_OPERATION_TIMEOUT_MS,
+          headers: authHeaders(managementKey),
+          signal,
+        }
+      );
+      return response.data;
+    });
+  },
+
+  createUsageArchive: async (
+    base: string,
+    cutoffTimestampMs: number,
+    managementKey?: string,
+    signal?: AbortSignal
+  ): Promise<UsageArchiveStatus> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return createDemoUsageArchive(cutoffTimestampMs);
+    }
+    return withUsageServiceError(async () => {
+      const response = await axios.post<UsageArchiveStatus>(
+        buildUrl(base, '/v0/management/usage/archives'),
+        { cutoff_timestamp_ms: cutoffTimestampMs },
+        {
+          timeout: USAGE_ARCHIVE_OPERATION_TIMEOUT_MS,
+          headers: authHeaders(managementKey),
+          signal,
+        }
+      );
+      return response.data;
+    });
+  },
+
+  listUsageArchives: async (
+    base: string,
+    managementKey?: string,
+    limitOrOptions: number | UsageArchiveListOptions = 20,
+    signal?: AbortSignal
+  ): Promise<UsageArchiveList> => {
+    const options: UsageArchiveListOptions =
+      typeof limitOrOptions === 'number' ? { limit: limitOrOptions } : limitOrOptions;
+    if (__DEMO_SITE__ && isDemoMode()) {
+      const demo = getDemoUsageArchives(100);
+      const modeFiltered = demo.runs.filter((run) => !options.mode || run.mode === options.mode);
+      const filtered = modeFiltered.filter(
+        (run) => !options.status || run.status === options.status
+      );
+      const offset = Math.max(0, Number.parseInt(options.cursor ?? '0', 10) || 0);
+      const limit = options.limit ?? 20;
+      const runs = filtered.slice(offset, offset + limit);
+      return {
+        runs,
+        total: filtered.length,
+        status_counts: modeFiltered.reduce<Record<string, number>>((counts, run) => {
+          counts[run.status] = (counts[run.status] ?? 0) + 1;
+          return counts;
+        }, {}),
+        next_cursor:
+          offset + runs.length < filtered.length ? String(offset + runs.length) : undefined,
+      };
+    }
+    return withUsageServiceError(async () => {
+      const response = await axios.get<UsageArchiveList>(
+        buildUrl(base, '/v0/management/usage/archives'),
+        {
+          timeout: USAGE_SERVICE_TIMEOUT_MS,
+          headers: authHeaders(managementKey),
+          params: {
+            ...(options.status ? { status: options.status } : {}),
+            ...(options.mode ? { mode: options.mode } : {}),
+            limit: options.limit ?? 20,
+            ...(options.cursor ? { cursor: options.cursor } : {}),
+          },
+          signal,
+        }
+      );
+      return response.data;
+    });
+  },
+
+  getUsageArchive: async (
+    base: string,
+    runId: string,
+    managementKey?: string,
+    signal?: AbortSignal
+  ): Promise<UsageArchiveStatus> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return getDemoUsageArchive(runId);
+    }
+    return withUsageServiceError(async () => {
+      const response = await axios.get<UsageArchiveStatus>(
+        buildUrl(base, `/v0/management/usage/archives/${encodeURIComponent(runId)}`),
+        {
+          timeout: USAGE_SERVICE_TIMEOUT_MS,
+          headers: authHeaders(managementKey),
+          signal,
+        }
+      );
+      return response.data;
+    });
+  },
+
+  resumeUsageArchive: async (
+    base: string,
+    runId: string,
+    managementKey?: string,
+    signal?: AbortSignal,
+    expectedStage?: UsageArchiveResumeStage,
+    options?: UsageArchiveActionOptions
+  ): Promise<UsageArchiveStatus> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return resumeDemoUsageArchive(runId);
+    }
+    return runUsageArchiveAction(
+      base,
+      runId,
+      'resume',
+      managementKey,
+      signal,
+      expectedStage,
+      options
+    );
+  },
+
+  verifyUsageArchive: async (
+    base: string,
+    runId: string,
+    managementKey?: string,
+    signal?: AbortSignal,
+    options?: UsageArchiveActionOptions
+  ): Promise<UsageArchiveStatus> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return verifyDemoUsageArchive(runId);
+    }
+    return runUsageArchiveAction(base, runId, 'verify', managementKey, signal, undefined, options);
+  },
+
+  deleteUsageArchive: async (
+    base: string,
+    runId: string,
+    managementKey?: string,
+    signal?: AbortSignal,
+    options?: UsageArchiveActionOptions
+  ): Promise<UsageArchiveStatus> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return deleteDemoUsageArchive(runId);
+    }
+    return runUsageArchiveAction(base, runId, 'delete', managementKey, signal, undefined, options);
+  },
+
+  cancelUsageArchive: async (
+    base: string,
+    runId: string,
+    managementKey?: string,
+    signal?: AbortSignal
+  ): Promise<UsageArchiveStatus> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return cancelDemoUsageArchive(runId);
+    }
+    return runUsageArchiveAction(base, runId, 'cancel', managementKey, signal);
+  },
+
+  probeUsageMaintenance: async (
+    base: string,
+    managementKey?: string,
+    signal?: AbortSignal
+  ): Promise<void> => {
+    if (__DEMO_SITE__ && isDemoMode()) return;
+    return withUsageServiceError(async () => {
+      const response = await axios.head(buildUrl(base, '/v0/management/usage/maintenance'), {
+        timeout: USAGE_SERVICE_TIMEOUT_MS,
+        headers: authHeaders(managementKey),
+        signal,
+      });
+      if (response.status !== 200 && response.status !== 204) {
+        const error = new Error(
+          'This Manager Server does not support usage maintenance.'
+        ) as UsageServiceApiError;
+        error.status = response.status;
+        error.code = 'usage_archive_unavailable';
+        throw error;
+      }
+    });
+  },
+
+  getUsageMaintenance: async (
+    base: string,
+    managementKey?: string,
+    signal?: AbortSignal
+  ): Promise<UsageMaintenanceStatus> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return getDemoUsageMaintenance();
+    }
+    return withUsageServiceError(async () => {
+      const response = await axios.get<UsageMaintenanceStatus>(
+        buildUrl(base, '/v0/management/usage/maintenance'),
+        {
+          timeout: USAGE_SERVICE_TIMEOUT_MS,
+          headers: authHeaders(managementKey),
+          signal,
+        }
+      );
+      return response.data;
+    });
+  },
 };
 
 export const dashboardApi = {
@@ -2173,7 +4186,8 @@ export const monitoringAnalyticsApi = {
   getHeaderSnapshots: async (
     base: string,
     managementKey: string | undefined,
-    params: { days?: number; limit?: number } = {}
+    params: { days?: number; limit?: number } = {},
+    signal?: AbortSignal
   ): Promise<UsageHeaderSnapshotsResponse> => {
     if (__DEMO_SITE__ && isDemoMode()) {
       return getDemoHeaderSnapshots();
@@ -2186,6 +4200,53 @@ export const monitoringAnalyticsApi = {
           timeout: USAGE_SERVICE_TIMEOUT_MS,
           headers: authHeaders(managementKey),
           params,
+          signal,
+        }
+      );
+      return response.data;
+    });
+  },
+  getAccountHistory: async (
+    base: string,
+    managementKey: string | undefined,
+    request: MonitoringAccountHistoryRequest,
+    signal?: AbortSignal
+  ): Promise<MonitoringAccountHistoryResponse> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return getDemoAccountHistory(request);
+    }
+
+    return withUsageServiceError(async () => {
+      const response = await axios.post<MonitoringAccountHistoryResponse>(
+        buildUrl(base, '/v0/management/monitoring/account-history'),
+        request,
+        {
+          timeout: USAGE_SERVICE_TIMEOUT_MS,
+          headers: authHeaders(managementKey),
+          signal,
+        }
+      );
+      return response.data;
+    });
+  },
+  getAccountWindowUsage: async (
+    base: string,
+    managementKey: string | undefined,
+    request: MonitoringAccountWindowUsageRequest,
+    signal?: AbortSignal
+  ): Promise<MonitoringAccountWindowUsageResponse> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return getDemoAccountWindowUsage(request);
+    }
+
+    return withUsageServiceError(async () => {
+      const response = await axios.post<MonitoringAccountWindowUsageResponse>(
+        buildUrl(base, '/v0/management/monitoring/account-window-usage'),
+        request,
+        {
+          timeout: USAGE_SERVICE_TIMEOUT_MS,
+          headers: authHeaders(managementKey),
+          signal,
         }
       );
       return response.data;
@@ -2227,6 +4288,77 @@ export const monitoringAnalyticsApi = {
         request,
         {
           timeout: timeoutMs,
+          headers: authHeaders(managementKey),
+          signal,
+        }
+      );
+      return response.data;
+    });
+  },
+};
+
+export const accountQuotaSnapshotApi = {
+  write: async (
+    base: string,
+    managementKey: string | undefined,
+    entries: AccountQuotaSnapshotWriteEntry[],
+    signal?: AbortSignal
+  ): Promise<AccountQuotaSnapshotWriteResponse> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return {
+        observed_at_ms: Date.now(),
+        items: entries.map((entry) => ({
+          row_key: entry.row_key,
+          account_key: entry.row_key ?? '',
+          provider: entry.provider,
+          inserted_count: entry.windows.length,
+        })),
+      };
+    }
+    return withUsageServiceError(async () => {
+      const response = await axios.post<AccountQuotaSnapshotWriteResponse>(
+        buildUrl(base, '/v0/management/quota-snapshots'),
+        { entries },
+        {
+          timeout: USAGE_SERVICE_TIMEOUT_MS,
+          headers: authHeaders(managementKey),
+          signal,
+        }
+      );
+      return response.data;
+    });
+  },
+  query: async (
+    base: string,
+    managementKey: string | undefined,
+    accounts: AccountQuotaSnapshotQueryAccount[],
+    options: { nowMs?: number; includeInactive?: boolean } = {},
+    signal?: AbortSignal
+  ): Promise<AccountQuotaSnapshotQueryResponse> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      const generatedAtMs = options.nowMs ?? Date.now();
+      return {
+        generated_at_ms: generatedAtMs,
+        items: accounts.map((account) => ({
+          row_key: account.row_key,
+          account_key: account.row_key,
+          provider: account.provider,
+          windows: buildDemoAccountQuotaSnapshotWindows(account, generatedAtMs).filter(
+            (window) => options.includeInactive || window.availability !== 'inactive'
+          ),
+        })),
+      };
+    }
+    return withUsageServiceError(async () => {
+      const response = await axios.post<AccountQuotaSnapshotQueryResponse>(
+        buildUrl(base, '/v0/management/quota-snapshots/query'),
+        {
+          accounts,
+          now_ms: options.nowMs,
+          include_inactive: options.includeInactive,
+        },
+        {
+          timeout: USAGE_SERVICE_TIMEOUT_MS,
           headers: authHeaders(managementKey),
           signal,
         }

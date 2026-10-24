@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net"
 	"strings"
 	"sync"
@@ -12,8 +13,10 @@ import (
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/config"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/httpqueue"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/resp"
+	quotasnapshotsvc "github.com/seakee/cpa-manager-plus/apps/manager-server/internal/service/quotasnapshot"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/store"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/usage"
+	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/usageidentity"
 )
 
 type Status struct {
@@ -53,6 +56,7 @@ type Manager struct {
 	base              config.Config
 	store             *store.Store
 	snapshotResolver  *authSnapshotResolver
+	quotaSnapshots    *quotasnapshotsvc.Service
 	usageEventHandler UsageEventHandler
 	reconnectHandler  func()
 	mu                sync.Mutex
@@ -67,6 +71,7 @@ func NewManager(base config.Config, store *store.Store) *Manager {
 		base:             base,
 		store:            store,
 		snapshotResolver: newAuthSnapshotResolver(),
+		quotaSnapshots:   quotasnapshotsvc.New(store),
 		status: Status{
 			Collector: "stopped",
 			Mode:      collectorMode(base.CollectorMode),
@@ -463,7 +468,11 @@ func (m *Manager) processItems(ctx context.Context, cfg RuntimeConfig, items []s
 		return err
 	}
 	if result.Inserted > 0 {
-		m.handleUsageEvents(ctx, cfg, insertedEvents(events, result.InsertedEventHashes))
+		inserted := insertedEvents(events, result.InsertedEventHashes)
+		if err := m.quotaSnapshots.WriteUsageEvents(ctx, inserted); err != nil {
+			log.Printf("persist usage quota snapshots: %v", err)
+		}
+		m.handleUsageEvents(ctx, cfg, inserted)
 	}
 	if result.Inserted > 0 || result.Skipped > 0 {
 		m.setStatus(func(status *Status) {
@@ -555,8 +564,20 @@ func (m *Manager) enrichAccountSnapshots(ctx context.Context, cfg RuntimeConfig,
 		if !ok {
 			continue
 		}
+		if (isCodexEvent(events[i]) || isCodexSnapshot(snapshot)) && !codexSnapshotCanEnrichEvent(events[i], snapshot) {
+			// An auth-index lookup is only a credential locator. If the raw event
+			// and the current auth-file response provide conflicting strong Codex
+			// identity evidence, do not manufacture a workspace/member pair by
+			// combining fields from the two observations.
+			continue
+		}
 		updated := false
-		if events[i].AccountSnapshot == "" && snapshot.Account != "" {
+		accountSnapshotMissing := events[i].AccountSnapshot == ""
+		if isCodexEvent(events[i]) {
+			_, strongMember := usageidentity.NormalizeCodexMemberSnapshot(events[i].AccountSnapshot)
+			accountSnapshotMissing = !strongMember
+		}
+		if accountSnapshotMissing && snapshot.Account != "" {
 			events[i].AccountSnapshot = snapshot.Account
 			updated = true
 		}
@@ -572,6 +593,10 @@ func (m *Manager) enrichAccountSnapshots(ctx context.Context, cfg RuntimeConfig,
 			events[i].AuthProviderSnapshot = snapshot.Provider
 			updated = true
 		}
+		if events[i].AuthAccountIDSnapshot == "" && snapshot.AccountID != "" {
+			events[i].AuthAccountIDSnapshot = snapshot.AccountID
+			updated = true
+		}
 		if events[i].AuthProjectIDSnapshot == "" && snapshot.ProjectID != "" {
 			events[i].AuthProjectIDSnapshot = snapshot.ProjectID
 			updated = true
@@ -583,8 +608,65 @@ func (m *Manager) enrichAccountSnapshots(ctx context.Context, cfg RuntimeConfig,
 }
 
 func needsAccountSnapshotEnrichment(event usage.Event) bool {
-	return event.AccountSnapshot == "" ||
+	return accountSnapshotNeedsEnrichment(event) ||
+		(isCodexEvent(event) && event.AuthAccountIDSnapshot == "") ||
 		event.AuthProjectIDSnapshot == ""
+}
+
+func isCodexEvent(event usage.Event) bool {
+	provider := strings.TrimSpace(event.AuthProviderSnapshot)
+	if provider == "" {
+		provider = strings.TrimSpace(event.Provider)
+	}
+	return strings.EqualFold(provider, "codex")
+}
+
+func isCodexSnapshot(snapshot authSnapshot) bool {
+	return strings.EqualFold(strings.TrimSpace(snapshot.Provider), "codex")
+}
+
+func accountSnapshotNeedsEnrichment(event usage.Event) bool {
+	if isCodexEvent(event) {
+		_, ok := usageidentity.NormalizeCodexMemberSnapshot(event.AccountSnapshot)
+		return !ok
+	}
+	return event.AccountSnapshot == ""
+}
+
+func codexSnapshotCanEnrichEvent(event usage.Event, snapshot authSnapshot) bool {
+	if snapshot.AccountSnapshotInvalid || snapshot.AccountIDInvalid {
+		return false
+	}
+	eventProvider := strings.TrimSpace(event.AuthProviderSnapshot)
+	if eventProvider == "" {
+		eventProvider = strings.TrimSpace(event.Provider)
+	}
+	snapshotProvider := strings.TrimSpace(snapshot.Provider)
+	if eventProvider != "" && snapshotProvider != "" && !strings.EqualFold(eventProvider, snapshotProvider) {
+		return false
+	}
+	eventMember, eventMemberOK := usageidentity.NormalizeCodexMemberSnapshot(event.AccountSnapshot)
+	snapshotMember, snapshotMemberOK := usageidentity.NormalizeCodexMemberSnapshot(snapshot.Account)
+	if eventMemberOK && snapshotMemberOK && eventMember != snapshotMember {
+		return false
+	}
+
+	eventWorkspace, eventWorkspaceOK := usageidentity.NormalizeCodexWorkspaceSnapshot(event.AuthAccountIDSnapshot)
+	snapshotWorkspace, snapshotWorkspaceOK := usageidentity.NormalizeCodexWorkspaceSnapshot(snapshot.AccountID)
+	if eventWorkspaceOK && snapshotWorkspaceOK && eventWorkspace != snapshotWorkspace {
+		return false
+	}
+	// An auth-index lookup may fill missing fields only when the two observations
+	// retain enough evidence to prove that they describe the same member. Do not
+	// combine a strong member from one side with a workspace-only observation from
+	// the other side: that would manufacture e.g. workspace-B + member-A.
+	if eventMemberOK && snapshotWorkspaceOK && !snapshotMemberOK && !eventWorkspaceOK {
+		return false
+	}
+	if snapshotMemberOK && eventWorkspaceOK && !eventMemberOK && !snapshotWorkspaceOK {
+		return false
+	}
+	return true
 }
 
 func (m *Manager) markError(stage string, err error) {

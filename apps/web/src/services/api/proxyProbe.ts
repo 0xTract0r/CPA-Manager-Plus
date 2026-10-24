@@ -11,7 +11,7 @@
  * 基址已含 `/v0/management` 前缀（client.ts 请求拦截器 baseURL=computeApiUrl(apiBase)），
  * 且自动附带 `Authorization: Bearer ${managementKey}`，所以这里只传相对路径即可。
  */
-import { apiClient } from './client';
+import { apiClient, createScopedApiRequestConfig, type ApiClientRequestScope } from './client';
 
 /** 后端返回的 reason 全集（前端归一使用）。 */
 export type ProxyProbeReason =
@@ -84,12 +84,20 @@ const isValidExitIpShape = (value: string): boolean => {
  * - 网络异常 / 非 200 抛错：兜底成 `{ ok:false, exitIp:'', reason:'probe_failed' }`，
  *   让上层预检始终能拿到确定性结果（不放行、给出可读错误）。
  */
-export async function probeProxyConnectivity(proxyUrl: string): Promise<ProxyProbeResult> {
+export async function probeProxyConnectivity(
+  proxyUrl: string,
+  requestScope?: ApiClientRequestScope
+): Promise<ProxyProbeResult> {
   try {
-    const resp = await apiClient.post<RawProxyProbeResponse>(
-      '/diagnostics/proxy-connectivity-probe',
-      { proxy_url: proxyUrl }
-    );
+    const resp = requestScope
+      ? await apiClient.post<RawProxyProbeResponse>(
+          '/diagnostics/proxy-connectivity-probe',
+          { proxy_url: proxyUrl },
+          createScopedApiRequestConfig(requestScope)
+        )
+      : await apiClient.post<RawProxyProbeResponse>('/diagnostics/proxy-connectivity-probe', {
+          proxy_url: proxyUrl,
+        });
     const exitIp = typeof resp?.exit_ip === 'string' ? resp.exit_ip : '';
     // exit_ip 形状防御：后端契约里 exit_ip 仅在 ok:true 时非空。若回显了非 IPv4/IPv6 形状
     // （或超长）的 exit_ip，视为无效探测，fail-closed 收敛到 probe_failed 并清空 exitIp，

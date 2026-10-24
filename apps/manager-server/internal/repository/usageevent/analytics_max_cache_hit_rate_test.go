@@ -35,33 +35,33 @@ func TestAnalyticsWhereMaxCacheHitRateProviderAwareDenominator(t *testing.T) {
 	events := []usage.Event{
 		// Anthropic 系, 低命中率: denom = 100 + 0 + 0 = 100, hit = 0 (无 cache_read, 无 cached_tokens 回退) -> rate = 0
 		{
-			EventHash: "claude-low", TimestampMS: ts(1), Timestamp: base.Format(time.RFC3339Nano),
+			EventHash: "cffcacb1c96cabfa88a0d5622a57d41734d1136e338a8ce2253406c98de9dd0a", TimestampMS: ts(1), Timestamp: base.Format(time.RFC3339Nano),
 			Model: "claude-3-5-sonnet", InputTokens: 100, OutputTokens: 5, TotalTokens: 105, CreatedAtMS: ts(1),
 		},
 		// Anthropic 系(provider/model 形式), 高命中率: denom = 100+400+0 = 500, hit = 400 -> rate = 0.8
 		{
-			EventHash: "claude-high", TimestampMS: ts(2), Timestamp: base.Format(time.RFC3339Nano),
+			EventHash: "c84e85fa5ba7485295af4638603297ef673abf27aeba6f9fd96f6e0e8960576e", TimestampMS: ts(2), Timestamp: base.Format(time.RFC3339Nano),
 			Model: "anthropic/claude-3-opus", InputTokens: 100, OutputTokens: 5, CacheReadTokens: 400, TotalTokens: 505, CreatedAtMS: ts(2),
 		},
 		// 非 Anthropic 系, 低命中率: denom = max(100,10)+0 = 100, hit = 10 -> rate = 0.1
 		{
-			EventHash: "gpt-low", TimestampMS: ts(3), Timestamp: base.Format(time.RFC3339Nano),
+			EventHash: "f3afe01d5318a92be630626d68eccaf1bf8c6dda115a32352d01992d9a6a9c46", TimestampMS: ts(3), Timestamp: base.Format(time.RFC3339Nano),
 			Model: "gpt-5.6-sol", InputTokens: 100, OutputTokens: 5, CacheReadTokens: 10, TotalTokens: 115, CreatedAtMS: ts(3),
 		},
 		// 非 Anthropic 系, 高命中率: denom = max(100,90)+0 = 100, hit = 90 -> rate = 0.9
 		{
-			EventHash: "gpt-high", TimestampMS: ts(4), Timestamp: base.Format(time.RFC3339Nano),
+			EventHash: "46ab243d0e4805773ab9800b4a4a305e395a46427a65783d43a298e7b9db27b4", TimestampMS: ts(4), Timestamp: base.Format(time.RFC3339Nano),
 			Model: "gpt-5.6-sol", InputTokens: 100, OutputTokens: 5, CacheReadTokens: 90, TotalTokens: 195, CreatedAtMS: ts(4),
 		},
 		// 分母为 0: input=0, 无 cache_read/cache_creation, 无命中 tokens -> 命中率不可计算, 必须排除
 		{
-			EventHash: "zero-denom", TimestampMS: ts(5), Timestamp: base.Format(time.RFC3339Nano),
+			EventHash: "017619bac2830f4390f9cd06f0f7726b7ce08444c3260064cd385e987697a330", TimestampMS: ts(5), Timestamp: base.Format(time.RFC3339Nano),
 			Model: "gpt-5.6-sol", InputTokens: 0, OutputTokens: 0, TotalTokens: 0, CreatedAtMS: ts(5),
 		},
 		// 边界: 非 Anthropic 系, 命中率恰好等于阈值 0.5 (denom=max(100,50)+0=100, hit=50 -> rate=0.5),
 		// 阈值判定是严格小于, 恰好相等不应入选。
 		{
-			EventHash: "boundary-equal", TimestampMS: ts(6), Timestamp: base.Format(time.RFC3339Nano),
+			EventHash: "58412670307f0cb8c8139315b7466a1bb60d8f62aa90633d3d9b3d5515c27218", TimestampMS: ts(6), Timestamp: base.Format(time.RFC3339Nano),
 			Model: "gpt-5.6-sol", InputTokens: 100, OutputTokens: 5, CacheReadTokens: 50, TotalTokens: 155, CreatedAtMS: ts(6),
 		},
 	}
@@ -95,16 +95,16 @@ func TestAnalyticsWhereMaxCacheHitRateProviderAwareDenominator(t *testing.T) {
 	for _, item := range page.Items {
 		gotHashes = append(gotHashes, item.EventHash)
 	}
-	if !slices.Contains(gotHashes, "claude-low") || !slices.Contains(gotHashes, "gpt-low") {
+	if !slices.Contains(gotHashes, "cffcacb1c96cabfa88a0d5622a57d41734d1136e338a8ce2253406c98de9dd0a") || !slices.Contains(gotHashes, "f3afe01d5318a92be630626d68eccaf1bf8c6dda115a32352d01992d9a6a9c46") {
 		t.Fatalf("expected low cache hit rate events for both providers, got %#v", gotHashes)
 	}
-	if slices.Contains(gotHashes, "zero-denom") {
+	if slices.Contains(gotHashes, "017619bac2830f4390f9cd06f0f7726b7ce08444c3260064cd385e987697a330") {
 		t.Fatalf("zero-denominator event must be excluded, got %#v", gotHashes)
 	}
-	if slices.Contains(gotHashes, "boundary-equal") {
+	if slices.Contains(gotHashes, "58412670307f0cb8c8139315b7466a1bb60d8f62aa90633d3d9b3d5515c27218") {
 		t.Fatalf("event with rate exactly at threshold must be excluded (strict less-than), got %#v", gotHashes)
 	}
-	if slices.Contains(gotHashes, "claude-high") || slices.Contains(gotHashes, "gpt-high") {
+	if slices.Contains(gotHashes, "c84e85fa5ba7485295af4638603297ef673abf27aeba6f9fd96f6e0e8960576e") || slices.Contains(gotHashes, "46ab243d0e4805773ab9800b4a4a305e395a46427a65783d43a298e7b9db27b4") {
 		t.Fatalf("high cache hit rate events must be excluded, got %#v", gotHashes)
 	}
 }
@@ -121,8 +121,8 @@ func TestAnalyticsWhereMaxCacheHitRateNilMeansUnfiltered(t *testing.T) {
 	repo := New(db)
 	base := time.Date(2026, time.February, 2, 9, 0, 0, 0, time.UTC)
 	events := []usage.Event{
-		{EventHash: "a", TimestampMS: base.UnixMilli(), Timestamp: base.Format(time.RFC3339Nano), Model: "gpt-5.6-sol", InputTokens: 100, TotalTokens: 100, CreatedAtMS: base.UnixMilli()},
-		{EventHash: "b", TimestampMS: base.Add(time.Second).UnixMilli(), Timestamp: base.Format(time.RFC3339Nano), Model: "claude-3-5-sonnet", InputTokens: 0, TotalTokens: 0, CreatedAtMS: base.Add(time.Second).UnixMilli()},
+		{EventHash: "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb", TimestampMS: base.UnixMilli(), Timestamp: base.Format(time.RFC3339Nano), Model: "gpt-5.6-sol", InputTokens: 100, TotalTokens: 100, CreatedAtMS: base.UnixMilli()},
+		{EventHash: "3e23e8160039594a33894f6564e1b1348bbd7a0088d42c4acb73eeaed59c009d", TimestampMS: base.Add(time.Second).UnixMilli(), Timestamp: base.Format(time.RFC3339Nano), Model: "claude-3-5-sonnet", InputTokens: 0, TotalTokens: 0, CreatedAtMS: base.Add(time.Second).UnixMilli()},
 	}
 	if _, err := repo.InsertBatch(context.Background(), events); err != nil {
 		t.Fatalf("insert events: %v", err)

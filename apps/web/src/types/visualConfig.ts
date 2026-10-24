@@ -130,6 +130,7 @@ export type VisualConfigValues = {
   commercialMode: boolean;
   usageStatisticsEnabled: boolean;
   loggingToFile: boolean;
+  requestLog: boolean;
   logsMaxTotalSizeMb: string;
   errorLogsMaxFiles: string;
   redisUsageQueueRetentionSeconds: string;
@@ -153,7 +154,7 @@ export type VisualConfigValues = {
   quotaSwitchPreviewModel: boolean;
   quotaAntigravityCredits: boolean;
   quotaSnapshotRefresh: QuotaSnapshotRefreshConfig;
-  routingStrategy: 'round-robin' | 'fill-first';
+  routingStrategy: 'round-robin' | 'weighted-round-robin' | 'fill-first';
   routingSessionAffinity: boolean;
   routingSessionAffinityTTL: string;
   wsAuth: boolean;
@@ -171,6 +172,8 @@ export type VisualConfigValues = {
   codexHeaderUserAgent: string;
   codexHeaderBetaFeatures: string;
   codexIdentityConfuse: boolean;
+  codexIdentityConfuseSupported: boolean;
+  devinSensitiveWords: string[];
   payloadDefaultRules: PayloadRule[];
   payloadDefaultRawRules: PayloadRule[];
   payloadOverrideRules: PayloadRule[];
@@ -209,6 +212,7 @@ export const DEFAULT_VISUAL_VALUES: VisualConfigValues = {
   commercialMode: false,
   usageStatisticsEnabled: false,
   loggingToFile: false,
+  requestLog: false,
   logsMaxTotalSizeMb: '',
   errorLogsMaxFiles: '',
   redisUsageQueueRetentionSeconds: '',
@@ -254,6 +258,8 @@ export const DEFAULT_VISUAL_VALUES: VisualConfigValues = {
   codexHeaderUserAgent: '',
   codexHeaderBetaFeatures: '',
   codexIdentityConfuse: false,
+  codexIdentityConfuseSupported: false,
+  devinSensitiveWords: [],
   payloadDefaultRules: [],
   payloadDefaultRawRules: [],
   payloadOverrideRules: [],

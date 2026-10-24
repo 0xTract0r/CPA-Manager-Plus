@@ -60,7 +60,7 @@ func newFarmHandler(t *testing.T, orchestratorURL string, farmKey string) *Handl
 	st := testutil.NewStore(t, testutil.NewConfig(t))
 	return &Handler{App: &app.Context{
 		AdminAuthService: adminauthsvc.New(config.Config{}, st),
-		ProxyService:     proxysvc.New(nil, orchestratorURL, farmKey),
+		ProxyService:     proxysvc.New(nil).WithFarm(orchestratorURL, farmKey),
 	}}
 }
 

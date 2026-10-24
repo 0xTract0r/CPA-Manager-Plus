@@ -32,10 +32,10 @@ func TestPerformanceFullScopeTelemetryAndRequestFilter(t *testing.T) {
 	c.FailStatusCode = 429
 	c.RequestID = "req-2"
 	split := a
-	split.EventHash = "perf-split"
+	split.EventHash = "dd9429d975cf0ab6b99dea0b795af41c77dedb499ce5a9a798d3750b64a651dc"
 	split.Model = "model-split"
 	outside := a
-	outside.EventHash = "perf-outside"
+	outside.EventHash = "817cfc5e163fdc536230a79105378ccb06175e64cf48526cfa88045e86603058"
 	outside.TimestampMS = from + 10000
 	if _, err := db.InsertEvents(ctx, []usage.Event{a, b, c, split, outside}); err != nil {
 		t.Fatal(err)
@@ -111,7 +111,7 @@ func TestPerformanceFirstResponseFromImportedTelemetry(t *testing.T) {
 	a := monitoringEvent("import-first-body", from+1, "model", "account", "source", false, 10, 100, 0, 0, 110, &latency)
 	a.Telemetry = &usage.Telemetry{Version: 1, AttemptID: "import-first-body", FirstBodyMS: &firstBody}
 	b := a
-	b.EventHash = "legacy-first-body"
+	b.EventHash = testCanonicalHash("legacy-first-body")
 	b.Telemetry = &usage.Telemetry{Version: 1, AttemptID: "legacy-first-body", FirstBodyMS: &firstBody}
 	b.TTFTMS = &legacy
 	if _, err := db.InsertEvents(ctx, []usage.Event{a, b}); err != nil {

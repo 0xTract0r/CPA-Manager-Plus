@@ -184,7 +184,7 @@ export interface GeminiCliQuotaBucketState {
   modelIds?: string[];
 }
 
-export interface GeminiCliQuotaState {
+export interface GeminiCliQuotaState extends CredentialScopedQuotaState {
   status: 'idle' | 'loading' | 'success' | 'error';
   buckets: GeminiCliQuotaBucketState[];
   tierLabel?: string | null;
@@ -192,6 +192,22 @@ export interface GeminiCliQuotaState {
   creditBalance?: number | null;
   error?: string;
   errorStatus?: number;
+}
+
+export type QuotaResetAccuracy = 'exact' | 'estimated' | 'unknown';
+export type QuotaWindowMode = 'fixed' | 'calendar' | 'rolling' | 'non_window' | 'unknown';
+export type QuotaObservationSource =
+  | 'api_query'
+  | 'response_header'
+  | 'response_body'
+  | 'inspection';
+export type QuotaModelScopeKind = 'all' | 'family' | 'models' | 'product' | 'feature';
+
+export interface QuotaModelScope {
+  kind: QuotaModelScopeKind;
+  key?: string;
+  models?: string[];
+  complete?: boolean;
 }
 
 export interface CodexUsageWindow {
@@ -237,10 +253,38 @@ export interface CodexCreditsInfo {
   approxCloudMessages?: number | string | null;
 }
 
+export interface CodexSpendControlLimitInfo {
+  source?: string | null;
+  unit?: string | null;
+  limit?: number | string | null;
+  used?: number | string | null;
+  remaining?: number | string | null;
+  used_percent?: number | string | null;
+  usedPercent?: number | string | null;
+  remaining_percent?: number | string | null;
+  remainingPercent?: number | string | null;
+  reset_after_seconds?: number | string | null;
+  resetAfterSeconds?: number | string | null;
+  reset_at?: number | string | null;
+  resetAt?: number | string | null;
+}
+
 export interface CodexSpendControlInfo {
   reached?: boolean;
-  individual_limit?: number | string | null;
-  individualLimit?: number | string | null;
+  individual_limit?: CodexSpendControlLimitInfo | number | string | null;
+  individualLimit?: CodexSpendControlLimitInfo | number | string | null;
+}
+
+export interface CodexSpendControlLimit {
+  source: string | null;
+  unit: string | null;
+  limit: string | null;
+  used: string | null;
+  remaining: string | null;
+  usedPercent: number | null;
+  remainingPercent: number | null;
+  resetAfterSeconds: number | null;
+  resetAtMs: number | null;
 }
 
 export interface CodexRateLimitResetCreditsInfo {
@@ -258,6 +302,7 @@ export interface CodexRateLimitResetCredit {
 export interface CodexResetCreditsSummary {
   availableCount: number | null;
   credits: CodexRateLimitResetCredit[];
+  creditsObserved: boolean;
   invalidPayload: boolean;
 }
 
@@ -302,6 +347,20 @@ export interface ClaudeExtraUsage {
   utilization: number | null;
 }
 
+export interface ClaudeUsageLimit {
+  kind?: unknown;
+  group?: unknown;
+  percent?: unknown;
+  utilization?: unknown;
+  resets_at?: unknown;
+  resetsAt?: unknown;
+  reset_at?: unknown;
+  resetAt?: unknown;
+  scope?: unknown;
+  is_active?: unknown;
+  isActive?: unknown;
+}
+
 export interface ClaudeUsagePayload {
   five_hour?: ClaudeUsageWindow | null;
   seven_day?: ClaudeUsageWindow | null;
@@ -310,6 +369,7 @@ export interface ClaudeUsagePayload {
   seven_day_sonnet?: ClaudeUsageWindow | null;
   seven_day_cowork?: ClaudeUsageWindow | null;
   iguana_necktie?: ClaudeUsageWindow | null;
+  limits?: ClaudeUsageLimit[] | null;
   extra_usage?: ClaudeExtraUsage | null;
 }
 
@@ -341,11 +401,25 @@ export interface ClaudeQuotaWindow {
   labelKey?: string;
   usedPercent: number | null;
   resetLabel: string;
+  resetAtMs?: number | null;
+  resetAccuracy?: QuotaResetAccuracy;
+  limitWindowSeconds?: number | null;
+  modelScope?: QuotaModelScope;
 }
 
-export interface ClaudeQuotaState {
+export interface CredentialScopedQuotaState {
+  authFileKey?: string;
+  authFileName?: string;
+  authIndex?: string | null;
+  authFileIdentityVerified?: boolean;
+  fetchedAtMs?: number;
+  failedAtMs?: number;
+}
+
+export interface ClaudeQuotaState extends CredentialScopedQuotaState {
   status: 'idle' | 'loading' | 'success' | 'error';
   windows: ClaudeQuotaWindow[];
+  quotaInventoryObserved?: boolean;
   extraUsage?: ClaudeExtraUsage | null;
   planType?: string | null;
   source?: 'core_snapshot' | 'direct';
@@ -379,9 +453,10 @@ export interface AntigravityQuotaBucket {
   description?: string;
 }
 
-export interface AntigravityQuotaState {
+export interface AntigravityQuotaState extends CredentialScopedQuotaState {
   status: 'idle' | 'loading' | 'success' | 'error';
   groups: AntigravityQuotaGroup[];
+  quotaInventoryObserved?: boolean;
   subscription?: AntigravityQuotaSubscription | null;
   serverTimeOffsetMs?: number | null;
   error?: string;
@@ -395,31 +470,45 @@ export interface CodexQuotaWindow {
   labelParams?: Record<string, string | number>;
   usedPercent: number | null;
   resetLabel: string;
+  resetAtMs?: number | null;
+  resetAccuracy?: QuotaResetAccuracy;
   limitWindowSeconds?: number | null;
+  observationSource?: QuotaObservationSource;
+  observedAtMs?: number | null;
+  quotaProgressObservedAtMs?: number | null;
+  modelScope?: QuotaModelScope;
+  providerWindowAliases?: string[];
 }
 
-export interface CodexQuotaState {
+export interface CodexQuotaState extends CredentialScopedQuotaState {
   status: 'idle' | 'loading' | 'success' | 'error';
   windows: CodexQuotaWindow[];
+  quotaInventoryObserved?: boolean;
   planType?: string | null;
   activeLimit?: string | null;
   creditsHasCredits?: boolean | null;
   creditsUnlimited?: boolean | null;
   creditsBalance?: string | null;
+  creditsOverageLimitReached?: boolean | null;
+  creditsApproxLocalMessages?: number | null;
+  creditsApproxCloudMessages?: number | null;
+  spendControlReached?: boolean | null;
+  spendControlIndividualLimit?: CodexSpendControlLimit | null;
   rateLimitReachedType?: string | null;
   primaryOverSecondaryLimitPercent?: number | null;
-  subscriptionActiveUntil?: string | null;
+  subscriptionActiveUntil?: string | number | null;
   rateLimitResetCreditsAvailableCount?: number | null;
   rateLimitResetCredits?: CodexRateLimitResetCredit[];
   rateLimitResetCreditsError?: string | null;
-  authFileKey?: string;
-  authFileName?: string;
-  authIndex?: string | null;
-  fetchedAtMs?: number;
-  failedAtMs?: number;
+  resetCreditsCountSource?: 'summary' | 'dedicated';
+  resetCreditsEvidenceAtMs?: number | null;
+  resetCreditsCountEvidenceAtMs?: number | null;
+  resetCreditsDetailEvidenceAtMs?: number | null;
+  resetCreditsDetailStale?: boolean;
   error?: string;
   errorStatus?: number;
   observedFromUsageHeaders?: boolean;
+  observedModelScope?: QuotaModelScope;
   observedResetCreditsUnknown?: boolean;
   observedAtMs?: number;
   observedTraceId?: string;
@@ -429,22 +518,22 @@ export interface CodexQuotaState {
 
 // Kimi API payload types
 export interface KimiUsageDetail {
-  used?: number;
-  limit?: number;
-  remaining?: number;
+  used?: number | string;
+  limit?: number | string;
+  remaining?: number | string;
   name?: string;
   title?: string;
-  resetAt?: string;
-  reset_at?: string;
-  resetTime?: string;
-  reset_time?: string;
-  resetIn?: number;
-  reset_in?: number;
-  ttl?: number;
+  resetAt?: string | number;
+  reset_at?: string | number;
+  resetTime?: string | number;
+  reset_time?: string | number;
+  resetIn?: number | string;
+  reset_in?: number | string;
+  ttl?: number | string;
 }
 
 export interface KimiLimitWindow {
-  duration?: number;
+  duration?: number | string;
   timeUnit?: string;
 }
 
@@ -454,21 +543,30 @@ export interface KimiLimitItem {
   scope?: string;
   detail?: KimiUsageDetail;
   window?: KimiLimitWindow;
-  used?: number;
-  limit?: number;
-  remaining?: number;
-  duration?: number;
+  used?: number | string;
+  limit?: number | string;
+  remaining?: number | string;
+  duration?: number | string;
   timeUnit?: string;
-  resetAt?: string;
-  reset_at?: string;
-  resetIn?: number;
-  reset_in?: number;
-  ttl?: number;
+  resetAt?: string | number;
+  reset_at?: string | number;
+  resetTime?: string | number;
+  reset_time?: string | number;
+  resetIn?: number | string;
+  reset_in?: number | string;
+  ttl?: number | string;
+}
+
+export interface KimiUsageEntry {
+  scope?: string;
+  detail?: KimiUsageDetail;
+  limits?: KimiLimitItem[];
 }
 
 export interface KimiUsagePayload {
   usage?: KimiUsageDetail;
   limits?: KimiLimitItem[];
+  usages?: KimiUsageEntry[];
 }
 
 export interface KimiQuotaRow {
@@ -479,20 +577,27 @@ export interface KimiQuotaRow {
   used: number;
   limit: number;
   resetHint?: string;
+  resetAtMs?: number | null;
+  resetAccuracy?: QuotaResetAccuracy;
+  scope?: string;
+  limitWindowSeconds?: number | null;
 }
 
-export interface KimiQuotaState {
+export interface KimiQuotaState extends CredentialScopedQuotaState {
   status: 'idle' | 'loading' | 'success' | 'error';
   rows: KimiQuotaRow[];
+  quotaInventoryObserved?: boolean;
   error?: string;
   errorStatus?: number;
 }
 
 // xAI/Grok API payload types
-export interface XaiBillingCent {
+export interface XaiBillingCent extends Record<string, unknown> {
   val?: number | string;
+  value?: number | string;
 }
 
+export type XaiBillingPeriodType = 'weekly' | 'monthly' | 'unknown';
 export interface XaiBillingPeriod {
   type?: string;
   start?: string;
@@ -505,13 +610,36 @@ export interface XaiBillingProductUsage {
   usage_percent?: number | string | null;
 }
 
+export type XaiProductUsage = XaiBillingProductUsage;
+
+export interface XaiProductUsageSummary {
+  product: string;
+  usagePercent: number | null;
+}
+
+export interface XaiBillingCycle {
+  billingPeriodStart?: string;
+  billing_period_start?: string;
+  billingPeriodEnd?: string;
+  billing_period_end?: string;
+}
+
+export interface XaiBillingUsage {
+  includedUsed?: XaiBillingCent | number | string | null;
+  included_used?: XaiBillingCent | number | string | null;
+  onDemandUsed?: XaiBillingCent | number | string | null;
+  on_demand_used?: XaiBillingCent | number | string | null;
+  totalUsed?: XaiBillingCent | number | string | null;
+  total_used?: XaiBillingCent | number | string | null;
+}
+
 export interface XaiBillingConfig {
   currentPeriod?: XaiBillingPeriod | null;
   current_period?: XaiBillingPeriod | null;
   creditUsagePercent?: number | string | null;
   credit_usage_percent?: number | string | null;
-  productUsage?: XaiBillingProductUsage[] | null;
-  product_usage?: XaiBillingProductUsage[] | null;
+  productUsage?: XaiProductUsage[] | null;
+  product_usage?: XaiProductUsage[] | null;
   monthlyLimit?: XaiBillingCent | number | string | null;
   monthly_limit?: XaiBillingCent | number | string | null;
   used?: XaiBillingCent | number | string | null;
@@ -523,17 +651,57 @@ export interface XaiBillingConfig {
   billing_period_start?: string;
   billingPeriodEnd?: string;
   billing_period_end?: string;
+  billingCycle?: XaiBillingCycle | null;
+  billing_cycle?: XaiBillingCycle | null;
+  usage?: XaiBillingUsage | null;
 }
 
 export interface XaiBillingPayload {
   config?: XaiBillingConfig | null;
+  currentPeriod?: XaiBillingPeriod | null;
+  current_period?: XaiBillingPeriod | null;
+  creditUsagePercent?: number | string | null;
+  credit_usage_percent?: number | string | null;
+  productUsage?: XaiProductUsage[] | null;
+  product_usage?: XaiProductUsage[] | null;
+  monthlyLimit?: XaiBillingCent | number | string | null;
+  monthly_limit?: XaiBillingCent | number | string | null;
+  used?: XaiBillingCent | number | string | null;
+  onDemandCap?: XaiBillingCent | number | string | null;
+  on_demand_cap?: XaiBillingCent | number | string | null;
+  onDemandUsed?: XaiBillingCent | number | string | null;
+  on_demand_used?: XaiBillingCent | number | string | null;
+  billingPeriodStart?: string;
+  billing_period_start?: string;
+  billingPeriodEnd?: string;
+  billing_period_end?: string;
+  billingCycle?: XaiBillingCycle | null;
+  billing_cycle?: XaiBillingCycle | null;
+  usage?: XaiBillingUsage | null;
 }
-
-export type XaiBillingPeriodType = 'weekly' | 'monthly' | 'unknown';
 
 export interface XaiProductUsageSummary {
   product: string;
   usagePercent: number | null;
+}
+
+export interface XaiBillingDiagnostic {
+  classification: string;
+  statusCode: number | null;
+  message: string;
+}
+
+export interface XaiOfficialApiHealth {
+  source: 'api.x.ai/v1/me';
+  userId: string | null;
+  teamId: string | null;
+  teamBlocked: boolean | null;
+}
+
+export interface XaiSubscriptionInfo {
+  planType: string | null;
+  source: 'user' | 'settings';
+  observedAtMs: number;
 }
 
 export interface XaiBillingSummary {
@@ -551,11 +719,67 @@ export interface XaiBillingSummary {
   billingPeriodStart?: string;
   billingPeriodEnd?: string;
   usedPercent: number | null;
+  officialApiHealth?: XaiOfficialApiHealth;
+  partial?: boolean;
+  diagnostics?: XaiBillingDiagnostic[];
+  rateLimited?: boolean;
+  subscription?: XaiSubscriptionInfo;
+  /** A prior subscription observation was discarded; file metadata cannot replace it. */
+  subscriptionSuperseded?: boolean;
 }
 
-export interface XaiQuotaState {
+export interface XaiQuotaState extends CredentialScopedQuotaState {
   status: 'idle' | 'loading' | 'success' | 'error';
   billing: XaiBillingSummary | null;
+  error?: string;
+  errorStatus?: number;
+}
+
+export interface DevinQuotaWindow {
+  id: 'daily' | 'weekly';
+  label?: string;
+  remainingPercent: number | null;
+  resetAtMs: number | null;
+  periodHours: number;
+}
+
+export interface DevinQuotaData {
+  windows: DevinQuotaWindow[];
+  observedAtMs: number | null;
+  plan: string | null;
+  planStartMs: number | null;
+  planEndMs: number | null;
+}
+
+export interface DevinQuotaState
+  extends CredentialScopedQuotaState,
+    DevinQuotaData {
+  status: 'idle' | 'loading' | 'success' | 'error';
+  error?: string;
+  errorStatus?: number;
+}
+
+export interface MetaQuotaWindow {
+  id: 'window' | 'weekly';
+  usedPercent: number | null;
+  resetAtMs: number | null;
+  resetAccuracy: QuotaResetAccuracy;
+  limitWindowSeconds: number | null;
+  quotaProgressObservedAtMs: number | null;
+}
+
+export interface MetaQuotaData {
+  windows: MetaQuotaWindow[];
+  observedAtMs: number;
+  plan: string | null;
+  isSubscriptionActive: boolean | null;
+  quotaInventoryObserved: boolean;
+}
+
+export interface MetaQuotaState
+  extends CredentialScopedQuotaState,
+    MetaQuotaData {
+  status: 'idle' | 'loading' | 'success' | 'error';
   error?: string;
   errorStatus?: number;
 }

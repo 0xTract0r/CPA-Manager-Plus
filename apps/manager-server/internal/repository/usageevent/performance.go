@@ -134,7 +134,7 @@ func (a *performanceAccumulator) finish(from, to int64) PerformanceGroup {
 func (r *repository) PerformanceWithFilter(ctx context.Context, filter AnalyticsFilter, granularity string, location *time.Location, cost func(PerformanceEvent) float64) (Performance, error) {
 	result := Performance{Models: []PerformanceGroup{}, Accounts: []PerformanceGroup{}, Timeline: []PerformanceGroup{}, WindowFromMS: filter.FromMS, WindowToMS: filter.ToMS, CoverageNote: "latency/ttfb eligible=all matching usage events; total_tps eligible=successful matching events. Samples require positive values. Calls are usage events, not logical requests. Attempt/retry counts require telemetry IDs and cover this filtered window only. Concurrency is inferred from completed event intervals, deduplicated by attempt when available; not realtime. Attempts may contain internal retries and counts are observed lower bounds. Timeline throughput uses each clipped bucket duration."}
 	where, args := analyticsWhere(filter)
-	rows, err := r.db.QueryContext(ctx, `select id,timestamp_ms,model,coalesce(resolved_model,''),coalesce(service_tier,''),coalesce(nullif(auth_provider_snapshot,''),provider,''),coalesce(nullif(auth_index,''),nullif(auth_file_snapshot,''),nullif(source_hash,''),'unknown'),input_tokens,output_tokens,total_tokens,`+compatCachedExpr+`,cache_read_tokens,cache_creation_tokens,latency_ms,ttft_ms,failed,coalesce(fail_status_code,0),coalesce(telemetry_json,'') from usage_events `+where, args...)
+	rows, err := r.db.QueryContext(ctx, `select id,timestamp_ms,model,coalesce(resolved_model,''),coalesce(service_tier,''),coalesce(nullif(auth_provider_snapshot,''),provider,''),coalesce(nullif(auth_index,''),nullif(auth_file_snapshot,''),nullif(source_hash,''),'unknown'),`+normalizedInputExpr+`,output_tokens,total_tokens,`+compatCachedExpr+`,coalesce(normalized_cache_read_tokens,cache_read_tokens),coalesce(normalized_cache_creation_tokens,cache_creation_tokens),latency_ms,ttft_ms,failed,coalesce(fail_status_code,0),coalesce(telemetry_json,'') from usage_events `+where, args...)
 	if err != nil {
 		return result, err
 	}
@@ -165,7 +165,7 @@ func (r *repository) PerformanceWithFilter(ctx context.Context, filter Analytics
 			accounts[key].AccountKey = account
 			accounts[key].Provider = provider
 		}
-		bucket := resolveBucketMS(ts, granularity, location)
+		bucket := usage.AnalyticsBucketMS(ts, granularity, location)
 		if timeline[bucket] == nil {
 			timeline[bucket] = newPerformanceAccumulator()
 			timeline[bucket].BucketMS = bucket

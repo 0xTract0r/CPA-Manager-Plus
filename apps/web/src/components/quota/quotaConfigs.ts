@@ -1,45 +1,108 @@
-/**
- * Quota configuration definitions.
- */
-
-import React from 'react';
-import type { ReactNode } from 'react';
+import i18n from '@/i18n';
 import type { TFunction } from 'i18next';
+
 import type {
   AntigravityQuotaState,
-  AntigravityQuotaSubscription,
   AuthFileItem,
-  ClaudeExtraUsage,
   ClaudeQuotaState,
-  ClaudeQuotaWindow,
   CodexQuotaState,
-  CodexRateLimitResetCredit,
   CodexQuotaWindow,
+  CodexRateLimitResetCredit,
+  CredentialScopedQuotaState,
+  DevinQuotaData,
+  DevinQuotaState,
+  KimiQuotaState,
+  MetaQuotaData,
+  MetaQuotaState,
+  XaiBillingSummary,
+  XaiQuotaState,
+} from '@/types';
+
+import type { UsageHeaderSnapshot } from '@/services/api/usageService';
+
+import type { AuthFilesApiRequestScope } from '@/services/api/authFiles';
+
+import { createScopedApiRequestConfig } from '@/services/api/client';
+
+import { fetchXaiSubscription } from '@/utils/quota/xaiSubscription';
+
+import type {
+  AntigravityQuotaData,
+  ClaudeQuotaData,
+  CodexQuotaData,
+  KimiQuotaData,
+  QuotaFetchContext,
+} from '@/utils/quota';
+
+import {
+  buildCodexQuotaWindows,
+  fetchAntigravityQuota,
+  fetchClaudeQuota,
+  fetchCodexQuota,
+  fetchCodexQuotaSummary,
+  fetchDevinQuota,
+  fetchKimiQuota,
+  fetchMetaQuota,
+  fetchXaiQuota,
+  filterFreshCodexQuotaWindows,
+  findCodexProviderWindowMatch,
+  isCodexMainQuotaWindow,
+  isCodexMainQuotaModelScope,
+  isValidQuotaResetAtMs,
+  resolveCodexUsageQuotaScope,
+  resolveCodexPlanType,
+  shouldClearInheritedCodexQuotaProgress,
+  mergeCodexResetCreditsEvidence,
+} from '@/utils/quota';
+
+import {
+  buildObservedCodexQuotaFromHeaderSnapshot,
+  getHeaderSnapshotErrorCode,
+  getHeaderSnapshotErrorKind,
+  getHeaderSnapshotPlanType,
+  getHeaderSnapshotRecoverAtMs,
+  getHeaderSnapshotTraceId,
+  getHeaderSnapshotUsedPercent,
+  hasUsageHeaderQuotaSignal,
+} from '@/utils/usageHeaderSnapshots';
+
+import {
+  buildQuotaCredentialIdentity,
+  getQuotaCredentialStoreKey,
+  scopeQuotaStateToCredential,
+} from '@/utils/quota/credentialScope';
+
+import React from 'react';
+
+import type { ReactNode } from 'react';
+
+import type {
+  AntigravityQuotaSubscription,
   GeminiCliCodeAssistPayload,
   GeminiCliCredits,
   GeminiCliParsedBucket,
   GeminiCliQuotaBucketState,
   GeminiCliQuotaState,
   GeminiCliUserTier,
-  KimiQuotaRow,
-  KimiQuotaState,
-  XaiBillingSummary,
-  XaiQuotaState,
 } from '@/types';
-import type { UsageHeaderSnapshot } from '@/services/api/usageService';
+
 import {
   parseCoreQuotaTimestamp,
   type CoreQuotaSnapshotEntry,
 } from '@/services/api/quotaSnapshots';
-import type { AntigravityQuotaData, CodexQuotaData } from '@/utils/quota';
+
 import {
   buildObservedClaudeQuotaStateFromCoreSnapshot,
   buildObservedCodexQuotaStateFromCoreSnapshot,
 } from '@/utils/quota/coreQuotaSnapshots';
+
 import { IconInfo } from '@/components/ui/icons';
-import { apiCallApi, getApiCallErrorMessage } from '@/services/api';
-import { resetCodexQuota } from '@/services/api/codexQuota';
-import { useQuotaStore } from '@/stores';
+
+import { apiCallApi, getApiCallErrorMessage } from '@/services/api/apiCall';
+
+import { consumeCodexRateLimitResetCredit } from '@/services/api/codexQuota';
+
+
 import {
   GEMINI_CLI_QUOTA_URL,
   GEMINI_CLI_CODE_ASSIST_URL,
@@ -49,16 +112,9 @@ import {
   normalizeQuotaFraction,
   normalizeStringValue,
   resolveCodexChatgptAccountId,
-  resolveCodexPlanType,
   resolveGeminiCliProjectId,
   formatQuotaResetTime,
   formatKimiResetHint,
-  fetchAntigravityQuota,
-  fetchClaudeQuota,
-  fetchCodexQuota,
-  fetchKimiQuota,
-  fetchXaiQuota,
-  buildCodexQuotaWindows,
   buildGeminiCliQuotaBuckets,
   createStatusError,
   normalizeGeminiCliModelId,
@@ -73,29 +129,25 @@ import {
   isRuntimeOnlyAuthFile,
   isXaiFile,
 } from '@/utils/quota';
-import {
-  buildObservedCodexQuotaFromHeaderSnapshot,
-  getHeaderSnapshotErrorCode,
-  getHeaderSnapshotErrorKind,
-  getHeaderSnapshotPlanType,
-  getHeaderSnapshotRecoverAtMs,
-  getHeaderSnapshotTraceId,
-  getHeaderSnapshotUsedPercent,
-  hasUsageHeaderQuotaSignal,
-} from '@/utils/usageHeaderSnapshots';
+
 import { normalizeAuthIndex } from '@/utils/authIndex';
+
 import { formatDateTimeUtc8, formatInUtc8 } from '@/utils/datetime';
+
 import type { QuotaRenderHelpers } from './QuotaCard';
+
 import styles from '@/features/quota/QuotaPage.module.scss';
 
 type QuotaUpdater<T> = T | ((prev: T) => T);
 
-type QuotaType = 'antigravity' | 'claude' | 'codex' | 'gemini-cli' | 'kimi' | 'xai';
 export type QuotaSortMode = 'default' | 'name-asc' | 'plan-desc' | 'plan-asc';
 
 const QUOTA_PROGRESS_HIGH_THRESHOLD = 70;
+
 const QUOTA_PROGRESS_MEDIUM_THRESHOLD = 30;
+
 const CODEX_INFO_WINDOW_IDS = new Set(['five-hour', 'weekly', 'monthly']);
+
 export interface QuotaStore {
   antigravityQuota: Record<string, AntigravityQuotaState>;
   claudeQuota: Record<string, ClaudeQuotaState>;
@@ -111,79 +163,6 @@ export interface QuotaStore {
   setXaiQuota: (updater: QuotaUpdater<Record<string, XaiQuotaState>>) => void;
   clearQuotaCache: () => void;
 }
-
-export interface QuotaConfig<TState, TData> {
-  type: QuotaType;
-  i18nPrefix: string;
-  cardIdleMessageKey?: string;
-  filterFn: (file: AuthFileItem) => boolean;
-  fetchQuota: (file: AuthFileItem, t: TFunction) => Promise<TData>;
-  storeSelector: (state: QuotaStore) => Record<string, TState>;
-  storeSetter: keyof QuotaStore;
-  getStoreKey?: (file: AuthFileItem) => string;
-  buildLoadingState: (file?: AuthFileItem) => TState;
-  buildSuccessState: (data: TData, file?: AuthFileItem) => TState;
-  buildErrorState: (message: string, status?: number, file?: AuthFileItem) => TState;
-  buildFailureState?: (
-    message: string,
-    status: number | undefined,
-    file: AuthFileItem | undefined,
-    activeState: TState | undefined,
-    failedAtMs: number
-  ) => TState;
-  scopeState?: (file: AuthFileItem, state: TState | undefined) => TState | undefined;
-  cardClassName: string;
-  controlsClassName: string;
-  controlClassName: string;
-  gridClassName: string;
-  getSearchText?: (file: AuthFileItem, quota: TState | undefined, t: TFunction) => unknown[];
-  getPlanSortRank?: (file: AuthFileItem, quota: TState | undefined) => number | null;
-  buildObservedState?: (
-    file: AuthFileItem,
-    snapshot: UsageHeaderSnapshot | undefined,
-    t: TFunction
-  ) => TState | undefined;
-  // core `GET /quota/snapshots` 只读持久快照兜底：mount 时不打真实上游即可展示额度，
-  // 并在账号异常（reauth_required / error）时展示「要求重新认证 / 加载失败」。
-  buildObservedStateFromCoreSnapshot?: (
-    file: AuthFileItem,
-    entry: CoreQuotaSnapshotEntry | undefined,
-    t: TFunction
-  ) => TState | undefined;
-  resetQuota?: (file: AuthFileItem, t: TFunction) => Promise<TData>;
-  canResetQuota?: (file: AuthFileItem, quota: TState | undefined) => boolean;
-  renderQuotaItems: (quota: TState, t: TFunction, helpers: QuotaRenderHelpers) => ReactNode;
-}
-
-export const getQuotaStoreKey = <TState, TData>(
-  config: Pick<QuotaConfig<TState, TData>, 'getStoreKey'>,
-  file: AuthFileItem
-): string => config.getStoreKey?.(file) ?? file.name;
-
-export const getScopedQuotaState = <TState, TData>(
-  config: Pick<QuotaConfig<TState, TData>, 'getStoreKey' | 'scopeState'>,
-  states: Record<string, TState>,
-  file: AuthFileItem
-): TState | undefined => {
-  const storeKey = getQuotaStoreKey(config, file);
-  const activeQuota = states[storeKey];
-  const scopedQuota = config.scopeState ? config.scopeState(file, activeQuota) : activeQuota;
-  if (scopedQuota || storeKey === file.name) return scopedQuota;
-  const legacyQuota = states[file.name];
-  return config.scopeState ? config.scopeState(file, legacyQuota) : legacyQuota;
-};
-
-export const buildQuotaFailureState = <TState, TData>(
-  config: Pick<QuotaConfig<TState, TData>, 'buildErrorState' | 'buildFailureState'>,
-  message: string,
-  status: number | undefined,
-  file: AuthFileItem | undefined,
-  activeState: TState | undefined,
-  failedAtMs = Date.now()
-): TState =>
-  config.buildFailureState
-    ? config.buildFailureState(message, status, file, activeState, failedAtMs)
-    : config.buildErrorState(message, status, file);
 
 const formatAntigravityDuration = (t: TFunction, deltaMs: number): string => {
   const totalMinutes = Math.max(0, Math.ceil(deltaMs / 60000));
@@ -433,291 +412,11 @@ const getCodexSearchText = (
   ];
 };
 
-type DisplayQuotaState = {
-  status?: 'idle' | 'loading' | 'success' | 'error';
-  error?: string;
-  errorStatus?: number | null;
-  fetchedAtMs?: number;
-  failedAtMs?: number;
-  observedAtMs?: number;
-};
-
-type CodexQuotaMergeState = DisplayQuotaState & Partial<CodexQuotaState>;
-
-const readFiniteTimestamp = (value: unknown): number | null =>
-  typeof value === 'number' && Number.isFinite(value) ? value : null;
-
-const hasHeaderValue = (value: unknown): boolean => {
-  if (value === undefined || value === null) return false;
-  if (typeof value === 'string') return value.trim() !== '';
-  if (typeof value === 'number') return Number.isFinite(value);
-  return true;
-};
-
-const hasKnownResetLabel = (value: unknown): value is string => {
-  if (typeof value !== 'string') return false;
-  const trimmed = value.trim();
-  return trimmed !== '' && trimmed !== '-';
-};
-
-const mergeCodexQuotaWindow = (
-  activeWindow: CodexQuotaWindow,
-  observedWindow: CodexQuotaWindow
-): CodexQuotaWindow => ({
-  ...activeWindow,
-  ...(hasHeaderValue(observedWindow.label) ? { label: observedWindow.label } : {}),
-  ...(hasHeaderValue(observedWindow.labelKey) ? { labelKey: observedWindow.labelKey } : {}),
-  ...(observedWindow.labelParams && Object.keys(observedWindow.labelParams).length > 0
-    ? { labelParams: observedWindow.labelParams }
-    : {}),
-  ...(observedWindow.usedPercent !== null &&
-  observedWindow.usedPercent !== undefined &&
-  Number.isFinite(observedWindow.usedPercent)
-    ? { usedPercent: observedWindow.usedPercent }
-    : {}),
-  ...(hasKnownResetLabel(observedWindow.resetLabel)
-    ? { resetLabel: observedWindow.resetLabel }
-    : {}),
-  ...(observedWindow.limitWindowSeconds !== null &&
-  observedWindow.limitWindowSeconds !== undefined &&
-  observedWindow.limitWindowSeconds > 0
-    ? { limitWindowSeconds: observedWindow.limitWindowSeconds }
-    : {}),
-});
-
-const mergeCodexQuotaWindows = (
-  activeWindows: CodexQuotaWindow[] | undefined,
-  observedWindows: CodexQuotaWindow[] | undefined
-): CodexQuotaWindow[] | undefined => {
-  if (!observedWindows || observedWindows.length === 0) return activeWindows;
-  if (!activeWindows || activeWindows.length === 0) return observedWindows;
-
-  const observedById = new Map(observedWindows.map((window) => [window.id, window]));
-  const mergedWindows = activeWindows.map((window) => {
-    const observedWindow = observedById.get(window.id);
-    if (!observedWindow) return window;
-    observedById.delete(window.id);
-    return mergeCodexQuotaWindow(window, observedWindow);
-  });
-
-  return [...mergedWindows, ...observedById.values()];
-};
-
-const hasKnownResetCreditCount = (quota: CodexQuotaMergeState): boolean => {
-  const value = quota.rateLimitResetCreditsAvailableCount;
-  return typeof value === 'number' && Number.isFinite(value);
-};
-
-const mergeObservedQuotaIntoActive = <TState extends DisplayQuotaState>(
-  activeQuota: TState,
-  observedQuota: TState
-): TState => {
-  const active = activeQuota as CodexQuotaMergeState;
-  const observed = observedQuota as CodexQuotaMergeState;
-  const merged: CodexQuotaMergeState = { ...active };
-
-  const scalarKeys: Array<keyof CodexQuotaMergeState> = [
-    'status',
-    'planType',
-    'activeLimit',
-    'creditsHasCredits',
-    'creditsUnlimited',
-    'creditsBalance',
-    'rateLimitReachedType',
-    'primaryOverSecondaryLimitPercent',
-    'observedAtMs',
-    'observedTraceId',
-    'observedErrorKind',
-    'observedErrorCode',
-  ];
-
-  scalarKeys.forEach((key) => {
-    const value = observed[key];
-    if (hasHeaderValue(value)) {
-      (merged as Record<string, unknown>)[key] = value;
-    }
-  });
-
-  merged.windows = mergeCodexQuotaWindows(active.windows, observed.windows);
-  if (observed.observedFromUsageHeaders === true) {
-    merged.observedFromUsageHeaders = true;
-  }
-  if (observed.observedResetCreditsUnknown === true && !hasKnownResetCreditCount(active)) {
-    merged.observedResetCreditsUnknown = true;
-  }
-
-  return merged as TState;
-};
-
-const clearQuotaFailureForObservedRecovery = <TState extends DisplayQuotaState>(
-  quota: TState
-): TState => {
-  const recovered = { ...quota };
-  delete recovered.error;
-  delete recovered.errorStatus;
-  delete recovered.failedAtMs;
-  return recovered;
-};
-
-const isObservedQuotaNewerThanFailure = <TState extends DisplayQuotaState>(
-  activeQuota: TState,
-  observedQuota: TState | undefined
-): observedQuota is TState => {
-  if (observedQuota?.status !== 'success') return false;
-  const failedAtMs = readFiniteTimestamp(activeQuota.failedAtMs);
-  const observedAtMs = readFiniteTimestamp(observedQuota.observedAtMs);
-  return failedAtMs !== null && observedAtMs !== null && observedAtMs > failedAtMs;
-};
-
-const buildCodexQuotaAuthIdentity = (file: AuthFileItem | undefined) => {
-  if (!file?.name) return {};
-  const authIndex = normalizeAuthIndex(file['auth_index'] ?? file.authIndex ?? file['auth-index']);
-  return {
-    authFileKey: `${file.name}::${authIndex ?? '-'}`,
-    authFileName: file.name,
-    authIndex,
-  };
-};
-
-export const getCodexQuotaStoreKey = (file: AuthFileItem): string =>
-  buildCodexQuotaAuthIdentity(file).authFileKey ?? file.name;
-
-const scopeCodexQuotaStateToAuthFile = (
-  file: AuthFileItem,
-  state: CodexQuotaState | undefined
-): CodexQuotaState | undefined => {
-  if (!state) return undefined;
-  const identity = buildCodexQuotaAuthIdentity(file);
-  if (!state.authFileKey) return identity.authIndex === null ? state : undefined;
-  return state.authFileKey === identity.authFileKey ? state : undefined;
-};
-
-const buildCodexQuotaFailureState = (
-  message: string,
-  status: number | undefined,
-  file: AuthFileItem | undefined,
-  activeState: CodexQuotaState | undefined,
-  failedAtMs: number
-): CodexQuotaState => {
-  const preservedState = activeState ? { ...activeState } : null;
-  return {
-    ...(preservedState ?? { windows: [] }),
-    status: 'error',
-    windows: preservedState?.windows ?? [],
-    error: message,
-    errorStatus: status,
-    failedAtMs,
-    ...buildCodexQuotaAuthIdentity(file),
-  };
-};
-
-export const resolveQuotaDisplayState = <TState extends DisplayQuotaState>(
-  activeQuota: TState | undefined,
-  observedQuota: TState | undefined
-): TState | undefined => {
-  if (activeQuota?.status === 'error') {
-    if (isObservedQuotaNewerThanFailure(activeQuota, observedQuota)) {
-      return clearQuotaFailureForObservedRecovery(
-        mergeObservedQuotaIntoActive(activeQuota, observedQuota)
-      );
-    }
-    return activeQuota;
-  }
-
-  if (activeQuota && activeQuota.status !== 'idle') {
-    if (activeQuota.status === 'success' && observedQuota?.status === 'success') {
-      const fetchedAtMs = readFiniteTimestamp(activeQuota.fetchedAtMs);
-      const observedAtMs = readFiniteTimestamp(observedQuota.observedAtMs);
-      if (fetchedAtMs !== null && observedAtMs !== null && observedAtMs > fetchedAtMs) {
-        return mergeObservedQuotaIntoActive(activeQuota, observedQuota);
-      }
-    }
-    return activeQuota;
-  }
-
-  return observedQuota ?? activeQuota;
-};
-
-export const buildObservedCodexQuotaState = (
-  file: AuthFileItem,
-  snapshot: UsageHeaderSnapshot | undefined,
-  t: TFunction
-): CodexQuotaState | undefined => {
-  if (!hasUsageHeaderQuotaSignal(snapshot)) return undefined;
-  const observedQuota = buildObservedCodexQuotaFromHeaderSnapshot(snapshot);
-  const usedPercent = getHeaderSnapshotUsedPercent(snapshot);
-  const recoverAtMS = getHeaderSnapshotRecoverAtMs(snapshot);
-  // 标准数字格式 `YYYY-MM-DD HH:mm:ss`（#78：与 locale 无关），委托给 formatDateTimeUtc8。
-  const recoverLabel = recoverAtMS ? formatDateTimeUtc8(recoverAtMS, undefined, '', false) : '-';
-  const headerPlanType = observedQuota?.planType || getHeaderSnapshotPlanType(snapshot);
-  const planType = resolveCodexPlanType(file) ?? (headerPlanType || null);
-  const observedWindows = observedQuota?.payload
-    ? buildCodexQuotaWindows(observedQuota.payload, t, planType)
-    : [];
-  const windows: CodexQuotaWindow[] =
-    observedWindows.length > 0
-      ? observedWindows
-      : usedPercent !== null || recoverAtMS
-        ? [
-            {
-              id: 'usage-header-observed',
-              label: t('codex_quota.observed_window', {
-                defaultValue: 'Latest request',
-              }),
-              usedPercent,
-              resetLabel: recoverLabel,
-            },
-          ]
-        : [];
-
-  return {
-    status: 'success',
-    windows,
-    planType,
-    activeLimit: observedQuota?.activeLimit ?? null,
-    creditsHasCredits: observedQuota?.creditsHasCredits ?? null,
-    creditsUnlimited: observedQuota?.creditsUnlimited ?? null,
-    creditsBalance: observedQuota?.creditsBalance ?? null,
-    rateLimitReachedType: observedQuota?.rateLimitReachedType ?? null,
-    primaryOverSecondaryLimitPercent: observedQuota?.primaryOverSecondaryLimitPercent ?? null,
-    observedFromUsageHeaders: true,
-    observedResetCreditsUnknown: true,
-    observedAtMs: snapshot?.timestamp_ms,
-    observedTraceId: getHeaderSnapshotTraceId(snapshot),
-    observedErrorKind: getHeaderSnapshotErrorKind(snapshot),
-    observedErrorCode: getHeaderSnapshotErrorCode(snapshot),
-  };
-};
-
 type CodexQuotaTooltipRow = {
   key: string;
   label: string;
   value: string;
 };
-
-export type CodexResetCreditExpiryInfo = {
-  id: string;
-  expiresAt: string;
-  expiresAtMs: number;
-};
-
-export const getSortedCodexResetCreditExpiries = (
-  credits: CodexRateLimitResetCredit[] | undefined,
-  nowMs = Date.now()
-): CodexResetCreditExpiryInfo[] =>
-  (credits ?? [])
-    .map((credit, index) => {
-      const expiresAt = String(credit.expiresAt ?? '').trim();
-      const expiresAtMs = expiresAt ? new Date(expiresAt).getTime() : Number.NaN;
-      if (!Number.isFinite(expiresAtMs) || expiresAtMs <= nowMs) return null;
-      return {
-        id: String(credit.id || index),
-        expiresAt,
-        expiresAtMs,
-      };
-    })
-    .filter((credit): credit is CodexResetCreditExpiryInfo => Boolean(credit))
-    .sort((left, right) => left.expiresAtMs - right.expiresAtMs || left.id.localeCompare(right.id));
 
 const formatCodexResetCreditExpiryTime = (expiresAt: string): string => {
   const expiresAtMs = new Date(expiresAt).getTime();
@@ -1076,132 +775,8 @@ const renderClaudeItems = (
   return h(Fragment, null, ...nodes);
 };
 
-export const CLAUDE_CONFIG: QuotaConfig<
-  ClaudeQuotaState,
-  { windows: ClaudeQuotaWindow[]; extraUsage?: ClaudeExtraUsage | null; planType?: string | null }
-> = {
-  type: 'claude',
-  i18nPrefix: 'claude_quota',
-  cardIdleMessageKey: 'quota_management.card_idle_hint',
-  filterFn: (file) => isClaudeFile(file) && !isDisabledAuthFile(file),
-  fetchQuota: fetchClaudeQuota,
-  storeSelector: (state) => state.claudeQuota,
-  storeSetter: 'setClaudeQuota',
-  buildLoadingState: () => ({ status: 'loading', windows: [] }),
-  buildSuccessState: (data) => ({
-    status: 'success',
-    windows: data.windows,
-    extraUsage: data.extraUsage,
-    planType: data.planType,
-    source: 'direct',
-    lastRefreshedAt: new Date().toISOString(),
-    nextRefreshAt: null,
-  }),
-  buildErrorState: (message, status) => ({
-    status: 'error',
-    windows: [],
-    error: message,
-    errorStatus: status,
-  }),
-  cardClassName: styles.claudeCard,
-  controlsClassName: styles.claudeControls,
-  controlClassName: styles.claudeControl,
-  gridClassName: styles.claudeGrid,
-  buildObservedStateFromCoreSnapshot: (file, entry, t) =>
-    buildObservedClaudeQuotaStateFromCoreSnapshot(file, entry, t, {
-      surfaceReauthAndError: true,
-    }),
-  renderQuotaItems: renderClaudeItems,
-};
-
-export const ANTIGRAVITY_CONFIG: QuotaConfig<AntigravityQuotaState, AntigravityQuotaData> = {
-  type: 'antigravity',
-  i18nPrefix: 'antigravity_quota',
-  cardIdleMessageKey: 'quota_management.card_idle_hint',
-  filterFn: (file) => isAntigravityFile(file) && !isDisabledAuthFile(file),
-  fetchQuota: fetchAntigravityQuota,
-  storeSelector: (state) => state.antigravityQuota,
-  storeSetter: 'setAntigravityQuota',
-  buildLoadingState: () => ({
-    status: 'loading',
-    groups: [],
-    subscription: null,
-    serverTimeOffsetMs: null,
-  }),
-  buildSuccessState: (data) => ({
-    status: 'success',
-    groups: data.groups,
-    subscription: data.subscription ?? null,
-    serverTimeOffsetMs: data.serverTimeOffsetMs,
-  }),
-  buildErrorState: (message, status) => ({
-    status: 'error',
-    groups: [],
-    subscription: null,
-    serverTimeOffsetMs: null,
-    error: message,
-    errorStatus: status,
-  }),
-  cardClassName: styles.antigravityCard,
-  controlsClassName: styles.antigravityControls,
-  controlClassName: styles.antigravityControl,
-  gridClassName: styles.antigravityGrid,
-  renderQuotaItems: renderAntigravityItems,
-};
-
-export const CODEX_CONFIG: QuotaConfig<CodexQuotaState, CodexQuotaData> = {
-  type: 'codex',
-  i18nPrefix: 'codex_quota',
-  cardIdleMessageKey: 'quota_management.card_idle_hint',
-  filterFn: (file) => isCodexFile(file) && !isDisabledAuthFile(file),
-  fetchQuota: fetchCodexQuota,
-  storeSelector: (state) => state.codexQuota,
-  storeSetter: 'setCodexQuota',
-  getStoreKey: getCodexQuotaStoreKey,
-  buildLoadingState: (file) => ({
-    status: 'loading',
-    windows: [],
-    ...buildCodexQuotaAuthIdentity(file),
-  }),
-  buildSuccessState: (data, file) => ({
-    status: 'success',
-    windows: data.windows,
-    planType: data.planType,
-    subscriptionActiveUntil: data.subscriptionActiveUntil,
-    rateLimitResetCreditsAvailableCount: data.rateLimitResetCreditsAvailableCount,
-    rateLimitResetCredits: data.rateLimitResetCredits,
-    rateLimitResetCreditsError: data.rateLimitResetCreditsError,
-    ...buildCodexQuotaAuthIdentity(file),
-    fetchedAtMs: Date.now(),
-  }),
-  buildErrorState: (message, status, file) => ({
-    status: 'error',
-    windows: [],
-    error: message,
-    errorStatus: status,
-    failedAtMs: Date.now(),
-    ...buildCodexQuotaAuthIdentity(file),
-  }),
-  buildFailureState: buildCodexQuotaFailureState,
-  scopeState: scopeCodexQuotaStateToAuthFile,
-  cardClassName: styles.codexCard,
-  controlsClassName: styles.codexControls,
-  controlClassName: styles.codexControl,
-  gridClassName: styles.codexGrid,
-  getSearchText: getCodexSearchText,
-  getPlanSortRank: getCodexPlanSortRank,
-  buildObservedState: buildObservedCodexQuotaState,
-  buildObservedStateFromCoreSnapshot: (file, entry, t) =>
-    buildObservedCodexQuotaStateFromCoreSnapshot(file, entry, t, {
-      surfaceReauthAndError: true,
-    }),
-  resetQuota: resetCodexQuota,
-  canResetQuota: (_file, quota) =>
-    quota?.status === 'success' && (quota.rateLimitResetCreditsAvailableCount ?? 0) > 0,
-  renderQuotaItems: renderCodexItems,
-};
-
 const GEMINI_CLI_G1_CREDIT_TYPE = 'GOOGLE_ONE_AI';
+
 const PREMIUM_GEMINI_CLI_TIER_IDS = new Set(['g1-ultra-tier']);
 
 const GEMINI_CLI_TIER_LABELS: Record<string, string> = {
@@ -1211,17 +786,6 @@ const GEMINI_CLI_TIER_LABELS: Record<string, string> = {
   'g1-pro-tier': 'tier_pro',
   'g1-ultra-tier': 'tier_ultra',
 };
-
-const geminiCliSupplementaryRequestIds = new Map<string, number>();
-const geminiCliSupplementaryCache = new Map<
-  string,
-  {
-    requestId: number;
-    tierLabel: string | null;
-    tierId: string | null;
-    creditBalance: number | null;
-  }
->();
 
 const resolveGeminiCliTierLabel = (
   payload: GeminiCliCodeAssistPayload | null,
@@ -1274,7 +838,8 @@ const resolveGeminiCliCreditBalance = (
 const fetchGeminiCliCodeAssist = async (
   authIndex: string,
   projectId: string,
-  t: TFunction
+  t: TFunction,
+  requestScope?: AuthFilesApiRequestScope
 ): Promise<{ tierLabel: string | null; tierId: string | null; creditBalance: number | null }> => {
   try {
     const result = await apiCallApi.request({
@@ -1291,7 +856,7 @@ const fetchGeminiCliCodeAssist = async (
           duetProject: projectId,
         },
       }),
-    });
+    }, requestScope ? createScopedApiRequestConfig(requestScope) : undefined);
 
     if (result.statusCode < 200 || result.statusCode >= 300) {
       return { tierLabel: null, tierId: null, creditBalance: null };
@@ -1308,72 +873,7 @@ const fetchGeminiCliCodeAssist = async (
   }
 };
 
-const readGeminiCliSupplementarySnapshot = (
-  fileName: string,
-  requestId: number
-): { tierLabel: string | null; tierId: string | null; creditBalance: number | null } => {
-  const cached = geminiCliSupplementaryCache.get(fileName);
-  if (!cached || cached.requestId !== requestId) {
-    return { tierLabel: null, tierId: null, creditBalance: null };
-  }
-
-  return {
-    tierLabel: cached.tierLabel,
-    tierId: cached.tierId,
-    creditBalance: cached.creditBalance,
-  };
-};
-
-const scheduleGeminiCliSupplementaryRefresh = (
-  fileName: string,
-  authIndex: string,
-  projectId: string,
-  t: TFunction
-): number => {
-  const requestId = (geminiCliSupplementaryRequestIds.get(fileName) ?? 0) + 1;
-  geminiCliSupplementaryRequestIds.set(fileName, requestId);
-  geminiCliSupplementaryCache.delete(fileName);
-
-  void (async () => {
-    const supplementary = await fetchGeminiCliCodeAssist(authIndex, projectId, t);
-    if (geminiCliSupplementaryRequestIds.get(fileName) !== requestId) {
-      return;
-    }
-
-    geminiCliSupplementaryCache.set(fileName, { requestId, ...supplementary });
-
-    useQuotaStore.getState().setGeminiCliQuota((prev) => {
-      const current = prev[fileName];
-      if (!current || current.status !== 'success') {
-        return prev;
-      }
-
-      if (
-        current.tierLabel === supplementary.tierLabel &&
-        current.tierId === supplementary.tierId &&
-        current.creditBalance === supplementary.creditBalance
-      ) {
-        return prev;
-      }
-
-      return {
-        ...prev,
-        [fileName]: {
-          ...current,
-          tierLabel: supplementary.tierLabel,
-          tierId: supplementary.tierId,
-          creditBalance: supplementary.creditBalance,
-        },
-      };
-    });
-  })();
-
-  return requestId;
-};
-
 type GeminiCliQuotaData = {
-  fileName: string;
-  supplementaryRequestId: number;
   buckets: GeminiCliQuotaBucketState[];
   tierLabel: string | null;
   tierId: string | null;
@@ -1382,7 +882,8 @@ type GeminiCliQuotaData = {
 
 const fetchGeminiCliQuota = async (
   file: AuthFileItem,
-  t: TFunction
+  t: TFunction,
+  requestScope?: AuthFilesApiRequestScope
 ): Promise<GeminiCliQuotaData> => {
   const rawAuthIndex = file['auth_index'] ?? file.authIndex;
   const authIndex = normalizeAuthIndex(rawAuthIndex);
@@ -1401,7 +902,7 @@ const fetchGeminiCliQuota = async (
     url: GEMINI_CLI_QUOTA_URL,
     header: { ...GEMINI_CLI_REQUEST_HEADERS },
     data: JSON.stringify({ project: projectId }),
-  });
+  }, requestScope ? createScopedApiRequestConfig(requestScope) : undefined);
   if (quotaResponse.statusCode < 200 || quotaResponse.statusCode >= 300) {
     throw createStatusError(getApiCallErrorMessage(quotaResponse), quotaResponse.statusCode);
   }
@@ -1439,25 +940,7 @@ const fetchGeminiCliQuota = async (
     .filter((bucket): bucket is GeminiCliParsedBucket => bucket !== null);
 
   const builtBuckets = buildGeminiCliQuotaBuckets(parsedBuckets);
-  const supplementaryRequestId = scheduleGeminiCliSupplementaryRefresh(
-    file.name,
-    authIndex,
-    projectId,
-    t
-  );
-  const supplementarySnapshot = readGeminiCliSupplementarySnapshot(
-    file.name,
-    supplementaryRequestId
-  );
-
-  return {
-    fileName: file.name,
-    supplementaryRequestId,
-    buckets: builtBuckets,
-    tierLabel: supplementarySnapshot.tierLabel,
-    tierId: supplementarySnapshot.tierId,
-    creditBalance: supplementarySnapshot.creditBalance,
-  };
+  return {buckets: builtBuckets, tierLabel: null, tierId: null, creditBalance: null};
 };
 
 const renderGeminiCliItems = (
@@ -1558,49 +1041,6 @@ const renderGeminiCliItems = (
   return h(Fragment, null, ...nodes);
 };
 
-export const GEMINI_CLI_CONFIG: QuotaConfig<GeminiCliQuotaState, GeminiCliQuotaData> = {
-  type: 'gemini-cli',
-  i18nPrefix: 'gemini_cli_quota',
-  cardIdleMessageKey: 'quota_management.card_idle_hint',
-  filterFn: (file) =>
-    isGeminiCliFile(file) && !isRuntimeOnlyAuthFile(file) && !isDisabledAuthFile(file),
-  fetchQuota: fetchGeminiCliQuota,
-  storeSelector: (state) => state.geminiCliQuota,
-  storeSetter: 'setGeminiCliQuota',
-  buildLoadingState: () => ({
-    status: 'loading',
-    buckets: [],
-    tierLabel: null,
-    tierId: null,
-    creditBalance: null,
-  }),
-  buildSuccessState: (data) => {
-    const supplementarySnapshot = readGeminiCliSupplementarySnapshot(
-      data.fileName,
-      data.supplementaryRequestId
-    );
-
-    return {
-      status: 'success',
-      buckets: data.buckets,
-      tierLabel: supplementarySnapshot.tierLabel ?? data.tierLabel,
-      tierId: supplementarySnapshot.tierId ?? data.tierId,
-      creditBalance: supplementarySnapshot.creditBalance ?? data.creditBalance,
-    };
-  },
-  buildErrorState: (message, status) => ({
-    status: 'error',
-    buckets: [],
-    error: message,
-    errorStatus: status,
-  }),
-  cardClassName: styles.geminiCliCard,
-  controlsClassName: styles.geminiCliControls,
-  controlClassName: styles.geminiCliControl,
-  gridClassName: styles.geminiCliGrid,
-  renderQuotaItems: renderGeminiCliItems,
-};
-
 const renderKimiItems = (
   quota: KimiQuotaState,
   t: TFunction,
@@ -1652,29 +1092,6 @@ const renderKimiItems = (
   });
 };
 
-export const KIMI_CONFIG: QuotaConfig<KimiQuotaState, KimiQuotaRow[]> = {
-  type: 'kimi',
-  i18nPrefix: 'kimi_quota',
-  cardIdleMessageKey: 'quota_management.card_idle_hint',
-  filterFn: (file) => isKimiFile(file) && !isDisabledAuthFile(file),
-  fetchQuota: fetchKimiQuota,
-  storeSelector: (state) => state.kimiQuota,
-  storeSetter: 'setKimiQuota',
-  buildLoadingState: () => ({ status: 'loading', rows: [] }),
-  buildSuccessState: (rows) => ({ status: 'success', rows }),
-  buildErrorState: (message, status) => ({
-    status: 'error',
-    rows: [],
-    error: message,
-    errorStatus: status,
-  }),
-  cardClassName: styles.kimiCard,
-  controlsClassName: styles.kimiControls,
-  controlClassName: styles.kimiControl,
-  gridClassName: styles.kimiGrid,
-  renderQuotaItems: renderKimiItems,
-};
-
 const formatXaiCurrency = (value: number | null): string => {
   if (value === null) return '--';
   return `$${(value / 100).toFixed(2)}`;
@@ -1711,6 +1128,7 @@ const formatXaiPeriodRange = (start?: string, end?: string): string => {
 };
 
 const XAI_SUPERGROK_LIMIT_CENTS = 15_000;
+
 const XAI_SUPERGROK_HEAVY_LIMIT_CENTS = 150_000;
 
 const resolveXaiPlan = (
@@ -1912,25 +1330,1022 @@ const renderXaiItems = (
   return h(React.Fragment, null, ...nodes);
 };
 
-export const XAI_CONFIG: QuotaConfig<XaiQuotaState, XaiBillingSummary> = {
+type QuotaType =
+  | 'antigravity'
+  | 'claude'
+  | 'codex'
+  | 'kimi'
+  | 'xai'
+  | 'devin'
+  | 'meta'
+  | 'gemini-cli';
+
+export type { QuotaFetchContext };
+
+export interface QuotaConfig<TState, TData> {
+  type: QuotaType;
+  i18nPrefix: string;
+  fetchQuota: (
+    file: AuthFileItem,
+    t: TFunction,
+    requestScope?: AuthFilesApiRequestScope,
+    context?: QuotaFetchContext
+  ) => Promise<TData>;
+  getStoreKey?: (file: AuthFileItem) => string;
+  enrichState?: (
+    file: AuthFileItem,
+    state: TState,
+    requestScope?: AuthFilesApiRequestScope,
+    context?: QuotaFetchContext
+  ) => Promise<TState>;
+  buildLoadingState: (file?: AuthFileItem) => TState;
+  buildSuccessState: (data: TData, file?: AuthFileItem, currentState?: TState) => TState;
+  buildErrorState: (message: string, status?: number, file?: AuthFileItem) => TState;
+  buildFailureState?: (
+    message: string,
+    status: number | undefined,
+    file: AuthFileItem | undefined,
+    activeState: TState | undefined,
+    failedAtMs: number
+  ) => TState;
+  scopeState?: (file: AuthFileItem, state: TState | undefined) => TState | undefined;
+  buildObservedState?: (
+    file: AuthFileItem,
+    snapshot: UsageHeaderSnapshot | undefined,
+    t: TFunction
+  ) => TState | undefined;
+}
+
+export interface LegacyQuotaConfig<TState, TData> extends QuotaConfig<TState, TData> {
+  cardIdleMessageKey?: string;
+  filterFn: (file: AuthFileItem) => boolean;
+  storeSelector: (state: QuotaStore) => Record<string, TState>;
+  storeSetter: keyof QuotaStore;
+  cardClassName: string;
+  controlsClassName: string;
+  controlClassName: string;
+  gridClassName: string;
+  getSearchText?: (file: AuthFileItem, quota: TState | undefined, t: TFunction) => unknown[];
+  getPlanSortRank?: (file: AuthFileItem, quota: TState | undefined) => number | null;
+  buildObservedStateFromCoreSnapshot?: (
+    file: AuthFileItem,
+    entry: CoreQuotaSnapshotEntry | undefined,
+    t: TFunction
+  ) => TState | undefined;
+  resetQuota?: (
+    file: AuthFileItem,
+    t: TFunction,
+    requestScope?: AuthFilesApiRequestScope,
+    context?: QuotaFetchContext
+  ) => Promise<TData>;
+  canResetQuota?: (file: AuthFileItem, quota: TState | undefined) => boolean;
+  renderQuotaItems: (quota: TState, t: TFunction, helpers: QuotaRenderHelpers) => ReactNode;
+}
+
+export const getQuotaStoreKey = <TState, TData>(
+  config: Pick<QuotaConfig<TState, TData>, 'getStoreKey'>,
+  file: AuthFileItem
+): string => config.getStoreKey?.(file) ?? file.name;
+
+export const getScopedQuotaState = <TState, TData>(
+  config: Pick<QuotaConfig<TState, TData>, 'getStoreKey' | 'scopeState'>,
+  states: Record<string, TState>,
+  file: AuthFileItem
+): TState | undefined => {
+  const storeKey = getQuotaStoreKey(config, file);
+  const activeQuota = states[storeKey];
+  const scopedQuota = config.scopeState ? config.scopeState(file, activeQuota) : activeQuota;
+  if (scopedQuota || storeKey === file.name) return scopedQuota;
+  const legacyQuota = states[file.name];
+  return config.scopeState ? config.scopeState(file, legacyQuota) : legacyQuota;
+};
+
+export const buildQuotaFailureState = <TState, TData>(
+  config: Pick<QuotaConfig<TState, TData>, 'buildErrorState' | 'buildFailureState'>,
+  message: string,
+  status: number | undefined,
+  file: AuthFileItem | undefined,
+  activeState: TState | undefined,
+  failedAtMs = Date.now()
+): TState => {
+  if (config.buildFailureState) {
+    return config.buildFailureState(message, status, file, activeState, failedAtMs);
+  }
+
+  const errorState = config.buildErrorState(message, status, file);
+  if (!activeState || typeof activeState !== 'object') {
+    return { ...errorState, failedAtMs } as TState;
+  }
+
+  // Provider states own the payload shape. Preserve it on a transient refresh
+  // failure while replacing only the lifecycle/error metadata from the failed
+  // request. This keeps non-Codex windows/groups/rows/billing visible too.
+  return {
+    ...errorState,
+    ...activeState,
+    status: 'error',
+    error: message,
+    errorStatus: status,
+    failedAtMs,
+  } as TState;
+};
+
+type DisplayQuotaState = {
+  status?: 'idle' | 'loading' | 'success' | 'error';
+  error?: string;
+  errorStatus?: number | null;
+  fetchedAtMs?: number;
+  failedAtMs?: number;
+  observedAtMs?: number;
+};
+
+type CodexQuotaMergeState = DisplayQuotaState & Partial<CodexQuotaState>;
+
+const readFiniteTimestamp = (value: unknown): number | null =>
+  typeof value === 'number' && Number.isFinite(value) ? value : null;
+
+const readPositiveTimestamp = (value: unknown): number | null =>
+  typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+
+const hasObservedValue = (value: unknown): boolean => {
+  if (value === undefined || value === null) return false;
+  if (typeof value === 'string') return value.trim() !== '';
+  if (typeof value === 'number') return Number.isFinite(value);
+  return true;
+};
+
+const hasKnownResetLabel = (value: unknown): value is string => {
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  return trimmed !== '' && trimmed !== '-';
+};
+
+const readCodexWindowDurationMs = (window: CodexQuotaWindow): number | null => {
+  const seconds = window.limitWindowSeconds;
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) return null;
+  const durationMs = seconds * 1000;
+  return Number.isFinite(durationMs) && durationMs > 0 ? durationMs : null;
+};
+
+const hasReliableCodexWindowEvidence = (window: CodexQuotaWindow): boolean =>
+  readCodexWindowDurationMs(window) !== null ||
+  (isValidQuotaResetAtMs(window.resetAtMs) && window.resetAccuracy === 'exact');
+
+const isCodexZeroOnlyObservedQuotaPlaceholder = (window: CodexQuotaWindow): boolean =>
+  window.observationSource === 'response_header' &&
+  window.usedPercent === 0 &&
+  isCodexMainQuotaWindow(window) &&
+  !hasReliableCodexWindowEvidence(window);
+
+const stampCodexQuotaWindows = (
+  windows: CodexQuotaWindow[] | undefined,
+  observationSource: NonNullable<CodexQuotaWindow['observationSource']>,
+  observedAtMs: number | null
+): CodexQuotaWindow[] | undefined =>
+  windows?.map((window) => {
+    const stampedObservedAtMs = readFiniteTimestamp(window.observedAtMs) ?? observedAtMs;
+    const hasQuotaProgress =
+      typeof window.usedPercent === 'number' && Number.isFinite(window.usedPercent);
+    const quotaProgressObservedAtMs = !hasQuotaProgress
+      ? null
+      : window.quotaProgressObservedAtMs !== undefined
+        ? readPositiveTimestamp(window.quotaProgressObservedAtMs)
+        : stampedObservedAtMs;
+    return {
+      ...window,
+      observationSource: window.observationSource ?? observationSource,
+      observedAtMs: stampedObservedAtMs,
+      quotaProgressObservedAtMs,
+    };
+  });
+
+const mergeCodexQuotaWindow = (
+  activeWindow: CodexQuotaWindow,
+  observedWindow: CodexQuotaWindow
+): CodexQuotaWindow => {
+  const hasObservedResetLabel = hasKnownResetLabel(observedWindow.resetLabel);
+  const hasObservedResetAt = isValidQuotaResetAtMs(observedWindow.resetAtMs);
+  const hasObservedUsedPercent =
+    typeof observedWindow.usedPercent === 'number' && Number.isFinite(observedWindow.usedPercent);
+  const observedQuotaProgressObservedAtMs = hasObservedUsedPercent
+    ? observedWindow.quotaProgressObservedAtMs !== undefined
+      ? readPositiveTimestamp(observedWindow.quotaProgressObservedAtMs)
+      : readPositiveTimestamp(observedWindow.observedAtMs)
+    : null;
+  const confirmedCycleRollover = shouldClearInheritedCodexQuotaProgress(
+    {
+      providerWindowId: activeWindow.id,
+      endMs: activeWindow.resetAtMs,
+      durationSeconds: activeWindow.limitWindowSeconds,
+      boundaryAccuracy: activeWindow.resetAccuracy,
+    },
+    {
+      providerWindowId: observedWindow.id,
+      endMs: observedWindow.resetAtMs,
+      durationSeconds: observedWindow.limitWindowSeconds,
+      boundaryAccuracy: observedWindow.resetAccuracy,
+    }
+  );
+  const resetMetadata = hasObservedResetAt
+    ? {
+        resetLabel: hasObservedResetLabel ? observedWindow.resetLabel : '-',
+        resetAtMs: observedWindow.resetAtMs ?? null,
+        resetAccuracy: observedWindow.resetAccuracy ?? 'unknown',
+      }
+    : hasObservedResetLabel
+      ? {
+          resetLabel: observedWindow.resetLabel,
+          resetAtMs: null,
+          resetAccuracy: 'unknown' as const,
+        }
+      : {};
+
+  return {
+    ...activeWindow,
+    ...(confirmedCycleRollover ? { usedPercent: null, quotaProgressObservedAtMs: null } : {}),
+    ...(hasObservedValue(observedWindow.label) ? { label: observedWindow.label } : {}),
+    ...(hasObservedValue(observedWindow.labelKey) ? { labelKey: observedWindow.labelKey } : {}),
+    ...(observedWindow.labelParams && Object.keys(observedWindow.labelParams).length > 0
+      ? { labelParams: observedWindow.labelParams }
+      : {}),
+    ...(hasObservedUsedPercent ? { usedPercent: observedWindow.usedPercent } : {}),
+    ...(hasObservedUsedPercent
+      ? { quotaProgressObservedAtMs: observedQuotaProgressObservedAtMs }
+      : {}),
+    ...resetMetadata,
+    ...(observedWindow.limitWindowSeconds !== null &&
+    observedWindow.limitWindowSeconds !== undefined &&
+    observedWindow.limitWindowSeconds > 0
+      ? { limitWindowSeconds: observedWindow.limitWindowSeconds }
+      : {}),
+    ...(observedWindow.observationSource
+      ? { observationSource: observedWindow.observationSource }
+      : {}),
+    ...(readFiniteTimestamp(observedWindow.observedAtMs) !== null
+      ? { observedAtMs: observedWindow.observedAtMs }
+      : {}),
+    ...(observedWindow.modelScope ? { modelScope: observedWindow.modelScope } : {}),
+    ...(observedWindow.providerWindowAliases
+      ? { providerWindowAliases: observedWindow.providerWindowAliases }
+      : {}),
+  };
+};
+
+const mergeCodexQuotaWindows = (
+  activeWindows: CodexQuotaWindow[] | undefined,
+  observedWindows: CodexQuotaWindow[] | undefined
+): CodexQuotaWindow[] | undefined => {
+  if (!observedWindows || observedWindows.length === 0) return activeWindows;
+  if (!activeWindows || activeWindows.length === 0) return observedWindows;
+
+  const usedObserved = new Set<number>();
+  const mergedWindows = activeWindows.map((window, activeIndex) => {
+    const observedIndex = findCodexProviderWindowMatch(
+      activeWindows,
+      observedWindows,
+      activeIndex,
+      usedObserved
+    );
+    if (observedIndex < 0) return window;
+    usedObserved.add(observedIndex);
+    const observedWindow = observedWindows[observedIndex];
+    const merged = mergeCodexQuotaWindow(window, observedWindow);
+    const aliases = Array.from(
+      new Set([
+        ...(window.providerWindowAliases ?? []),
+        ...(observedWindow.providerWindowAliases ?? []),
+        window.id,
+      ])
+    ).filter((alias) => alias && alias !== observedWindow.id);
+    return {
+      ...merged,
+      id: observedWindow.id,
+      ...(aliases.length > 0 ? { providerWindowAliases: aliases } : {}),
+    };
+  });
+  return [...mergedWindows, ...observedWindows.filter((_, index) => !usedObserved.has(index))];
+};
+
+const hasKnownResetCreditCount = (quota: CodexQuotaMergeState): boolean => {
+  const value = quota.rateLimitResetCreditsAvailableCount;
+  return typeof value === 'number' && Number.isFinite(value);
+};
+
+const mergeObservedQuotaIntoActive = <TState extends DisplayQuotaState>(
+  activeQuota: TState,
+  observedQuota: TState
+): TState => {
+  const active = activeQuota as CodexQuotaMergeState;
+  const observed = observedQuota as CodexQuotaMergeState;
+  const merged: CodexQuotaMergeState = { ...active };
+  const activeWindows = stampCodexQuotaWindows(
+    active.windows,
+    'api_query',
+    readFiniteTimestamp(active.fetchedAtMs)
+  );
+  const observedWindows = stampCodexQuotaWindows(
+    observed.windows,
+    'response_header',
+    readFiniteTimestamp(observed.observedAtMs)
+  )?.filter((window) => !isCodexZeroOnlyObservedQuotaPlaceholder(window));
+  const scopedObservation =
+    observed.observedFromUsageHeaders === true &&
+    (observed.observedModelScope === undefined ||
+      !isCodexMainQuotaModelScope(observed.observedModelScope));
+  const scalarKeys: Array<keyof CodexQuotaMergeState> = [
+    'status',
+    'planType',
+    'observedAtMs',
+    'observedTraceId',
+    'observedErrorKind',
+    'observedErrorCode',
+  ];
+  if (!scopedObservation) {
+    scalarKeys.push(
+      'activeLimit',
+      'creditsHasCredits',
+      'creditsUnlimited',
+      'creditsBalance',
+      'creditsOverageLimitReached',
+      'creditsApproxLocalMessages',
+      'creditsApproxCloudMessages',
+      'spendControlReached',
+      'spendControlIndividualLimit',
+      'rateLimitReachedType',
+      'primaryOverSecondaryLimitPercent'
+    );
+  }
+  scalarKeys.forEach((key) => {
+    const value = observed[key];
+    if (hasObservedValue(value)) {
+      (merged as Record<string, unknown>)[key] = value;
+    }
+  });
+  merged.windows = mergeCodexQuotaWindows(activeWindows, observedWindows);
+  if (observed.observedFromUsageHeaders === true) merged.observedFromUsageHeaders = true;
+  if (observed.observedModelScope) merged.observedModelScope = observed.observedModelScope;
+  if (observed.observedResetCreditsUnknown === true && !hasKnownResetCreditCount(active)) {
+    merged.observedResetCreditsUnknown = true;
+  }
+  return merged as TState;
+};
+
+const appendMissingObservedQuotaWindows = <TState extends DisplayQuotaState>(
+  activeQuota: TState,
+  observedQuota: TState
+): TState => {
+  const active = activeQuota as CodexQuotaMergeState;
+  const observed = observedQuota as CodexQuotaMergeState;
+  const activeWindows =
+    stampCodexQuotaWindows(active.windows, 'api_query', readFiniteTimestamp(active.fetchedAtMs)) ??
+    [];
+  const observedWindows =
+    stampCodexQuotaWindows(
+      observed.windows,
+      'response_header',
+      readFiniteTimestamp(observed.observedAtMs)
+    )?.filter((window) => !isCodexZeroOnlyObservedQuotaPlaceholder(window)) ?? [];
+  const isAlreadyRepresented = (observedIndex: number): boolean => {
+    return activeWindows.some(
+      (_, activeIndex) =>
+        findCodexProviderWindowMatch(
+          activeWindows,
+          observedWindows,
+          activeIndex,
+          new Set<number>()
+        ) === observedIndex
+    );
+  };
+  const missingWindows = observedWindows.filter(
+    (_, observedIndex) => !isAlreadyRepresented(observedIndex)
+  );
+  if (missingWindows.length === 0) return activeQuota;
+  const merged: CodexQuotaMergeState = {
+    ...active,
+    windows: [...activeWindows, ...missingWindows],
+    observedFromUsageHeaders: true,
+    observedModelScope: observed.observedModelScope,
+  };
+  const observedAtMs = readFiniteTimestamp(observed.observedAtMs);
+  if (observedAtMs !== null) merged.observedAtMs = observedAtMs;
+  if (hasObservedValue(observed.observedTraceId)) merged.observedTraceId = observed.observedTraceId;
+  if (hasObservedValue(observed.observedErrorKind)) {
+    merged.observedErrorKind = observed.observedErrorKind;
+  }
+  if (hasObservedValue(observed.observedErrorCode)) {
+    merged.observedErrorCode = observed.observedErrorCode;
+  }
+  if (observed.observedResetCreditsUnknown === true && !hasKnownResetCreditCount(active)) {
+    merged.observedResetCreditsUnknown = true;
+  }
+  return merged as TState;
+};
+
+const clearQuotaFailureForObservedRecovery = <TState extends DisplayQuotaState>(
+  quota: TState
+): TState => {
+  const recovered = { ...quota };
+  delete recovered.error;
+  delete recovered.errorStatus;
+  delete recovered.failedAtMs;
+  return recovered;
+};
+
+const isObservedQuotaNewerThanFailure = <TState extends DisplayQuotaState>(
+  activeQuota: TState,
+  observedQuota: TState | undefined
+): observedQuota is TState => {
+  if (observedQuota?.status !== 'success') return false;
+  const failedAtMs = readFiniteTimestamp(activeQuota.failedAtMs);
+  const observedAtMs = readFiniteTimestamp(observedQuota.observedAtMs);
+  return failedAtMs !== null && observedAtMs !== null && observedAtMs > failedAtMs;
+};
+
+export const getCodexQuotaStoreKey = (file: AuthFileItem): string =>
+  getQuotaCredentialStoreKey(file);
+
+const scopeCredentialQuotaState = <TState extends CredentialScopedQuotaState>(
+  file: AuthFileItem,
+  state: TState | undefined
+): TState | undefined => scopeQuotaStateToCredential(file, state);
+
+const buildCodexQuotaFailureState = (
+  message: string,
+  status: number | undefined,
+  file: AuthFileItem | undefined,
+  activeState: CodexQuotaState | undefined,
+  failedAtMs: number
+): CodexQuotaState => {
+  const preservedState = activeState ? { ...activeState } : null;
+  return {
+    ...(preservedState ?? { windows: [] }),
+    status: 'error',
+    windows: preservedState?.windows ?? [],
+    error: message,
+    errorStatus: status,
+    failedAtMs,
+    ...buildQuotaCredentialIdentity(file),
+  };
+};
+
+export const resolveQuotaDisplayState = <TState extends DisplayQuotaState>(
+  activeQuota: TState | undefined,
+  observedQuota: TState | undefined
+): TState | undefined => {
+  if (activeQuota?.status === 'error') {
+    if (isObservedQuotaNewerThanFailure(activeQuota, observedQuota)) {
+      return clearQuotaFailureForObservedRecovery(
+        mergeObservedQuotaIntoActive(activeQuota, observedQuota)
+      );
+    }
+    return activeQuota;
+  }
+  if (activeQuota && activeQuota.status !== 'idle') {
+    if (activeQuota.status === 'success' && observedQuota?.status === 'success') {
+      const activeCodexQuota = activeQuota as CodexQuotaMergeState;
+      const fetchedAtMs = readFiniteTimestamp(activeQuota.fetchedAtMs);
+      const observedAtMs = readFiniteTimestamp(observedQuota.observedAtMs);
+      if (activeCodexQuota.quotaInventoryObserved === false) {
+        if (fetchedAtMs !== null && observedAtMs !== null && observedAtMs > fetchedAtMs) {
+          return mergeObservedQuotaIntoActive(activeQuota, observedQuota);
+        }
+        return appendMissingObservedQuotaWindows(activeQuota, observedQuota);
+      }
+      if (fetchedAtMs !== null && observedAtMs !== null && observedAtMs > fetchedAtMs) {
+        return mergeObservedQuotaIntoActive(activeQuota, observedQuota);
+      }
+    }
+    return activeQuota;
+  }
+  return observedQuota ?? activeQuota;
+};
+
+export const buildObservedCodexQuotaState = (
+  file: AuthFileItem,
+  snapshot: UsageHeaderSnapshot | undefined,
+  t: TFunction,
+  nowMs = Date.now()
+): CodexQuotaState | undefined => {
+  if (!hasUsageHeaderQuotaSignal(snapshot)) return undefined;
+  const observedQuota = buildObservedCodexQuotaFromHeaderSnapshot(snapshot);
+  const observedScope =
+    observedQuota?.quotaScope ??
+    resolveCodexUsageQuotaScope({
+      model: snapshot?.model,
+      analyticsModel: snapshot?.analytics_model,
+      requestedModel: snapshot?.requested_model,
+      resolvedModel: snapshot?.resolved_model,
+    });
+  const usedPercent = getHeaderSnapshotUsedPercent(snapshot);
+  const recoverAtMS = getHeaderSnapshotRecoverAtMs(snapshot);
+  // 标准数字格式 `YYYY-MM-DD HH:mm:ss`（#78：与 locale 无关），委托给 formatDateTimeUtc8。
+  const recoverLabel = recoverAtMS ? formatDateTimeUtc8(recoverAtMS, undefined, '', false) : '-';
+  const headerPlanType = observedQuota?.planType || getHeaderSnapshotPlanType(snapshot);
+  const planType = headerPlanType || resolveCodexPlanType(file) || null;
+  const rawObservedWindows = observedQuota?.payload
+    ? buildCodexQuotaWindows(
+        observedQuota.payload,
+        t,
+        planType,
+        snapshot?.timestamp_ms ?? nowMs,
+        'response_header',
+        observedScope
+      )
+    : [];
+  const observedWindows = filterFreshCodexQuotaWindows(rawObservedWindows, nowMs);
+  const fallbackExpired = recoverAtMS !== null && recoverAtMS <= nowMs;
+  const fallbackUsedPercent = fallbackExpired ? null : usedPercent;
+  const fallbackRecoverAtMS = fallbackExpired ? null : recoverAtMS;
+  const windows: CodexQuotaWindow[] =
+    rawObservedWindows.length > 0
+      ? observedWindows
+      : fallbackUsedPercent !== null || fallbackRecoverAtMS
+        ? [
+            {
+              id: observedScope.providerWindowIdPrefix
+                ? `${observedScope.providerWindowIdPrefix}-observed`
+                : 'usage-header-observed',
+              label: t('codex_quota.observed_window', { defaultValue: 'Latest request' }),
+              usedPercent: fallbackUsedPercent,
+              resetLabel: fallbackRecoverAtMS ? recoverLabel : '-',
+              resetAtMs: fallbackRecoverAtMS,
+              resetAccuracy: fallbackRecoverAtMS ? 'estimated' : 'unknown',
+              observationSource: 'response_header',
+              observedAtMs: snapshot?.timestamp_ms ?? null,
+              quotaProgressObservedAtMs:
+                fallbackUsedPercent !== null ? readFiniteTimestamp(snapshot?.timestamp_ms) : null,
+              modelScope: observedScope.modelScope,
+            },
+          ]
+        : [];
+  return {
+    status: 'success',
+    windows,
+    planType,
+    ...buildQuotaCredentialIdentity(file),
+    activeLimit: observedQuota?.activeLimit ?? null,
+    creditsHasCredits: observedQuota?.creditsHasCredits ?? null,
+    creditsUnlimited: observedQuota?.creditsUnlimited ?? null,
+    creditsBalance: observedQuota?.creditsBalance ?? null,
+    rateLimitReachedType: observedQuota?.rateLimitReachedType ?? null,
+    primaryOverSecondaryLimitPercent: observedQuota?.primaryOverSecondaryLimitPercent ?? null,
+    observedFromUsageHeaders: true,
+    observedModelScope: observedScope.modelScope,
+    observedResetCreditsUnknown: true,
+    observedAtMs: snapshot?.timestamp_ms,
+    observedTraceId: getHeaderSnapshotTraceId(snapshot),
+    observedErrorKind: getHeaderSnapshotErrorKind(snapshot),
+    observedErrorCode: getHeaderSnapshotErrorCode(snapshot),
+  };
+};
+
+export type CodexResetCreditExpiryInfo = {
+  id: string;
+  expiresAt: string;
+  expiresAtMs: number;
+};
+
+export const getSortedCodexResetCreditExpiries = (
+  credits: CodexRateLimitResetCredit[] | undefined,
+  nowMs = Date.now()
+): CodexResetCreditExpiryInfo[] =>
+  (credits ?? [])
+    .map((credit, index) => {
+      const expiresAt = String(credit.expiresAt ?? '').trim();
+      const expiresAtMs = expiresAt ? new Date(expiresAt).getTime() : Number.NaN;
+      if (!Number.isFinite(expiresAtMs) || expiresAtMs <= nowMs) return null;
+      return {
+        id: String(credit.id || index),
+        expiresAt,
+        expiresAtMs,
+      };
+    })
+    .filter((credit): credit is CodexResetCreditExpiryInfo => Boolean(credit))
+    .sort((left, right) => left.expiresAtMs - right.expiresAtMs || left.id.localeCompare(right.id));
+
+export const CLAUDE_CONFIG: LegacyQuotaConfig<ClaudeQuotaState, ClaudeQuotaData> = {
+  type: 'claude',
+  i18nPrefix: 'claude_quota',
+  fetchQuota: fetchClaudeQuota,
+  getStoreKey: getQuotaCredentialStoreKey,
+  buildLoadingState: (file) => ({
+    status: 'loading',
+    windows: [],
+    ...buildQuotaCredentialIdentity(file),
+  }),
+  buildSuccessState: (data, file) => ({
+    status: 'success',
+    windows: data.windows,
+    quotaInventoryObserved: data.quotaInventoryObserved,
+    source: 'direct',
+    lastRefreshedAt: new Date().toISOString(),
+    nextRefreshAt: null,
+    extraUsage: data.extraUsage,
+    planType: data.planType,
+    ...buildQuotaCredentialIdentity(file),
+    fetchedAtMs: Date.now(),
+  }),
+  buildErrorState: (message, status, file) => ({
+    status: 'error',
+    windows: [],
+    error: message,
+    errorStatus: status,
+    ...buildQuotaCredentialIdentity(file),
+    failedAtMs: Date.now(),
+  }),
+  scopeState: scopeCredentialQuotaState,
+  cardIdleMessageKey: 'quota_management.card_idle_hint',
+  filterFn: (file) => isClaudeFile(file) && !isDisabledAuthFile(file),
+  storeSelector: (state) => state.claudeQuota,
+  storeSetter: 'setClaudeQuota',
+  cardClassName: styles.claudeCard,
+  controlsClassName: styles.claudeControls,
+  controlClassName: styles.claudeControl,
+  gridClassName: styles.claudeGrid,
+  buildObservedStateFromCoreSnapshot: (file, entry, t) =>
+    buildObservedClaudeQuotaStateFromCoreSnapshot(file, entry, t, {
+      surfaceReauthAndError: true,
+    }),
+  renderQuotaItems: renderClaudeItems,
+};
+
+export const ANTIGRAVITY_CONFIG: LegacyQuotaConfig<AntigravityQuotaState, AntigravityQuotaData> = {
+  type: 'antigravity',
+  i18nPrefix: 'antigravity_quota',
+  fetchQuota: fetchAntigravityQuota,
+  getStoreKey: getQuotaCredentialStoreKey,
+  buildLoadingState: (file) => ({
+    status: 'loading',
+    groups: [],
+    subscription: null,
+    serverTimeOffsetMs: null,
+    ...buildQuotaCredentialIdentity(file),
+  }),
+  buildSuccessState: (data, file) => ({
+    status: 'success',
+    groups: data.groups,
+    quotaInventoryObserved: data.quotaInventoryObserved,
+    subscription: data.subscription ?? null,
+    serverTimeOffsetMs: data.serverTimeOffsetMs,
+    ...buildQuotaCredentialIdentity(file),
+    fetchedAtMs: Date.now(),
+  }),
+  buildErrorState: (message, status, file) => ({
+    status: 'error',
+    groups: [],
+    subscription: null,
+    serverTimeOffsetMs: null,
+    error: message,
+    errorStatus: status,
+    ...buildQuotaCredentialIdentity(file),
+    failedAtMs: Date.now(),
+  }),
+  scopeState: scopeCredentialQuotaState,
+  cardIdleMessageKey: 'quota_management.card_idle_hint',
+  filterFn: (file) => isAntigravityFile(file) && !isDisabledAuthFile(file),
+  storeSelector: (state) => state.antigravityQuota,
+  storeSetter: 'setAntigravityQuota',
+  cardClassName: styles.antigravityCard,
+  controlsClassName: styles.antigravityControls,
+  controlClassName: styles.antigravityControl,
+  gridClassName: styles.antigravityGrid,
+  renderQuotaItems: renderAntigravityItems,
+};
+
+export const CODEX_CONFIG: LegacyQuotaConfig<CodexQuotaState, CodexQuotaData> = {
+  type: 'codex',
+  i18nPrefix: 'codex_quota',
+  fetchQuota: fetchCodexQuota,
+  getStoreKey: getCodexQuotaStoreKey,
+  buildLoadingState: (file) => ({
+    status: 'loading',
+    windows: [],
+    ...buildQuotaCredentialIdentity(file),
+  }),
+  buildSuccessState: (data, file, currentState) => {
+    const resetEvidence = mergeCodexResetCreditsEvidence(currentState, {
+      ...data,
+      // CODEX_CONFIG is the full refresh. An explicit dedicated count-only
+      // response is authoritative; an actual endpoint failure is already
+      // identified as 'summary' by fetchCodexQuota.
+      resetCreditsCountSource:
+        data.resetCreditsCountSource ?? (data.rateLimitResetCreditsError ? 'summary' : 'dedicated'),
+    });
+    return {
+      status: 'success',
+      windows: data.windows,
+      quotaInventoryObserved: data.quotaInventoryObserved,
+      planType: data.planType,
+      subscriptionActiveUntil: data.subscriptionActiveUntil,
+      creditsHasCredits: data.creditsHasCredits,
+      creditsUnlimited: data.creditsUnlimited,
+      creditsBalance: data.creditsBalance,
+      creditsOverageLimitReached: data.creditsOverageLimitReached,
+      creditsApproxLocalMessages: data.creditsApproxLocalMessages,
+      creditsApproxCloudMessages: data.creditsApproxCloudMessages,
+      spendControlReached: data.spendControlReached,
+      spendControlIndividualLimit: data.spendControlIndividualLimit,
+      rateLimitResetCreditsAvailableCount: resetEvidence.rateLimitResetCreditsAvailableCount,
+      resetCreditsCountSource: resetEvidence.resetCreditsCountSource,
+      rateLimitResetCredits: resetEvidence.rateLimitResetCredits,
+      rateLimitResetCreditsError: resetEvidence.rateLimitResetCreditsError,
+      resetCreditsEvidenceAtMs: resetEvidence.resetCreditsEvidenceAtMs,
+      resetCreditsCountEvidenceAtMs: resetEvidence.resetCreditsCountEvidenceAtMs,
+      resetCreditsDetailEvidenceAtMs: resetEvidence.resetCreditsDetailEvidenceAtMs,
+      resetCreditsDetailStale: resetEvidence.resetCreditsDetailStale,
+      ...buildQuotaCredentialIdentity(file),
+      fetchedAtMs:
+        readFiniteTimestamp(data.observedAtMs) ??
+        readFiniteTimestamp(data.windows[0]?.observedAtMs) ??
+        Date.now(),
+    };
+  },
+  buildErrorState: (message, status, file) => ({
+    status: 'error',
+    windows: [],
+    error: message,
+    errorStatus: status,
+    failedAtMs: Date.now(),
+    ...buildQuotaCredentialIdentity(file),
+  }),
+  buildFailureState: buildCodexQuotaFailureState,
+  scopeState: scopeCredentialQuotaState,
+  buildObservedState: buildObservedCodexQuotaState,
+  cardIdleMessageKey: 'quota_management.card_idle_hint',
+  filterFn: (file) => isCodexFile(file) && !isDisabledAuthFile(file),
+  storeSelector: (state) => state.codexQuota,
+  storeSetter: 'setCodexQuota',
+  cardClassName: styles.codexCard,
+  controlsClassName: styles.codexControls,
+  controlClassName: styles.codexControl,
+  gridClassName: styles.codexGrid,
+  getSearchText: getCodexSearchText,
+  getPlanSortRank: getCodexPlanSortRank,
+  buildObservedStateFromCoreSnapshot: (file, entry, t) =>
+    buildObservedCodexQuotaStateFromCoreSnapshot(file, entry, t, {
+      surfaceReauthAndError: true,
+    }),
+  resetQuota: async (file, t, requestScope, context) => {
+    if (context?.isCurrent && !context.isCurrent())
+      throw new Error(t('auth_files.delete_scope_changed'));
+    await consumeCodexRateLimitResetCredit(file, t, requestScope);
+    if (context?.isCurrent && !context.isCurrent())
+      throw new Error(t('auth_files.delete_scope_changed'));
+    return fetchCodexQuota(file, t, requestScope);
+  },
+  canResetQuota: (_file, quota) =>
+    quota?.status === 'success' && (quota.rateLimitResetCreditsAvailableCount ?? 0) > 0,
+  renderQuotaItems: renderCodexItems,
+};
+
+export const CODEX_SUMMARY_CONFIG: QuotaConfig<CodexQuotaState, CodexQuotaData> = {
+  ...CODEX_CONFIG,
+  fetchQuota: fetchCodexQuotaSummary,
+  buildSuccessState: (data, file, currentState) => {
+    const resetEvidence = mergeCodexResetCreditsEvidence(currentState, data, {
+      isFullDetailObservation: false,
+    });
+    return {
+      status: 'success',
+      windows: data.windows,
+      quotaInventoryObserved: data.quotaInventoryObserved,
+      planType: data.planType,
+      subscriptionActiveUntil: data.subscriptionActiveUntil,
+      creditsHasCredits: data.creditsHasCredits,
+      creditsUnlimited: data.creditsUnlimited,
+      creditsBalance: data.creditsBalance,
+      creditsOverageLimitReached: data.creditsOverageLimitReached,
+      creditsApproxLocalMessages: data.creditsApproxLocalMessages,
+      creditsApproxCloudMessages: data.creditsApproxCloudMessages,
+      spendControlReached: data.spendControlReached,
+      spendControlIndividualLimit: data.spendControlIndividualLimit,
+      rateLimitResetCreditsAvailableCount: resetEvidence.rateLimitResetCreditsAvailableCount,
+      resetCreditsCountSource: resetEvidence.resetCreditsCountSource,
+      rateLimitResetCredits: resetEvidence.rateLimitResetCredits,
+      rateLimitResetCreditsError: resetEvidence.rateLimitResetCreditsError,
+      resetCreditsEvidenceAtMs: resetEvidence.resetCreditsEvidenceAtMs,
+      resetCreditsCountEvidenceAtMs: resetEvidence.resetCreditsCountEvidenceAtMs,
+      resetCreditsDetailEvidenceAtMs: resetEvidence.resetCreditsDetailEvidenceAtMs,
+      resetCreditsDetailStale: resetEvidence.resetCreditsDetailStale,
+      ...buildQuotaCredentialIdentity(file),
+      fetchedAtMs:
+        readFiniteTimestamp(data.observedAtMs) ??
+        readFiniteTimestamp(data.windows[0]?.observedAtMs) ??
+        Date.now(),
+    };
+  },
+};
+
+export const KIMI_CONFIG: LegacyQuotaConfig<KimiQuotaState, KimiQuotaData> = {
+  type: 'kimi',
+  i18nPrefix: 'kimi_quota',
+  fetchQuota: fetchKimiQuota,
+  getStoreKey: getQuotaCredentialStoreKey,
+  buildLoadingState: (file) => ({
+    status: 'loading',
+    rows: [],
+    ...buildQuotaCredentialIdentity(file),
+  }),
+  buildSuccessState: (data, file) => ({
+    status: 'success',
+    rows: data.rows,
+    quotaInventoryObserved: data.quotaInventoryObserved,
+    ...buildQuotaCredentialIdentity(file),
+    fetchedAtMs: Date.now(),
+  }),
+  buildErrorState: (message, status, file) => ({
+    status: 'error',
+    rows: [],
+    error: message,
+    errorStatus: status,
+    ...buildQuotaCredentialIdentity(file),
+    failedAtMs: Date.now(),
+  }),
+  scopeState: scopeCredentialQuotaState,
+  cardIdleMessageKey: 'quota_management.card_idle_hint',
+  filterFn: (file) => isKimiFile(file) && !isDisabledAuthFile(file),
+  storeSelector: (state) => state.kimiQuota,
+  storeSetter: 'setKimiQuota',
+  cardClassName: styles.kimiCard,
+  controlsClassName: styles.kimiControls,
+  controlClassName: styles.kimiControl,
+  gridClassName: styles.kimiGrid,
+  renderQuotaItems: renderKimiItems,
+};
+
+export const XAI_CONFIG: LegacyQuotaConfig<XaiQuotaState, XaiBillingSummary> = {
   type: 'xai',
   i18nPrefix: 'xai_quota',
-  cardIdleMessageKey: 'quota_management.card_idle_hint',
-  filterFn: (file) => isXaiFile(file) && !isDisabledAuthFile(file),
   fetchQuota: fetchXaiQuota,
-  storeSelector: (state) => state.xaiQuota,
-  storeSetter: 'setXaiQuota',
-  buildLoadingState: () => ({ status: 'loading', billing: null }),
-  buildSuccessState: (billing) => ({ status: 'success', billing }),
-  buildErrorState: (message, status) => ({
+  getStoreKey: getQuotaCredentialStoreKey,
+  buildLoadingState: (file) => ({
+    status: 'loading',
+    billing: null,
+    ...buildQuotaCredentialIdentity(file),
+  }),
+  // A new quota observation must not renew an older paid-entitlement observation.
+  buildSuccessState: (billing, file, currentState) => {
+    const previous = file ? scopeCredentialQuotaState(file, currentState) : undefined;
+    const superseded = previous?.billing?.subscription || previous?.billing?.subscriptionSuperseded;
+    return {
+      status: 'success',
+      billing: superseded ? { ...billing, subscriptionSuperseded: true } : billing,
+      ...buildQuotaCredentialIdentity(file),
+      fetchedAtMs: Date.now(),
+    };
+  },
+  enrichState: async (file, state, requestScope, context) => {
+    if (!state.billing || state.billing.officialApiHealth) return state;
+    const subscription = await fetchXaiSubscription(
+      file,
+      requestScope ? createScopedApiRequestConfig(requestScope) : undefined,
+      context?.isCurrent,
+      state.fetchedAtMs
+    );
+    return subscription
+      ? {
+          ...state,
+          billing: { ...state.billing, subscription },
+        }
+      : state;
+  },
+  buildErrorState: (message, status, file) => ({
     status: 'error',
     billing: null,
     error: message,
     errorStatus: status,
+    ...buildQuotaCredentialIdentity(file),
+    failedAtMs: Date.now(),
   }),
+  scopeState: scopeCredentialQuotaState,
+  cardIdleMessageKey: 'quota_management.card_idle_hint',
+  filterFn: (file) => isXaiFile(file) && !isDisabledAuthFile(file),
+  storeSelector: (state) => state.xaiQuota,
+  storeSetter: 'setXaiQuota',
   cardClassName: styles.kimiCard,
   controlsClassName: styles.kimiControls,
   controlClassName: styles.kimiControl,
   gridClassName: styles.kimiGrid,
   renderQuotaItems: renderXaiItems,
+};
+
+export const DEVIN_CONFIG: QuotaConfig<DevinQuotaState, DevinQuotaData> = {
+  type: 'devin',
+  i18nPrefix: 'devin_quota',
+  fetchQuota: fetchDevinQuota,
+  getStoreKey: getQuotaCredentialStoreKey,
+  buildLoadingState: (file) => ({
+    status: 'loading',
+    windows: [],
+    observedAtMs: null,
+    plan: null,
+    planStartMs: null,
+    planEndMs: null,
+    ...buildQuotaCredentialIdentity(file),
+  }),
+  buildSuccessState: (data, file) => ({
+    status: 'success',
+    windows: data.windows,
+    observedAtMs: data.observedAtMs,
+    plan: data.plan,
+    planStartMs: data.planStartMs,
+    planEndMs: data.planEndMs,
+    ...buildQuotaCredentialIdentity(file),
+    fetchedAtMs: data.observedAtMs ?? Date.now(),
+  }),
+  buildErrorState: (message, status, file) => ({
+    status: 'error',
+    windows: [],
+    observedAtMs: null,
+    plan: null,
+    planStartMs: null,
+    planEndMs: null,
+    error: message,
+    errorStatus: status,
+    ...buildQuotaCredentialIdentity(file),
+    failedAtMs: Date.now(),
+  }),
+  scopeState: scopeCredentialQuotaState,
+};
+
+export const META_CONFIG: QuotaConfig<MetaQuotaState, MetaQuotaData> = {
+  type: 'meta',
+  i18nPrefix: 'meta_quota',
+  fetchQuota: fetchMetaQuota,
+  getStoreKey: getQuotaCredentialStoreKey,
+  buildLoadingState: (file) => ({
+    status: 'loading',
+    windows: [],
+    observedAtMs: Date.now(),
+    plan: null,
+    isSubscriptionActive: null,
+    quotaInventoryObserved: false,
+    ...buildQuotaCredentialIdentity(file),
+  }),
+  buildSuccessState: (data, file) => ({
+    status: 'success',
+    windows: data.windows,
+    observedAtMs: data.observedAtMs,
+    plan: data.plan,
+    isSubscriptionActive: data.isSubscriptionActive,
+    quotaInventoryObserved: data.quotaInventoryObserved,
+    ...buildQuotaCredentialIdentity(file),
+    fetchedAtMs: data.observedAtMs ?? Date.now(),
+  }),
+  buildErrorState: (message, status, file) => ({
+    status: 'error',
+    windows: [],
+    observedAtMs: Date.now(),
+    plan: null,
+    isSubscriptionActive: null,
+    quotaInventoryObserved: false,
+    error: message,
+    errorStatus: status,
+    ...buildQuotaCredentialIdentity(file),
+    failedAtMs: Date.now(),
+  }),
+  scopeState: scopeCredentialQuotaState,
+};
+
+export const GEMINI_CLI_CONFIG: LegacyQuotaConfig<GeminiCliQuotaState, GeminiCliQuotaData> = {
+  type: 'gemini-cli',
+  i18nPrefix: 'gemini_cli_quota',
+  cardIdleMessageKey: 'quota_management.card_idle_hint',
+  filterFn: (file) =>
+    isGeminiCliFile(file) && !isRuntimeOnlyAuthFile(file) && !isDisabledAuthFile(file),
+  fetchQuota: fetchGeminiCliQuota,
+  storeSelector: (state) => state.geminiCliQuota,
+  storeSetter: 'setGeminiCliQuota',
+  getStoreKey: getQuotaCredentialStoreKey,
+  scopeState: scopeCredentialQuotaState,
+  buildLoadingState: (file) => ({
+    ...buildQuotaCredentialIdentity(file),
+    status: 'loading',
+    buckets: [],
+    tierLabel: null,
+    tierId: null,
+    creditBalance: null,
+  }),
+  buildSuccessState: (data, file) => ({status: 'success', ...data, ...buildQuotaCredentialIdentity(file), fetchedAtMs: Date.now()}),
+  enrichState: async (file, state, requestScope, context) => {
+    if (context?.isCurrent?.() === false) return state;
+    const authIndex = normalizeAuthIndex(file['auth_index'] ?? file.authIndex);
+    const projectId = resolveGeminiCliProjectId(file);
+    if (!authIndex || !projectId) return state;
+    const supplementary = await fetchGeminiCliCodeAssist(authIndex, projectId, i18n.t.bind(i18n), requestScope);
+    if (context?.isCurrent?.() === false) return state;
+    return {...state, ...supplementary};
+  },
+  buildErrorState: (message, status, file) => ({
+    ...buildQuotaCredentialIdentity(file),
+    status: 'error',
+    buckets: [],
+    error: message,
+    errorStatus: status,
+  }),
+  cardClassName: styles.geminiCliCard,
+  controlsClassName: styles.geminiCliControls,
+  controlClassName: styles.geminiCliControl,
+  gridClassName: styles.geminiCliGrid,
+  renderQuotaItems: renderGeminiCliItems,
 };

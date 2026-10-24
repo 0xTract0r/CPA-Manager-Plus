@@ -59,7 +59,7 @@ vi.mock('./useMonitoringAnalytics', () => ({
     toMs?: number | null;
     searchQuery?: string;
     filters?: MonitoringAnalyticsFilters;
-    include?: { events_page?: unknown };
+    include?: { events_page?: unknown; summary?: boolean };
   }) => {
     const captured: CapturedParams = {
       nowMs: params.nowMs,
@@ -70,7 +70,7 @@ vi.mock('./useMonitoringAnalytics', () => ({
     };
     if (params.include?.events_page) {
       latestEventsParams = captured;
-    } else {
+    } else if (params.include?.summary) {
       latestOverviewParams = captured;
     }
     return STABLE_ANALYTICS_RESULT;

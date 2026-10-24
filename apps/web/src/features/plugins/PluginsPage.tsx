@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -34,7 +35,6 @@ import { useAuthStore, useConfigStore, useNotificationStore } from '@/stores';
 import { getErrorMessage, isRecord } from '@/utils/helpers';
 import type {
   PluginConfigField,
-  PluginConfigObject,
   PluginListEntry,
   PluginListResponse,
 } from '@/types';
@@ -47,17 +47,15 @@ import {
 import { waitForPluginState } from './pluginPolling';
 import { buildPluginDisplay, type PluginStatusTone } from './pluginDisplay';
 import { PluginStorePage } from './PluginStorePage';
+import {
+  buildPluginConfigPatch,
+  createPluginConfigDraft,
+  type PluginConfigDraftState,
+} from './pluginConfigDraft';
 import styles from './PluginsPage.module.scss';
 
 type PluginPageTab = 'installed' | 'store';
-type PluginDraftValue = string | boolean | string[];
-
-interface PluginConfigDraft {
-  enabled: boolean;
-  priority: string;
-  values: Record<string, PluginDraftValue>;
-  errors: Record<string, string>;
-}
+type PluginConfigDraft = PluginConfigDraftState;
 
 const PLUGIN_ENABLE_REFRESH_DELAY_MS = 1600;
 
@@ -82,165 +80,6 @@ const getErrorDetailCode = (error: unknown): string => {
 
 const normalizeFieldType = (field: PluginConfigField) => field.type.trim().toLowerCase();
 
-const stringifyArrayItem = (value: unknown): string => {
-  if (value === undefined || value === null) return '';
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
-};
-
-const getFieldDraftValue = (field: PluginConfigField, value: unknown): PluginDraftValue => {
-  const type = normalizeFieldType(field);
-  if (type === 'boolean') return value === true;
-  if (type === 'array') {
-    if (Array.isArray(value)) {
-      return value.length > 0 ? value.map((item) => stringifyArrayItem(item)) : [''];
-    }
-    if (value !== undefined && value !== null) return [stringifyArrayItem(value)];
-    return [''];
-  }
-  if (value === undefined || value === null) return '';
-  if (type === 'object') return JSON.stringify(value, null, 2);
-  return String(value);
-};
-
-const buildDraft = (
-  plugin: PluginListEntry,
-  currentConfig: PluginConfigObject
-): PluginConfigDraft => {
-  const enabled =
-    typeof currentConfig.enabled === 'boolean' ? currentConfig.enabled : plugin.enabled;
-  const priority =
-    typeof currentConfig.priority === 'number' || typeof currentConfig.priority === 'string'
-      ? String(currentConfig.priority)
-      : '0';
-  const values: PluginConfigDraft['values'] = {};
-
-  plugin.configFields.forEach((field) => {
-    values[field.name] = getFieldDraftValue(field, currentConfig[field.name]);
-  });
-
-  return {
-    enabled,
-    priority,
-    values,
-    errors: {},
-  };
-};
-
-const parseJSONField = (
-  text: string,
-  fieldType: string,
-  fieldName: string,
-  t: (key: string, options?: Record<string, unknown>) => string,
-  errors: Record<string, string>
-) => {
-  try {
-    const parsed = JSON.parse(text);
-    if (fieldType === 'array' && !Array.isArray(parsed)) {
-      errors[fieldName] = t('plugin_management.expected_array');
-      return undefined;
-    }
-    if (fieldType === 'object' && !isRecord(parsed)) {
-      errors[fieldName] = t('plugin_management.expected_object');
-      return undefined;
-    }
-    return parsed;
-  } catch {
-    errors[fieldName] = t('plugin_management.invalid_json');
-    return undefined;
-  }
-};
-
-const buildConfigPayload = (
-  draft: PluginConfigDraft,
-  fields: PluginConfigField[],
-  currentConfig: PluginConfigObject,
-  t: (key: string, options?: Record<string, unknown>) => string
-) => {
-  const errors: Record<string, string> = {};
-  const nextConfig: PluginConfigObject = { ...currentConfig };
-  const priorityText = draft.priority.trim();
-
-  nextConfig.enabled = draft.enabled;
-  if (!priorityText) {
-    nextConfig.priority = 0;
-  } else if (!/^-?\d+$/.test(priorityText)) {
-    errors.priority = t('plugin_management.invalid_priority');
-  } else {
-    nextConfig.priority = Number.parseInt(priorityText, 10);
-  }
-
-  fields.forEach((field) => {
-    const fieldType = normalizeFieldType(field);
-    const value = draft.values[field.name];
-
-    if (fieldType === 'boolean') {
-      nextConfig[field.name] = value === true;
-      return;
-    }
-
-    if (fieldType === 'array') {
-      const items = Array.isArray(value) ? value.map((item) => item.trim()).filter(Boolean) : [];
-      if (items.length === 0) {
-        delete nextConfig[field.name];
-      } else {
-        nextConfig[field.name] = items;
-      }
-      return;
-    }
-
-    const text = typeof value === 'string' ? value.trim() : '';
-    if (!text) {
-      delete nextConfig[field.name];
-      return;
-    }
-
-    if (fieldType === 'enum') {
-      if (field.enumValues.length > 0 && !field.enumValues.includes(text)) {
-        errors[field.name] = t('plugin_management.invalid_enum');
-        return;
-      }
-      nextConfig[field.name] = text;
-      return;
-    }
-
-    if (fieldType === 'number') {
-      const parsed = Number(text);
-      if (!Number.isFinite(parsed)) {
-        errors[field.name] = t('plugin_management.invalid_number');
-        return;
-      }
-      nextConfig[field.name] = parsed;
-      return;
-    }
-
-    if (fieldType === 'integer') {
-      if (!/^-?\d+$/.test(text)) {
-        errors[field.name] = t('plugin_management.invalid_integer');
-        return;
-      }
-      nextConfig[field.name] = Number.parseInt(text, 10);
-      return;
-    }
-
-    if (fieldType === 'object') {
-      const parsed = parseJSONField(text, fieldType, field.name, t, errors);
-      if (errors[field.name]) return;
-      nextConfig[field.name] = parsed;
-      return;
-    }
-
-    nextConfig[field.name] = text;
-  });
-
-  return { nextConfig, errors };
-};
-
 function PluginLogo({ src }: { src: string }) {
   const [failed, setFailed] = useState(false);
   const showImage = Boolean(src) && !failed;
@@ -264,6 +103,13 @@ const openExternalURL = (url: string) => {
 };
 
 export function PluginsPage() {
+  const connectionScope = useAuthStore((state) =>
+    JSON.stringify([state.apiBase, state.managementKey])
+  );
+  return <PluginsPageContent key={connectionScope} />;
+}
+
+function PluginsPageContent() {
   const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState<PluginPageTab>(() =>
@@ -349,21 +195,56 @@ function InstalledPluginsView({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [editingPlugin, setEditingPlugin] = useState<PluginListEntry | null>(null);
-  const [editingConfig, setEditingConfig] = useState<PluginConfigObject>({});
   const [draft, setDraft] = useState<PluginConfigDraft | null>(null);
   const [mutatingID, setMutatingID] = useState('');
   const [openingConfigID, setOpeningConfigID] = useState('');
   const configRequestSeq = useRef(0);
 
   const connected = connectionStatus === 'connected';
+  const canOperate = connected && supportsPlugin && Boolean(data);
+  const canOperateRef = useRef(canOperate);
+  canOperateRef.current = canOperate;
+  const operationEpochRef = useRef(0);
+  // Captured actions stay invalid after access is revoked, even if access later recovers.
+  const operationEpoch = operationEpochRef.current;
+  const canContinueOperation = useCallback(
+    () => canOperateRef.current && operationEpochRef.current === operationEpoch,
+    [operationEpoch]
+  );
 
+  const listRequestIdRef = useRef(0);
+  const clearPluginData = useCallback(() => {
+    canOperateRef.current = false;
+    operationEpochRef.current += 1;
+    listRequestIdRef.current += 1;
+    configRequestSeq.current += 1;
+    setData(null);
+    setEditingPlugin(null);
+    setDraft(null);
+    setOpeningConfigID('');
+    setLoading(false);
+  }, []);
+  useLayoutEffect(() => {
+    if (!connected || !supportsPlugin) clearPluginData();
+  }, [connected, supportsPlugin, clearPluginData]);
+  useEffect(
+    () => () => {
+      canOperateRef.current = false;
+      operationEpochRef.current += 1;
+      listRequestIdRef.current += 1;
+    },
+    []
+  );
   const loadPlugins = useCallback(async () => {
+    const requestId = ++listRequestIdRef.current;
     if (!connected) {
+      clearPluginData();
       setLoading(false);
       setError(t('notification.connection_required'));
       return;
     }
     if (!supportsPlugin) {
+      clearPluginData();
       setLoading(false);
       setError(t('plugin_management.unsupported_backend'));
       return;
@@ -373,17 +254,20 @@ function InstalledPluginsView({
     setError('');
     try {
       const plugins = await pluginsApi.list();
+      if (requestId !== listRequestIdRef.current) return;
       setData(plugins);
     } catch (err: unknown) {
+      if (requestId !== listRequestIdRef.current) return;
+      if ([401, 403, 404].some((status) => hasStatus(err, status))) clearPluginData();
       setError(
         hasStatus(err, 404)
           ? t('plugin_management.unsupported_backend')
           : getErrorMessage(err, t('plugin_management.load_failed'))
       );
     } finally {
-      setLoading(false);
+      if (requestId === listRequestIdRef.current) setLoading(false);
     }
-  }, [connected, supportsPlugin, t]);
+  }, [connected, supportsPlugin, clearPluginData, t]);
 
   const loadPluginsAfterMutation = useCallback(
     async (
@@ -391,17 +275,36 @@ function InstalledPluginsView({
       pluginID?: string,
       predicate?: (plugin: PluginListEntry, response: PluginListResponse) => boolean
     ) => {
+      if (!canContinueOperation()) return;
       if (waitForRegistration && pluginID && predicate) {
-        const result = await waitForPluginState(pluginID, predicate);
-        setData(result.response);
+        const requestId = ++listRequestIdRef.current;
+        try {
+          const result = await waitForPluginState(pluginID, predicate);
+          if (requestId === listRequestIdRef.current) {
+            setData(result.response);
+            setError('');
+          }
+        } catch (err: unknown) {
+          if (
+            requestId === listRequestIdRef.current &&
+            [401, 403, 404].some((status) => hasStatus(err, status))
+          ) {
+            clearPluginData();
+            setError(getErrorMessage(err, t('plugin_management.load_failed')));
+          }
+          throw err;
+        } finally {
+          if (requestId === listRequestIdRef.current) setLoading(false);
+        }
         return;
       }
       if (waitForRegistration) {
         await wait(PLUGIN_ENABLE_REFRESH_DELAY_MS);
       }
+      if (!canContinueOperation()) return;
       await loadPlugins();
     },
-    [loadPlugins]
+    [loadPlugins, clearPluginData, canContinueOperation, t]
   );
 
   useHeaderRefresh(loadPlugins, connected && supportsPlugin);
@@ -446,26 +349,23 @@ function InstalledPluginsView({
   );
 
   const openConfigDrawer = async (plugin: PluginListEntry) => {
-    if (openingConfigID || mutatingID) return;
+    if (!canContinueOperation() || openingConfigID || mutatingID) return;
 
     const requestSeq = configRequestSeq.current + 1;
     configRequestSeq.current = requestSeq;
     setOpeningConfigID(plugin.id);
     setEditingPlugin(plugin);
-    setEditingConfig({});
     setDraft(null);
 
     try {
       const currentConfig = await pluginsApi.getConfig(plugin.id);
       if (configRequestSeq.current !== requestSeq) return;
 
-      setEditingConfig(currentConfig);
-      setDraft(buildDraft(plugin, currentConfig));
+      setDraft(createPluginConfigDraft(plugin.configFields, currentConfig, plugin.enabled));
     } catch (err: unknown) {
       if (configRequestSeq.current !== requestSeq) return;
 
       setEditingPlugin(null);
-      setEditingConfig({});
       setDraft(null);
       showNotification(
         hasStatus(err, 404)
@@ -486,7 +386,6 @@ function InstalledPluginsView({
   const closeConfigDrawer = () => {
     if (mutatingID || openingConfigID) return;
     setEditingPlugin(null);
-    setEditingConfig({});
     setDraft(null);
   };
 
@@ -495,6 +394,7 @@ function InstalledPluginsView({
   };
 
   const handleTogglePlugin = async (plugin: PluginListEntry, enabled: boolean) => {
+    if (!canContinueOperation()) return;
     setMutatingID(plugin.id);
     try {
       await pluginsApi.updateEnabled(plugin.id, enabled);
@@ -516,7 +416,7 @@ function InstalledPluginsView({
   };
 
   const handleDeletePlugin = (plugin: PluginListEntry) => {
-    if (openingConfigID || mutatingID) return;
+    if (!canContinueOperation() || openingConfigID || mutatingID) return;
 
     showConfirmation({
       title: t('plugin_management.delete_confirm_title'),
@@ -527,13 +427,13 @@ function InstalledPluginsView({
       cancelText: t('common.cancel'),
       variant: 'danger',
       onConfirm: async () => {
+        if (!canContinueOperation()) return;
         setMutatingID(plugin.id);
         try {
           const result = await pluginsApi.deletePlugin(plugin.id);
           clearConfigCache();
           if (editingPlugin?.id === plugin.id) {
             setEditingPlugin(null);
-            setEditingConfig({});
             setDraft(null);
           }
           await loadPluginsAfterMutation(false);
@@ -562,7 +462,7 @@ function InstalledPluginsView({
   };
 
   const handleReinstallPlugin = (plugin: PluginListEntry) => {
-    if (openingConfigID || mutatingID) return;
+    if (!canContinueOperation() || openingConfigID || mutatingID) return;
 
     showConfirmation({
       title: t('plugin_management.reinstall_confirm_title'),
@@ -573,10 +473,12 @@ function InstalledPluginsView({
       cancelText: t('common.cancel'),
       variant: 'danger',
       onConfirm: async () => {
+        if (!canContinueOperation()) return;
         const mutationKey = `${plugin.id}:reinstall`;
         setMutatingID(mutationKey);
         try {
           const store = await pluginStoreApi.list();
+          if (!canContinueOperation()) return;
           const candidates = store.plugins.filter((entry) => entry.id === plugin.id);
           const storeEntry =
             candidates.find((entry) => entry.installed) ??
@@ -591,7 +493,6 @@ function InstalledPluginsView({
           clearConfigCache();
           if (editingPlugin?.id === plugin.id) {
             setEditingPlugin(null);
-            setEditingConfig({});
             setDraft(null);
           }
           if (deleteResult.restartRequired) {
@@ -602,6 +503,7 @@ function InstalledPluginsView({
           }
 
           const sourceId = storeEntry.sourceId || undefined;
+          if (!canContinueOperation()) return;
           const installResult = await pluginStoreApi.install(storeEntry.id, { sourceId });
           clearConfigCache();
           await loadPluginsAfterMutation(
@@ -636,13 +538,9 @@ function InstalledPluginsView({
   };
 
   const handleSaveConfig = async () => {
-    if (!editingPlugin || !draft || openingConfigID || mutatingID) return;
-    const { nextConfig, errors } = buildConfigPayload(
-      draft,
-      editingPlugin.configFields,
-      editingConfig,
-      t
-    );
+    if (!canContinueOperation() || !editingPlugin || !draft || openingConfigID || mutatingID)
+      return;
+    const { patch, errors } = buildPluginConfigPatch(draft, editingPlugin.configFields, t);
 
     if (Object.keys(errors).length > 0) {
       setDraft({ ...draft, errors });
@@ -652,16 +550,15 @@ function InstalledPluginsView({
 
     setMutatingID(editingPlugin.id);
     try {
-      await pluginsApi.putConfig(editingPlugin.id, nextConfig);
+      await pluginsApi.patchConfig(editingPlugin.id, patch);
       clearConfigCache();
       await loadPluginsAfterMutation(
-        nextConfig.enabled === true && editingPlugin.enabled !== true,
+        patch.enabled === true && editingPlugin.enabled !== true,
         editingPlugin.id,
         (item) => item.enabled === true
       );
       notifyPluginResourcesChanged();
       setEditingPlugin(null);
-      setEditingConfig({});
       setDraft(null);
       showNotification(t('plugin_management.save_success'), 'success');
     } catch (err: unknown) {
@@ -683,6 +580,7 @@ function InstalledPluginsView({
       updateDraft((current) => ({
         ...current,
         values: { ...current.values, [fieldName]: value },
+        touched: new Set(current.touched).add(fieldName),
         errors: { ...current.errors, [fieldName]: '' },
       }));
     };
@@ -691,20 +589,9 @@ function InstalledPluginsView({
     updateDraft((current) => ({
       ...current,
       values: { ...current.values, [fieldName]: value },
+      touched: new Set(current.touched).add(fieldName),
       errors: { ...current.errors, [fieldName]: '' },
     }));
-  };
-
-  const updateArrayField = (fieldName: string, updater: (items: string[]) => string[]) => {
-    updateDraft((current) => {
-      const currentValue = current.values[fieldName];
-      const items = Array.isArray(currentValue) ? currentValue : [''];
-      return {
-        ...current,
-        values: { ...current.values, [fieldName]: updater(items) },
-        errors: { ...current.errors, [fieldName]: '' },
-      };
-    });
   };
 
   const handlePriorityChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -712,6 +599,7 @@ function InstalledPluginsView({
     updateDraft((current) => ({
       ...current,
       priority: value,
+      touched: new Set(current.touched).add('priority'),
       errors: { ...current.errors, priority: '' },
     }));
   };
@@ -753,6 +641,7 @@ function InstalledPluginsView({
               updateDraft((current) => ({
                 ...current,
                 values: { ...current.values, [field.name]: nextValue },
+                touched: new Set(current.touched).add(field.name),
                 errors: { ...current.errors, [field.name]: '' },
               }))
             }
@@ -765,65 +654,17 @@ function InstalledPluginsView({
     }
 
     if (fieldType === 'array') {
-      const items = Array.isArray(value) && value.length > 0 ? value : [''];
       return (
         <div key={field.name} className={styles.formField}>
-          <div className={styles.fieldLabel}>{field.name}</div>
-          <div className={styles.arrayEditor}>
-            {items.map((item, index) => (
-              <div key={`${field.name}-${index}`} className={styles.arrayItemRow}>
-                <input
-                  className={styles.arrayInput}
-                  aria-label={`${field.name} ${index + 1}`}
-                  value={item}
-                  onChange={(event) =>
-                    updateArrayField(field.name, (currentItems) =>
-                      currentItems.map((currentItem, currentIndex) =>
-                        currentIndex === index ? event.target.value : currentItem
-                      )
-                    )
-                  }
-                  placeholder={t('plugin_management.array_item_placeholder')}
-                />
-                <div className={styles.arrayActions}>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className={styles.iconButton}
-                    onClick={() =>
-                      updateArrayField(field.name, (currentItems) => [
-                        ...currentItems.slice(0, index + 1),
-                        '',
-                        ...currentItems.slice(index + 1),
-                      ])
-                    }
-                    title={t('plugin_management.add_array_item')}
-                    aria-label={t('plugin_management.add_array_item')}
-                  >
-                    <IconPlus size={16} />
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className={styles.iconButton}
-                    onClick={() =>
-                      updateArrayField(field.name, (currentItems) =>
-                        currentItems.length <= 1
-                          ? ['']
-                          : currentItems.filter((_, currentIndex) => currentIndex !== index)
-                      )
-                    }
-                    title={t('plugin_management.remove_array_item')}
-                    aria-label={t('plugin_management.remove_array_item')}
-                  >
-                    <IconTrash2 size={16} />
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
+          <label htmlFor={`plugin-field-${field.name}`}>{field.name}</label>
+          <textarea
+            id={`plugin-field-${field.name}`}
+            className={styles.textarea}
+            value={textValue}
+            onChange={handleFieldTextChange(field.name)}
+            placeholder="[]"
+            spellCheck={false}
+          />
           {field.description ? <div className={styles.fieldHint}>{field.description}</div> : null}
           {errorText ? <div className={styles.fieldError}>{errorText}</div> : null}
         </div>
@@ -942,13 +783,13 @@ function InstalledPluginsView({
         </div>
       </section>
 
-      {loading ? (
+      {loading && !data ? (
         <div className={styles.list} aria-busy="true">
           {Array.from({ length: 4 }, (_, index) => (
             <div key={index} className={styles.skeletonRow} />
           ))}
         </div>
-      ) : visiblePlugins.length === 0 ? (
+      ) : error && !data ? null : visiblePlugins.length === 0 ? (
         <section className={styles.emptySurface}>
           <EmptyState
             title={t('plugin_management.no_plugins')}
@@ -987,7 +828,7 @@ function InstalledPluginsView({
             const logo = resolvePluginAsset(plugin.logo || plugin.metadata?.logo || '');
             const repositoryURL = buildRepositoryURL(plugin.metadata?.githubRepository ?? '');
             const openingConfig = openingConfigID === plugin.id;
-            const actionBusy = Boolean(mutatingID || openingConfigID);
+            const actionBusy = !canOperate || Boolean(mutatingID || openingConfigID);
             const subtitle = display.subtitleParts.join(' / ');
             const menuItems: DropdownMenuItem[] = [
               ...(repositoryURL
@@ -1155,7 +996,7 @@ function InstalledPluginsView({
             <Button variant="secondary" onClick={closeConfigDrawer} disabled={savingConfig}>
               {t('common.cancel')}
             </Button>
-            <Button onClick={handleSaveConfig} loading={savingConfig}>
+            <Button onClick={handleSaveConfig} loading={savingConfig} disabled={!canOperate}>
               {t('common.save')}
             </Button>
           </div>
@@ -1174,7 +1015,13 @@ function InstalledPluginsView({
                 </div>
                 <ToggleSwitch
                   checked={draft.enabled}
-                  onChange={(enabled) => updateDraft((current) => ({ ...current, enabled }))}
+                  onChange={(enabled) =>
+                    updateDraft((current) => ({
+                      ...current,
+                      enabled,
+                      touched: new Set(current.touched).add('enabled'),
+                    }))
+                  }
                   ariaLabel={t('plugin_management.enabled')}
                 />
               </div>

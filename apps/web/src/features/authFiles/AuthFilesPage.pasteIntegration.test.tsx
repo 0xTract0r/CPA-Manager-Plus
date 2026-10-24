@@ -15,6 +15,7 @@ const { mocks } = vi.hoisted(() => {
       list: vi.fn(),
       saveJsonObject: vi.fn(),
       deleteFiles: vi.fn(),
+      deleteFileByName: vi.fn(),
       deleteAll: vi.fn(),
       showNotification: vi.fn(),
       showConfirmation: vi.fn(),
@@ -103,6 +104,7 @@ vi.mock('@/services/api', () => ({
     list: mocks.list,
     saveJsonObject: mocks.saveJsonObject,
     deleteFiles: mocks.deleteFiles,
+    deleteFileByName: mocks.deleteFileByName,
     deleteAll: mocks.deleteAll,
   },
 }));
@@ -258,6 +260,9 @@ describe('AuthFilesPage real auth JSON paste flow', () => {
     mocks.list.mockReset();
     mocks.saveJsonObject.mockReset();
     mocks.deleteFiles.mockReset();
+    mocks.deleteFileByName
+      .mockReset()
+      .mockResolvedValue({ deleted: 1, failed: [], files: ['team-codex.json'] });
     mocks.deleteAll.mockReset();
     mocks.showNotification.mockReset();
     mocks.showConfirmation.mockReset();
@@ -662,7 +667,13 @@ describe('AuthFilesPage real auth JSON paste flow', () => {
     mocks.list.mockResolvedValue({
       files: [
         { name: 'plus-codex.json', type: 'codex', authIndex: 'plus', plan_type: 'plus' },
-        { name: 'team-codex.json', type: 'codex', authIndex: 'team', plan_type: 'team' },
+        {
+          name: 'team-codex.json',
+          id: 'team-runtime',
+          type: 'codex',
+          authIndex: 'team',
+          plan_type: 'team',
+        },
         { name: 'qwen.json', type: 'qwen' },
       ],
     });
@@ -709,7 +720,13 @@ describe('AuthFilesPage real auth JSON paste flow', () => {
     mocks.list.mockResolvedValue({
       files: [
         { name: 'plus-codex.json', type: 'codex', authIndex: 'plus', plan_type: 'plus' },
-        { name: 'team-codex.json', type: 'codex', authIndex: 'team', plan_type: 'team' },
+        {
+          name: 'team-codex.json',
+          id: 'team-runtime',
+          type: 'codex',
+          authIndex: 'team',
+          plan_type: 'team',
+        },
         { name: 'qwen.json', type: 'qwen' },
       ],
     });
@@ -760,7 +777,21 @@ describe('AuthFilesPage real auth JSON paste flow', () => {
     });
 
     expect(mocks.deleteAll).not.toHaveBeenCalled();
-    expect(mocks.deleteFiles).toHaveBeenCalledWith(['team-codex.json']);
+    expect(mocks.deleteFiles).not.toHaveBeenCalled();
+    expect(mocks.deleteFileByName).toHaveBeenCalledExactlyOnceWith(
+      'team-runtime',
+      'team-codex.json',
+      expect.any(Function),
+      [
+        {
+          name: 'team-codex.json',
+          runtimeId: 'team-runtime',
+          authIndex: 'team',
+          provider: 'codex',
+        },
+      ],
+      { apiBase: 'http://manager.local:18317', managementKey: 'test-key' }
+    );
 
     await act(async () => {
       renderer!.unmount();
@@ -802,7 +833,8 @@ describe('AuthFilesPage real auth JSON paste flow', () => {
           email: 'Session.User+tag@example.com',
           account_id: 'session-account',
           access_token: 'plain-access-token',
-        })
+        }),
+        { apiBase: 'http://manager.local:18317', managementKey: 'test-key' }
       );
     });
     await vi.waitFor(() => {
@@ -871,18 +903,22 @@ describe('AuthFilesPage real auth JSON paste flow', () => {
     });
 
     await vi.waitFor(() => {
-      expect(mocks.saveJsonObject).toHaveBeenCalledWith('sub2api-codex-accounts.codex.json', [
-        expect.objectContaining({
-          type: 'codex',
-          email: 'first@example.com',
-          access_token: 'first-access-token',
-        }),
-        expect.objectContaining({
-          type: 'codex',
-          email: 'second@example.com',
-          access_token: 'second-access-token',
-        }),
-      ]);
+      expect(mocks.saveJsonObject).toHaveBeenCalledWith(
+        'sub2api-codex-accounts.codex.json',
+        [
+          expect.objectContaining({
+            type: 'codex',
+            email: 'first@example.com',
+            access_token: 'first-access-token',
+          }),
+          expect.objectContaining({
+            type: 'codex',
+            email: 'second@example.com',
+            access_token: 'second-access-token',
+          }),
+        ],
+        { apiBase: 'http://manager.local:18317', managementKey: 'test-key' }
+      );
     });
 
     await act(async () => {

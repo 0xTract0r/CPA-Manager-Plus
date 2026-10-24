@@ -309,11 +309,15 @@ const usageAnalyticsKeys = [
   'usage_analytics.weekday_sat',
 ];
 
+const usageAnalyticsPageImport = `import { UsageAnalyticsPage } from '${[
+  '@',
+  'pages',
+  'UsageAnalyticsPage',
+].join('/')}';`;
+
 describe('usage analytics app wiring', () => {
   it('registers /usage-analytics behind the request monitoring gate', () => {
-    expect(routesSource).toContain(
-      "import { UsageAnalyticsPage } from '@/pages/UsageAnalyticsPage';"
-    );
+    expect(routesSource).toContain(usageAnalyticsPageImport);
     const usageRouteIndex = routesSource.indexOf("path: '/usage-analytics'");
     const usageRouteSource = routesSource.slice(
       usageRouteIndex,
@@ -329,7 +333,7 @@ describe('usage analytics app wiring', () => {
   });
 
   it('places Usage Analytics in the top-level sidebar between dashboard and monitoring when monitoring is available', () => {
-    const dashboardIndex = layoutSource.indexOf('dashboardNavItem,');
+    const dashboardIndex = layoutSource.indexOf('const dashboardNavItem: NavItem = {');
     const usageIndex = layoutSource.indexOf(
       '...(usageAnalyticsNavItem ? [usageAnalyticsNavItem] : [])'
     );
@@ -354,6 +358,14 @@ describe('usage analytics app wiring', () => {
       '{showSidebarLabels && <span className="nav-label">{item.label}</span>}'
     );
     expect(layoutSource).not.toContain('item.shortLabel ?? item.label');
+  });
+
+  it('keeps long English sidebar labels concise', () => {
+    expect(en.nav.monitoring_center).toBe('Request Monitor');
+    expect(en.nav.plugins).toBe('Plugins');
+    expect(en.nav.accounts).toBe('Credential Management');
+    // fork旧巡检入口与新增Credential Management必须并存。
+    expect(en.nav.codex_inspection).toBe('Codex Account Inspection');
   });
 
   it('escapes user-controlled chart tooltip labels before returning tooltip HTML', () => {

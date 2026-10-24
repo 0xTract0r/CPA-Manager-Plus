@@ -7,11 +7,12 @@ import type { PerformanceData, PerformanceGroup, PerformanceMetric } from './typ
 // 仅从 demoFixtures 引用；生产构建通过现有 demo isolation 剔除。
 export function withDemoTelemetry(
   event: MonitoringAnalyticsEventRow,
-  index: number
+  index: number,
+  preserveScenarioIdentity = false
 ): MonitoringAnalyticsEventRow {
   if (index % 7 === 6) return event;
   // 较旧失败尝试与前一条较新成功事件关联，演示换尝试后的成功。
-  if (index % 173 === 2)
+  if (!preserveScenarioIdentity && index % 173 === 2)
     event = {
       ...event,
       request_id: `demo-request-${String(index).padStart(3, '0')}`,

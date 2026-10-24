@@ -1,146 +1,173 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-/**
- * 回归测试：账号级探测端点（如「测试发送消息」）返回 401 时，不应触发全局
- * 'unauthorized' 登出事件——该 401 来自「被测账号」上游认证失败，不代表管理
- * 会话过期。历史上 cpamp 从旧版 apps/web 移植 client.ts 时曾丢失
- * ACCOUNT_LEVEL_PROBE_PATHS 白名单，导致无条件 401 → dispatch('unauthorized')，
- * 使得测一个被封禁/失效的账号就会把整个管理前端登出。
- *
- * 这里直接 mock `axios` 模块本身，捕获 ApiClient 注册的响应拦截器错误处理
- * 分支，从而演练真实的 handleError 逻辑（含 isAccountLevelProbeUrl 判断），
- * 而不是在测试里重新实现一遍白名单规则。
- */
-
-type InterceptorHandlers = {
-  onFulfilled: (value: unknown) => unknown;
-  onRejected: (error: unknown) => unknown;
-};
-
-const requestInterceptors: InterceptorHandlers[] = [];
-const responseInterceptors: InterceptorHandlers[] = [];
-
-vi.mock('axios', () => {
-  const isAxiosError = (value: unknown): value is { response?: unknown; config?: unknown } =>
-    Boolean(value && typeof value === 'object' && (value as { isAxiosError?: boolean }).isAxiosError);
-
-  const mockAxiosInstance = {
-    defaults: { timeout: 0 },
-    interceptors: {
-      request: {
-        use: (onFulfilled: InterceptorHandlers['onFulfilled'], onRejected: InterceptorHandlers['onRejected']) => {
-          requestInterceptors.push({ onFulfilled, onRejected });
-        }
-      },
-      response: {
-        use: (onFulfilled: InterceptorHandlers['onFulfilled'], onRejected: InterceptorHandlers['onRejected']) => {
-          responseInterceptors.push({ onFulfilled, onRejected });
-        }
-      }
-    },
-    get: vi.fn(),
-    post: vi.fn(),
-    put: vi.fn(),
-    patch: vi.fn(),
-    delete: vi.fn(),
-    request: vi.fn()
-  };
-
+const { mocks, axiosInstance } = vi.hoisted(() => {
+  const requestUse = vi.fn();
+  const responseUse = vi.fn();
   return {
-    default: {
-      create: vi.fn(() => mockAxiosInstance),
-      isAxiosError
-    }
+    mocks: {
+      requestUse,
+      responseUse,
+    },
+    axiosInstance: {
+      defaults: { timeout: 0 },
+      interceptors: {
+        request: { use: requestUse },
+        response: { use: responseUse },
+      },
+    },
   };
 });
 
-vi.mock('@/features/demo/demoMode', () => ({
-  isDemoMode: () => false
+vi.mock('axios', () => ({
+  default: {
+    create: vi.fn(() => axiosInstance),
+    isAxiosError: (error: unknown) =>
+      Boolean(error && typeof error === 'object' && 'isAxiosError' in error),
+  },
 }));
 
-// client.ts 顶层直接 import 了 demoApi 的三个 handler；真实 demoApi 模块又会在顶层
-// 加载 demoFixtures（引用 demoMode 的 DEMO_API_BASE 常量）。由于上面已经把整个
-// demoMode 模块 mock 掉（只保留 isDemoMode），若不隔离 demoApi，模块加载阶段就会
-// 因缺失 DEMO_API_BASE 报错。这些 handler 本身只在 isDemoMode() 为 true 时才会被
-// client.ts 调用，测试里恒为 false，因此可以安全地整体 mock 掉。
-vi.mock('@/features/demo/demoApi', () => ({
-  handleDemoApiRequest: vi.fn(),
-  handleDemoFormRequest: vi.fn(),
-  handleDemoRawRequest: vi.fn()
-}));
+vi.mock('@/features/demo/demoApi', () => ({ handleDemoApiRequest: vi.fn(), handleDemoFormRequest: vi.fn(), handleDemoRawRequest: vi.fn() }));
+import { apiClient, createScopedApiRequestConfig } from './client';
 
-describe('apiClient 401 unauthorized dispatch whitelist', () => {
-  let dispatchEventSpy: ReturnType<typeof vi.fn>;
+type RequestConfig = {
+  baseURL?: string;
+  url?: string;
+  headers: Record<string, string>;
+  cpampScopedRequest?: true;
+};
 
-  beforeEach(async () => {
-    vi.resetModules();
-    requestInterceptors.length = 0;
-    responseInterceptors.length = 0;
-    dispatchEventSpy = vi.fn();
-    // 本项目 vitest 默认 node 环境（未配 jsdom），全局 window 不存在，
-    // 用 vi.stubGlobal 提供最小 mock，而非依赖真实 DOM 的 window.dispatchEvent。
-    vi.stubGlobal('window', {
-      dispatchEvent: dispatchEventSpy
+const applyRequestInterceptor = (config: RequestConfig): RequestConfig => {
+  const interceptor = mocks.requestUse.mock.calls[0]?.[0] as
+    | ((request: RequestConfig) => RequestConfig)
+    | undefined;
+  if (!interceptor) throw new Error('request interceptor was not registered');
+  return interceptor(config);
+};
+
+const applyResponseErrorInterceptor = async (error: unknown): Promise<void> => {
+  const interceptor = mocks.responseUse.mock.calls[0]?.[1] as
+    | ((reason: unknown) => Promise<never>)
+    | undefined;
+  if (!interceptor) throw new Error('response interceptor was not registered');
+  await interceptor(error);
+};
+
+const applyResponseSuccessInterceptor = (response: unknown): unknown => {
+  const interceptor = mocks.responseUse.mock.calls[0]?.[0] as
+    | ((value: unknown) => unknown)
+    | undefined;
+  if (!interceptor) throw new Error('response interceptor was not registered');
+  return interceptor(response);
+};
+
+describe('ApiClient request scoping', () => {
+  const dispatchEvent = vi.fn();
+
+  beforeEach(() => {
+    dispatchEvent.mockReset();
+    vi.stubGlobal('window', { dispatchEvent });
+    apiClient.setConfig({
+      apiBase: 'http://new-cpa.local:8317',
+      managementKey: 'new-cpa-key',
     });
-    // 触发模块初始化，注册拦截器
-    await import('./client');
   });
 
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
+  it('preserves an explicit old connection while regular requests use the current connection', () => {
+    const scoped = createScopedApiRequestConfig({
+      apiBase: 'http://old-cpa.local:8317',
+      managementKey: 'old-cpa-key',
+    }) as RequestConfig;
+    scoped.url = '/oauth-model-alias';
 
-  const makeAxiosError = (url: string, status = 401) => ({
-    isAxiosError: true,
-    message: 'Request failed with status code 401',
-    config: { url },
-    response: { status, data: { error: 'unauthorized' } }
-  });
-
-  const runResponseErrorInterceptor = (error: unknown) => {
-    const [{ onRejected }] = responseInterceptors;
-    expect(onRejected).toBeDefined();
-    // onRejected 声明类型是 (error: unknown) => unknown，但运行时实际返回被拒绝的
-    // Promise（handleError 内部 reject 出去），这里显式包一层 Promise.resolve 以获得
-    // 可 .catch() 的类型，而不改变真实运行时行为。
-    return Promise.resolve(onRejected(error)).catch(() => {
-      // handleError 把错误 reject 出去是预期行为，这里只关心副作用（dispatchEvent）
+    expect(applyRequestInterceptor(scoped)).toMatchObject({
+      baseURL: 'http://old-cpa.local:8317/v0/management',
+      headers: { Authorization: 'Bearer old-cpa-key' },
     });
-  };
-
-  it('does NOT dispatch unauthorized when /auth-files/test-message returns 401', async () => {
-    await runResponseErrorInterceptor(makeAxiosError('/auth-files/test-message'));
-
-    const dispatchedEventTypes = dispatchEventSpy.mock.calls.map(([event]) => (event as Event).type);
-    expect(dispatchedEventTypes).not.toContain('unauthorized');
+    expect(applyRequestInterceptor({ url: '/oauth-model-alias', headers: {} })).toMatchObject({
+      baseURL: 'http://new-cpa.local:8317/v0/management',
+      headers: { Authorization: 'Bearer new-cpa-key' },
+    });
   });
 
-  it('still dispatches unauthorized for a normal management endpoint 401', async () => {
-    await runResponseErrorInterceptor(makeAxiosError('/auth-files'));
+  it('does not let a stale scoped 401 log out the current connection', async () => {
+    const staleConfig = applyRequestInterceptor({
+      ...(createScopedApiRequestConfig({
+        apiBase: 'http://old-cpa.local:8317',
+        managementKey: 'old-cpa-key',
+      }) as RequestConfig),
+      url: '/oauth-model-alias',
+    });
+    const currentConfig = applyRequestInterceptor({
+      url: '/oauth-model-alias',
+      headers: {},
+    });
+    const createUnauthorizedError = (config: RequestConfig) => ({
+      isAxiosError: true,
+      message: 'unauthorized',
+      config,
+      response: { status: 401, data: { message: 'unauthorized' } },
+    });
 
-    const dispatchedEventTypes = dispatchEventSpy.mock.calls.map(([event]) => (event as Event).type);
-    expect(dispatchedEventTypes).toContain('unauthorized');
+    await expect(
+      applyResponseErrorInterceptor(createUnauthorizedError(staleConfig))
+    ).rejects.toThrow('unauthorized');
+    expect(dispatchEvent).not.toHaveBeenCalled();
+
+    await expect(
+      applyResponseErrorInterceptor(createUnauthorizedError(currentConfig))
+    ).rejects.toThrow('unauthorized');
+    expect(dispatchEvent).toHaveBeenCalledTimes(1);
   });
 
-  it('does not treat a path merely containing the probe suffix as whitelisted', async () => {
-    await runResponseErrorInterceptor(makeAxiosError('/x/auth-files/test-message'));
+  it('does not publish server metadata from a stale scoped response', () => {
+    const staleConfig = applyRequestInterceptor({
+      ...(createScopedApiRequestConfig({
+        apiBase: 'http://old-cpa.local:8317',
+        managementKey: 'old-cpa-key',
+      }) as RequestConfig),
+      url: '/oauth-model-alias',
+    });
+    const currentConfig = applyRequestInterceptor({
+      url: '/oauth-model-alias',
+      headers: {},
+    });
+    const createResponse = (config: RequestConfig) => ({
+      config,
+      headers: {
+        'x-cpa-version': 'v1.2.3',
+        'x-cpa-commit': '5bffd1514fba2ca7cbfd13bb6530a6f7d9d72d43',
+        'x-cpa-support-plugin': 'true',
+      },
+    });
 
-    const dispatchedEventTypes = dispatchEventSpy.mock.calls.map(([event]) => (event as Event).type);
-    expect(dispatchedEventTypes).toContain('unauthorized');
+    applyResponseSuccessInterceptor(createResponse(staleConfig));
+    expect(dispatchEvent).not.toHaveBeenCalled();
+
+    applyResponseSuccessInterceptor(createResponse(currentConfig));
+    expect(dispatchEvent).toHaveBeenCalledTimes(2);
+    expect((dispatchEvent.mock.calls[0]?.[0] as CustomEvent).detail).toEqual({
+      version: 'v1.2.3',
+      commit: '5bffd1514fba2ca7cbfd13bb6530a6f7d9d72d43',
+      buildDate: null,
+    });
   });
 
-  it('ignores query string when matching the probe path', async () => {
-    await runResponseErrorInterceptor(makeAxiosError('/auth-files/test-message?foo=bar'));
+  it('publishes a commit even when a development build omits version metadata', () => {
+    const currentConfig = applyRequestInterceptor({
+      url: '/config',
+      headers: {},
+    });
 
-    const dispatchedEventTypes = dispatchEventSpy.mock.calls.map(([event]) => (event as Event).type);
-    expect(dispatchedEventTypes).not.toContain('unauthorized');
-  });
+    applyResponseSuccessInterceptor({
+      config: currentConfig,
+      headers: { 'x-cpa-commit': '5bffd151' },
+    });
 
-  it('still dispatches unauthorized for non-401 status on the probe endpoint (no-op)', async () => {
-    // 500 场景下拦截器根本不应该走 dispatch 分支（无论端点），确保白名单只影响 401 判断
-    await runResponseErrorInterceptor(makeAxiosError('/auth-files/test-message', 500));
-
-    const dispatchedEventTypes = dispatchEventSpy.mock.calls.map(([event]) => (event as Event).type);
-    expect(dispatchedEventTypes).not.toContain('unauthorized');
+    expect(dispatchEvent).toHaveBeenCalledTimes(1);
+    expect((dispatchEvent.mock.calls[0]?.[0] as CustomEvent).detail).toEqual({
+      version: null,
+      commit: '5bffd151',
+      buildDate: null,
+    });
   });
 });

@@ -7,9 +7,10 @@ import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
 import type { ApiClientConfig, ApiError } from '@/types';
 import {
   BUILD_DATE_HEADER_KEYS,
+  COMMIT_HEADER_KEYS,
   CPA_SUPPORT_PLUGIN_HEADER_KEYS,
   REQUEST_TIMEOUT_MS,
-  VERSION_HEADER_KEYS
+  VERSION_HEADER_KEYS,
 } from '@/utils/constants';
 import { computeApiUrl } from '@/utils/connection';
 import {
@@ -46,6 +47,24 @@ const isAccountLevelProbeUrl = (url: string | undefined): boolean => {
   return ACCOUNT_LEVEL_PROBE_PATHS.some((probe) => path === probe);
 };
 
+export type ApiClientRequestScope = Pick<ApiClientConfig, 'apiBase' | 'managementKey'>;
+
+export type ScopedApiRequestConfig = AxiosRequestConfig & {
+  cpampScopedRequest?: true;
+};
+
+export const createScopedApiRequestConfig = (
+  scope: ApiClientRequestScope
+): ScopedApiRequestConfig => ({
+  baseURL: computeApiUrl(scope.apiBase),
+  headers: scope.managementKey
+    ? {
+        Authorization: `Bearer ${scope.managementKey}`,
+      }
+    : {},
+  cpampScopedRequest: true,
+});
+
 class ApiClient {
   private instance: AxiosInstance;
   private apiBase: string = '';
@@ -55,8 +74,8 @@ class ApiClient {
     this.instance = axios.create({
       timeout: REQUEST_TIMEOUT_MS,
       headers: {
-        'Content-Type': 'application/json'
-      }
+        'Content-Type': 'application/json',
+      },
     });
 
     this.setupInterceptors();
@@ -76,16 +95,15 @@ class ApiClient {
     }
   }
 
-  private readHeader(
-    headers: Record<string, unknown> | undefined,
-    keys: string[]
-  ): string | null {
+  private readHeader(headers: Record<string, unknown> | undefined, keys: string[]): string | null {
     if (!headers) return null;
 
     const normalizeValue = (value: unknown): string | null => {
       if (value === undefined || value === null) return null;
       if (Array.isArray(value)) {
-        const first = value.find((entry) => entry !== undefined && entry !== null && String(entry).trim());
+        const first = value.find(
+          (entry) => entry !== undefined && entry !== null && String(entry).trim()
+        );
         return first !== undefined ? String(first) : null;
       }
       const text = String(value);
@@ -128,6 +146,20 @@ class ApiClient {
     return null;
   }
 
+  private requestTargetsCurrentConfig(config?: AxiosRequestConfig): boolean {
+    const requestBase = String(config?.baseURL ?? '').replace(/\/+$/, '');
+    const requestAuthorization = this.readHeader(
+      config?.headers as Record<string, unknown> | undefined,
+      ['Authorization']
+    );
+    const currentAuthorization = this.managementKey ? `Bearer ${this.managementKey}` : '';
+
+    return (
+      requestBase === this.apiBase.replace(/\/+$/, '') &&
+      (requestAuthorization ?? '') === currentAuthorization
+    );
+  }
+
   /**
    * 设置请求/响应拦截器
    */
@@ -135,15 +167,19 @@ class ApiClient {
     // 请求拦截器
     this.instance.interceptors.request.use(
       (config) => {
-        // 设置 baseURL
-        config.baseURL = this.apiBase;
+        const scopedRequest = (config as ScopedApiRequestConfig).cpampScopedRequest === true;
+        // Explicitly scoped requests retain the connection captured when a multi-step
+        // operation began. Regular requests continue to use the current global config.
+        if (!scopedRequest) {
+          config.baseURL = this.apiBase;
+        }
         if (config.url) {
           // Normalize deprecated Gemini endpoint to the current path.
           config.url = config.url.replace(/\/generative-language-api-key\b/g, '/gemini-api-key');
         }
 
         // 添加认证头
-        if (this.managementKey) {
+        if (!scopedRequest && this.managementKey) {
           config.headers.Authorization = `Bearer ${this.managementKey}`;
         }
 
@@ -157,21 +193,27 @@ class ApiClient {
       (response) => {
         const headers = response.headers as Record<string, string | undefined>;
         const version = this.readHeader(headers, VERSION_HEADER_KEYS);
+        const commit = this.readHeader(headers, COMMIT_HEADER_KEYS);
         const buildDate = this.readHeader(headers, BUILD_DATE_HEADER_KEYS);
         const supportsPlugin = this.readBooleanHeader(headers, CPA_SUPPORT_PLUGIN_HEADER_KEYS);
+        const targetsCurrentConfig = this.requestTargetsCurrentConfig(response.config);
 
         // 触发版本更新事件（后续通过 store 处理）
-        if (version || buildDate) {
+        if (targetsCurrentConfig && (version || commit || buildDate)) {
           window.dispatchEvent(
             new CustomEvent('server-version-update', {
-              detail: { version: version || null, buildDate: buildDate || null }
+              detail: {
+                version: version || null,
+                commit: commit || null,
+                buildDate: buildDate || null,
+              },
             })
           );
         }
-        if (supportsPlugin !== null) {
+        if (targetsCurrentConfig && supportsPlugin !== null) {
           window.dispatchEvent(
             new CustomEvent('server-plugin-support-update', {
-              detail: { supportsPlugin }
+              detail: { supportsPlugin },
             })
           );
         }
@@ -211,7 +253,7 @@ class ApiClient {
       // 401 未授权 - 触发登出事件。
       // 但账号级探测端点（如测试发送消息）的 401 来自「被测账号」上游认证失败，
       // 不代表管理会话过期，跳过全局登出，交由发起页面就地处理错误。
-      if (error.response?.status === 401 && !isAccountLevelProbeUrl(error.config?.url)) {
+      if (error.response?.status === 401 && !isAccountLevelProbeUrl(error.config?.url) && this.requestTargetsCurrentConfig(error.config)) {
         window.dispatchEvent(new Event('unauthorized'));
       }
 
@@ -219,7 +261,11 @@ class ApiClient {
     }
 
     const fallbackMessage =
-      error instanceof Error ? error.message : typeof error === 'string' ? error : 'Unknown error occurred';
+      error instanceof Error
+        ? error.message
+        : typeof error === 'string'
+          ? error
+          : 'Unknown error occurred';
     const fallback = new Error(fallbackMessage) as ApiError;
     fallback.name = 'ApiError';
     return fallback;
@@ -305,8 +351,8 @@ class ApiClient {
       ...config,
       headers: {
         ...(config?.headers || {}),
-        'Content-Type': 'multipart/form-data'
-      }
+        'Content-Type': 'multipart/form-data',
+      },
     });
     return response.data;
   }

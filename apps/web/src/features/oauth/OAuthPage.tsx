@@ -1,11 +1,25 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { authFilesApi } from '@/services/api/authFiles';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+} from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { AccountIdentity } from '@/components/ui/AccountIdentity';
 import { Input } from '@/components/ui/Input';
-import { useAuthStore, useNotificationStore, useThemeStore } from '@/stores';
+import {
+  publishAccountCredentialMutationRevision,
+  useAuthStore,
+  useNotificationStore,
+  useThemeStore,
+} from '@/stores';
 import {
   oauthApi,
   pluginsApi,
@@ -14,7 +28,6 @@ import {
   type OAuthProvider,
   type OAuthStatusResponse,
 } from '@/services/api';
-import { authFilesApi } from '@/services/api/authFiles';
 import type { AuthFileItem } from '@/types/authFile';
 import { vertexApi, type VertexImportResponse } from '@/services/api/vertex';
 import { copyToClipboard } from '@/utils/clipboard';
@@ -33,10 +46,27 @@ import { toProxyOwnerAccount } from '@/features/authFiles/constants';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import type { PluginListEntry } from '@/types';
 import { getPluginTitle, resolvePluginAssetURL } from '@/features/plugins/pluginResources';
+import { createCodexInspectionConnectionFingerprint } from '@/features/monitoring/codexInspection';
 import {
+  createAccountCredentialMutationBaseline,
+  recordAccountCredentialMutationMarker,
+  type AccountCredentialMutationBaseline,
+} from '@/features/accounts/model/accountCredentialMutationMarker';
+import { probeProxyConnectivity } from '@/services/api/proxyProbe';
+import type { ApiClientRequestScope } from '@/services/api/client';
+import {
+  completeAccountOAuthReauthSessionFromSearch,
+  readAccountOAuthReauthSessionId,
+} from '@/features/accounts/model/accountReauthSession';
+import {
+  isOAuthProviderAttemptCurrent,
+  isOAuthPollingScopeCurrent,
   resolvePluginOAuthProviderId,
   shouldShowPluginOAuthProvider,
+  type OAuthProviderAttempt,
+  type OAuthPollingScope,
 } from './oauthProviderHelpers';
+import { validateDevinCallback } from './devinOAuth';
 import styles from './OAuthPage.module.scss';
 import iconCodex from '@/assets/icons/codex.svg';
 import iconClaude from '@/assets/icons/claude.svg';
@@ -46,8 +76,16 @@ import iconKimiDark from '@/assets/icons/kimi-dark.svg';
 import iconVertex from '@/assets/icons/vertex.svg';
 import iconGrok from '@/assets/icons/grok.svg';
 import iconGrokDark from '@/assets/icons/grok-dark.svg';
+import iconDevin from '@/assets/icons/devin.svg';
+import iconDevinDark from '@/assets/icons/devin-dark.svg';
+import iconMeta from '@/assets/icons/meta.svg';
 
-type OAuthFlowStep = 'generate_link' | 'wait_callback' | 'submit_callback' | 'exchange_token' | 'saved';
+type OAuthFlowStep =
+  | 'generate_link'
+  | 'wait_callback'
+  | 'submit_callback'
+  | 'exchange_token'
+  | 'saved';
 
 interface OAuthSuccessResult {
   authFile?: string;
@@ -73,12 +111,21 @@ interface ProviderState {
   savedProxyUrl?: string;
   expiresAtMs?: number;
   expiresInSeconds?: number;
+  userCode?: string;
+  cancelError?: string;
   callbackUrl?: string;
   callbackSubmitting?: boolean;
   callbackStatus?: 'success' | 'error';
   callbackError?: string;
   authFilesBeforeStart?: string[];
   successResult?: OAuthSuccessResult;
+}
+
+interface ScopedOAuthProviderAttempt extends OAuthProviderAttempt {
+  requestScope: ApiClientRequestScope;
+  credentialBaseline?: AccountCredentialMutationBaseline;
+  beforeNames?: string[];
+  stateSnapshot?: ProviderState;
 }
 
 interface VertexImportResult {
@@ -166,16 +213,25 @@ const BUILT_IN_PROVIDERS: BuiltInProviderDefinition[] = [
     urlLabelKey: 'auth_login.xai_oauth_url_label',
     icon: { light: iconGrok, dark: iconGrokDark },
   },
+  {
+    id: 'devin',
+    titleKey: 'auth_login.devin_oauth_title',
+    hintKey: 'auth_login.devin_oauth_hint',
+    urlLabelKey: 'auth_login.devin_oauth_url_label',
+    icon: { light: iconDevin, dark: iconDevinDark },
+  },
+  {
+    id: 'meta',
+    titleKey: 'auth_login.meta_oauth_title',
+    hintKey: 'auth_login.meta_oauth_hint',
+    urlLabelKey: 'auth_login.meta_oauth_url_label',
+    icon: iconMeta,
+  },
 ];
 
 const BUILT_IN_PROVIDER_IDS = new Set<string>(BUILT_IN_PROVIDERS.map((provider) => provider.id));
 
-const CALLBACK_SUPPORTED = new Set<string>([
-  'codex',
-  'anthropic',
-  'antigravity',
-  'xai',
-]);
+const CALLBACK_SUPPORTED = new Set<string>(['codex', 'anthropic', 'antigravity', 'xai', 'devin']);
 const XAI_CALLBACK_URL = 'http://127.0.0.1:56121/callback';
 const getProviderI18nPrefix = (provider: BuiltInOAuthProvider) => provider.replace('-', '_');
 const getAuthKey = (provider: BuiltInOAuthProvider, suffix: string) =>
@@ -231,10 +287,7 @@ const formatDuration = (seconds: number) => {
 // 从 core 返回的过期字段推导授权链接的绝对到期时间戳（ms）。
 // 优先用 expires_at 的绝对时间；否则用 expires_in_seconds 相对当前时间换算。
 // 放在组件外的纯模块函数里，避免在组件渲染作用域内直接调用 Date.now()。
-const resolveExpiresAtMs = (
-  expiresAt?: string,
-  expiresInSeconds?: number
-): number | undefined => {
+const resolveExpiresAtMs = (expiresAt?: string, expiresInSeconds?: number): number | undefined => {
   const parsedExpiresAt = expiresAt ? Date.parse(expiresAt) : NaN;
   if (Number.isFinite(parsedExpiresAt)) return parsedExpiresAt;
   if (expiresInSeconds && Number.isFinite(expiresInSeconds)) {
@@ -243,6 +296,7 @@ const resolveExpiresAtMs = (
   return undefined;
 };
 
+const SUCCESS_RESET_DELAY_MS = 5000;
 const OAUTH_FLOW_STEPS: OAuthFlowStep[] = [
   'generate_link',
   'wait_callback',
@@ -331,6 +385,7 @@ const resolveCallbackUrl = (
   input: string,
   state?: string
 ): string | null => {
+  if (provider === 'devin') return input.trim();
   if (provider !== 'xai') return input.trim();
   return buildXaiCallbackUrl(input, state);
 };
@@ -353,17 +408,6 @@ const readStringField = (record: Record<string, unknown>, keys: string[]) => {
     if (typeof value === 'number' && Number.isFinite(value)) return String(value);
   }
   return undefined;
-};
-
-const getAuthFileModifiedMs = (entry: AuthFileItem) => {
-  const record = entry as Record<string, unknown>;
-  const raw = record.modified ?? record.modtime ?? record.updated_at ?? record.created_at;
-  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
-  if (typeof raw === 'string') {
-    const parsed = Date.parse(raw);
-    return Number.isFinite(parsed) ? parsed : 0;
-  }
-  return 0;
 };
 
 const matchesAuthFileProvider = (entry: AuthFileItem, provider: OAuthProvider) => {
@@ -404,26 +448,42 @@ const findSavedAuthFile = (
   beforeNames: string[] | undefined,
   files: AuthFileItem[]
 ): AuthFileItem | undefined => {
+  const candidates = files.filter((entry) => matchesAuthFileProvider(entry, provider));
   if (authFileName) {
-    const exact = files.find((entry) => entry.name === authFileName);
-    if (exact) return exact;
+    const physicalName = authFileName.split('/').pop();
+    const exact = candidates.filter((entry) => entry.name === physicalName);
+    return exact.length === 1 ? exact[0] : undefined;
   }
-  const before = new Set(beforeNames ?? []);
-  const candidates = files
-    .filter((entry) => matchesAuthFileProvider(entry, provider))
-    .sort((left, right) => getAuthFileModifiedMs(right) - getAuthFileModifiedMs(left));
-  return candidates.find((entry) => !before.has(entry.name)) ?? candidates[0];
+  if (!beforeNames) return undefined;
+  const before = new Set(beforeNames);
+  const created = candidates.filter((entry) => !before.has(entry.name));
+  return created.length === 1 ? created[0] : undefined;
 };
 
 export function OAuthPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const location = useLocation();
   const { showNotification } = useNotificationStore();
   const resolvedTheme = useThemeStore((state) => state.resolvedTheme);
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const apiBase = useAuthStore((state) => state.apiBase);
+  const managementKey = useAuthStore((state) => state.managementKey);
   const supportsPlugin = useAuthStore((state) => state.supportsPlugin);
+  const requestScope = useMemo(() => ({ apiBase, managementKey }), [apiBase, managementKey]);
   const pluginOAuthAvailable = connectionStatus === 'connected' && supportsPlugin;
+  const connectionFingerprint = useMemo(
+    () => createCodexInspectionConnectionFingerprint(apiBase, managementKey),
+    [apiBase, managementKey]
+  );
+  const oauthPollingScope = useMemo<OAuthPollingScope>(
+    () => ({
+      connectionFingerprint,
+      accountReauthSessionId: readAccountOAuthReauthSessionId(location.search),
+      search: location.search,
+    }),
+    [connectionFingerprint, location.search]
+  );
   const [states, setStates] = useState<Record<string, ProviderState>>({});
   // 选中的登录选项卡：provider id 或 'vertex'（一次只显示/登录一个）。
   const [activeTab, setActiveTab] = useState<string>('codex');
@@ -436,7 +496,54 @@ export function OAuthPage() {
   });
   const pollingTimers = useRef<Partial<Record<string, number>>>({});
   const statesRef = useRef(states);
+  const successResetTimers = useRef<Partial<Record<string, number>>>({});
+  const providerAttemptVersions = useRef<Partial<Record<string, number>>>({});
+  const providerCredentialBaselines = useRef<
+    Partial<Record<string, { version: number; baseline: AccountCredentialMutationBaseline }>>
+  >({});
+  const callbackAttemptVersions = useRef<Partial<Record<string, number>>>({});
+  const oauthPollingScopeRef = useRef(oauthPollingScope);
+  const connectionFingerprintRef = useRef(connectionFingerprint);
+  const vertexImportGenerationRef = useRef(0);
+  const attemptSequence = useRef(0);
+  const blurSequence = useRef(0);
+  const blurVersions = useRef<Partial<Record<string, number>>>({});
+  const activeSessions = useRef<
+    Partial<Record<string, { state: string; attempt: ScopedOAuthProviderAttempt }>>
+  >({});
+  const completionTasks = useRef<
+    Partial<Record<string, { version: number; promise: Promise<boolean> }>>
+  >({});
   const vertexFileInputRef = useRef<HTMLInputElement | null>(null);
+  connectionFingerprintRef.current = connectionFingerprint;
+
+  const clearTimers = useCallback(() => {
+    Object.values(pollingTimers.current).forEach((timer) => {
+      if (timer !== undefined) window.clearInterval(timer);
+    });
+    Object.values(successResetTimers.current).forEach((timer) => {
+      if (timer !== undefined) window.clearTimeout(timer);
+    });
+    pollingTimers.current = {};
+    successResetTimers.current = {};
+  }, []);
+
+  useLayoutEffect(() => {
+    const previousScope = oauthPollingScopeRef.current;
+    oauthPollingScopeRef.current = oauthPollingScope;
+    if (isOAuthPollingScopeCurrent(previousScope, oauthPollingScope)) return;
+    providerAttemptVersions.current = {};
+    blurVersions.current = {};
+    activeSessions.current = {};
+    completionTasks.current = {};
+    providerCredentialBaselines.current = {};
+    callbackAttemptVersions.current = {};
+    vertexImportGenerationRef.current += 1;
+    clearTimers();
+    setStates((prev) => (Object.keys(prev).length === 0 ? prev : {}));
+    setPluginOAuthPlugins([]);
+    setVertexState({ fileName: '', location: '', loading: false });
+  }, [clearTimers, oauthPollingScope]);
 
   useEffect(() => {
     statesRef.current = states;
@@ -481,15 +588,24 @@ export function OAuthPage() {
   // 高亮判定：vertex 精确匹配；provider tab 命中当前有效 provider（含回退后的默认项）。
   const resolvedTabId = activeTab === 'vertex' ? 'vertex' : activeProvider?.id;
 
-  const clearTimers = useCallback(() => {
-    Object.values(pollingTimers.current).forEach((timer) => {
-      if (timer !== undefined) window.clearInterval(timer);
+  useEffect(() => {
+    const targetId = location.hash.replace(/^#/, '');
+    if (!targetId) return;
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById(targetId)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
-    pollingTimers.current = {};
-  }, []);
+    return () => window.cancelAnimationFrame(frame);
+  }, [location.hash, providers.length]);
 
   useEffect(() => {
     return () => {
+      providerAttemptVersions.current = {};
+      blurVersions.current = {};
+      activeSessions.current = {};
+      completionTasks.current = {};
+      providerCredentialBaselines.current = {};
+      callbackAttemptVersions.current = {};
+      vertexImportGenerationRef.current += 1;
       clearTimers();
     };
   }, [clearTimers]);
@@ -508,21 +624,22 @@ export function OAuthPage() {
     if (!pluginOAuthAvailable) return;
 
     let cancelled = false;
+    const loadConnectionFingerprint = connectionFingerprint;
     pluginsApi
-      .list()
+      .list(requestScope)
       .then((response) => {
-        if (cancelled) return;
+        if (cancelled || connectionFingerprintRef.current !== loadConnectionFingerprint) return;
         setPluginOAuthPlugins(response.plugins.filter((plugin) => plugin.supportsOAuth));
       })
       .catch(() => {
-        if (cancelled) return;
+        if (cancelled || connectionFingerprintRef.current !== loadConnectionFingerprint) return;
         setPluginOAuthPlugins([]);
       });
 
     return () => {
       cancelled = true;
     };
-  }, [apiBase, pluginOAuthAvailable]);
+  }, [connectionFingerprint, pluginOAuthAvailable, requestScope]);
 
   const getProviderDefinition = useCallback(
     (provider: OAuthProvider) => providers.find((item) => item.id === provider),
@@ -587,6 +704,18 @@ export function OAuthPage() {
   // 代理输入框失焦（blur）时的内联实时校验：格式（同步、不触网）→ 查重（L2）→ 连通性探针（L1）。
   // 空值不就地报错（必填在提交时拦）；同值已校验 / 校验中时不重复触发（缓存上次结果、防网络刷屏）。
   const handleProxyBlur = async (provider: OAuthProvider) => {
+    const version = ++blurSequence.current;
+    blurVersions.current[provider] = version;
+    const capturedScope = requestScope;
+    const capturedFingerprint = connectionFingerprintRef.current;
+    const isBlurCurrent = () =>
+      blurVersions.current[provider] === version &&
+      connectionFingerprintRef.current === capturedFingerprint &&
+      createCodexInspectionConnectionFingerprint(
+        useAuthStore.getState().apiBase,
+        useAuthStore.getState().managementKey
+      ) === capturedFingerprint &&
+      (statesRef.current[provider]?.proxyUrl || '').trim() === trimmed;
     const current = statesRef.current[provider] ?? {};
     const rawValue = current.proxyUrl || '';
     const trimmed = rawValue.trim();
@@ -620,15 +749,101 @@ export function OAuthPage() {
     const result = await runProxyInlineChecks({
       proxyUrl: trimmed,
       translate: (reason) => t(`proxy_preflight.reason_${reason}`),
+      probe: (value) =>
+        isBlurCurrent()
+          ? probeProxyConnectivity(value, capturedScope)
+          : Promise.resolve({ ok: false, exitIp: '', reason: 'probe_failed' }),
       checkDuplicate: async (value) => {
-        const filesResponse = await authFilesApi.list();
-        return findAccountsUsingProxy(value, (filesResponse.files || []).map(toProxyOwnerAccount), { provider });
+        if (!isBlurCurrent()) return [];
+        const filesResponse = await authFilesApi.list(capturedScope);
+        return findAccountsUsingProxy(value, (filesResponse.files || []).map(toProxyOwnerAccount), {
+          provider,
+        });
       },
       duplicateMessage: (accounts) =>
         t('proxy_preflight.duplicate_account', { accounts: accounts.join('、') }),
-      onStage: (stage) => setProxyInlineStage(provider, trimmed, stage),
+      onStage: (stage) => {
+        if (isBlurCurrent()) setProxyInlineStage(provider, trimmed, stage);
+      },
     });
-    applyProxyInlineResult(provider, trimmed, result);
+    if (isBlurCurrent()) applyProxyInlineResult(provider, trimmed, result);
+  };
+
+  const beginProviderAttempt = (provider: OAuthProvider): ScopedOAuthProviderAttempt => {
+    const version = ++attemptSequence.current;
+    providerAttemptVersions.current[provider] = version;
+    return {
+      scope: oauthPollingScopeRef.current,
+      version,
+      requestScope,
+      stateSnapshot: { ...statesRef.current[provider] },
+    };
+  };
+
+  const isProviderAttemptCurrent = (
+    provider: OAuthProvider,
+    attempt: OAuthProviderAttempt
+  ): boolean => {
+    const currentAuth = useAuthStore.getState();
+    const currentConnectionFingerprint = createCodexInspectionConnectionFingerprint(
+      currentAuth.apiBase,
+      currentAuth.managementKey
+    );
+    return (
+      Boolean(attempt.scope.connectionFingerprint) &&
+      currentConnectionFingerprint === attempt.scope.connectionFingerprint &&
+      connectionFingerprintRef.current === attempt.scope.connectionFingerprint &&
+      isOAuthProviderAttemptCurrent(
+        attempt,
+        oauthPollingScopeRef.current,
+        providerAttemptVersions.current[provider]
+      )
+    );
+  };
+
+  const finishProviderAttempt = (provider: OAuthProvider, attempt: OAuthProviderAttempt) => {
+    if (providerAttemptVersions.current[provider] === attempt.version) {
+      delete providerAttemptVersions.current[provider];
+      delete providerCredentialBaselines.current[provider];
+    }
+  };
+
+  const beginCallbackAttempt = (provider: OAuthProvider): ScopedOAuthProviderAttempt => {
+    const version = ++attemptSequence.current;
+    callbackAttemptVersions.current[provider] = version;
+    return {
+      scope: oauthPollingScopeRef.current,
+      version,
+      requestScope,
+      stateSnapshot: { ...statesRef.current[provider] },
+    };
+  };
+
+  const isCallbackAttemptCurrent = (
+    provider: OAuthProvider,
+    attempt: OAuthProviderAttempt
+  ): boolean => {
+    const currentAuth = useAuthStore.getState();
+    const currentConnectionFingerprint = createCodexInspectionConnectionFingerprint(
+      currentAuth.apiBase,
+      currentAuth.managementKey
+    );
+    return (
+      Boolean(attempt.scope.connectionFingerprint) &&
+      currentConnectionFingerprint === attempt.scope.connectionFingerprint &&
+      connectionFingerprintRef.current === attempt.scope.connectionFingerprint &&
+      isOAuthProviderAttemptCurrent(
+        attempt,
+        oauthPollingScopeRef.current,
+        callbackAttemptVersions.current[provider]
+      )
+    );
+  };
+
+  const finishCallbackAttempt = (provider: OAuthProvider, attempt: OAuthProviderAttempt) => {
+    if (callbackAttemptVersions.current[provider] === attempt.version) {
+      delete callbackAttemptVersions.current[provider];
+    }
   };
 
   const clearPollingTimer = (provider: OAuthProvider) => {
@@ -639,119 +854,253 @@ export function OAuthPage() {
     }
   };
 
-  const resetProviderAttempt = (provider: OAuthProvider) => {
-    clearPollingTimer(provider);
-    setStates((prev) => ({
-      ...prev,
-      [provider]: {},
-    }));
-  };
-
-  const resolveOAuthSuccessResult = async (
-    provider: OAuthProvider,
-    current: ProviderState,
-    response: OAuthStatusResponse
-  ): Promise<OAuthSuccessResult> => {
-    const authFileFromStatus = response.auth_name || response.saved_path;
-    let matchedFile: AuthFileItem | undefined;
-    try {
-      const filesResponse = await authFilesApi.list();
-      matchedFile = findSavedAuthFile(
-        provider,
-        authFileFromStatus,
-        current.authFilesBeforeStart,
-        filesResponse.files || []
-      );
-    } catch {
-      matchedFile = undefined;
+  const clearSuccessResetTimer = (provider: OAuthProvider) => {
+    const timer = successResetTimers.current[provider];
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      delete successResetTimers.current[provider];
     }
-
-    return {
-      authFile: authFileFromStatus || matchedFile?.name,
-      account: getAuthFileAccount(matchedFile),
-      note: response.note || (current.accountNote || '').trim() || undefined,
-      proxyUrl: response.proxy_url || (current.proxyUrl || '').trim() || undefined,
-    };
   };
-
-  const completeProviderAuth = async (provider: OAuthProvider, response: OAuthStatusResponse) => {
+  const clearProviderTimers = (provider: OAuthProvider) => {
     clearPollingTimer(provider);
-    const current = statesRef.current[provider] ?? {};
-    const successResult = await resolveOAuthSuccessResult(provider, current, response);
+    clearSuccessResetTimer(provider);
+  };
+  const resetProviderAttempt = (provider: OAuthProvider) => {
+    delete providerAttemptVersions.current[provider];
+    delete providerCredentialBaselines.current[provider];
+    delete callbackAttemptVersions.current[provider];
+    delete activeSessions.current[provider];
+    clearProviderTimers(provider);
     setStates((prev) => {
-      const latest = prev[provider] ?? {};
       return {
         ...prev,
-        [provider]: {
-          ...latest,
-          url: undefined,
-          state: undefined,
-          status: 'success',
-          error: undefined,
-          polling: false,
-          cancelling: false,
-          savedProxyUrl: successResult.proxyUrl,
-          callbackUrl: '',
-          callbackSubmitting: false,
-          callbackStatus: undefined,
-          callbackError: undefined,
-          successResult,
-        },
+        [provider]: {},
       };
     });
   };
 
-  const startPolling = (provider: OAuthProvider, state: string) => {
-    clearPollingTimer(provider);
-    const timer = window.setInterval(async () => {
+  const completeProviderAuth = (
+    provider: OAuthProvider,
+    response: OAuthStatusResponse,
+    attempt: ScopedOAuthProviderAttempt
+  ): Promise<boolean> => {
+    const existing = completionTasks.current[provider];
+    if (existing?.version === attempt.version) return existing.promise;
+    const complete = async (): Promise<boolean> => {
+      if (!isProviderAttemptCurrent(provider, attempt)) return false;
+      clearPollingTimer(provider);
+      const snapshot = attempt.stateSnapshot ?? {};
+      const authFile = response.auth_name || response.saved_path;
+      let matched: AuthFileItem | undefined;
       try {
-        const res = await oauthApi.getAuthStatus(state);
-        if (res.status === 'ok') {
-          window.clearInterval(timer);
-          delete pollingTimers.current[provider];
-          await completeProviderAuth(provider, res);
-          showNotification(getProviderActionText(provider, 'oauth_status_success'), 'success');
-        } else if (res.status === 'cancelled') {
-          const cancelledMessage =
-            res.error?.trim() ||
-            t('auth_login.oauth_status_cancelled', {
-              defaultValue: '认证已取消，可重新开始。',
-            });
-          updateProviderState(provider, {
-            status: 'cancelled',
-            error: cancelledMessage,
-            polling: false,
-            cancelling: false,
-            url: undefined,
-            state: undefined,
-          });
-          showNotification(cancelledMessage, 'info');
-          window.clearInterval(timer);
-          delete pollingTimers.current[provider];
-        } else if (res.status === 'error') {
-          updateProviderState(provider, { status: 'error', error: res.error, polling: false, cancelling: false });
-          showNotification(
-            `${getProviderActionText(provider, 'oauth_status_error')} ${res.error || ''}`,
-            'error'
-          );
-          window.clearInterval(timer);
+        const result = await authFilesApi.list(attempt.requestScope);
+        if (!isProviderAttemptCurrent(provider, attempt)) return false;
+        matched = findSavedAuthFile(provider, authFile, attempt.beforeNames, result.files || []);
+      } catch {
+        if (!isProviderAttemptCurrent(provider, attempt)) return false;
+      }
+      if (!isProviderAttemptCurrent(provider, attempt)) return false;
+      const successResult: OAuthSuccessResult = {
+        authFile: authFile || matched?.name,
+        account: getAuthFileAccount(matched),
+        note: response.note || snapshot.accountNote?.trim() || undefined,
+        proxyUrl: response.proxy_url || snapshot.proxyUrl?.trim() || undefined,
+      };
+      const currentScope = oauthPollingScopeRef.current;
+      const completionConnectionFingerprint = attempt.scope.connectionFingerprint;
+      if (
+        !completionConnectionFingerprint ||
+        !isOAuthPollingScopeCurrent(attempt.scope, currentScope)
+      ) {
+        return false;
+      }
+      completeAccountOAuthReauthSessionFromSearch(
+        currentScope.search,
+        provider,
+        completionConnectionFingerprint
+      );
+      recordAccountCredentialMutationMarker({
+        connectionFingerprint: completionConnectionFingerprint,
+        provider,
+        baseline: attempt.credentialBaseline,
+        requireObservedMutation: true,
+      });
+      publishAccountCredentialMutationRevision({
+        connectionFingerprint: completionConnectionFingerprint,
+        provider,
+        kind: 'oauth',
+      });
+      clearPollingTimer(provider);
+      clearSuccessResetTimer(provider);
+      finishProviderAttempt(provider, attempt);
+      delete callbackAttemptVersions.current[provider];
+      updateProviderState(provider, {
+        url: undefined,
+        state: undefined,
+        userCode: undefined,
+        status: 'success',
+        successResult,
+        savedProxyUrl: successResult.proxyUrl,
+        error: undefined,
+        polling: false,
+        ...(provider === 'devin'
+          ? {
+              cancelling: false,
+              cancelError: undefined,
+            }
+          : {}),
+        callbackUrl: '',
+        callbackSubmitting: false,
+        callbackStatus: undefined,
+        callbackError: undefined,
+      });
+      const timer = window.setTimeout(() => {
+        if (successResetTimers.current[provider] !== timer) return;
+        resetProviderAttempt(provider);
+      }, SUCCESS_RESET_DELAY_MS);
+      successResetTimers.current[provider] = timer;
+      return true;
+    };
+    const promise = complete();
+    completionTasks.current[provider] = { version: attempt.version, promise };
+    return promise;
+  };
+
+  const handleProviderAuthStatus = async (
+    provider: OAuthProvider,
+    response: Awaited<ReturnType<typeof oauthApi.getAuthStatus>>,
+    attempt: ScopedOAuthProviderAttempt,
+    successMessage: string
+  ): Promise<'completed' | 'waiting' | 'error' | 'stale'> => {
+    if (!isProviderAttemptCurrent(provider, attempt)) return 'stale';
+    if (response.status === 'ok') {
+      if (completionTasks.current[provider]?.version === attempt.version) return 'waiting';
+      if (!(await completeProviderAuth(provider, response, attempt))) return 'stale';
+      showNotification(successMessage, 'success');
+      return 'completed';
+    }
+    if (response.status === 'cancelled') {
+      finishProviderAttempt(provider, attempt);
+      clearProviderTimers(provider);
+      delete activeSessions.current[provider];
+      delete callbackAttemptVersions.current[provider];
+      const message = response.error?.trim() || t('auth_login.oauth_status_cancelled');
+      updateProviderState(provider, {
+        status: 'cancelled',
+        error: message,
+        polling: false,
+        cancelling: false,
+        url: undefined,
+        state: undefined,
+        userCode: undefined,
+      });
+      showNotification(message, 'info');
+      return 'completed';
+    }
+    if (response.status === 'error') {
+      finishProviderAttempt(provider, attempt);
+      delete callbackAttemptVersions.current[provider];
+      clearPollingTimer(provider);
+      updateProviderState(provider, {
+        ...(provider === 'devin'
+          ? {
+              url: undefined,
+              state: undefined,
+              callbackUrl: '',
+              cancelling: false,
+              cancelError: undefined,
+            }
+          : {}),
+        userCode: undefined,
+        status: 'error',
+        error: response.error,
+        polling: false,
+        callbackSubmitting: false,
+        callbackStatus: 'error',
+        callbackError: response.error,
+      });
+      showNotification(
+        `${getProviderActionText(provider, 'oauth_status_error')} ${response.error || ''}`,
+        'error'
+      );
+      return 'error';
+    }
+    return 'waiting';
+  };
+
+  const startPolling = (
+    provider: OAuthProvider,
+    state: string,
+    attempt: ScopedOAuthProviderAttempt
+  ) => {
+    clearPollingTimer(provider);
+    let requestInFlight = false;
+    const timer = window.setInterval(async () => {
+      const isCurrentAttempt = () =>
+        pollingTimers.current[provider] === timer && isProviderAttemptCurrent(provider, attempt);
+      const stopAttempt = () => {
+        window.clearInterval(timer);
+        if (pollingTimers.current[provider] === timer) {
           delete pollingTimers.current[provider];
         }
+      };
+      if (!isCurrentAttempt()) {
+        stopAttempt();
+        return;
+      }
+      if (requestInFlight) return;
+      requestInFlight = true;
+      try {
+        const res = await oauthApi.getAuthStatus(state, attempt.requestScope);
+        if (!isCurrentAttempt()) {
+          stopAttempt();
+          return;
+        }
+        const result = await handleProviderAuthStatus(
+          provider,
+          res,
+          attempt,
+          getProviderActionText(provider, 'oauth_status_success')
+        );
+        if (result === 'error' || result === 'completed') {
+          stopAttempt();
+        }
       } catch (err: unknown) {
+        if (!isCurrentAttempt()) {
+          stopAttempt();
+          return;
+        }
+        if (provider === 'devin') {
+          updateProviderState(provider, {
+            status: 'error',
+            error: `${getErrorMessage(err) || ''} ${t('auth_login.devin_oauth_retry_hint')}`.trim(),
+            polling: false,
+          });
+          stopAttempt();
+          return;
+        }
+        finishProviderAttempt(provider, attempt);
         updateProviderState(provider, {
+          userCode: undefined,
           status: 'error',
           error: getErrorMessage(err),
           polling: false,
           cancelling: false,
         });
-        window.clearInterval(timer);
-        delete pollingTimers.current[provider];
+        stopAttempt();
+      } finally {
+        requestInFlight = false;
       }
     }, 3000);
     pollingTimers.current[provider] = timer;
   };
 
   const startAuth = async (provider: OAuthProvider) => {
+    if (provider === 'devin' && states[provider]?.state) return;
+    const attempt = beginProviderAttempt(provider);
+    const isStartCurrent = () =>
+      isProviderAttemptCurrent(provider, attempt) &&
+      (statesRef.current[provider]?.proxyUrl || '').trim() === proxyUrl;
     const current = states[provider] || {};
     const proxyUrl = (current.proxyUrl || '').trim();
     // 提交门控：读取输入框内联实时校验状态。主校验路径在失焦时已跑，这里只做最后确认门，
@@ -791,8 +1140,13 @@ export function OAuthPage() {
       const result = await runProxyInlineChecks({
         proxyUrl,
         translate: (reason) => t(`proxy_preflight.reason_${reason}`),
+        probe: (value) =>
+          isStartCurrent()
+            ? probeProxyConnectivity(value, attempt.requestScope)
+            : Promise.resolve({ ok: false, exitIp: '', reason: 'probe_failed' }),
         checkDuplicate: async (value) => {
-          const filesResponse = await authFilesApi.list();
+          if (!isStartCurrent()) return [];
+          const filesResponse = await authFilesApi.list(attempt.requestScope);
           return findAccountsUsingProxy(
             value,
             (filesResponse.files || []).map(toProxyOwnerAccount),
@@ -801,21 +1155,22 @@ export function OAuthPage() {
         },
         duplicateMessage: (accounts) =>
           t('proxy_preflight.duplicate_account', { accounts: accounts.join('、') }),
-        onStage: (stage) => setProxyInlineStage(provider, proxyUrl, stage),
+        onStage: (stage) => {
+          if (isStartCurrent()) setProxyInlineStage(provider, proxyUrl, stage);
+        },
       });
+      if (!isStartCurrent()) return;
       applyProxyInlineResult(provider, proxyUrl, result);
       if (result.phase !== 'ok') {
         showNotification(result.message || t('auth_login.account_proxy_invalid'), 'error');
         return;
       }
       if (result.exitIp) {
-        showNotification(
-          t('proxy_preflight.connected_with_ip', { ip: result.exitIp }),
-          'success'
-        );
+        showNotification(t('proxy_preflight.connected_with_ip', { ip: result.exitIp }), 'success');
       }
     }
-    clearPollingTimer(provider);
+    if (!isStartCurrent()) return;
+    clearProviderTimers(provider);
     updateProviderState(provider, {
       url: undefined,
       state: undefined,
@@ -826,6 +1181,8 @@ export function OAuthPage() {
       savedProxyUrl: undefined,
       expiresAtMs: undefined,
       expiresInSeconds: undefined,
+      cancelError: undefined,
+      callbackSubmitting: false,
       callbackStatus: undefined,
       callbackError: undefined,
       callbackUrl: '',
@@ -833,23 +1190,36 @@ export function OAuthPage() {
       successResult: undefined,
     });
     try {
-      let authFilesBeforeStart: string[] | undefined;
       try {
-        const filesResponse = await authFilesApi.list();
-        authFilesBeforeStart = (filesResponse.files || []).map((file) => file.name);
-        updateProviderState(provider, { authFilesBeforeStart });
+        const response = await authFilesApi.list(attempt.requestScope);
+        if (!isProviderAttemptCurrent(provider, attempt)) return;
+        attempt.beforeNames = response.files.map((file) => file.name);
+        attempt.credentialBaseline =
+          createAccountCredentialMutationBaseline(response.files, provider) ?? undefined;
+        if (attempt.credentialBaseline) {
+          providerCredentialBaselines.current[provider] = {
+            version: attempt.version,
+            baseline: attempt.credentialBaseline,
+          };
+        }
       } catch {
-        authFilesBeforeStart = undefined;
+        if (!isProviderAttemptCurrent(provider, attempt)) return;
+        // OAuth remains available, but completion will fail closed without a mutation marker.
       }
+      if (!isStartCurrent()) return;
       const res = await oauthApi.startAuth(provider, {
+        ...attempt.requestScope,
         note: (current.accountNote || '').trim() || undefined,
         proxyUrl: proxyUrl || undefined,
       });
+      if (!isProviderAttemptCurrent(provider, attempt)) return;
       if (!res.state) {
         const message = t('auth_login.missing_state');
+        finishProviderAttempt(provider, attempt);
         updateProviderState(provider, {
           url: res.url,
           state: undefined,
+          userCode: undefined,
           status: 'error',
           error: message,
           polling: false,
@@ -864,15 +1234,24 @@ export function OAuthPage() {
       updateProviderState(provider, {
         url: res.url,
         state: res.state,
+        userCode: res.user_code,
         status: 'waiting',
         polling: true,
         expiresAtMs,
         expiresInSeconds,
       });
-      startPolling(provider, res.state);
+      activeSessions.current[provider] = { state: res.state, attempt };
+      startPolling(provider, res.state, attempt);
     } catch (err: unknown) {
+      if (!isProviderAttemptCurrent(provider, attempt)) return;
       const message = getErrorMessage(err);
-      updateProviderState(provider, { status: 'error', error: message, polling: false });
+      finishProviderAttempt(provider, attempt);
+      updateProviderState(provider, {
+        status: 'error',
+        error: message,
+        polling: false,
+        userCode: undefined,
+      });
       showNotification(
         `${getProviderActionText(provider, 'oauth_start_error')}${message ? ` ${message}` : ''}`,
         'error'
@@ -881,42 +1260,80 @@ export function OAuthPage() {
   };
 
   const cancelAuth = async (provider: OAuthProvider) => {
-    const state = states[provider]?.state;
-    if (!state) {
-      resetProviderAttempt(provider);
-      return;
+    const session = activeSessions.current[provider];
+    if (!session || !isProviderAttemptCurrent(provider, session.attempt)) return;
+    const { state } = session;
+
+    const previousVersion = providerAttemptVersions.current[provider];
+    const previousBaseline = providerCredentialBaselines.current[provider];
+
+    clearPollingTimer(provider);
+    delete callbackAttemptVersions.current[provider];
+
+    const attempt = { ...session.attempt, version: ++attemptSequence.current };
+    providerAttemptVersions.current[provider] = attempt.version;
+    activeSessions.current[provider] = { state, attempt };
+
+    if (previousBaseline && previousBaseline.version === previousVersion) {
+      attempt.credentialBaseline = previousBaseline.baseline;
+      providerCredentialBaselines.current[provider] = {
+        version: attempt.version,
+        baseline: previousBaseline.baseline,
+      };
     }
-    updateProviderState(provider, { cancelling: true });
+
+    updateProviderState(provider, {
+      cancelling: true,
+      cancelError: undefined,
+    });
+
     try {
-      const res = await oauthApi.cancelAuth(state);
-      clearPollingTimer(provider);
-      if (isOAuthCancelSuccessful(res)) {
-        updateProviderState(provider, {
-          status: 'cancelled',
-          error: t('auth_login.oauth_status_cancelled', {
-            defaultValue: '认证已取消，可重新开始。',
-          }),
-          polling: false,
-          cancelling: false,
-          url: undefined,
-          state: undefined,
-        });
-      } else {
-        updateProviderState(provider, {
-          cancelling: false,
-          error: res.error || t('auth_login.oauth_cancel_error', { defaultValue: '取消登录失败' }),
-        });
+      const res =
+        provider === 'devin'
+          ? await oauthApi.cancelSession(state, attempt.requestScope)
+          : await oauthApi.cancelAuth(state, attempt.requestScope);
+      if (!isProviderAttemptCurrent(provider, attempt)) return;
+
+      if (provider === 'devin' ? res.cancelled : isOAuthCancelSuccessful(res)) {
+        resetProviderAttempt(provider);
+        updateProviderState(provider, { status: 'cancelled', polling: false, cancelling: false });
         showNotification(
-          res.error || t('auth_login.oauth_cancel_error', { defaultValue: '取消登录失败' }),
-          'error'
+          t(
+            provider === 'devin'
+              ? 'auth_login.devin_oauth_cancelled'
+              : 'auth_login.oauth_status_cancelled'
+          ),
+          'success'
         );
+        return;
+      }
+
+      updateProviderState(provider, { cancelling: false });
+      const statusRes = await oauthApi.getAuthStatus(state, attempt.requestScope);
+      if (!isProviderAttemptCurrent(provider, attempt)) return;
+
+      const result = await handleProviderAuthStatus(
+        provider,
+        statusRes,
+        attempt,
+        getProviderActionText(provider, 'oauth_status_success')
+      );
+      if (result === 'waiting') {
+        updateProviderState(provider, { polling: true });
+        startPolling(provider, state, attempt);
       }
     } catch (err: unknown) {
-      updateProviderState(provider, { cancelling: false });
-      showNotification(
-        getErrorMessage(err) || t('auth_login.oauth_cancel_error', { defaultValue: '取消登录失败' }),
-        'error'
-      );
+      if (!isProviderAttemptCurrent(provider, attempt)) return;
+      const message = getErrorMessage(err);
+      const cancelErrorMessage = message || t('auth_login.devin_oauth_cancel_error');
+      updateProviderState(provider, {
+        cancelling: false,
+        cancelError: cancelErrorMessage,
+        status: 'waiting',
+        polling: true,
+      });
+      showNotification(cancelErrorMessage, 'error');
+      startPolling(provider, state, attempt);
     }
   };
 
@@ -929,8 +1346,20 @@ export function OAuthPage() {
     );
   };
 
+  const copyCode = async (code?: string) => {
+    if (!code) return;
+    const copied = await copyToClipboard(code);
+    showNotification(
+      t(copied ? 'auth_login.device_code_copied' : 'notification.copy_failed', {
+        defaultValue: copied ? t('notification.link_copied') : t('notification.copy_failed'),
+      }),
+      copied ? 'success' : 'error'
+    );
+  };
+
   const submitCallback = async (provider: OAuthProvider) => {
-    const callbackInput = (states[provider]?.callbackUrl || '').trim();
+    const providerState = states[provider];
+    const callbackInput = (providerState?.callbackUrl || '').trim();
     if (!callbackInput) {
       showNotification(
         t(
@@ -942,7 +1371,21 @@ export function OAuthPage() {
       );
       return;
     }
-    const redirectUrl = resolveCallbackUrl(provider, callbackInput, states[provider]?.state);
+    const state = providerState?.state;
+    const providerVersion = providerAttemptVersions.current[provider];
+    if (provider === 'devin') {
+      const validation = validateDevinCallback(callbackInput, state);
+      if (!validation.valid) {
+        const errorMsg = t(validation.errorKey || 'auth_login.devin_callback_invalid');
+        updateProviderState(provider, {
+          callbackStatus: 'error',
+          callbackError: errorMsg,
+        });
+        showNotification(errorMsg, 'warning');
+        return;
+      }
+    }
+    const redirectUrl = resolveCallbackUrl(provider, callbackInput, state);
     if (!redirectUrl) {
       showNotification(
         t(
@@ -952,17 +1395,75 @@ export function OAuthPage() {
       );
       return;
     }
+    if (!state || providerVersion === undefined) {
+      showNotification(t('auth_login.missing_state'), 'warning');
+      return;
+    }
+    const session = activeSessions.current[provider];
+    if (!session || session.state !== state || session.attempt.version !== providerVersion) return;
+    const providerAttempt = session.attempt;
+    if (!isProviderAttemptCurrent(provider, providerAttempt)) return;
+    const callbackAttempt = beginCallbackAttempt(provider);
     updateProviderState(provider, {
       callbackSubmitting: true,
       callbackStatus: undefined,
       callbackError: undefined,
     });
+    const probeStatus = async () => {
+      const response = await oauthApi.getAuthStatus(state, providerAttempt.requestScope);
+      if (
+        !isCallbackAttemptCurrent(provider, callbackAttempt) ||
+        !isProviderAttemptCurrent(provider, providerAttempt)
+      ) {
+        return;
+      }
+      finishCallbackAttempt(provider, callbackAttempt);
+      await handleProviderAuthStatus(
+        provider,
+        response,
+        providerAttempt,
+        getProviderActionText(provider, 'oauth_status_success')
+      );
+    };
     try {
-      await oauthApi.submitCallback(provider, redirectUrl);
-      updateProviderState(provider, { callbackSubmitting: false, callbackStatus: 'success' });
+      await oauthApi.submitCallback(provider, redirectUrl, callbackAttempt.requestScope);
+      if (!isCallbackAttemptCurrent(provider, callbackAttempt)) return;
+      if (!isProviderAttemptCurrent(provider, providerAttempt)) return;
+      updateProviderState(provider, {
+        callbackSubmitting: false,
+        callbackStatus: 'success',
+        callbackError: undefined,
+      });
       showNotification(t('auth_login.oauth_callback_success'), 'success');
+      try {
+        await probeStatus();
+      } catch {
+        if (isCallbackAttemptCurrent(provider, callbackAttempt)) {
+          finishCallbackAttempt(provider, callbackAttempt);
+        }
+      }
     } catch (err: unknown) {
+      if (!isCallbackAttemptCurrent(provider, callbackAttempt)) return;
       const status = getErrorStatus(err);
+      if (status === 409 && isProviderAttemptCurrent(provider, providerAttempt)) {
+        updateProviderState(provider, {
+          callbackSubmitting: false,
+          callbackStatus: 'success',
+          callbackError: undefined,
+        });
+        try {
+          await probeStatus();
+        } catch (probeError: unknown) {
+          if (!isCallbackAttemptCurrent(provider, callbackAttempt)) return;
+          finishCallbackAttempt(provider, callbackAttempt);
+          updateProviderState(provider, {
+            callbackSubmitting: false,
+            callbackStatus: 'error',
+            callbackError: getErrorMessage(probeError) || undefined,
+          });
+        }
+        return;
+      }
       const message = getErrorMessage(err);
       const errorMessage =
         status === 404
@@ -970,6 +1471,7 @@ export function OAuthPage() {
               defaultValue: 'Please update CLI Proxy API or check the connection.',
             })
           : message || undefined;
+      finishCallbackAttempt(provider, callbackAttempt);
       updateProviderState(provider, {
         callbackSubmitting: false,
         callbackStatus: 'error',
@@ -1012,21 +1514,41 @@ export function OAuthPage() {
       return;
     }
     const location = vertexState.location.trim();
+    const importGeneration = vertexImportGenerationRef.current + 1;
+    vertexImportGenerationRef.current = importGeneration;
+    const importConnectionFingerprint = connectionFingerprint;
+    if (!importConnectionFingerprint) return;
+    const importRequestScope = requestScope;
+    const isCurrentImport = () =>
+      connectionFingerprintRef.current === importConnectionFingerprint &&
+      vertexImportGenerationRef.current === importGeneration;
     setVertexState((prev) => ({ ...prev, loading: true, error: undefined, result: undefined }));
     try {
       const res: VertexImportResponse = await vertexApi.importCredential(
         vertexState.file,
-        location || undefined
+        location || undefined,
+        importRequestScope
       );
+      if (!isCurrentImport()) return;
       const result: VertexImportResult = {
         projectId: res.project_id,
         email: res.email,
         location: res.location,
         authFile: res['auth-file'] ?? res.auth_file,
       };
+      recordAccountCredentialMutationMarker({
+        connectionFingerprint: importConnectionFingerprint,
+        provider: 'vertex',
+      });
+      publishAccountCredentialMutationRevision({
+        connectionFingerprint: importConnectionFingerprint,
+        provider: 'vertex',
+        kind: 'credential',
+      });
       setVertexState((prev) => ({ ...prev, loading: false, result }));
       showNotification(t('vertex_import.success'), 'success');
     } catch (err: unknown) {
+      if (!isCurrentImport()) return;
       const message = getErrorMessage(err);
       setVertexState((prev) => ({
         ...prev,
@@ -1041,432 +1563,476 @@ export function OAuthPage() {
   };
 
   const renderProviderCard = (provider: OAuthProviderDefinition) => {
-          const state = states[provider.id] || {};
-          const canSubmitCallback =
-            provider.supportsCallback && Boolean(state.url) && state.status !== 'cancelled';
-          const loginButtonLabel =
-            state.status === 'success'
-              ? t('auth_login.login_another_account')
-              : getProviderActionText(provider.id, 'oauth_button');
-          const statusBadgeClassName = [
-            'status-badge',
-            state.status === 'success' ? 'success' : '',
-            state.status === 'error' ? 'error' : '',
-          ]
-            .filter(Boolean)
-            .join(' ');
-          const flowStep = getOAuthFlowStep(state, provider.supportsCallback);
-          const flowStepIndex = OAUTH_FLOW_STEPS.indexOf(flowStep);
-          const showFlowSteps = Boolean(state.status) && state.status !== 'idle' && state.status !== 'cancelled';
-          const canCancel =
-            (state.status === 'starting' || state.status === 'waiting') && Boolean(state.state);
-          return (
-              <Card
-                key={provider.id}
-                title={
-                  <span className={styles.cardTitle}>
-                    {provider.icon ? (
-                      <img
-                        src={getIcon(provider.icon, resolvedTheme)}
-                        alt=""
-                        className={styles.cardTitleIcon}
-                      />
-                    ) : (
-                      <span className={styles.pluginIconFallback} aria-hidden="true">
-                        {provider.title.slice(0, 1).toUpperCase()}
-                      </span>
-                    )}
-                    {provider.title}
-                  </span>
-                }
-                extra={
-                  <Button
-                    onClick={() => startAuth(provider.id)}
-                    loading={Boolean(state.polling) || state.proxyInline?.phase === 'checking'}
-                    disabled={state.proxyInline?.phase === 'checking'}
-                  >
-                    {loginButtonLabel}
-                  </Button>
-                }
-              >
-                <div className={styles.cardContent}>
-                  <div className={styles.cardHint}>{provider.hint}</div>
-                  <div className={styles.accountSetupGrid}>
-                    <Input
-                      label={t('auth_login.account_note_label')}
-                      value={state.accountNote || ''}
-                      disabled={Boolean(state.polling)}
-                      onChange={(e) =>
-                        updateProviderState(provider.id, { accountNote: e.target.value })
-                      }
-                      placeholder={t('auth_login.account_note_placeholder')}
-                    />
-                    <Input
-                      label={t('auth_login.account_proxy_label')}
-                      hint={t('auth_login.account_proxy_hint')}
-                      value={state.proxyUrl || ''}
-                      error={
-                        state.proxyInline?.phase === 'invalid'
-                          ? state.proxyInline.message
-                          : undefined
-                      }
-                      disabled={Boolean(state.polling) || state.proxyInline?.phase === 'checking'}
-                      onChange={(e) =>
-                        updateProviderState(provider.id, {
-                          proxyUrl: e.target.value,
-                          // 编辑即清空上次内联校验结果（回 idle），失焦后重新校验。
-                          proxyInline: { phase: 'idle' },
-                        })
-                      }
-                      onBlur={() => void handleProxyBlur(provider.id)}
-                      placeholder={t('auth_login.account_proxy_placeholder')}
-                      data-testid={`oauth-proxy-url-input-${provider.id}`}
-                    />
-                  </div>
-                  {/* 代理内联校验状态区：紧邻输入框就地展示「验证中 / 已连通(出口 IP)」；
-                      失败文案走 Input 自身的 error 红框（不重复展示）。 */}
-                  {state.proxyInline?.phase === 'checking' && (
-                    <div
-                      className={`status-badge muted ${styles.proxyInlineStatus}`}
-                      data-testid={`oauth-proxy-status-${provider.id}`}
-                      data-proxy-phase="checking"
-                    >
-                      <LoadingSpinner size={12} />
-                      {state.proxyInline.stage === 'dedup'
-                        ? t('proxy_preflight.checking_dedup', { defaultValue: '正在查重代理…' })
-                        : t('proxy_preflight.probing')}
-                    </div>
-                  )}
-                  {state.proxyInline?.phase === 'ok' && (
-                    <div
-                      className="status-badge success"
-                      data-testid={`oauth-proxy-status-${provider.id}`}
-                      data-proxy-phase="ok"
-                    >
-                      {state.proxyInline.exitIp
-                        ? `✓ ${t('proxy_preflight.connected_with_ip', { ip: state.proxyInline.exitIp })}`
-                        : `✓ ${t('proxy_preflight.connected', { defaultValue: '连通正常' })}`}
-                    </div>
-                  )}
-                  {(() => {
-                    const fingerprint = getFingerprintPreset(provider.id);
-                    return (
-                      <div className={styles.fingerprintBox}>
-                        <div className={styles.connectionLabel}>
-                          {t('auth_login.fingerprint_snapshot_title')}
-                        </div>
-                        <div className={styles.keyValueList}>
-                          <div className={styles.keyValueItem}>
-                            <span className={styles.keyValueKey}>
-                              {t('auth_login.fingerprint_profile')}
-                            </span>
-                            <span className={styles.keyValueValue}>{fingerprint.profile}</span>
-                          </div>
-                          <div className={styles.keyValueItem}>
-                            <span className={styles.keyValueKey}>
-                              {t('auth_login.fingerprint_tls')}
-                            </span>
-                            <span className={styles.keyValueValue}>{fingerprint.tls}</span>
-                          </div>
-                          <div className={styles.keyValueItem}>
-                            <span className={styles.keyValueKey}>
-                              {t('auth_login.fingerprint_headers')}
-                            </span>
-                            <span className={styles.keyValueValue}>{fingerprint.headers}</span>
-                          </div>
-                        </div>
-                        <div className={styles.cardHintSecondary}>
-                          {t('auth_login.fingerprint_snapshot_note')}
-                        </div>
-                      </div>
-                    );
-                  })()}
-                  {showFlowSteps && (
-                    <div className={styles.flowSteps}>
-                      {OAUTH_FLOW_STEPS.map((step, index) => {
-                        const isDone = state.status === 'success' || index < flowStepIndex;
-                        const isActive = index === flowStepIndex && state.status !== 'success';
-                        return (
-                          <div
-                            key={step}
-                            className={`${styles.flowStep} ${isDone ? styles.flowStepDone : ''} ${isActive ? styles.flowStepActive : ''}`.trim()}
-                          >
-                            <span className={styles.flowStepDot} />
-                            <span className={styles.flowStepLabel}>
-                              {t(`auth_login.oauth_flow_${step}`)}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                  {state.url && (
-                    <div className={styles.authUrlBox}>
-                      <div className={styles.authUrlLabel}>{provider.urlLabel}</div>
-                      {state.expiresAtMs && state.status === 'waiting' && (
-                        <div className={styles.countdownBadge}>
-                          {t('auth_login.oauth_countdown', {
-                            time: formatDuration((state.expiresAtMs - nowMs) / 1000),
-                          })}
-                        </div>
-                      )}
-                      <div className={styles.authUrlValue}>{state.url}</div>
-                      <div className={styles.cardHintSecondary}>
-                        {t('auth_login.oauth_link_ready_hint')}
-                      </div>
-                      <div className={styles.authUrlActions}>
-                        <Button variant="secondary" size="sm" onClick={() => copyLink(state.url!)}>
-                          {getProviderActionText(provider.id, 'copy_link')}
-                        </Button>
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => window.open(state.url, '_blank', 'noopener,noreferrer')}
-                        >
-                          {getProviderActionText(provider.id, 'open_link')}
-                        </Button>
-                        {canCancel && (
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => cancelAuth(provider.id)}
-                            loading={state.cancelling}
-                          >
-                            {t('auth_login.oauth_cancel_button', { defaultValue: '取消本次登录' })}
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                  {canSubmitCallback && (
-                    <div className={styles.callbackSection}>
-                      <Input
-                        label={t(
-                          provider.id === 'xai'
-                            ? 'auth_login.xai_callback_label'
-                            : 'auth_login.oauth_callback_label'
-                        )}
-                        hint={t(
-                          provider.id === 'xai'
-                            ? 'auth_login.xai_callback_hint'
-                            : 'auth_login.oauth_callback_hint'
-                        )}
-                        value={state.callbackUrl || ''}
-                        onChange={(e) =>
-                          updateProviderState(provider.id, {
-                            callbackUrl: e.target.value,
-                            callbackStatus: undefined,
-                            callbackError: undefined,
-                          })
-                        }
-                        placeholder={t(
-                          provider.id === 'xai'
-                            ? 'auth_login.xai_callback_placeholder'
-                            : 'auth_login.oauth_callback_placeholder'
-                        )}
-                      />
-                      <div className={styles.callbackActions}>
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => submitCallback(provider.id)}
-                          loading={state.callbackSubmitting}
-                        >
-                          {t('auth_login.oauth_callback_button')}
-                        </Button>
-                      </div>
-                      {state.callbackStatus === 'success' && state.status === 'waiting' && (
-                        <div className="status-badge success">
-                          {t('auth_login.oauth_callback_status_success')}
-                        </div>
-                      )}
-                      {state.callbackStatus === 'error' && (
-                        <div className="status-badge error">
-                          {t('auth_login.oauth_callback_status_error')} {state.callbackError || ''}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  {state.status && state.status !== 'idle' && (
-                    <div className={statusBadgeClassName}>
-                      {state.status === 'success'
-                        ? getProviderActionText(provider.id, 'oauth_status_success')
-                        : state.status === 'cancelled'
-                          ? state.error ||
-                            t('auth_login.oauth_status_cancelled', {
-                              defaultValue: '认证已取消，可重新开始。',
-                            })
-                          : state.status === 'error'
-                            ? `${getProviderActionText(provider.id, 'oauth_status_error')} ${state.error || ''}`
-                            : state.status === 'starting'
-                              ? t('auth_login.oauth_status_starting', { defaultValue: '正在准备授权链接...' })
-                              : getProviderActionText(provider.id, 'oauth_status_waiting')}
-                    </div>
-                  )}
-                  {state.status === 'success' && state.successResult && (
-                    <div className={styles.successResultBox}>
-                      <div className={styles.connectionLabel}>
-                        {t('auth_login.oauth_saved_result_title', { defaultValue: '登录成功' })}
-                      </div>
-                      <div className={styles.keyValueList}>
-                        <div className={styles.keyValueItem}>
-                          <span className={styles.keyValueKey}>
-                            {t('auth_login.oauth_saved_auth_file', { defaultValue: '认证文件' })}
-                          </span>
-                          <span className={styles.keyValueValue}>
-                            {state.successResult.authFile ||
-                              t('auth_login.oauth_saved_auth_file_unknown', { defaultValue: '未知' })}
-                          </span>
-                        </div>
-                        {(state.successResult.account || state.successResult.note) && (
-                          <div className={styles.keyValueItem}>
-                            <span className={styles.keyValueKey}>
-                              {t('auth_login.oauth_saved_account', { defaultValue: '账号' })}
-                            </span>
-                            <AccountIdentity
-                              identity={resolveAccountIdentity({
-                                note: state.successResult.note,
-                                email: state.successResult.account,
-                                fallback: state.successResult.account,
-                              })}
-                              compact
-                              className={styles.keyValueValue}
-                              testId={`oauth-success-account-${provider.id}`}
-                            />
-                          </div>
-                        )}
-                        {state.successResult.proxyUrl && (
-                          <div className={styles.keyValueItem}>
-                            <span className={styles.keyValueKey}>
-                              {t('auth_login.oauth_saved_proxy')}
-                            </span>
-                            <span className={styles.keyValueValue}>
-                              {state.successResult.proxyUrl}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                      <div className={styles.successActions}>
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() =>
-                            navigate('/auth-files', {
-                              state: { highlightAuthFile: state.successResult?.authFile },
-                            })
-                          }
-                        >
-                          {t('auth_login.oauth_view_auth_file', { defaultValue: '查看认证文件' })}
-                        </Button>
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => resetProviderAttempt(provider.id)}
-                        >
-                          {t('auth_login.oauth_add_another', { defaultValue: '继续添加下一个账号' })}
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </Card>
-          );
-  };
-
-  const renderVertexCard = () => (
+    const state = states[provider.id] || {};
+    const canSubmitCallback =
+      provider.supportsCallback && Boolean(state.url) && state.status !== 'cancelled';
+    const loginButtonLabel =
+      state.status === 'success'
+        ? t('auth_login.login_another_account')
+        : getProviderActionText(provider.id, 'oauth_button');
+    const statusBadgeClassName = [
+      'status-badge',
+      state.status === 'success' ? 'success' : '',
+      state.status === 'error' ? 'error' : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+    const flowStep = getOAuthFlowStep(state, provider.supportsCallback);
+    const flowStepIndex = OAUTH_FLOW_STEPS.indexOf(flowStep);
+    const showFlowSteps =
+      Boolean(state.status) && state.status !== 'idle' && state.status !== 'cancelled';
+    const canCancel =
+      (state.status === 'starting' ||
+        state.status === 'waiting' ||
+        (provider.id === 'devin' && state.status === 'error')) &&
+      Boolean(state.state);
+    return (
+      <div key={provider.id} id={`oauth-provider-${provider.id}`}>
         <Card
+          key={provider.id}
           title={
             <span className={styles.cardTitle}>
-              <img src={iconVertex} alt="" className={styles.cardTitleIcon} />
-              {t('vertex_import.title')}
+              {provider.icon ? (
+                <img
+                  src={getIcon(provider.icon, resolvedTheme)}
+                  alt=""
+                  className={styles.cardTitleIcon}
+                />
+              ) : (
+                <span className={styles.pluginIconFallback} aria-hidden="true">
+                  {provider.title.slice(0, 1).toUpperCase()}
+                </span>
+              )}
+              {provider.title}
             </span>
           }
           extra={
-            <Button onClick={handleVertexImport} loading={vertexState.loading}>
-              {t('vertex_import.import_button')}
+            <Button
+              onClick={() => startAuth(provider.id)}
+              loading={Boolean(state.polling) || state.proxyInline?.phase === 'checking'}
+              disabled={
+                state.proxyInline?.phase === 'checking' ||
+                (provider.id === 'devin' && Boolean(state.state))
+              }
+            >
+              {loginButtonLabel}
             </Button>
           }
         >
           <div className={styles.cardContent}>
-            <div className={styles.cardHint}>{t('vertex_import.description')}</div>
-            <Input
-              label={t('vertex_import.location_label')}
-              hint={t('vertex_import.location_hint')}
-              value={vertexState.location}
-              onChange={(e) =>
-                setVertexState((prev) => ({
-                  ...prev,
-                  location: e.target.value,
-                }))
-              }
-              placeholder={t('vertex_import.location_placeholder')}
-            />
-            <div className={styles.formItem}>
-              <label className={styles.formItemLabel}>{t('vertex_import.file_label')}</label>
-              <div className={styles.filePicker}>
-                <Button variant="secondary" size="sm" onClick={handleVertexFilePick}>
-                  {t('vertex_import.choose_file')}
-                </Button>
-                <div
-                  className={`${styles.fileName} ${
-                    vertexState.fileName ? '' : styles.fileNamePlaceholder
-                  }`.trim()}
-                >
-                  {vertexState.fileName || t('vertex_import.file_placeholder')}
-                </div>
-              </div>
-              <div className={styles.cardHintSecondary}>{t('vertex_import.file_hint')}</div>
-              <input
-                ref={vertexFileInputRef}
-                type="file"
-                accept=".json,application/json"
-                style={{ display: 'none' }}
-                onChange={handleVertexFileChange}
+            <div className={styles.cardHint}>{provider.hint}</div>
+            <div className={styles.accountSetupGrid}>
+              <Input
+                label={t('auth_login.account_note_label')}
+                value={state.accountNote || ''}
+                disabled={Boolean(state.polling)}
+                onChange={(e) => updateProviderState(provider.id, { accountNote: e.target.value })}
+                placeholder={t('auth_login.account_note_placeholder')}
+              />
+              <Input
+                label={t('auth_login.account_proxy_label')}
+                hint={t('auth_login.account_proxy_hint')}
+                value={state.proxyUrl || ''}
+                error={
+                  state.proxyInline?.phase === 'invalid' ? state.proxyInline.message : undefined
+                }
+                disabled={Boolean(state.polling) || state.proxyInline?.phase === 'checking'}
+                onChange={(e) =>
+                  updateProviderState(provider.id, {
+                    proxyUrl: e.target.value,
+                    // 编辑即清空上次内联校验结果（回 idle），失焦后重新校验。
+                    proxyInline: { phase: 'idle' },
+                  })
+                }
+                onBlur={() => void handleProxyBlur(provider.id)}
+                placeholder={t('auth_login.account_proxy_placeholder')}
+                data-testid={`oauth-proxy-url-input-${provider.id}`}
               />
             </div>
-            {vertexState.error && <div className="status-badge error">{vertexState.error}</div>}
-            {vertexState.result && (
-              <div className={styles.connectionBox}>
-                <div className={styles.connectionLabel}>{t('vertex_import.result_title')}</div>
-                <div className={styles.keyValueList}>
-                  {vertexState.result.projectId && (
+            {/* 代理内联校验状态区：紧邻输入框就地展示「验证中 / 已连通(出口 IP)」；
+                      失败文案走 Input 自身的 error 红框（不重复展示）。 */}
+            {state.proxyInline?.phase === 'checking' && (
+              <div
+                className={`status-badge muted ${styles.proxyInlineStatus}`}
+                data-testid={`oauth-proxy-status-${provider.id}`}
+                data-proxy-phase="checking"
+              >
+                <LoadingSpinner size={12} />
+                {state.proxyInline.stage === 'dedup'
+                  ? t('proxy_preflight.checking_dedup', { defaultValue: '正在查重代理…' })
+                  : t('proxy_preflight.probing')}
+              </div>
+            )}
+            {state.proxyInline?.phase === 'ok' && (
+              <div
+                className="status-badge success"
+                data-testid={`oauth-proxy-status-${provider.id}`}
+                data-proxy-phase="ok"
+              >
+                {state.proxyInline.exitIp
+                  ? `✓ ${t('proxy_preflight.connected_with_ip', { ip: state.proxyInline.exitIp })}`
+                  : `✓ ${t('proxy_preflight.connected', { defaultValue: '连通正常' })}`}
+              </div>
+            )}
+            {(() => {
+              const fingerprint = getFingerprintPreset(provider.id);
+              return (
+                <div className={styles.fingerprintBox}>
+                  <div className={styles.connectionLabel}>
+                    {t('auth_login.fingerprint_snapshot_title')}
+                  </div>
+                  <div className={styles.keyValueList}>
                     <div className={styles.keyValueItem}>
                       <span className={styles.keyValueKey}>
-                        {t('vertex_import.result_project')}
+                        {t('auth_login.fingerprint_profile')}
                       </span>
-                      <span className={styles.keyValueValue}>{vertexState.result.projectId}</span>
+                      <span className={styles.keyValueValue}>{fingerprint.profile}</span>
                     </div>
-                  )}
-                  {vertexState.result.email && (
                     <div className={styles.keyValueItem}>
-                      <span className={styles.keyValueKey}>{t('vertex_import.result_email')}</span>
+                      <span className={styles.keyValueKey}>{t('auth_login.fingerprint_tls')}</span>
+                      <span className={styles.keyValueValue}>{fingerprint.tls}</span>
+                    </div>
+                    <div className={styles.keyValueItem}>
+                      <span className={styles.keyValueKey}>
+                        {t('auth_login.fingerprint_headers')}
+                      </span>
+                      <span className={styles.keyValueValue}>{fingerprint.headers}</span>
+                    </div>
+                  </div>
+                  <div className={styles.cardHintSecondary}>
+                    {t('auth_login.fingerprint_snapshot_note')}
+                  </div>
+                </div>
+              );
+            })()}
+            {showFlowSteps && (
+              <div className={styles.flowSteps}>
+                {OAUTH_FLOW_STEPS.map((step, index) => {
+                  const isDone = state.status === 'success' || index < flowStepIndex;
+                  const isActive = index === flowStepIndex && state.status !== 'success';
+                  return (
+                    <div
+                      key={step}
+                      className={`${styles.flowStep} ${isDone ? styles.flowStepDone : ''} ${isActive ? styles.flowStepActive : ''}`.trim()}
+                    >
+                      <span className={styles.flowStepDot} />
+                      <span className={styles.flowStepLabel}>
+                        {t(`auth_login.oauth_flow_${step}`)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {state.url && (
+              <div className={styles.authUrlBox}>
+                <div className={styles.authUrlLabel}>{provider.urlLabel}</div>
+                {state.expiresAtMs && state.status === 'waiting' && (
+                  <div className={styles.countdownBadge}>
+                    {t('auth_login.oauth_countdown', {
+                      time: formatDuration((state.expiresAtMs - nowMs) / 1000),
+                    })}
+                  </div>
+                )}
+                <div className={styles.authUrlValue}>{state.url}</div>
+                <div className={styles.cardHintSecondary}>
+                  {t('auth_login.oauth_link_ready_hint')}
+                </div>
+                {state.userCode && (
+                  <div className={styles.deviceCodeSection}>
+                    <div className={styles.authUrlLabel}>{t('auth_login.device_code_label')}</div>
+                    <div className={styles.deviceCodeRow}>
+                      <span
+                        className={styles.deviceCodeValue}
+                        aria-label={t('auth_login.device_code_label')}
+                      >
+                        {state.userCode}
+                      </span>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => copyCode(state.userCode)}
+                        aria-label={t('auth_login.device_code_copy')}
+                      >
+                        {t('auth_login.device_code_copy')}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                <div className={styles.authUrlActions}>
+                  <Button variant="secondary" size="sm" onClick={() => copyLink(state.url!)}>
+                    {getProviderActionText(provider.id, 'copy_link')}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => window.open(state.url, '_blank', 'noopener,noreferrer')}
+                  >
+                    {getProviderActionText(provider.id, 'open_link')}
+                  </Button>
+                  {canCancel && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => cancelAuth(provider.id)}
+                      loading={state.cancelling}
+                      disabled={state.cancelling}
+                    >
+                      {t(
+                        provider.id === 'devin'
+                          ? 'auth_login.devin_oauth_cancel'
+                          : 'auth_login.oauth_cancel_button',
+                        { defaultValue: '取消本次登录' }
+                      )}
+                    </Button>
+                  )}
+                </div>
+                {state.cancelError && <div className="status-badge error">{state.cancelError}</div>}
+              </div>
+            )}
+            {canSubmitCallback && (
+              <div className={styles.callbackSection}>
+                <Input
+                  label={t(
+                    provider.id === 'devin'
+                      ? 'auth_login.devin_callback_label'
+                      : provider.id === 'xai'
+                        ? 'auth_login.xai_callback_label'
+                        : 'auth_login.oauth_callback_label'
+                  )}
+                  hint={t(
+                    provider.id === 'devin'
+                      ? 'auth_login.devin_callback_hint'
+                      : provider.id === 'xai'
+                        ? 'auth_login.xai_callback_hint'
+                        : 'auth_login.oauth_callback_hint'
+                  )}
+                  value={state.callbackUrl || ''}
+                  disabled={
+                    provider.id === 'devin' &&
+                    (state.cancelling === true || state.status !== 'waiting')
+                  }
+                  onChange={(e) =>
+                    updateProviderState(provider.id, {
+                      callbackUrl: e.target.value,
+                      callbackStatus: undefined,
+                      callbackError: undefined,
+                    })
+                  }
+                  placeholder={t(
+                    provider.id === 'devin'
+                      ? 'auth_login.devin_callback_placeholder'
+                      : provider.id === 'xai'
+                        ? 'auth_login.xai_callback_placeholder'
+                        : 'auth_login.oauth_callback_placeholder'
+                  )}
+                />
+                <div className={styles.callbackActions}>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => submitCallback(provider.id)}
+                    loading={state.callbackSubmitting}
+                    disabled={
+                      provider.id === 'devin' &&
+                      (state.cancelling === true || state.status !== 'waiting')
+                    }
+                  >
+                    {t('auth_login.oauth_callback_button')}
+                  </Button>
+                </div>
+                {state.callbackStatus === 'success' && state.status === 'waiting' && (
+                  <div className="status-badge success">
+                    {t('auth_login.oauth_callback_status_success')}
+                  </div>
+                )}
+                {state.callbackStatus === 'error' && (
+                  <div className="status-badge error">
+                    {t('auth_login.oauth_callback_status_error')} {state.callbackError || ''}
+                  </div>
+                )}
+              </div>
+            )}
+            {state.status && state.status !== 'idle' && (
+              <div className={statusBadgeClassName}>
+                {state.status === 'success'
+                  ? getProviderActionText(provider.id, 'oauth_status_success')
+                  : state.status === 'cancelled'
+                    ? state.error ||
+                      t('auth_login.oauth_status_cancelled', {
+                        defaultValue: '认证已取消，可重新开始。',
+                      })
+                    : state.status === 'error'
+                      ? `${getProviderActionText(provider.id, 'oauth_status_error')} ${state.error || ''}`
+                      : state.status === 'starting'
+                        ? t('auth_login.oauth_status_starting', {
+                            defaultValue: '正在准备授权链接...',
+                          })
+                        : getProviderActionText(provider.id, 'oauth_status_waiting')}
+              </div>
+            )}
+            {state.status === 'success' && state.successResult && (
+              <div className={styles.successResultBox}>
+                <div className={styles.connectionLabel}>
+                  {t('auth_login.oauth_saved_result_title', { defaultValue: '登录成功' })}
+                </div>
+                <div className={styles.keyValueList}>
+                  <div className={styles.keyValueItem}>
+                    <span className={styles.keyValueKey}>
+                      {t('auth_login.oauth_saved_auth_file', { defaultValue: '认证文件' })}
+                    </span>
+                    <span className={styles.keyValueValue}>
+                      {state.successResult.authFile ||
+                        t('auth_login.oauth_saved_auth_file_unknown', { defaultValue: '未知' })}
+                    </span>
+                  </div>
+                  {(state.successResult.account || state.successResult.note) && (
+                    <div className={styles.keyValueItem}>
+                      <span className={styles.keyValueKey}>
+                        {t('auth_login.oauth_saved_account', { defaultValue: '账号' })}
+                      </span>
                       <AccountIdentity
-                        identity={resolveAccountIdentity({ email: vertexState.result.email })}
+                        identity={resolveAccountIdentity({
+                          note: state.successResult.note,
+                          email: state.successResult.account,
+                          fallback: state.successResult.account,
+                        })}
                         compact
                         className={styles.keyValueValue}
-                        testId="vertex-import-account-identity"
+                        testId={`oauth-success-account-${provider.id}`}
                       />
                     </div>
                   )}
-                  {vertexState.result.location && (
+                  {state.successResult.proxyUrl && (
                     <div className={styles.keyValueItem}>
                       <span className={styles.keyValueKey}>
-                        {t('vertex_import.result_location')}
+                        {t('auth_login.oauth_saved_proxy')}
                       </span>
-                      <span className={styles.keyValueValue}>{vertexState.result.location}</span>
+                      <span className={styles.keyValueValue}>{state.successResult.proxyUrl}</span>
                     </div>
                   )}
-                  {vertexState.result.authFile && (
-                    <div className={styles.keyValueItem}>
-                      <span className={styles.keyValueKey}>{t('vertex_import.result_file')}</span>
-                      <span className={styles.keyValueValue}>{vertexState.result.authFile}</span>
-                    </div>
-                  )}
+                </div>
+                <div className={styles.successActions}>
+                  <Button variant="secondary" size="sm" onClick={() => navigate('/accounts')}>
+                    {t('auth_login.view_credentials')}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() =>
+                      navigate('/auth-files', {
+                        state: { highlightAuthFile: state.successResult?.authFile },
+                      })
+                    }
+                  >
+                    {t('auth_login.oauth_view_auth_file', { defaultValue: '查看认证文件' })}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => resetProviderAttempt(provider.id)}
+                  >
+                    {t('auth_login.oauth_add_another', { defaultValue: '继续添加下一个账号' })}
+                  </Button>
                 </div>
               </div>
             )}
           </div>
         </Card>
+      </div>
+    );
+  };
+
+  const renderVertexCard = () => (
+    <Card
+      title={
+        <span className={styles.cardTitle}>
+          <img src={iconVertex} alt="" className={styles.cardTitleIcon} />
+          {t('vertex_import.title')}
+        </span>
+      }
+      extra={
+        <Button onClick={handleVertexImport} loading={vertexState.loading}>
+          {t('vertex_import.import_button')}
+        </Button>
+      }
+    >
+      <div className={styles.cardContent}>
+        <div className={styles.cardHint}>{t('vertex_import.description')}</div>
+        <Input
+          label={t('vertex_import.location_label')}
+          hint={t('vertex_import.location_hint')}
+          value={vertexState.location}
+          onChange={(e) =>
+            setVertexState((prev) => ({
+              ...prev,
+              location: e.target.value,
+            }))
+          }
+          placeholder={t('vertex_import.location_placeholder')}
+        />
+        <div className={styles.formItem}>
+          <label className={styles.formItemLabel}>{t('vertex_import.file_label')}</label>
+          <div className={styles.filePicker}>
+            <Button variant="secondary" size="sm" onClick={handleVertexFilePick}>
+              {t('vertex_import.choose_file')}
+            </Button>
+            <div
+              className={`${styles.fileName} ${
+                vertexState.fileName ? '' : styles.fileNamePlaceholder
+              }`.trim()}
+            >
+              {vertexState.fileName || t('vertex_import.file_placeholder')}
+            </div>
+          </div>
+          <div className={styles.cardHintSecondary}>{t('vertex_import.file_hint')}</div>
+          <input
+            ref={vertexFileInputRef}
+            type="file"
+            accept=".json,application/json"
+            style={{ display: 'none' }}
+            onChange={handleVertexFileChange}
+          />
+        </div>
+        {vertexState.error && <div className="status-badge error">{vertexState.error}</div>}
+        {vertexState.result && (
+          <div className={styles.connectionBox}>
+            <div className={styles.connectionLabel}>{t('vertex_import.result_title')}</div>
+            <div className={styles.keyValueList}>
+              {vertexState.result.projectId && (
+                <div className={styles.keyValueItem}>
+                  <span className={styles.keyValueKey}>{t('vertex_import.result_project')}</span>
+                  <span className={styles.keyValueValue}>{vertexState.result.projectId}</span>
+                </div>
+              )}
+              {vertexState.result.email && (
+                <div className={styles.keyValueItem}>
+                  <span className={styles.keyValueKey}>{t('vertex_import.result_email')}</span>
+                  <AccountIdentity
+                    identity={resolveAccountIdentity({ email: vertexState.result.email })}
+                    compact
+                    className={styles.keyValueValue}
+                    testId="vertex-import-account-identity"
+                  />
+                </div>
+              )}
+              {vertexState.result.location && (
+                <div className={styles.keyValueItem}>
+                  <span className={styles.keyValueKey}>{t('vertex_import.result_location')}</span>
+                  <span className={styles.keyValueValue}>{vertexState.result.location}</span>
+                </div>
+              )}
+              {vertexState.result.authFile && (
+                <div className={styles.keyValueItem}>
+                  <span className={styles.keyValueKey}>{t('vertex_import.result_file')}</span>
+                  <span className={styles.keyValueValue}>{vertexState.result.authFile}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </Card>
   );
 
   return (
