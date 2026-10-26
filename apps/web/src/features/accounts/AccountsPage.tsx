@@ -7806,10 +7806,23 @@ export function AccountsPage() {
     accountSortTriggerRef.current?.focus();
   };
 
-  const closeMobileFilters = () => {
+  const closeMobileFilters = useCallback(() => {
     setIsMobileFiltersOpen(false);
     setIsAccountSortDropdownOpen(false);
-  };
+  }, []);
+
+  useEffect(() => {
+    if (!isMobileFiltersOpen || typeof window === 'undefined') return;
+
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      event.preventDefault();
+      closeMobileFilters();
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [closeMobileFilters, isMobileFiltersOpen]);
 
   const resetAccountFilters = () => {
     setStatusFilter('all');
