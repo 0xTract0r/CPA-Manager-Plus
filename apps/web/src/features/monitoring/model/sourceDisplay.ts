@@ -1,16 +1,22 @@
 import type { CredentialInfo } from '@/types/sourceInfo';
 import { buildSourceInfoMap, resolveSourceDisplay } from '@/utils/sourceResolver';
-import { normalizeAuthIndex } from '@/utils/usage';
+import { isOpaqueUsageSourceId, normalizeAuthIndex } from '@/utils/usage';
 import { maskEmailLike, readString } from './base';
 import type { MonitoringAuthMeta, MonitoringChannelMeta } from './types';
 
 const GENERIC_PROVIDER_LABELS = new Set([
   'codex',
+  'antigravity',
   'openai',
   'openai-compatibility',
   'gemini',
   'claude',
   'vertex',
+  'xai',
+  'x-ai',
+  'grok',
+  'devin',
+  'meta',
 ]);
 
 const hasReadableValue = (value: string | null | undefined) => {
@@ -20,6 +26,52 @@ const hasReadableValue = (value: string | null | undefined) => {
 
 export const isGenericMonitoringProviderLabel = (value: string) =>
   GENERIC_PROVIDER_LABELS.has(value.trim().toLowerCase());
+
+export const isProviderLikeMonitoringLabel = (
+  value: string | null | undefined,
+  provider: string | null | undefined
+) => {
+  const candidate = readString(value);
+  if (!candidate) return false;
+
+  if (isGenericMonitoringProviderLabel(candidate)) {
+    return true;
+  }
+
+  const providerValue = readString(provider);
+  return (
+    Boolean(providerValue) &&
+    candidate.toLowerCase() === providerValue.toLowerCase()
+  );
+};
+
+/**
+ * True when `refined` is a key/provider ordinal disambiguation of `base`
+ * (for example base=`kuaileshifu`, refined=`kuaileshifu #1`).
+ */
+export const isKeyDisambiguatedLabel = (
+  refined: string | null | undefined,
+  base: string | null | undefined
+) => {
+  const refinedValue = readString(refined);
+  const baseValue = readString(base);
+  if (!refinedValue || !baseValue || refinedValue === baseValue) return false;
+  return refinedValue.toLowerCase().startsWith(`${baseValue.toLowerCase()} #`);
+};
+
+export const isRedundantMonitoringLabel = (
+  candidate: string | null | undefined,
+  primary: string | null | undefined
+) => {
+  const candidateValue = readString(candidate);
+  const primaryValue = readString(primary);
+  if (!candidateValue || !primaryValue) return false;
+  if (candidateValue === primaryValue) return true;
+  return (
+    isKeyDisambiguatedLabel(primaryValue, candidateValue) ||
+    isKeyDisambiguatedLabel(candidateValue, primaryValue)
+  );
+};
 
 const firstReadable = (...values: Array<string | null | undefined>) =>
   values.find(hasReadableValue)?.trim() || '';
@@ -93,11 +145,13 @@ export const buildMonitoringSourceDisplay = (
         (authMeta?.authIndex ? context.channelByAuthIndex.get(authMeta.authIndex) : undefined);
   const sourceInfoMap = context.sourceInfoMap ?? buildSourceInfoMap({});
   const authFileMap = context.authFileMap ?? buildAuthFileMapFromMeta(context.authMetaMap);
+  const snapshotProvider = readString(input.authProviderSnapshot);
   const sourceMeta = resolveSourceDisplay(
     readString(input.source),
     authIndex,
     sourceInfoMap,
-    authFileMap
+    authFileMap,
+    snapshotProvider
   );
   const apiKeyHash = readString(input.apiKeyHash).toLowerCase();
   const apiKeyAlias = firstReadable(
@@ -106,7 +160,6 @@ export const buildMonitoringSourceDisplay = (
   );
   const snapshotAccount = readString(input.accountSnapshot);
   const snapshotLabel = readString(input.authLabelSnapshot);
-  const snapshotProvider = readString(input.authProviderSnapshot);
   const explicitChannel = readString(input.channel);
   const explicitLabel = readString(input.authLabel);
   const explicitAccount = readString(input.account);
@@ -118,37 +171,83 @@ export const buildMonitoringSourceDisplay = (
     explicitLabel,
     snapshotLabel
   );
-  const sourceLabel = firstReadable(
-    authMeta?.label,
-    explicitLabel,
-    snapshotLabel,
-    account,
-    sourceMeta.displayName
-  );
   const provider = firstReadable(authMeta?.provider, snapshotProvider, sourceMeta.type);
   const channel = firstReadable(channelMeta?.name, explicitChannel, provider);
   const channelHost = firstReadable(channelMeta?.host);
+  const resolvedSourceName = firstReadable(sourceMeta.displayName);
+  const labelCandidates = firstReadable(authMeta?.label, explicitLabel, snapshotLabel);
+  const configuredSourceName = Boolean(
+    resolvedSourceName &&
+      sourceMeta.identityKey &&
+      !sourceMeta.identityKey.startsWith('source:') &&
+      !sourceMeta.identityKey.startsWith('auth:')
+  );
+  // Prefer key-disambiguated source names (e.g. "kuaileshifu #1") over the bare
+  // OpenAI-compatible provider/channel name when multi-key providers share a label.
+  const sourceLabel = firstReadable(
+    resolvedSourceName &&
+      (isKeyDisambiguatedLabel(resolvedSourceName, channel) ||
+        isKeyDisambiguatedLabel(resolvedSourceName, channelHost) ||
+        isKeyDisambiguatedLabel(resolvedSourceName, labelCandidates) ||
+        isKeyDisambiguatedLabel(resolvedSourceName, account) ||
+        (configuredSourceName &&
+          isProviderLikeMonitoringLabel(firstReadable(labelCandidates, account), provider)))
+      ? resolvedSourceName
+      : '',
+    labelCandidates,
+    account,
+    resolvedSourceName
+  );
   const sourceMasked = maskEmailLike(sourceLabel || sourceMeta.displayName);
   const accountMasked = maskEmailLike(account || sourceLabel);
   const fallbackId = shortHash(input.sourceHash || input.apiKeyHash || authIndex);
+  const nonGenericChannel =
+    channel && !isProviderLikeMonitoringLabel(channel, provider) ? channel : '';
+  const nonGenericSource =
+    sourceMasked && !isProviderLikeMonitoringLabel(sourceMasked, provider) ? sourceMasked : '';
+  const readableNonGenericSource =
+    nonGenericSource && !isOpaqueUsageSourceId(nonGenericSource) ? nonGenericSource : '';
+  const readableAccountMasked =
+    accountMasked && !isOpaqueUsageSourceId(accountMasked) ? accountMasked : '';
+  const opaqueSource = isOpaqueUsageSourceId(sourceMasked)
+    ? sourceMasked
+    : isOpaqueUsageSourceId(accountMasked)
+    ? accountMasked
+    : '';
+  const keyDisambiguatedSource =
+    readableNonGenericSource &&
+    (isKeyDisambiguatedLabel(readableNonGenericSource, channel) ||
+      isKeyDisambiguatedLabel(readableNonGenericSource, channelHost) ||
+      isKeyDisambiguatedLabel(readableNonGenericSource, labelCandidates) ||
+      isKeyDisambiguatedLabel(readableNonGenericSource, account))
+      ? readableNonGenericSource
+      : '';
   const primary =
     firstReadable(
-      channel && !isGenericMonitoringProviderLabel(channel) ? channel : '',
+      keyDisambiguatedSource,
+      nonGenericChannel,
       channelHost,
-      sourceMasked,
+      readableNonGenericSource,
+      readableAccountMasked,
       provider && !isGenericMonitoringProviderLabel(provider) ? provider : '',
-      accountMasked,
       apiKeyAlias,
       channel,
       provider,
+      opaqueSource,
       fallbackId
     ) || '-';
   const meta = firstReadable(
-    provider && provider !== primary ? provider : '',
-    channelHost && channelHost !== primary ? channelHost : '',
-    accountMasked && accountMasked !== primary ? accountMasked : '',
-    sourceMasked && sourceMasked !== primary ? sourceMasked : '',
-    apiKeyAlias && apiKeyAlias !== primary ? apiKeyAlias : ''
+    provider && !isRedundantMonitoringLabel(provider, primary) ? provider : '',
+    channelHost && !isRedundantMonitoringLabel(channelHost, primary) ? channelHost : '',
+    readableAccountMasked && !isRedundantMonitoringLabel(readableAccountMasked, primary)
+      ? readableAccountMasked
+      : '',
+    readableNonGenericSource && !isRedundantMonitoringLabel(readableNonGenericSource, primary)
+      ? readableNonGenericSource
+      : '',
+    apiKeyAlias && !isRedundantMonitoringLabel(apiKeyAlias, primary) ? apiKeyAlias : '',
+    channel && !isRedundantMonitoringLabel(channel, primary) ? channel : '',
+    opaqueSource && !isRedundantMonitoringLabel(opaqueSource, primary) ? opaqueSource : ''
   );
   const title = Array.from(
     new Set(

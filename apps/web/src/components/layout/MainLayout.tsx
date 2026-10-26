@@ -1,3 +1,4 @@
+import { isFileLogsAvailable } from '@/features/logs/logFeatureAvailability';
 import {
   ReactNode,
   SVGProps,
@@ -12,6 +13,8 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { PageTransition } from '@/components/common/PageTransition';
 import { TimezoneMenu } from '@/components/layout/TimezoneMenu';
+import { DatabaseMaintenanceBanner } from '@/components/common/DatabaseMaintenanceBanner';
+import { DatabaseMaintenanceProvider } from '@/components/common/DatabaseMaintenanceContext';
 import { MainRoutes } from '@/router/MainRoutes';
 import {
   IconBot,
@@ -23,18 +26,22 @@ import {
   IconSidebarAuthFiles,
   IconSidebarConfig,
   IconSidebarDashboard,
+  IconSidebarQuota,
   IconSidebarInspection,
   IconSidebarLogs,
   IconSidebarMonitor,
   IconSidebarOauth,
   IconSidebarPlugins,
   IconSidebarProviders,
-  IconSidebarQuota,
   IconSidebarSystem,
   IconSidebarUsage,
   IconTrendingUp,
 } from '@/components/ui/icons';
-import { INLINE_LOGO_JPEG } from '@/assets/logoInline';
+import {
+  CPAMP_SYMBOL_COLOR_PNG_URL,
+  CPAMP_WORDMARK_COLOR_PNG_URL,
+  CPAMP_WORDMARK_ON_DARK_PNG_URL,
+} from '@/assets/brand';
 import {
   useAuthStore,
   useConfigStore,
@@ -55,7 +62,6 @@ import {
 } from '@/features/plugins/pluginResources';
 import { triggerHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { usePanelFeatureAvailability } from '@/hooks/usePanelFeatureAvailability';
-import { isFileLogsAvailable } from '@/features/logs/logFeatureAvailability';
 import { getDemoLogoutPath, prefixRouteBase, stripRouteBase } from '@/features/demo/demoMode';
 import { LANGUAGE_LABEL_KEYS, LANGUAGE_ORDER, STORAGE_KEY_SIDEBAR } from '@/utils/constants';
 import { isSupportedLanguage } from '@/utils/language';
@@ -68,10 +74,10 @@ const sidebarIcons: Record<string, ReactNode> = {
   dashboard: <IconSidebarDashboard size={SIDEBAR_ICON_SIZE} />,
   aiProviders: <IconSidebarProviders size={SIDEBAR_ICON_SIZE} />,
   authFiles: <IconSidebarAuthFiles size={SIDEBAR_ICON_SIZE} />,
-  oauth: <IconSidebarOauth size={SIDEBAR_ICON_SIZE} />,
   quota: <IconSidebarQuota size={SIDEBAR_ICON_SIZE} />,
-  usageAnalytics: <IconSidebarUsage size={SIDEBAR_ICON_SIZE} />,
   codexInspection: <IconSidebarInspection size={SIDEBAR_ICON_SIZE} />,
+  oauth: <IconSidebarOauth size={SIDEBAR_ICON_SIZE} />,
+  usageAnalytics: <IconSidebarUsage size={SIDEBAR_ICON_SIZE} />,
   monitoring: <IconSidebarMonitor size={SIDEBAR_ICON_SIZE} />,
   // 农场（Device Farm）迁移第一刀：暂复用监控图标，专属图标留后续精修切片。
   farm: <IconSidebarMonitor size={SIDEBAR_ICON_SIZE} />,
@@ -255,7 +261,7 @@ interface MainLayoutProps {
   demoMode?: boolean;
 }
 
-export function MainLayout({ routeBase = '', demoMode = false }: MainLayoutProps = {}) {
+function MainLayoutContent({ routeBase = '', demoMode = false }: MainLayoutProps = {}) {
   const { t } = useTranslation();
   const { showNotification } = useNotificationStore();
   const location = useLocation();
@@ -300,12 +306,14 @@ export function MainLayout({ routeBase = '', demoMode = false }: MainLayoutProps
   const headerRef = useRef<HTMLElement | null>(null);
 
   const fullBrandName = 'CPA Manager Plus';
-  const abbrBrandName = t('title.abbr');
   const isLogsPage = routePathname.startsWith('/logs');
   const isPluginResourcePage = routePathname.startsWith('/plugin-pages');
   const showSidebarLabels = !sidebarCollapsed || sidebarOpen;
-  const pluginControlMenuVisible = isPluginManagementNavVisible({ supportsPlugin });
   const configPluginsEnabled = config?.pluginsEnabled;
+  const pluginControlMenuVisible = isPluginManagementNavVisible({
+    supportsPlugin,
+    pluginsEnabled: configPluginsEnabled,
+  });
 
   // 将顶部悬浮控制区高度写入 CSS 变量，供移动端粘性元素和浮层避让。
   useLayoutEffect(() => {
@@ -559,6 +567,19 @@ export function MainLayout({ routeBase = '', demoMode = false }: MainLayoutProps
         icon: sidebarIcons.monitoring,
       }
     : null;
+  const usageMaintenanceNavItem: NavItem | null =
+    featureAvailability.panelHostMode === 'manager_embedded' &&
+    featureAvailability.managerServiceAvailable
+      ? {
+          path: '/usage-maintenance',
+          label: t('nav.usage_maintenance', { defaultValue: 'Usage Maintenance' }),
+          shortLabel: navShortLabel(
+            'nav.usage_maintenance',
+            t('nav.usage_maintenance', { defaultValue: 'Maintenance' })
+          ),
+          icon: sidebarIcons.system,
+        }
+      : null;
   const operationNavItems: NavItem[] = [
     {
       path: '/farm',
@@ -635,6 +656,7 @@ export function MainLayout({ routeBase = '', demoMode = false }: MainLayoutProps
         dashboardNavItem,
         ...(usageAnalyticsNavItem ? [usageAnalyticsNavItem] : []),
         ...(monitoringNavItem ? [monitoringNavItem] : []),
+        ...(usageMaintenanceNavItem ? [usageMaintenanceNavItem] : []),
       ],
     },
     {
@@ -658,6 +680,7 @@ export function MainLayout({ routeBase = '', demoMode = false }: MainLayoutProps
     {
       titleKey: 'nav_groups.credentials',
       items: [
+        {path: '/accounts', label: t('nav.accounts', {defaultValue: t('accounts.title')}), shortLabel: navShortLabel('nav.accounts', t('accounts.title')), icon: sidebarIcons.authFiles},
         {
           path: '/auth-files',
           label: t('nav.auth_files'),
@@ -701,6 +724,7 @@ export function MainLayout({ routeBase = '', demoMode = false }: MainLayoutProps
           shortLabel: navShortLabel('nav.system_info', t('nav.system_info')),
           icon: sidebarIcons.system,
         },
+        {path: '/system/updates', label: t('manager_updates.title', {defaultValue: '更新'}), shortLabel: t('manager_updates.title', {defaultValue: '更新'}), icon: sidebarIcons.system, isSub: true},
       ],
     },
   ].filter((section) => section.items.length > 0);
@@ -724,16 +748,6 @@ export function MainLayout({ routeBase = '', demoMode = false }: MainLayoutProps
       }
     }
 
-    const authFilesIndex = navOrder.indexOf('/auth-files');
-    if (authFilesIndex !== -1) {
-      if (normalizedPath === '/auth-files') return authFilesIndex;
-      if (normalizedPath.startsWith('/auth-files/')) {
-        if (normalizedPath.startsWith('/auth-files/oauth-excluded')) return authFilesIndex + 0.1;
-        if (normalizedPath.startsWith('/auth-files/oauth-model-alias')) return authFilesIndex + 0.2;
-        return authFilesIndex + 0.05;
-      }
-    }
-
     const exactIndex = navOrder.indexOf(normalizedPath);
     if (exactIndex !== -1) return exactIndex;
     const nestedIndex = navOrder.findIndex(
@@ -751,11 +765,10 @@ export function MainLayout({ routeBase = '', demoMode = false }: MainLayoutProps
 
     const from = normalize(fromPathname);
     const to = normalize(toPathname);
-    const isAuthFiles = (pathname: string) =>
-      pathname === '/auth-files' || pathname.startsWith('/auth-files/');
+    const isAccounts = (pathname: string) => pathname === '/accounts' || pathname === '/auth-files' || pathname.startsWith('/auth-files/');
     const isAiProviders = (pathname: string) =>
       pathname === '/ai-providers' || pathname.startsWith('/ai-providers/');
-    if (isAuthFiles(from) && isAuthFiles(to)) return 'ios';
+    if (isAccounts(from) && isAccounts(to)) return 'ios';
     if (isAiProviders(from) && isAiProviders(to)) return 'ios';
     return 'none';
   }, []);
@@ -802,8 +815,10 @@ export function MainLayout({ routeBase = '', demoMode = false }: MainLayoutProps
   const activeNavItem =
     [...navItems]
       .sort((a, b) => b.path.length - a.path.length)
-      .find((item) => matchesNavPath(item, currentPath)) ?? navItems[0];
-  const currentRouteLabel = activeNavItem?.label ?? fullBrandName;
+      .find((item) => matchesNavPath(item, currentPath)) ?? null;
+  const standaloneRouteLabel =
+    currentPath === '/accounts' ? t('nav.accounts', { defaultValue: t('accounts.title') }) : null;
+  const currentRouteLabel = activeNavItem?.label ?? standaloneRouteLabel ?? fullBrandName;
 
   return (
     <div
@@ -1048,12 +1063,26 @@ export function MainLayout({ routeBase = '', demoMode = false }: MainLayoutProps
         >
           <div className="sidebar-brand" title={fullBrandName}>
             <div className="sidebar-brand-main">
-              <img src={INLINE_LOGO_JPEG} alt="CPAMC logo" className="sidebar-brand-logo" />
-              {showSidebarLabels && <span className="sidebar-brand-title">{abbrBrandName}</span>}
+              <img
+                src={CPAMP_SYMBOL_COLOR_PNG_URL}
+                alt={showSidebarLabels ? '' : 'CPA Manager Plus'}
+                className="sidebar-brand-symbol"
+              />
+              {showSidebarLabels && (
+                <>
+                  <img
+                    src={CPAMP_WORDMARK_COLOR_PNG_URL}
+                    alt="CPA Manager Plus"
+                    className="sidebar-brand-wordmark sidebar-brand-wordmark-light"
+                  />
+                  <img
+                    src={CPAMP_WORDMARK_ON_DARK_PNG_URL}
+                    alt="CPA Manager Plus"
+                    className="sidebar-brand-wordmark sidebar-brand-wordmark-dark"
+                  />
+                </>
+              )}
             </div>
-            {!showSidebarLabels && (
-              <span className="sidebar-brand-short">{abbrBrandName.charAt(0) || 'C'}</span>
-            )}
           </div>
 
           <div className="nav-section">
@@ -1105,6 +1134,7 @@ export function MainLayout({ routeBase = '', demoMode = false }: MainLayoutProps
               .filter(Boolean)
               .join(' ')}
           >
+            <DatabaseMaintenanceBanner />
             <PageTransition
               key={routeBase || 'main'}
               render={(location) => <MainRoutes location={location} routeBase={routeBase} />}
@@ -1121,5 +1151,13 @@ export function MainLayout({ routeBase = '', demoMode = false }: MainLayoutProps
         </div>
       </div>
     </div>
+  );
+}
+
+export function MainLayout(props: MainLayoutProps = {}) {
+  return (
+    <DatabaseMaintenanceProvider>
+      <MainLayoutContent {...props} />
+    </DatabaseMaintenanceProvider>
   );
 }

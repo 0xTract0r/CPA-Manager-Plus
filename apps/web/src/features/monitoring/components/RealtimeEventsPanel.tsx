@@ -47,6 +47,7 @@ import { CONTENT_REVEAL_OPEN_EVENT } from '@/utils/contentReveal';
 import { downloadBlob } from '@/utils/download';
 import { maskSensitiveText, truncateText } from '@/utils/format';
 import { formatInUtc8 } from '@/utils/datetime';
+import { getPlanLabel, getPlanPresentation, type PlanDisplayMode } from '@/utils/plans';
 import { formatCompactNumber, formatUsd } from '@/utils/usage';
 import {
   buildEventExportCsv,
@@ -138,6 +139,13 @@ type FailureTooltipPosition = {
   style: CSSProperties;
 };
 
+type UsageTooltipPlacement = 'left-above' | 'left-below';
+
+type UsageTooltipPosition = {
+  placement: UsageTooltipPlacement;
+  style: CSSProperties;
+};
+
 const formatOptionalText = (value: string | null | undefined) => {
   const trimmed = String(value || '').trim();
   return trimmed || '-';
@@ -186,7 +194,9 @@ const buildCodexFastDisplay = (row: MonitoringEventRow, t: TFunction): CodexFast
     : 'unknown';
   return {
     label: t('monitoring.codex_fast_requested'),
-    title: t('monitoring.codex_fast_outbound_hint', { source: t(`monitoring.codex_fast_outbound_${source}`) }),
+    title: t('monitoring.codex_fast_outbound_hint', {
+      source: t(`monitoring.codex_fast_outbound_${source}`),
+    }),
     blocked: false,
   };
 };
@@ -245,6 +255,53 @@ const resolveFailureTooltipPosition = (anchor: HTMLElement): FailureTooltipPosit
   };
 
   return placement === 'below'
+    ? {
+        placement,
+        style: {
+          ...baseStyle,
+          top: rect.bottom + FAILURE_TOOLTIP_OFFSET,
+        },
+      }
+    : {
+        placement,
+        style: {
+          ...baseStyle,
+          bottom: viewportHeight - rect.top + FAILURE_TOOLTIP_OFFSET,
+        },
+      };
+};
+
+const resolveUsageTooltipPosition = (anchor: HTMLElement): UsageTooltipPosition | null => {
+  if (typeof window === 'undefined') return null;
+
+  const rect = anchor.getBoundingClientRect();
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+  const maxWidth = Math.max(0, viewportWidth - FAILURE_TOOLTIP_VIEWPORT_MARGIN * 2);
+  const availableLeftWidth = Math.max(
+    0,
+    rect.left - FAILURE_TOOLTIP_VIEWPORT_MARGIN - FAILURE_TOOLTIP_OFFSET
+  );
+  const width = Math.min(USAGE_TOOLTIP_WIDTH, maxWidth, availableLeftWidth);
+  const spaceBelow =
+    viewportHeight - rect.bottom - FAILURE_TOOLTIP_VIEWPORT_MARGIN - FAILURE_TOOLTIP_OFFSET;
+  const spaceAbove = rect.top - FAILURE_TOOLTIP_VIEWPORT_MARGIN - FAILURE_TOOLTIP_OFFSET;
+  const placement: UsageTooltipPlacement =
+    spaceAbove >= USAGE_TOOLTIP_ESTIMATED_HEIGHT || spaceAbove >= spaceBelow
+      ? 'left-above'
+      : 'left-below';
+  const availableHeight = Math.max(0, placement === 'left-above' ? spaceAbove : spaceBelow);
+  const left = Math.max(
+    FAILURE_TOOLTIP_VIEWPORT_MARGIN,
+    rect.left - FAILURE_TOOLTIP_OFFSET - width
+  );
+  const baseStyle: CSSProperties = {
+    left,
+    width,
+    maxHeight: Math.min(USAGE_TOOLTIP_ESTIMATED_HEIGHT, availableHeight),
+  };
+
+  return placement === 'left-below'
     ? {
         placement,
         style: {
@@ -361,9 +418,12 @@ const formatHeaderRecoverAt = (value: number | null | undefined, locale: string)
 const buildHeaderDiagnosticParts = (
   row: MonitoringEventRow,
   t: TFunction,
-  locale: string
+  locale: string,
+  planDisplayMode: PlanDisplayMode = 'compact'
 ): string[] => {
   const parts: string[] = [];
+  const formatCount = (value: number): string =>
+    new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(value);
   const compactSignal = (label: string, value: string | number | null | undefined, limit = 42) => {
     const normalized =
       typeof value === 'number'
@@ -380,9 +440,56 @@ const buildHeaderDiagnosticParts = (
       `${t('monitoring.header_error')}: ${[errorKind, errorCode].filter(Boolean).join(' / ')}`
     );
   }
+  const shouldRetry = row.responseMetadata?.errors?.should_retry;
+  if (typeof shouldRetry === 'boolean') {
+    parts.push(
+      `${t('monitoring.header_should_retry', { defaultValue: 'Should retry' })}: ${shouldRetry ? t('common.yes', { defaultValue: 'Yes' }) : t('common.no', { defaultValue: 'No' })}`
+    );
+  }
   const traceId = row.headerTraceId || row.responseMetadata?.trace?.primary_trace_id || '';
   if (traceId) {
     parts.push(`${t('monitoring.header_trace')}: ${truncateText(traceId, 42)}`);
+  }
+  const traceparent = row.responseMetadata?.trace?.traceparent || '';
+  if (traceparent && traceparent !== traceId) {
+    parts.push(`traceparent: ${truncateText(traceparent, 64)}`);
+  }
+  const providerUsage = row.responseMetadata?.provider_usage;
+  if (
+    providerUsage?.provider === 'xai' &&
+    providerUsage.kind === 'included_free_usage' &&
+    providerUsage.state === 'exhausted'
+  ) {
+    const usageParts: string[] = [];
+    if (providerUsage.model) usageParts.push(providerUsage.model);
+    if (typeof providerUsage.actual === 'number' && typeof providerUsage.limit === 'number') {
+      usageParts.push(
+        `${formatCount(providerUsage.actual)} / ${formatCount(providerUsage.limit)} ${providerUsage.unit || 'tokens'}`
+      );
+    }
+    if (typeof providerUsage.remaining === 'number') {
+      usageParts.push(
+        `${t('monitoring.provider_usage_remaining', { defaultValue: 'Remaining' })} ${formatCount(providerUsage.remaining)}`
+      );
+    }
+    if (typeof providerUsage.overage === 'number' && providerUsage.overage > 0) {
+      usageParts.push(
+        `${t('monitoring.provider_usage_overage', { defaultValue: 'Overage' })} ${formatCount(providerUsage.overage)}`
+      );
+    }
+    if (providerUsage.window_kind === 'rolling_24h') {
+      usageParts.push(
+        t('monitoring.provider_usage_rolling_24h', { defaultValue: 'Rolling 24-hour window' })
+      );
+    }
+    if (providerUsage.recover_at_ms) {
+      usageParts.push(
+        `${providerUsage.recover_at_estimated ? t('monitoring.provider_usage_estimated_recovery', { defaultValue: 'Estimated recovery' }) : t('monitoring.header_recover_at')} ${formatHeaderRecoverAt(providerUsage.recover_at_ms, locale)}`
+      );
+    }
+    parts.push(
+      `${t('monitoring.provider_usage_xai_exhausted', { defaultValue: 'xAI included free usage exhausted' })}${usageParts.length > 0 ? `: ${usageParts.join(' · ')}` : ''}`
+    );
   }
   const quotaParts: string[] = [];
   const planType =
@@ -390,7 +497,13 @@ const buildHeaderDiagnosticParts = (
     row.responseMetadata?.quota?.plan_type ||
     row.responseMetadata?.quota?.active_limit ||
     '';
-  if (planType) quotaParts.push(planType);
+  const planPresentation = getPlanPresentation({
+    provider: row.provider,
+    planType,
+    t,
+  });
+  const planLabel = getPlanLabel(planPresentation, planDisplayMode);
+  if (planLabel) quotaParts.push(planLabel);
   const usedPercent =
     row.headerQuotaUsedPercent ?? row.responseMetadata?.quota?.used_percent ?? null;
   if (typeof usedPercent === 'number' && Number.isFinite(usedPercent)) {
@@ -405,6 +518,32 @@ const buildHeaderDiagnosticParts = (
   }
   if (quotaParts.length > 0) {
     parts.push(`${t('monitoring.header_quota')}: ${quotaParts.join(' · ')}`);
+  }
+  const rateLimit = row.responseMetadata?.rate_limit;
+  const rateLimitParts = [
+    rateLimit?.requests?.limit !== undefined || rateLimit?.requests?.remaining !== undefined
+      ? `${t('monitoring.provider_rate_limit_requests', { defaultValue: 'Requests' })} ${rateLimit.requests?.remaining ?? '-'} / ${rateLimit.requests?.limit ?? '-'}`
+      : '',
+    rateLimit?.tokens?.limit !== undefined || rateLimit?.tokens?.remaining !== undefined
+      ? `${t('monitoring.provider_rate_limit_tokens', { defaultValue: 'Tokens' })} ${rateLimit.tokens?.remaining ?? '-'} / ${rateLimit.tokens?.limit ?? '-'}`
+      : '',
+  ].filter(Boolean);
+  if (rateLimitParts.length > 0) {
+    parts.push(
+      `${t('monitoring.provider_rate_limit', { defaultValue: 'API rate limit' })}: ${rateLimitParts.join(' · ')}`
+    );
+  }
+  const dataPolicy = row.responseMetadata?.data_policy;
+  const dataPolicyParts = [
+    dataPolicy?.retention_mode || '',
+    typeof dataPolicy?.zero_retention === 'boolean'
+      ? `${t('monitoring.provider_zero_retention', { defaultValue: 'Zero retention' })}: ${dataPolicy.zero_retention ? t('common.yes', { defaultValue: 'Yes' }) : t('common.no', { defaultValue: 'No' })}`
+      : '',
+  ].filter(Boolean);
+  if (dataPolicyParts.length > 0) {
+    parts.push(
+      `${t('monitoring.provider_data_policy', { defaultValue: 'Data policy' })}: ${dataPolicyParts.join(' · ')}`
+    );
   }
   const routing = row.responseMetadata?.routing;
   const routingParts = [
@@ -446,15 +585,16 @@ const buildHeaderDiagnosticParts = (
   return parts;
 };
 
-const buildFailureMetaText = (row: MonitoringEventRow, t: TFunction, locale: string) => {
-  if (!row.failed) return '';
+const buildRequestDiagnosticMetaText = (row: MonitoringEventRow, t: TFunction, locale: string) => {
   const parts: string[] = [];
-  if (row.failStatusCode) {
+  if (row.failed && row.failStatusCode) {
     parts.push(
       `${shortLabel(t, 'monitoring.fail_status_code_short', 'monitoring.fail_status_code')} ${row.failStatusCode}`
     );
+  } else {
+    parts.push(t(row.failed ? 'monitoring.result_failed' : 'monitoring.result_success'));
   }
-  const body = maskSensitiveText(row.failSummary || '');
+  const body = row.failed ? maskSensitiveText(row.failSummary || '') : '';
   if (body) {
     parts.push(truncateText(body, 96));
   }
@@ -462,28 +602,32 @@ const buildFailureMetaText = (row: MonitoringEventRow, t: TFunction, locale: str
   return parts.join(' · ');
 };
 
-const buildFailureDetails = (row: MonitoringEventRow, t: TFunction, locale: string) => {
+const buildRequestDiagnosticDetails = (row: MonitoringEventRow, t: TFunction, locale: string) => {
   if (!row.failed) return null;
+
   const summary = maskSensitiveText(row.failSummary || '');
-  const diagnostics = buildHeaderDiagnosticParts(row, t, locale);
+  const diagnostics = buildHeaderDiagnosticParts(row, t, locale, 'full');
   if (!row.failStatusCode && !summary && diagnostics.length === 0) return null;
   const statusText = row.failStatusCode
     ? `${shortLabel(t, 'monitoring.fail_status_code_short', 'monitoring.fail_status_code')} ${row.failStatusCode}`
-    : '';
+    : t('monitoring.result_failed');
   return {
+    failed: row.failed,
     statusCode: row.failStatusCode,
     statusText,
     summary,
     diagnostics,
-    label: buildFailureMetaText(row, t, locale),
+    label: buildRequestDiagnosticMetaText(row, t, locale),
     copyText: [statusText, summary, ...diagnostics].filter(Boolean).join('\n'),
   };
 };
 
-type RealtimeFailureDetails = NonNullable<ReturnType<typeof buildFailureDetails>>;
+type RealtimeRequestDiagnosticDetails = NonNullable<
+  ReturnType<typeof buildRequestDiagnosticDetails>
+>;
 
-type RealtimeFailureStatusProps = {
-  details: RealtimeFailureDetails;
+type RealtimeRequestDiagnosticStatusProps = {
+  details: RealtimeRequestDiagnosticDetails;
   tooltipId: string;
   t: TFunction;
   onCopy: (text: string) => void;
@@ -569,9 +713,7 @@ function useContentTooltip<T extends HTMLElement>({
     }
     updatePosition();
     if (typeof window !== 'undefined') {
-      window.dispatchEvent(
-        new CustomEvent<string>(CONTENT_REVEAL_OPEN_EVENT, { detail: ownerId })
-      );
+      window.dispatchEvent(new CustomEvent<string>(CONTENT_REVEAL_OPEN_EVENT, { detail: ownerId }));
     }
     setOpen(true);
   }, [clearCloseTimer, clearOpenTimer, ownerId, refreshAvailability, updatePosition]);
@@ -792,170 +934,6 @@ function TableHeaderInfo({ label, info }: { label: ReactNode; info: string }) {
   );
 }
 
-function RealtimeFailureStatus({ details, tooltipId, t, onCopy }: RealtimeFailureStatusProps) {
-  const triggerRef = useRef<HTMLSpanElement | null>(null);
-  const tooltipRef = useRef<HTMLSpanElement | null>(null);
-  const closeTimerRef = useRef<number | null>(null);
-  const rafRef = useRef<number | null>(null);
-  const [open, setOpen] = useState(false);
-  const [tooltipPosition, setTooltipPosition] = useState<FailureTooltipPosition | null>(null);
-  const isBrowser = typeof document !== 'undefined';
-
-  const clearCloseTimer = useCallback(() => {
-    if (closeTimerRef.current === null || typeof window === 'undefined') return;
-    window.clearTimeout(closeTimerRef.current);
-    closeTimerRef.current = null;
-  }, []);
-
-  const updateTooltipPosition = useCallback(() => {
-    if (!triggerRef.current) return;
-    const nextPosition = resolveFailureTooltipPosition(triggerRef.current);
-    if (nextPosition) {
-      setTooltipPosition(nextPosition);
-    }
-  }, []);
-
-  const scheduleTooltipPositionUpdate = useCallback(() => {
-    if (typeof window === 'undefined') return;
-    if (rafRef.current !== null) {
-      window.cancelAnimationFrame(rafRef.current);
-    }
-    rafRef.current = window.requestAnimationFrame(() => {
-      rafRef.current = null;
-      updateTooltipPosition();
-    });
-  }, [updateTooltipPosition]);
-
-  const showTooltip = useCallback(() => {
-    clearCloseTimer();
-    updateTooltipPosition();
-    setOpen(true);
-  }, [clearCloseTimer, updateTooltipPosition]);
-
-  const requestHideTooltip = useCallback(() => {
-    clearCloseTimer();
-    if (typeof window === 'undefined') {
-      setOpen(false);
-      return;
-    }
-    closeTimerRef.current = window.setTimeout(() => {
-      closeTimerRef.current = null;
-      setOpen(false);
-    }, FAILURE_TOOLTIP_CLOSE_DELAY_MS);
-  }, [clearCloseTimer]);
-
-  const handleBlur = useCallback(
-    (event: FocusEvent<HTMLElement>) => {
-      const nextTarget = event.relatedTarget;
-      if (
-        isNodeInside(triggerRef.current, nextTarget) ||
-        isNodeInside(tooltipRef.current, nextTarget)
-      ) {
-        return;
-      }
-      requestHideTooltip();
-    },
-    [requestHideTooltip]
-  );
-
-  const handleKeyDown = useCallback((event: KeyboardEvent<HTMLSpanElement>) => {
-    if (event.key !== 'Escape') return;
-    event.preventDefault();
-    setOpen(false);
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      clearCloseTimer();
-      if (rafRef.current !== null && typeof window !== 'undefined') {
-        window.cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
-      }
-    };
-  }, [clearCloseTimer]);
-
-  useEffect(() => {
-    if (!open || typeof window === 'undefined') return undefined;
-
-    scheduleTooltipPositionUpdate();
-    window.addEventListener('resize', scheduleTooltipPositionUpdate);
-    window.addEventListener('scroll', scheduleTooltipPositionUpdate, true);
-
-    return () => {
-      window.removeEventListener('resize', scheduleTooltipPositionUpdate);
-      window.removeEventListener('scroll', scheduleTooltipPositionUpdate, true);
-    };
-  }, [open, scheduleTooltipPositionUpdate]);
-
-  const placement = tooltipPosition?.placement ?? 'below';
-  const tooltipClassName = [
-    styles.realtimeFailureTooltip,
-    placement === 'above' ? styles.realtimeFailureTooltipAbove : styles.realtimeFailureTooltipBelow,
-    open ? styles.realtimeFailureTooltipOpen : '',
-  ]
-    .filter(Boolean)
-    .join(' ');
-  const tooltip = (
-    <span
-      id={tooltipId}
-      ref={tooltipRef}
-      role="tooltip"
-      className={tooltipClassName}
-      style={isBrowser ? tooltipPosition?.style : undefined}
-      onMouseEnter={clearCloseTimer}
-      onMouseLeave={requestHideTooltip}
-      onFocus={showTooltip}
-      onBlur={handleBlur}
-    >
-      <button
-        type="button"
-        className={styles.realtimeFailureCopyButton}
-        onClick={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          onCopy(details.copyText);
-        }}
-        title={t('common.copy')}
-        aria-label={t('common.copy')}
-      >
-        <IconCopy size={13} />
-      </button>
-      {details.statusCode ? (
-        <span className={styles.realtimeFailureTooltipStatus}>{details.statusText}</span>
-      ) : null}
-      {details.summary ? (
-        <span className={styles.realtimeFailureTooltipBody}>{details.summary}</span>
-      ) : null}
-      {details.diagnostics.map((item) => (
-        <span key={item} className={styles.realtimeFailureTooltipBody}>
-          {item}
-        </span>
-      ))}
-    </span>
-  );
-
-  return (
-    <span
-      ref={triggerRef}
-      className={styles.realtimeFailureStatus}
-      tabIndex={0}
-      aria-describedby={tooltipId}
-      aria-label={details.label}
-      onMouseEnter={showTooltip}
-      onMouseLeave={requestHideTooltip}
-      onFocus={showTooltip}
-      onBlur={handleBlur}
-      onKeyDown={handleKeyDown}
-    >
-      <span className={`${styles.realtimeRequestStatus} ${styles.realtimeRequestStatusBad}`}>
-        {t('monitoring.result_failed')}
-      </span>
-      {!isBrowser ? tooltip : null}
-      {isBrowser && open ? createPortal(tooltip, document.body) : null}
-    </span>
-  );
-}
-
 type RealtimeModelCellProps = {
   model: string;
   resolvedModel?: string;
@@ -1035,7 +1013,7 @@ function RealtimeModelCell({ model, resolvedModel, tooltipId }: RealtimeModelCel
           className={`${styles.monoCell} ${styles.realtimeModelText}`}
           data-overflow-content="true"
         >
-          {resolvedModel}
+          {`→ ${resolvedModel}`}
         </small>
       ) : null}
       {!isBrowser ? tooltip : null}
@@ -1841,7 +1819,7 @@ export function RealtimeEventsPanel({
               <th>{sourceApiKeyLabel}</th>
               {/* 来源/账号作为扫描主锚点放第 1 列；时间保留前置但退到较窄的第 2 列。
                   列宽映射见 MonitoringCenterPage.module.scss 的 nth-child 规则。 */}
-              <th>{t('monitoring.column_time')}</th>
+              <th className={styles.realtimeTimeColumn}>{t('monitoring.column_time')}</th>
               <th>{t('monitoring.column_model')}</th>
               <th>
                 <TableHeaderInfo
@@ -1910,15 +1888,29 @@ export function RealtimeEventsPanel({
                   tooltipId={`${tooltipIdPrefix}-apikey-tooltip-${row.id}`}
                 />
               ) : null;
-              const showResolvedModel =
-                row.resolvedModel &&
-                row.resolvedModel.trim() &&
-                row.resolvedModel.trim() !== row.model;
+              const requestedModel = row.requestedModel?.trim() || row.model;
+              const showResolvedModel = Boolean(
+                row.resolvedModel?.trim() && row.resolvedModel.trim() !== requestedModel
+              );
+              const modelDiagnostics = [
+                requestedModel ? t('monitoring.requested_model') + ': ' + requestedModel : '',
+                showResolvedModel ? t('monitoring.resolved_model') + ': ' + row.resolvedModel : '',
+                row.responseModel && (!row.resolvedModel || row.responseModel !== row.resolvedModel)
+                  ? t('monitoring.response_model') + ': ' + row.responseModel
+                  : '',
+                row.responseModel && row.resolvedModel && row.responseModel !== row.resolvedModel
+                  ? t('monitoring.model_mismatch')
+                  : '',
+              ]
+                .filter(Boolean)
+                .join('\n');
               const reasoningEffort = formatOptionalText(row.reasoningEffort);
-              const serviceTier = formatOptionalText(row.serviceTier);
+              const effectiveServiceTier = formatOptionalText(
+                row.requestServiceTier || row.serviceTier || row.responseServiceTier
+              );
               const codexFastDisplay = buildCodexFastDisplay(row, t);
-              const failureDetails = buildFailureDetails(row, t, locale);
-              const failureTooltipId = failureDetails
+              const requestDiagnosticDetails = buildRequestDiagnosticDetails(row, t, locale);
+              const requestDiagnosticTooltipId = requestDiagnosticDetails
                 ? `${tooltipIdPrefix}-failure-tooltip-${row.id}`
                 : undefined;
               const timeParts = formatRealtimeDateParts(row.timestampMs, locale);
@@ -1940,6 +1932,16 @@ export function RealtimeEventsPanel({
                           tooltipId={`${tooltipIdPrefix}-source-tooltip-${row.id}`}
                         />
                         {accountMeta}
+                        {sourceDisplay.requestMetadataTitle ? (
+                          <details className={styles.realtimeRequestMetadata}>
+                            <summary>{t('monitoring.request_metadata')}</summary>
+                            <small>
+                              {sourceDisplay.requestMetadataTitle.split('\n').map((line) => (
+                                <span key={line}>{line}</span>
+                              ))}
+                            </small>
+                          </details>
+                        ) : null}
                         {apiKeyMeta}
                         <button
                           type="button"
@@ -1976,22 +1978,34 @@ export function RealtimeEventsPanel({
                   </td>
                   {/* 时间作为辅助上下文放第 2 列。列窄时 date/time 各自省略号截断，
                       hover/focus 用溢出感知浮层展示完整时间戳。 */}
-                  <td>
+                  <td className={styles.realtimeTimeColumn}>
                     <RealtimeTimeCell
                       dateText={timeParts.date}
                       timeText={timeParts.time}
                       tooltipId={`${tooltipIdPrefix}-time-tooltip-${row.id}`}
                     />
                   </td>
-                  <td>
+                  <td aria-label={modelDiagnostics}>
                     {/* 模型名较长时被 .realtimeModelText 的 12% 列宽 nowrap 省略号截断；
                         全名展示改走溢出感知浮层(见 RealtimeModelCell)，不再用原生 title=
                         (浏览器原生 tooltip 有 ~0.5-1s 不可控延迟)。 */}
                     <RealtimeModelCell
-                      model={row.model}
+                      model={row.requestedModel?.trim() || row.model}
                       resolvedModel={showResolvedModel ? row.resolvedModel : undefined}
                       tooltipId={`${tooltipIdPrefix}-model-tooltip-${row.id}`}
                     />
+                    {row.responseModel &&
+                    row.resolvedModel &&
+                    row.responseModel !== row.resolvedModel ? (
+                      <div className={styles.realtimeModelResponseLine}>
+                        <small
+                          className={styles.realtimeModelResponseText}
+                        >{`↳ ${row.responseModel}`}</small>
+                        <span className={styles.realtimeModelMismatchBadge}>
+                          {t('monitoring.model_mismatch')}
+                        </span>
+                      </div>
+                    ) : null}
                   </td>
                   <td title={buildReasoningTierNativeTitle(row)}>
                     {/* 前两行恒定显示客户端请求的思考强度和服务档位；Codex 有
@@ -2001,7 +2015,7 @@ export function RealtimeEventsPanel({
                         {`${realtimeReasoningLabel}: ${reasoningEffort !== '-' ? reasoningEffort : REASONING_TIER_PLACEHOLDER}`}
                       </span>
                       <span className={styles.realtimeServiceValue}>
-                        {`${realtimeServiceLabel}: ${serviceTier !== '-' ? serviceTier : REASONING_TIER_PLACEHOLDER}`}
+                        {`${realtimeServiceLabel}: ${effectiveServiceTier !== '-' ? effectiveServiceTier : REASONING_TIER_PLACEHOLDER}`}
                       </span>
                       {codexFastDisplay ? (
                         <span
@@ -2015,17 +2029,21 @@ export function RealtimeEventsPanel({
                       ) : null}
                     </div>
                   </td>
-                  <td>
+
+                  <td className={styles.realtimeCenteredColumn}>
                     <div className={styles.recentStatusCell}>
                       <RecentPattern pattern={row.recentPattern} variant="plain" />
                     </div>
                   </td>
-                  <td>
+                  <td className={styles.realtimeCenteredColumn}>
                     <div className={styles.primaryCell}>
-                      {failureDetails ? (
-                        <RealtimeFailureStatus
-                          details={failureDetails}
-                          tooltipId={failureTooltipId ?? `${tooltipIdPrefix}-failure-tooltip`}
+                      {requestDiagnosticDetails ? (
+                        <RealtimeRequestDiagnosticStatus
+                          details={requestDiagnosticDetails}
+                          tooltipId={
+                            requestDiagnosticTooltipId ??
+                            `${tooltipIdPrefix}-request-diagnostic-tooltip`
+                          }
                           t={t}
                           onCopy={handleCopyFailureDetails}
                         />
@@ -2100,8 +2118,13 @@ export function RealtimeEventsPanel({
                   </td>
                   <td>
                     <div className={styles.primaryCell}>
-                      <span>{formatCompactNumber(row.totalTokens)}</span>
-                      <small>{buildRealtimeTokenSummary(row, t)}</small>
+                      <RealtimeTokenUsage
+                        details={buildRealtimeTokenUsageDetails(row, t)}
+                        tooltipId={`${tooltipIdPrefix}-token-usage-tooltip-${row.id}`}
+                      >
+                        <span>{formatCompactNumber(row.totalTokens)}</span>
+                        <small>{buildRealtimeTokenSummary(row, t)}</small>
+                      </RealtimeTokenUsage>
                     </div>
                   </td>
                   <td
@@ -2120,7 +2143,7 @@ export function RealtimeEventsPanel({
                       极端大额走省略号 + title 兜底可见完整值。 */}
                   <td
                     className={`${styles.realtimeNumericColumn} ${styles.realtimeCostCell}`}
-                    title={hasPrices ? formatUsd(row.totalCost) : undefined}
+                    title={hasPrices ? formatUsd(row.totalCost, 3) : undefined}
                   >
                     {hasPrices ? formatUsd(row.totalCost) : '--'}
                   </td>
@@ -2203,5 +2226,392 @@ export function RealtimeEventsPanel({
     >
       {content}
     </MonitoringPanel>
+  );
+}
+
+const USAGE_TOOLTIP_WIDTH = 184;
+
+const USAGE_TOOLTIP_ESTIMATED_HEIGHT = 170;
+
+function RealtimeRequestDiagnosticStatus({
+  details,
+  tooltipId,
+  t,
+  onCopy,
+}: RealtimeRequestDiagnosticStatusProps) {
+  const triggerRef = useRef<HTMLSpanElement | null>(null);
+  const tooltipRef = useRef<HTMLSpanElement | null>(null);
+  const closeTimerRef = useRef<number | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const [open, setOpen] = useState(false);
+  const [tooltipPosition, setTooltipPosition] = useState<FailureTooltipPosition | null>(null);
+  const isBrowser = typeof document !== 'undefined';
+
+  const clearCloseTimer = useCallback(() => {
+    if (closeTimerRef.current === null || typeof window === 'undefined') return;
+    window.clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = null;
+  }, []);
+
+  const updateTooltipPosition = useCallback(() => {
+    if (!triggerRef.current) return;
+    const nextPosition = resolveFailureTooltipPosition(triggerRef.current);
+    if (nextPosition) {
+      setTooltipPosition(nextPosition);
+    }
+  }, []);
+
+  const scheduleTooltipPositionUpdate = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    if (rafRef.current !== null) {
+      window.cancelAnimationFrame(rafRef.current);
+    }
+    rafRef.current = window.requestAnimationFrame(() => {
+      rafRef.current = null;
+      updateTooltipPosition();
+    });
+  }, [updateTooltipPosition]);
+
+  const showTooltip = useCallback(() => {
+    clearCloseTimer();
+    updateTooltipPosition();
+    setOpen(true);
+  }, [clearCloseTimer, updateTooltipPosition]);
+
+  const requestHideTooltip = useCallback(() => {
+    clearCloseTimer();
+    if (typeof window === 'undefined') {
+      setOpen(false);
+      return;
+    }
+    closeTimerRef.current = window.setTimeout(() => {
+      closeTimerRef.current = null;
+      setOpen(false);
+    }, FAILURE_TOOLTIP_CLOSE_DELAY_MS);
+  }, [clearCloseTimer]);
+
+  const handleBlur = useCallback(
+    (event: FocusEvent<HTMLElement>) => {
+      const nextTarget = event.relatedTarget;
+      if (
+        isNodeInside(triggerRef.current, nextTarget) ||
+        isNodeInside(tooltipRef.current, nextTarget)
+      ) {
+        return;
+      }
+      requestHideTooltip();
+    },
+    [requestHideTooltip]
+  );
+
+  const handleKeyDown = useCallback((event: KeyboardEvent<HTMLSpanElement>) => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    setOpen(false);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      clearCloseTimer();
+      if (rafRef.current !== null && typeof window !== 'undefined') {
+        window.cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+  }, [clearCloseTimer]);
+
+  useEffect(() => {
+    if (!open || typeof window === 'undefined') return undefined;
+
+    scheduleTooltipPositionUpdate();
+    window.addEventListener('resize', scheduleTooltipPositionUpdate);
+    window.addEventListener('scroll', scheduleTooltipPositionUpdate, true);
+
+    return () => {
+      window.removeEventListener('resize', scheduleTooltipPositionUpdate);
+      window.removeEventListener('scroll', scheduleTooltipPositionUpdate, true);
+    };
+  }, [open, scheduleTooltipPositionUpdate]);
+
+  const placement = tooltipPosition?.placement ?? 'below';
+  const tooltipClassName = [
+    styles.realtimeFailureTooltip,
+    placement === 'above' ? styles.realtimeFailureTooltipAbove : styles.realtimeFailureTooltipBelow,
+    open ? styles.realtimeFailureTooltipOpen : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+  const tooltip = (
+    <span
+      id={tooltipId}
+      ref={tooltipRef}
+      role="tooltip"
+      className={tooltipClassName}
+      style={isBrowser ? tooltipPosition?.style : undefined}
+      onMouseEnter={clearCloseTimer}
+      onMouseLeave={requestHideTooltip}
+      onFocus={showTooltip}
+      onBlur={handleBlur}
+    >
+      <button
+        type="button"
+        className={styles.realtimeFailureCopyButton}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onCopy(details.copyText);
+        }}
+        title={t('common.copy')}
+        aria-label={t('common.copy')}
+      >
+        <IconCopy size={13} />
+      </button>
+      <span className={styles.realtimeFailureTooltipStatus}>{details.statusText}</span>
+      {details.summary ? (
+        <span className={styles.realtimeFailureTooltipBody}>{details.summary}</span>
+      ) : null}
+      {details.diagnostics.map((item) => (
+        <span key={item} className={styles.realtimeFailureTooltipBody}>
+          {item}
+        </span>
+      ))}
+    </span>
+  );
+
+  return (
+    <span
+      ref={triggerRef}
+      className={styles.realtimeFailureStatus}
+      tabIndex={0}
+      aria-describedby={tooltipId}
+      aria-label={details.label}
+      onMouseEnter={showTooltip}
+      onMouseLeave={requestHideTooltip}
+      onFocus={showTooltip}
+      onBlur={handleBlur}
+      onKeyDown={handleKeyDown}
+    >
+      <span
+        className={`${styles.realtimeRequestStatus} ${
+          details.failed ? styles.realtimeRequestStatusBad : styles.realtimeRequestStatusGood
+        }`}
+      >
+        {t(details.failed ? 'monitoring.result_failed' : 'monitoring.result_success')}
+      </span>
+      {!isBrowser ? tooltip : null}
+      {isBrowser && open ? createPortal(tooltip, document.body) : null}
+    </span>
+  );
+}
+
+type RealtimeTokenUsageDetails = {
+  total: string;
+  input: string;
+  output: string;
+  fields: Array<{ label: string; value: string }>;
+  ariaLabel: string;
+};
+
+const buildRealtimeTokenUsageDetails = (row: MonitoringEventRow, t: TFunction) => {
+  const fields = [
+    {
+      label: t('monitoring.realtime_usage_total_label'),
+      value: formatCompactNumber(row.totalTokens),
+    },
+    {
+      label: t('monitoring.realtime_usage_input_label'),
+      value: formatCompactNumber(row.inputTokens),
+    },
+    {
+      label: t('monitoring.realtime_usage_output_label'),
+      value: formatCompactNumber(row.outputTokens),
+    },
+    {
+      label: t('monitoring.realtime_usage_reasoning_label'),
+      value: String(row.reasoningTokens),
+    },
+    {
+      label: t('monitoring.realtime_usage_cached_label'),
+      value: formatCompactNumber(row.cachedTokens),
+    },
+    {
+      label: t('monitoring.realtime_usage_cache_read_label'),
+      value: formatCompactNumber(row.cacheReadTokens),
+    },
+    {
+      label: t('monitoring.realtime_usage_cache_creation_label'),
+      value: formatCompactNumber(row.cacheCreationTokens),
+    },
+  ];
+
+  return {
+    total: fields[0].value,
+    input: fields[1].value,
+    output: fields[2].value,
+    fields,
+    ariaLabel: fields.map((field) => `${field.label}: ${field.value}`).join(', '),
+  } satisfies RealtimeTokenUsageDetails;
+};
+
+type RealtimeTokenUsageProps = {
+  details: RealtimeTokenUsageDetails;
+  children?: ReactNode;
+  tooltipId: string;
+};
+
+function RealtimeTokenUsage({ details, tooltipId, children }: RealtimeTokenUsageProps) {
+  const triggerRef = useRef<HTMLDivElement | null>(null);
+  const tooltipRef = useRef<HTMLDivElement | null>(null);
+  const closeTimerRef = useRef<number | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const [open, setOpen] = useState(false);
+  const [tooltipPosition, setTooltipPosition] = useState<UsageTooltipPosition | null>(null);
+  const isBrowser = typeof document !== 'undefined';
+
+  const clearCloseTimer = useCallback(() => {
+    if (closeTimerRef.current === null || typeof window === 'undefined') return;
+    window.clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = null;
+  }, []);
+
+  const updateTooltipPosition = useCallback(() => {
+    if (!triggerRef.current) return;
+    const nextPosition = resolveUsageTooltipPosition(triggerRef.current);
+    if (nextPosition) {
+      setTooltipPosition(nextPosition);
+    }
+  }, []);
+
+  const scheduleTooltipPositionUpdate = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    if (rafRef.current !== null) {
+      window.cancelAnimationFrame(rafRef.current);
+    }
+    rafRef.current = window.requestAnimationFrame(() => {
+      rafRef.current = null;
+      updateTooltipPosition();
+    });
+  }, [updateTooltipPosition]);
+
+  const showTooltip = useCallback(() => {
+    clearCloseTimer();
+    updateTooltipPosition();
+    setOpen(true);
+  }, [clearCloseTimer, updateTooltipPosition]);
+
+  const requestHideTooltip = useCallback(() => {
+    clearCloseTimer();
+    if (typeof window === 'undefined') {
+      setOpen(false);
+      return;
+    }
+    closeTimerRef.current = window.setTimeout(() => {
+      closeTimerRef.current = null;
+      setOpen(false);
+    }, FAILURE_TOOLTIP_CLOSE_DELAY_MS);
+  }, [clearCloseTimer]);
+
+  const handleBlur = useCallback(
+    (event: FocusEvent<HTMLElement>) => {
+      const nextTarget = event.relatedTarget;
+      if (
+        isNodeInside(triggerRef.current, nextTarget) ||
+        isNodeInside(tooltipRef.current, nextTarget)
+      ) {
+        return;
+      }
+      requestHideTooltip();
+    },
+    [requestHideTooltip]
+  );
+
+  const handleKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    setOpen(false);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      clearCloseTimer();
+      if (rafRef.current !== null && typeof window !== 'undefined') {
+        window.cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+  }, [clearCloseTimer]);
+
+  useEffect(() => {
+    if (!open || typeof window === 'undefined') return undefined;
+
+    scheduleTooltipPositionUpdate();
+    window.addEventListener('resize', scheduleTooltipPositionUpdate);
+    window.addEventListener('scroll', scheduleTooltipPositionUpdate, true);
+
+    return () => {
+      window.removeEventListener('resize', scheduleTooltipPositionUpdate);
+      window.removeEventListener('scroll', scheduleTooltipPositionUpdate, true);
+    };
+  }, [open, scheduleTooltipPositionUpdate]);
+
+  const placement = tooltipPosition?.placement ?? 'left-below';
+  const tooltip = (
+    <div
+      id={tooltipId}
+      ref={tooltipRef}
+      role="tooltip"
+      className={[
+        styles.realtimeUsageTooltip,
+        placement === 'left-above'
+          ? styles.realtimeUsageTooltipLeftAbove
+          : styles.realtimeUsageTooltipLeftBelow,
+        open ? styles.realtimeUsageTooltipOpen : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+      style={isBrowser ? tooltipPosition?.style : undefined}
+      onMouseEnter={clearCloseTimer}
+      onMouseLeave={requestHideTooltip}
+    >
+      {details.fields.map((field) => (
+        <span key={field.label} className={styles.realtimeUsageTooltipLine}>
+          <span className={styles.realtimeUsageTooltipLabel}>{field.label}</span>
+          <span className={styles.realtimeUsageTooltipValue}>{field.value}</span>
+        </span>
+      ))}
+    </div>
+  );
+
+  return (
+    <div
+      ref={triggerRef}
+      className={styles.realtimeUsageCell}
+      tabIndex={0}
+      aria-describedby={tooltipId}
+      aria-label={details.ariaLabel}
+      onMouseEnter={showTooltip}
+      onMouseLeave={requestHideTooltip}
+      onFocus={showTooltip}
+      onBlur={handleBlur}
+      onKeyDown={handleKeyDown}
+    >
+      {children ?? (
+        <>
+          <span className={styles.realtimeUsageTotal}>{details.total}</span>
+          <span className={styles.realtimeUsageFlow}>
+            <span className={styles.realtimeUsageMetric}>
+              <span aria-hidden="true">↑</span>
+              {details.input}
+            </span>
+            <span className={styles.realtimeUsageMetric}>
+              <span aria-hidden="true">↓</span>
+              {details.output}
+            </span>
+          </span>
+        </>
+      )}
+      {!isBrowser ? tooltip : null}
+      {isBrowser && open ? createPortal(tooltip, document.body) : null}
+    </div>
   );
 }

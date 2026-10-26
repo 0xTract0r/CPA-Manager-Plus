@@ -12,6 +12,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { authFilesMock } = vi.hoisted(() => ({
   authFilesMock: {
     getAccountSettings: vi.fn(),
+    lookup: vi.fn(),
+    list: vi.fn(),
+    patchFieldsWithPluginSourceFallback: vi.fn(),
+    saveTextVerified: vi.fn(),
     downloadText: vi.fn(),
     updateAccountSettings: vi.fn(),
     patchFields: vi.fn(),
@@ -80,6 +84,13 @@ function HookHarness({
 }
 
 const mountHook = (accounts: AuthFileItem[] = []) => {
+  authFilesMock.list.mockResolvedValue({
+    files: accounts.map((file) =>
+      file.name === authFile.name
+        ? { ...file, id: authFile.id, auth_index: authFile.auth_index }
+        : file
+    ),
+  });
   const hookRef = createRef<UseAuthFilesAccountSettingsResult>();
   let renderer: ReactTestRenderer | null = null;
   act(() => {
@@ -101,7 +112,12 @@ const mountHook = (accounts: AuthFileItem[] = []) => {
 const OLD_PROXY = 'socks5://user:pass@oldhost:1080';
 const NEW_PROXY = 'socks5://user:pass@newhost:1080';
 
-const authFile: AuthFileItem = { name: 'acct-claude.json', type: 'claude' } as AuthFileItem;
+const authFile: AuthFileItem = {
+  name: 'acct-claude.json',
+  id: 'runtime-claude',
+  auth_index: 'index-claude',
+  type: 'claude',
+} as AuthFileItem;
 
 const openEditor = async (harness: ReturnType<typeof mountHook>) => {
   authFilesMock.getAccountSettings.mockResolvedValue({ proxy_url: OLD_PROXY, note: 'AC-14' });
@@ -124,6 +140,10 @@ const blur = async (harness: ReturnType<typeof mountHook>) => {
 };
 
 beforeEach(() => {
+  authFilesMock.lookup.mockReset().mockResolvedValue([authFile]);
+  authFilesMock.list.mockReset().mockResolvedValue({ files: [] });
+  authFilesMock.patchFieldsWithPluginSourceFallback.mockReset();
+  authFilesMock.saveTextVerified.mockReset();
   authFilesMock.getAccountSettings.mockReset();
   authFilesMock.downloadText.mockReset();
   authFilesMock.updateAccountSettings.mockReset();

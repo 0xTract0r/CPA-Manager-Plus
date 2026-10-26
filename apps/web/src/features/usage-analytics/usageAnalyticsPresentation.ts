@@ -1,8 +1,11 @@
 import type { TFunction } from 'i18next';
 import { formatDateTimeUtc8, formatMonthDayTimeUtc8 } from '@/utils/datetime';
+import { formatCompactUsd } from '@/utils/usage';
 import {
-  computeCacheHitRate,
+  computeNormalizedCacheHitRate,
+  computeRowCacheHitRate,
   formatMetricValue,
+  getNormalizedUsageCacheTokens,
   USAGE_MODEL_LONG_TAIL_SHARE,
   USAGE_MODEL_TOP_SHARE_THRESHOLD,
   USAGE_SUCCESS_RATE_WATCH_THRESHOLD,
@@ -34,10 +37,12 @@ export type UsageSummaryCardTone = 'bad' | 'good' | 'warn';
 
 export type UsageSummaryCard = {
   accent?: UsageSummaryCardAccent;
+  dataAttributes?: Record<`data-${string}`, string>;
   fullLabel?: string;
   icon?: UsageSummaryCardIcon;
   label: string;
   meta: string;
+  showModelPriceAttention?: boolean;
   tone?: UsageSummaryCardTone;
   value: string;
   valueTitle?: string;
@@ -209,7 +214,9 @@ export const buildUsageOverviewSummaryCards = ({
       icon: 'cost',
       label: t('usage_analytics.metric_estimated_cost'),
       meta: deltaMeta(summaryDelta, 'estimatedCost', t, t('usage_analytics.summary_cost_meta')),
-      value: formatMetricValue('estimatedCost', summary.estimatedCost),
+      showModelPriceAttention: true,
+      value: formatCompactUsd(summary.estimatedCost),
+      valueTitle: formatMetricValue('estimatedCost', summary.estimatedCost),
     },
     {
       accent: 'teal',
@@ -250,7 +257,7 @@ export const buildUsageOverviewSummaryCards = ({
       fullLabel: t('usage_analytics.metric_cached_tokens'),
       icon: 'cache',
       label: t('usage_analytics.metric_cached_tokens'),
-      meta: `${t('usage_analytics.cache_read_rate')} ${formatPercent(computeCacheHitRate(summary))}`,
+      meta: `${t('usage_analytics.cache_read_rate')} ${formatPercent(computeNormalizedCacheHitRate(summary))}`,
       value: formatMetricValue('totalTokens', cacheTokens),
       valueTitle: formatFullNumber(cacheTokens, locale),
       variant: 'secondary',
@@ -311,6 +318,7 @@ export const buildUsageTrendSummaryCards = ({
       icon: 'cost',
       label: t('usage_analytics.trend_cost_change'),
       meta: t('usage_analytics.summary_vs_previous'),
+      showModelPriceAttention: true,
       value: summaryDelta.hasComparison ? formatDelta(summaryDelta.estimatedCost) : '-',
     },
     {
@@ -372,6 +380,7 @@ export const buildUsageEntitySummaryCards = ({
     icon: 'cost',
     label: t('usage_analytics.metric_estimated_cost'),
     meta: t('usage_analytics.summary_cost_meta'),
+    showModelPriceAttention: true,
     value: formatMetricValue('estimatedCost', summary.estimatedCost),
   },
   {
@@ -452,6 +461,7 @@ export const buildUsageModelSummaryCards = ({
       icon: 'cost',
       label: t('usage_analytics.metric_estimated_cost'),
       meta: t('usage_analytics.summary_cost_meta'),
+      showModelPriceAttention: true,
       value: formatMetricValue('estimatedCost', summary.estimatedCost),
     },
   ];
@@ -512,6 +522,7 @@ export const buildUsageApiKeySummaryCards = ({
       icon: 'cost',
       label: t('usage_analytics.metric_average_cost_per_call'),
       meta: t('usage_analytics.summary_cost_meta'),
+      showModelPriceAttention: true,
       value: formatMetricValue('estimatedCost', summary.averageCostPerCall),
     },
     {
@@ -551,6 +562,7 @@ export const buildUsageHeatmapSummaryCards = ({
     icon: 'cost',
     label: t('usage_analytics.metric_estimated_cost'),
     meta: t('usage_analytics.summary_cost_meta'),
+    showModelPriceAttention: true,
     value: formatMetricValue('estimatedCost', summary.estimatedCost),
   },
   {
@@ -573,7 +585,7 @@ export const buildCredentialDetailCards = ({
   const averageCost = row.requestCount > 0 ? row.estimatedCost / row.requestCount : 0;
   const averageTokens = row.requestCount > 0 ? row.totalTokens / row.requestCount : 0;
   const failureRate = row.requestCount > 0 ? row.failureCount / row.requestCount : 0;
-  const cacheRate = computeCacheHitRate(row);
+  const cacheRate = computeRowCacheHitRate(row);
   // 凭证「最近活跃」卡面值：紧凑 MM/DD HH:mm，走全局时区中心工具（不再裸 Intl 读浏览器本地时区）。
   const lastSeenLabel = row.lastSeenMs ? formatMonthDayTimeUtc8(row.lastSeenMs) : '-';
 
@@ -591,6 +603,7 @@ export const buildCredentialDetailCards = ({
       icon: 'cost',
       label: t('usage_analytics.average_cost'),
       meta: `${t('usage_analytics.metric_estimated_cost')} ${formatMetricValue('estimatedCost', row.estimatedCost)}`,
+      showModelPriceAttention: true,
       value: formatMetricValue('estimatedCost', averageCost),
     },
     {
@@ -605,7 +618,7 @@ export const buildCredentialDetailCards = ({
       accent: 'cyan',
       icon: 'cache',
       label: t('usage_analytics.cache_read_rate'),
-      meta: `${t('usage_analytics.metric_cached_tokens')} ${formatCompactNumber(row.cachedTokens)}`,
+      meta: `${t('usage_analytics.metric_cached_tokens')} ${formatCompactNumber(getNormalizedUsageCacheTokens(row))}`,
       value: formatPercent(cacheRate),
     },
     {

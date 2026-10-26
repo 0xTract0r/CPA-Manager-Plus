@@ -11,19 +11,41 @@ import {
   useNotificationStore,
   useOpenAIEditDraftStore,
 } from '@/stores';
-import { entriesToModels, modelsToEntries } from '@/components/ui/modelInputListUtils';
-import type { ApiKeyEntry, OpenAIProviderConfig } from '@/types';
+import {
+  cloneModelEntry,
+  entriesToModels,
+  hasInvalidThinkingLevels,
+  modelsToEntries,
+} from '@/components/ui/modelInputListUtils';
+import {
+  coolingPolicyFromOverride,
+  coolingPolicyToOverride,
+  toCommittedModelThinkingSnapshot,
+  type ApiKeyEntry,
+  type OpenAIProviderConfig,
+} from '@/types';
 import type { ModelInfo } from '@/utils/models';
 import { normalizeAuthIndex } from '@/utils/authIndex';
 import { buildHeaderObject, headersToEntries, normalizeHeaderEntries } from '@/utils/headers';
 import { areKeyValueEntriesEqual, areModelEntriesEqual } from '@/utils/compare';
-import { buildApiKeyEntry } from '@/components/providers/utils';
+import { buildApiKeyEntry, toCommittedOpenAIProviderSnapshot } from '@/components/providers/utils';
+import { hasOpenAIKeyEntryConfiguration } from '@/utils/openAIKeyEntries';
 import {
   buildProviderDraftKey,
   parseProviderIndexParam,
 } from '@/features/aiProviders/model/routeParams';
-import type { ModelEntry, OpenAIFormState } from '@/components/providers/types';
+import type {
+  ModelEntry,
+  OpenAIFormApiKeyEntry,
+  OpenAIFormState,
+} from '@/components/providers/types';
 import type { KeyTestStatus, OpenAIEditBaseline } from '@/stores/useOpenAIEditDraftStore';
+import {
+  getCredentialWeightComparisonValue,
+  getCredentialWeightError,
+  normalizeCredentialWeight,
+  type CredentialWeightComparisonValue,
+} from '@/utils/credentialWeight';
 
 type LocationState = { fromAiProviders?: boolean } | null;
 
@@ -62,6 +84,7 @@ const buildEmptyForm = (): OpenAIFormState => ({
   apiKeyEntries: [buildApiKeyEntry()],
   modelEntries: [{ name: '', alias: '' }],
   testModel: undefined,
+  disableCooling: 'inherit',
 });
 
 const getErrorMessage = (err: unknown) => {
@@ -78,7 +101,7 @@ const normalizeModelEntries = (entries: ModelEntry[]) =>
       alias = '';
     }
     if (!name && !alias) return acc;
-    acc.push({ ...entry, name, alias });
+    acc.push(cloneModelEntry(entry, { name, alias }));
     return acc;
   }, []);
 
@@ -94,21 +117,23 @@ const normalizeKeyHeaders = (headers: ApiKeyEntry['headers']) => {
     });
 };
 
-const normalizeApiKeyEntries = (entries: ApiKeyEntry[]) =>
+const normalizeApiKeyEntries = (entries: OpenAIFormApiKeyEntry[]) =>
   (entries ?? []).reduce<
     Array<{
       apiKey: string;
+      weight: CredentialWeightComparisonValue;
       proxyUrl: string;
       authIndex: string;
       headers: Array<{ key: string; value: string }>;
     }>
   >((acc, entry) => {
     const apiKey = String(entry?.apiKey ?? '').trim();
+    const weight = getCredentialWeightComparisonValue(entry?.weight);
     const proxyUrl = String(entry?.proxyUrl ?? '').trim();
     const authIndex = normalizeAuthIndex(entry?.authIndex) ?? '';
     const headers = normalizeKeyHeaders(entry?.headers);
-    if (!apiKey && !proxyUrl && !authIndex && headers.length === 0) return acc;
-    acc.push({ apiKey, proxyUrl, authIndex, headers });
+    if (!apiKey && weight === null && !proxyUrl && !authIndex && headers.length === 0) return acc;
+    acc.push({ apiKey, weight, proxyUrl, authIndex, headers });
     return acc;
   }, []);
 
@@ -120,10 +145,10 @@ const buildOpenAIBaseline = (form: OpenAIFormState, testModel: string): OpenAIEd
       : null,
   prefix: String(form.prefix ?? '').trim(),
   baseUrl: String(form.baseUrl ?? '').trim(),
-  disableCooling: Boolean(form.disableCooling),
+  disableCooling: form.disableCooling,
   headers: normalizeHeaderEntries(form.headers),
   apiKeyEntries: normalizeApiKeyEntries(form.apiKeyEntries),
-  models: normalizeModelEntries(form.modelEntries),
+  models: normalizeModelEntries(form.modelEntries).map(toCommittedModelThinkingSnapshot),
   testModel: String(testModel ?? '').trim(),
 });
 
@@ -137,10 +162,14 @@ const areNormalizedApiKeyEntriesEqual = (
     const left = a[i];
     const right = b[i];
     if (!left || !right) return false;
+    // auth-index is server-generated runtime identity, not user configuration.
+    // Editing a key intentionally clears it; restoring the original visible
+    // configuration must therefore not remain dirty solely because the old
+    // runtime identity is gone.
     if (
       left.apiKey !== right.apiKey ||
-      left.proxyUrl !== right.proxyUrl ||
-      left.authIndex !== right.authIndex
+      left.weight !== right.weight ||
+      left.proxyUrl !== right.proxyUrl
     ) {
       return false;
     }
@@ -329,7 +358,7 @@ export function AiProvidersOpenAIEditLayout() {
         apiKeyEntries: initialData.apiKeyEntries?.length
           ? initialData.apiKeyEntries
           : [buildApiKeyEntry()],
-        disableCooling: initialData.disableCooling,
+        disableCooling: coolingPolicyFromOverride(initialData.disableCooling),
       };
 
       const available = modelEntries.map((entry) => entry.name.trim()).filter(Boolean);
@@ -388,11 +417,13 @@ export function AiProvidersOpenAIEditLayout() {
         prev.modelEntries.forEach((entry) => {
           const name = entry.name.trim();
           if (!name) return;
-          mergedMap.set(name.toLowerCase(), {
-            ...entry,
-            name,
-            alias: entry.alias?.trim() || '',
-          });
+          mergedMap.set(
+            name.toLowerCase(),
+            cloneModelEntry(entry, {
+              name,
+              alias: entry.alias?.trim() || '',
+            })
+          );
         });
 
         selectedModels.forEach((model) => {
@@ -456,7 +487,7 @@ export function AiProvidersOpenAIEditLayout() {
       baseline.priority !== normalizedPriority ||
       baseline.prefix !== form.prefix.trim() ||
       baseline.baseUrl !== form.baseUrl.trim() ||
-      baseline.disableCooling !== Boolean(form.disableCooling) ||
+      baseline.disableCooling !== form.disableCooling ||
       baseline.testModel !== normalizedTestModel ||
       isHeadersDirty ||
       isApiKeyEntriesDirty ||
@@ -488,11 +519,16 @@ export function AiProvidersOpenAIEditLayout() {
   const handleSave = useCallback(async () => {
     const name = form.name.trim();
     const baseUrl = form.baseUrl.trim();
+    const hasInvalidWeight = form.apiKeyEntries.some((entry) =>
+      getCredentialWeightError(entry.weight)
+    );
 
     if (!name || !baseUrl) {
       showNotification(t('notification.openai_provider_required'), 'error');
       return;
     }
+    if (hasInvalidWeight) return;
+    if (hasInvalidThinkingLevels(form.modelEntries)) return;
 
     // 代理输入连通性预检：每个 key entry 的非空 proxyUrl 保存前逐个做格式+连通性探针，
     // 遇到第一个不通即阻断保存并报错。
@@ -516,8 +552,9 @@ export function AiProvidersOpenAIEditLayout() {
         prefix: form.prefix?.trim() || undefined,
         baseUrl,
         headers: buildHeaderObject(form.headers),
-        apiKeyEntries: form.apiKeyEntries.map((entry: ApiKeyEntry) => ({
+        apiKeyEntries: form.apiKeyEntries.filter(hasOpenAIKeyEntryConfiguration).map((entry) => ({
           apiKey: entry.apiKey.trim(),
+          weight: normalizeCredentialWeight(entry.weight),
           proxyUrl: entry.proxyUrl?.trim() || undefined,
           authIndex: normalizeAuthIndex(entry.authIndex) ?? undefined,
           headers: entry.headers,
@@ -526,9 +563,7 @@ export function AiProvidersOpenAIEditLayout() {
       if (form.priority !== undefined && Number.isFinite(form.priority)) {
         payload.priority = Math.trunc(form.priority);
       }
-      if (form.disableCooling !== undefined) {
-        payload.disableCooling = form.disableCooling;
-      }
+      payload.disableCooling = coolingPolicyToOverride(form.disableCooling);
       if (initialData?.disabled !== undefined) {
         payload.disabled = initialData.disabled;
       }
@@ -536,23 +571,35 @@ export function AiProvidersOpenAIEditLayout() {
       if (resolvedTestModel) payload.testModel = resolvedTestModel;
       const models = entriesToModels(form.modelEntries);
       if (models.length) payload.models = models;
+      const committedPayload = toCommittedOpenAIProviderSnapshot(payload);
 
       const nextList =
         editIndex !== null
-          ? providers.map((item, idx) => (idx === editIndex ? payload : item))
-          : [...providers, payload];
+          ? providers.map((item, idx) => (idx === editIndex ? committedPayload : item))
+          : [...providers, committedPayload];
 
-      await providersApi.saveOpenAIProviders(nextList);
+      if (editIndex !== null) {
+        await providersApi.updateOpenAIProvider(providers[editIndex].name, editIndex, payload);
+      } else {
+        await providersApi.createOpenAIProvider(payload);
+      }
 
       let syncedProviders = nextList;
       try {
-        syncedProviders = await providersApi.getOpenAIProviders();
+        syncedProviders = (await providersApi.getOpenAIProviders()).map(
+          toCommittedOpenAIProviderSnapshot
+        );
       } catch {
         // 保存成功后刷新失败时，回退到本地计算结果，避免页面数据为空或回退
       }
 
       setProviders(syncedProviders);
       updateConfigValue('openai-compatibility', syncedProviders);
+      const committedForm = {
+        ...form,
+        modelEntries: form.modelEntries.map(toCommittedModelThinkingSnapshot),
+      };
+      setForm(committedForm);
       showNotification(
         editIndex !== null
           ? t('notification.openai_provider_updated')
@@ -560,7 +607,7 @@ export function AiProvidersOpenAIEditLayout() {
         'success'
       );
       allowNextNavigation();
-      setDraftBaseline(draftKey, buildOpenAIBaseline(form, testModel));
+      setDraftBaseline(draftKey, buildOpenAIBaseline(committedForm, testModel));
       handleBack();
     } catch (err: unknown) {
       showNotification(`${t('notification.update_failed')}: ${getErrorMessage(err)}`, 'error');
@@ -577,6 +624,7 @@ export function AiProvidersOpenAIEditLayout() {
     initialData?.disabled,
     providers,
     setDraftBaseline,
+    setForm,
     showNotification,
     t,
     testModel,

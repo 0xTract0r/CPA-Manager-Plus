@@ -1,8 +1,25 @@
 ## Summary
+
 <!-- What changed and why. Keep it short, 2-4 lines. -->
 
+> 本 fork 使用单一 `main` 主线；功能分支使用 `codex/*`，PR 目标为 `main`，不自动改投 `dev`。
+> 候选先通过 CI 和独立审查，再固定候选进行测试环境验收；验收通过后才批准合主。
+> 检查通过不代表已批准合主或部署。
+
+<details>
+<summary>仅 seakee/CPA-Manager-Plus 上游适用的分支策略</summary>
+
+> Community and 1.x maintenance PRs must target `dev`. Approved v2 implementation
+> PRs target `v2`. Repository automation retargets other pull requests to `dev`;
+> this can change the diff and make existing review comments outdated. `main`
+> accepts only a promotion PR whose source is this repository's `dev` branch.
+
+</details>
+
 ## Scope
+
 <!-- Check all areas touched by this PR. -->
+
 - [ ] Frontend panel
 - [ ] Manager Server
 - [ ] CPA panel mode
@@ -12,33 +29,38 @@
 - [ ] CI / build / tooling
 
 ## Changes
+
 <!-- List concrete changes, not implementation trivia. -->
--
+
 -
 -
 
 ## User Impact
+
 <!-- What users will notice. Use "No user-facing behavior change" if applicable. -->
 
-
 ## Compatibility / Runtime Notes
+
 <!-- Mention mode-specific behavior, config changes, queue behavior, or N/A. -->
+
 - CPA panel mode:
 - Manager Server mode:
 - Full Docker / native packages:
 
 ## Data / Security Notes
+
 <!-- Required for SQLite, admin key, CPA Management Key, auth files, logs, raw usage data, or plugins. Use N/A if not relevant. -->
 
-
 ## Risk / Rollback
+
 Risk level: Low / Medium / High
 
 Rollback notes:
--
 
 ## Verification
+
 <!-- Check what was actually done. Keep skipped items unchecked and explain when needed. -->
+
 - [ ] Type check
 - [ ] Lint
 - [ ] Tests
@@ -48,18 +70,25 @@ Rollback notes:
 - [ ] Not applicable, docs-only
 
 Commands / evidence:
+
 ```text
+
 ```
 
 ## Screenshots / Recordings
+
 <!-- Required for visible UI changes. Use N/A for backend/docs-only changes. -->
 
-
 ## Docs
-- [ ] README updated
-- [ ] Wiki updated
+
+- [ ] README / README_CN updated for user-visible capabilities
+- [ ] Matching docs manual and navigation updated
+- [ ] Demo fixtures, screenshots, and deep links reviewed
 - [ ] Release notes needed
-- [ ] Not needed
+- [ ] Not needed — explanation included below
+
+Docs decision:
 
 ## Related
+
 <!-- Closes #123 / Fixes #123 / Refs #123 / N/A -->

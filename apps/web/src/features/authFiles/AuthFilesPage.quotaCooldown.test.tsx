@@ -886,81 +886,91 @@ describe('AuthFilesPage quota cooldown derived badge', () => {
     expect(card.props['data-codex-quota-plan']).toBe('plus');
   });
 
-  it('merges observed Codex header quota without clearing stored quota-only fields', async () => {
-    mocks.codexQuota = {
-      'codex-one.json::-': {
-        status: 'success',
-        authFileKey: 'codex-one.json::-',
-        authFileName: 'codex-one.json',
-        authIndex: null,
-        fetchedAtMs: 1_000,
-        planType: 'plus',
-        rateLimitResetCreditsAvailableCount: 2,
-        windows: [
+  it.each(['gpt-5.4', undefined])(
+    'merges observed Codex header quota without clearing stored quota-only fields (manager model=%s)',
+    async (model) => {
+      mocks.codexQuota = {
+        'codex-one.json::-': {
+          status: 'success',
+          authFileKey: 'codex-one.json::-',
+          authFileName: 'codex-one.json',
+          authIndex: null,
+          fetchedAtMs: 1_000,
+          planType: 'plus',
+          rateLimitResetCreditsAvailableCount: 2,
+          windows: [
+            {
+              id: 'five-hour',
+              label: '5-hour limit',
+              labelKey: 'codex_quota.primary_window',
+              usedPercent: 10,
+              resetLabel: '06/30 12:00',
+              limitWindowSeconds: 18_000,
+            },
+            {
+              id: 'spark-five-hour-0',
+              label: 'Spark 5-hour limit',
+              labelKey: 'codex_quota.additional_primary_window',
+              labelParams: { name: 'spark' },
+              usedPercent: 30,
+              resetLabel: '07/01 01:00',
+              limitWindowSeconds: 18_000,
+            },
+          ],
+        },
+      };
+      mocks.getHeaderSnapshots.mockResolvedValue({
+        generated_at_ms: 1_700_000_000_000,
+        from_ms: 1_700_000_000_000,
+        to_ms: 1_700_000_000_000,
+        items: [
           {
-            id: 'five-hour',
-            label: '5-hour limit',
-            labelKey: 'codex_quota.primary_window',
-            usedPercent: 10,
-            resetLabel: '06/30 12:00',
-            limitWindowSeconds: 18_000,
-          },
-          {
-            id: 'spark-five-hour-0',
-            label: 'Spark 5-hour limit',
-            labelKey: 'codex_quota.additional_primary_window',
-            labelParams: { name: 'spark' },
-            usedPercent: 30,
-            resetLabel: '07/01 01:00',
-            limitWindowSeconds: 18_000,
-          },
-        ],
-      },
-    };
-    mocks.getHeaderSnapshots.mockResolvedValue({
-      generated_at_ms: 1_700_000_000_000,
-      from_ms: 1_700_000_000_000,
-      to_ms: 1_700_000_000_000,
-      items: [
-        {
-          event_hash: 'event-1',
-          timestamp_ms: 1_700_000_000_000,
-          auth_file_snapshot: 'codex-one.json',
-          auth_provider_snapshot: 'codex',
-          response_metadata: {
-            quota: {
-              plan_type: 'free',
-              primary: {
-                used_percent: 20,
-                reset_at_ms: 1_700_018_000_000,
-                window_minutes: 300,
+            // F core已有resolved model；当前manager投影该字段，旧manager缺失时保unknown隔离。
+            model,
+            event_hash: 'event-1',
+            timestamp_ms: 1_700_000_000_000,
+            auth_file_snapshot: 'codex-one.json',
+            auth_provider_snapshot: 'codex',
+            response_metadata: {
+              quota: {
+                plan_type: 'free',
+                primary: {
+                  used_percent: 20,
+                  reset_at_ms: 1_700_018_000_000,
+                  window_minutes: 300,
+                },
               },
             },
           },
-        },
-      ],
-    });
+        ],
+      });
 
-    let renderer: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(<AuthFilesPage />);
-    });
+      let renderer: ReactTestRenderer;
+      await act(async () => {
+        renderer = create(<AuthFilesPage />);
+      });
 
-    await vi.waitFor(() => {
-      expect(
-        renderer!.root.findByProps({ 'data-auth-card': 'codex-one.json' }).props[
-          'data-codex-quota-window-percent'
-        ]
-      ).toBe('20');
-    });
+      await vi.waitFor(() => {
+        expect(
+          renderer!.root.findByProps({ 'data-auth-card': 'codex-one.json' }).props[
+            'data-codex-quota-window-percent'
+          ]
+        ).toBe(model ? '20' : '10');
+      });
 
-    const card = renderer!.root.findByProps({ 'data-auth-card': 'codex-one.json' });
-    expect(card.props['data-codex-quota-plan']).toBe('free');
-    expect(card.props['data-codex-quota-observed']).toBe('true');
-    expect(card.props['data-codex-quota-reset-count']).toBe('2');
-    expect(card.props['data-codex-quota-window-ids']).toBe('five-hour,spark-five-hour-0');
-    expect(card.props['data-codex-quota-window-seconds']).toBe('18000');
-  });
+      const card = renderer!.root.findByProps({ 'data-auth-card': 'codex-one.json' });
+      expect(card.props['data-codex-quota-plan']).toBe('free');
+      expect(card.props['data-codex-quota-observed']).toBe('true');
+      expect(card.props['data-codex-quota-reset-count']).toBe('2');
+      if (model)
+        expect(card.props['data-codex-quota-window-ids']).toBe('five-hour,spark-five-hour-0');
+      else {
+        expect(card.props['data-codex-quota-window-ids']).toContain('request-scope-unknown');
+        expect(card.props['data-codex-quota-window-ids']).toContain('spark-five-hour-0');
+      }
+      expect(card.props['data-codex-quota-window-seconds']).toBe('18000');
+    }
+  );
 
   it('keeps manual Codex quota refresh failures over older header snapshots', async () => {
     mocks.codexQuota = {
@@ -1029,80 +1039,90 @@ describe('AuthFilesPage quota cooldown derived badge', () => {
     expect(card.props['data-codex-quota-window-percent']).toBe('10');
   });
 
-  it('uses newer header snapshots after manual Codex quota refresh failures', async () => {
-    mocks.codexQuota = {
-      'codex-one.json::-': {
-        status: 'error',
-        error: 'refresh failed',
-        errorStatus: 502,
-        failedAtMs: 1_699_999_999_000,
-        authFileKey: 'codex-one.json::-',
-        authFileName: 'codex-one.json',
-        authIndex: null,
-        planType: 'plus',
-        rateLimitResetCreditsAvailableCount: 2,
-        windows: [
+  it.each(['gpt-5.4', undefined])(
+    'uses newer header snapshots after manual Codex quota refresh failures (manager model=%s)',
+    async (model) => {
+      mocks.codexQuota = {
+        'codex-one.json::-': {
+          status: 'error',
+          error: 'refresh failed',
+          errorStatus: 502,
+          failedAtMs: 1_699_999_999_000,
+          authFileKey: 'codex-one.json::-',
+          authFileName: 'codex-one.json',
+          authIndex: null,
+          planType: 'plus',
+          rateLimitResetCreditsAvailableCount: 2,
+          windows: [
+            {
+              id: 'five-hour',
+              label: '5-hour limit',
+              usedPercent: 10,
+              resetLabel: '06/30 12:00',
+              limitWindowSeconds: 18_000,
+            },
+            {
+              id: 'spark-five-hour-0',
+              label: 'Spark 5-hour limit',
+              usedPercent: 30,
+              resetLabel: '07/01 01:00',
+              limitWindowSeconds: 18_000,
+            },
+          ],
+        },
+      };
+      mocks.getHeaderSnapshots.mockResolvedValue({
+        generated_at_ms: 1_700_000_000_000,
+        from_ms: 1_700_000_000_000,
+        to_ms: 1_700_000_000_000,
+        items: [
           {
-            id: 'five-hour',
-            label: '5-hour limit',
-            usedPercent: 10,
-            resetLabel: '06/30 12:00',
-            limitWindowSeconds: 18_000,
-          },
-          {
-            id: 'spark-five-hour-0',
-            label: 'Spark 5-hour limit',
-            usedPercent: 30,
-            resetLabel: '07/01 01:00',
-            limitWindowSeconds: 18_000,
-          },
-        ],
-      },
-    };
-    mocks.getHeaderSnapshots.mockResolvedValue({
-      generated_at_ms: 1_700_000_000_000,
-      from_ms: 1_700_000_000_000,
-      to_ms: 1_700_000_000_000,
-      items: [
-        {
-          event_hash: 'event-1',
-          timestamp_ms: 1_700_000_000_000,
-          auth_file_snapshot: 'codex-one.json',
-          auth_provider_snapshot: 'codex',
-          response_metadata: {
-            quota: {
-              plan_type: 'free',
-              primary: {
-                used_percent: 20,
-                reset_at_ms: 1_700_018_000_000,
-                window_minutes: 300,
+            // F core已有resolved model；当前manager投影该字段，旧manager缺失时保unknown隔离。
+            model,
+            event_hash: 'event-1',
+            timestamp_ms: 1_700_000_000_000,
+            auth_file_snapshot: 'codex-one.json',
+            auth_provider_snapshot: 'codex',
+            response_metadata: {
+              quota: {
+                plan_type: 'free',
+                primary: {
+                  used_percent: 20,
+                  reset_at_ms: 1_700_018_000_000,
+                  window_minutes: 300,
+                },
               },
             },
           },
-        },
-      ],
-    });
+        ],
+      });
 
-    let renderer: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(<AuthFilesPage />);
-    });
+      let renderer: ReactTestRenderer;
+      await act(async () => {
+        renderer = create(<AuthFilesPage />);
+      });
 
-    await vi.waitFor(() => {
-      expect(
-        renderer!.root.findByProps({ 'data-auth-card': 'codex-one.json' }).props[
-          'data-codex-quota-status'
-        ]
-      ).toBe('success');
-    });
+      await vi.waitFor(() => {
+        expect(
+          renderer!.root.findByProps({ 'data-auth-card': 'codex-one.json' }).props[
+            'data-codex-quota-status'
+          ]
+        ).toBe('success');
+      });
 
-    const card = renderer!.root.findByProps({ 'data-auth-card': 'codex-one.json' });
-    expect(card.props['data-codex-quota-plan']).toBe('free');
-    expect(card.props['data-codex-quota-observed']).toBe('true');
-    expect(card.props['data-codex-quota-reset-count']).toBe('2');
-    expect(card.props['data-codex-quota-window-percent']).toBe('20');
-    expect(card.props['data-codex-quota-window-ids']).toBe('five-hour,spark-five-hour-0');
-  });
+      const card = renderer!.root.findByProps({ 'data-auth-card': 'codex-one.json' });
+      expect(card.props['data-codex-quota-plan']).toBe('free');
+      expect(card.props['data-codex-quota-observed']).toBe('true');
+      expect(card.props['data-codex-quota-reset-count']).toBe('2');
+      expect(card.props['data-codex-quota-window-percent']).toBe(model ? '20' : '10');
+      if (model)
+        expect(card.props['data-codex-quota-window-ids']).toBe('five-hour,spark-five-hour-0');
+      else {
+        expect(card.props['data-codex-quota-window-ids']).toContain('request-scope-unknown');
+        expect(card.props['data-codex-quota-window-ids']).toContain('spark-five-hour-0');
+      }
+    }
+  );
 
   it('does not treat cooldown context changes as recovered cooldowns', async () => {
     const recoveredAtMs = Date.now() - 1_000;
@@ -1323,5 +1343,73 @@ describe('AuthFilesPage quota cooldown derived badge', () => {
 
   it('ignores mocked Select import for sort/plan dropdowns without crashing', () => {
     expect(Select).toBeDefined();
+  });
+  it('keeps an expired-header refresh scoped and rejects its late result after a connection change', async () => {
+    let finish!: (value: unknown) => void;
+    const pending = {
+      promise: new Promise<unknown>((resolve) => {
+        finish = resolve;
+      }),
+      resolve: (value: unknown) => finish(value),
+    };
+    mocks.list.mockReturnValue([{ name: 'codex-one.json', type: 'codex', authIndex: '0' }]);
+    mocks.getHeaderSnapshots.mockResolvedValue({
+      generated_at_ms: 1700018000001,
+      items: [
+        {
+          event_hash: 'expired-connection-test',
+          timestamp_ms: 1700000000000,
+          auth_file_snapshot: 'codex-one.json',
+          auth_index: '0',
+          model: 'gpt-5.4',
+          auth_provider_snapshot: 'codex',
+          response_metadata: {
+            quota: {
+              primary: { used_percent: 100, reset_at_ms: 1700018000000, window_minutes: 300 },
+            },
+          },
+        },
+      ],
+    });
+    mocks.apiCallRequest
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValueOnce({
+        statusCode: 200,
+        body: JSON.stringify({ available_count: 1, credits: [] }),
+      });
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<AuthFilesPage />);
+    });
+    await vi.waitFor(() => expect(mocks.apiCallRequest).toHaveBeenCalledTimes(1));
+    setManagementKey('new-connection-key');
+    mocks.getHeaderSnapshots.mockResolvedValue({ generated_at_ms: 1700018000001, items: [] });
+    await act(async () => renderer.update(<AuthFilesPage />));
+    const writesAfterSwitch = mocks.setCodexQuota.mock.calls.length;
+    await act(async () => {
+      pending.resolve({
+        statusCode: 200,
+        body: JSON.stringify({
+          plan_type: 'plus',
+          rate_limit: {
+            primary_window: {
+              used_percent: 12,
+              limit_window_seconds: 18000,
+              reset_after_seconds: 12000,
+            },
+          },
+        }),
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(mocks.apiCallRequest).toHaveBeenCalledTimes(2));
+    expect(
+      mocks.apiCallRequest.mock.calls.every(
+        (call) => call[1]?.headers?.Authorization === 'Bearer test-key'
+      )
+    ).toBe(true);
+    expect(mocks.setCodexQuota.mock.calls.length).toBe(writesAfterSwitch);
+    await act(async () => renderer.unmount());
   });
 });

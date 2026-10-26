@@ -10,7 +10,6 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { triggerHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { useNotificationStore, useQuotaStore, useThemeStore } from '@/stores';
 import type { AuthFileItem, ResolvedTheme } from '@/types';
-import { getStatusFromError } from '@/utils/quota';
 import {
   getHighConfidenceUsageHeaderSnapshotForAuthFile,
   type UsageHeaderSnapshotLookup,
@@ -22,12 +21,14 @@ import {
 import { QuotaCard } from './QuotaCard';
 import type { QuotaStatusState } from './QuotaCard';
 import { useQuotaLoader } from './useQuotaLoader';
+import { refreshQuotaWithConfig } from './quotaRefresh';
+import { authFilesApi } from '@/services/api/authFiles';
+import { buildQuotaCredentialIdentity, getQuotaCredentialStoreKey } from '@/utils/quota/credentialScope';
 import {
-  buildQuotaFailureState,
   getQuotaStoreKey,
   getScopedQuotaState,
   resolveQuotaDisplayState,
-  type QuotaConfig,
+  type LegacyQuotaConfig as QuotaConfig,
   type QuotaSortMode,
 } from './quotaConfigs';
 import { resolveQuotaAccountDisplayText } from './quotaDisplay';
@@ -195,7 +196,10 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
   );
   const normalizedSearchQuery = searchQuery.trim().toLowerCase();
 
-  const { quota, loadQuota } = useQuotaLoader(config);
+  const { quota, loadQuota, captureRequest } = useQuotaLoader(config, files);
+  const pendingResets = useRef(new Set<string>());
+  const disabledRef = useRef(disabled);
+  disabledRef.current = disabled;
 
   const getScopedQuota = useCallback(
     (file: AuthFileItem): TState | undefined => {
@@ -378,111 +382,52 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
     });
   }, [config, filteredFiles, loading, setQuota]);
 
-  const refreshQuotaForFile = useCallback(
-    async (file: AuthFileItem) => {
-      if (disabled || file.disabled) return;
-      if (getScopedQuota(file)?.status === 'loading') return;
-      const displayName = getAccountDisplayName(file);
-      const storeKey = getQuotaStoreKey(config, file);
-      const previousQuota = getScopedQuota(file);
+  const refreshQuotaForFile = useCallback(async (file: AuthFileItem) => {
+    if (disabled || file.disabled) return;
+    const request = captureRequest(file);
+    const result = await refreshQuotaWithConfig({config, file, setQuota, t, ...request, currentState: getScopedQuota(file)});
+    if (!result || !request.isCurrent()) return;
+    const name = getAccountDisplayName(file);
+    showNotification(result.status === 'success'
+      ? t('auth_files.quota_refresh_success', {name})
+      : t('auth_files.quota_refresh_failed', {name, message: result.error}), result.status);
+  }, [captureRequest, config, disabled, getAccountDisplayName, getScopedQuota, setQuota, showNotification, t]);
 
-      setQuota((prev) => ({
-        ...prev,
-        [storeKey]: config.buildLoadingState(file),
-      }));
-
-      try {
-        const data = await config.fetchQuota(file, t);
-        setQuota((prev) => ({
-          ...prev,
-          [storeKey]: config.buildSuccessState(data, file),
-        }));
-        showNotification(t('auth_files.quota_refresh_success', { name: displayName }), 'success');
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : t('common.unknown_error');
-        const status = getStatusFromError(err);
-        setQuota((prev) => ({
-          ...prev,
-          [storeKey]: buildQuotaFailureState(config, message, status, file, previousQuota),
-        }));
-        showNotification(
-          t('auth_files.quota_refresh_failed', { name: displayName, message }),
-          'error'
-        );
-      }
-    },
-    [config, disabled, getAccountDisplayName, getScopedQuota, setQuota, showNotification, t]
-  );
-
-  const resetQuotaForFile = useCallback(
-    (file: AuthFileItem) => {
-      if (!config.resetQuota || disabled || file.disabled) return;
-      const fileQuota = getScopedQuota(file);
-      const canReset =
-        config.canResetQuota?.(file, fileQuota) ??
-        Boolean(fileQuota && fileQuota.status === 'success');
-      if (!canReset) return;
-      const resetCount =
-        (fileQuota as { rateLimitResetCreditsAvailableCount?: number | null } | undefined)
-          ?.rateLimitResetCreditsAvailableCount ?? 0;
-      const displayName = getAccountDisplayName(file);
-      const storeKey = getQuotaStoreKey(config, file);
-
-      showConfirmation({
-        title: t(`${config.i18nPrefix}.reset_confirm_title`),
-        message: t(`${config.i18nPrefix}.reset_confirm_message`, {
-          name: displayName,
-          count: resetCount,
-        }),
-        confirmText: t(`${config.i18nPrefix}.reset_button`, { count: resetCount }),
-        cancelText: t('common.cancel'),
-        variant: 'primary',
-        onConfirm: async () => {
-          const previousQuota = getScopedQuota(file);
-          setQuota((prev) => ({
-            ...prev,
-            [storeKey]: config.buildLoadingState(file),
-          }));
-
-          try {
-            const data = await config.resetQuota?.(file, t);
-            if (data === undefined) {
-              throw new Error(t('common.unknown_error'));
-            }
-            setQuota((prev) => ({
-              ...prev,
-              [storeKey]: config.buildSuccessState(data, file),
-            }));
-            showNotification(
-              t(`${config.i18nPrefix}.reset_success`, { name: displayName }),
-              'success'
-            );
-          } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : t('common.unknown_error');
-            const status = getStatusFromError(err);
-            setQuota((prev) => ({
-              ...prev,
-              [storeKey]: buildQuotaFailureState(config, message, status, file, previousQuota),
-            }));
-            showNotification(
-              t(`${config.i18nPrefix}.reset_failed`, { name: displayName, message }),
-              'error'
-            );
-          }
-        },
-      });
-    },
-    [
-      config,
-      disabled,
-      getAccountDisplayName,
-      getScopedQuota,
-      setQuota,
-      showConfirmation,
-      showNotification,
-      t,
-    ]
-  );
+  const resetQuotaForFile = useCallback((file: AuthFileItem) => {
+    if (!config.resetQuota || disabled || file.disabled) return;
+    const fileQuota = getScopedQuota(file);
+    if (!(config.canResetQuota?.(file, fileQuota) ?? Boolean(fileQuota?.status === 'success'))) return;
+    const request = captureRequest(file);
+    const identity = buildQuotaCredentialIdentity(file);
+    const resetKey = `${request.generation}:${getQuotaCredentialStoreKey(file)}`;
+    const count = (fileQuota as {rateLimitResetCreditsAvailableCount?: number | null})?.rateLimitResetCreditsAvailableCount ?? 0;
+    const name = getAccountDisplayName(file);
+    showConfirmation({
+      title: t(`${config.i18nPrefix}.reset_confirm_title`),
+      message: t(`${config.i18nPrefix}.reset_confirm_message`, {name, count}),
+      confirmText: t(`${config.i18nPrefix}.reset_button`, {count}), cancelText: t('common.cancel'), variant: 'primary',
+      onConfirm: async () => {
+        if (disabledRef.current || !request.isCurrent() || pendingResets.current.has(resetKey)) return;
+        pendingResets.current.add(resetKey);
+        try {
+          const result = await refreshQuotaWithConfig({
+            config: {...config, fetchQuota: async (target, translate, scope, context) => {
+              if (!identity.authFileIdentityVerified) throw new Error(t('auth_files.delete_target_changed'));
+              const snapshots = await authFilesApi.lookup({name: target.name, authIndex: identity.authIndex}, scope);
+              if (disabledRef.current || context?.isCurrent?.() === false) throw new Error(t('auth_files.delete_scope_changed'));
+              const matches = snapshots.filter((snapshot) => buildQuotaCredentialIdentity(snapshot).authFileIdentityVerified && request.matchesIdentity(snapshot));
+              if (matches.length !== 1) throw new Error(t('auth_files.delete_target_changed'));
+              return config.resetQuota!(matches[0], translate, scope, context);
+            }}, file, setQuota, t, ...request, currentState: getScopedQuota(file),
+          });
+          if (!result || !request.isCurrent()) return;
+          showNotification(result.status === 'success'
+            ? t(`${config.i18nPrefix}.reset_success`, {name})
+            : t(`${config.i18nPrefix}.reset_failed`, {name, message: result.error}), result.status);
+        } finally {pendingResets.current.delete(resetKey);}
+      },
+    });
+  }, [captureRequest, config, disabled, getAccountDisplayName, getScopedQuota, setQuota, showConfirmation, showNotification, t]);
 
   const titleNode = (
     <div className={styles.titleWrapper}>

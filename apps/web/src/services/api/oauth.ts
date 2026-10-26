@@ -2,19 +2,24 @@
  * OAuth 与设备码登录相关 API
  */
 
-import { apiClient } from './client';
+import { apiClient, createScopedApiRequestConfig, type ApiClientRequestScope } from './client';
 
 export type BuiltInOAuthProvider =
   | 'codex'
   | 'anthropic'
   | 'antigravity'
   | 'kimi'
-  | 'xai';
+  | 'xai'
+  | 'devin'
+  | 'meta';
 export type OAuthProvider = BuiltInOAuthProvider | (string & {});
 
 export interface OAuthStartResponse {
   url: string;
   state?: string;
+  user_code?: string;
+  flow?: string;
+  expires_in?: number;
   // core -auth-url 系列接口返回授权链接过期时间：expires_in_seconds（如 900）与 ISO8601 的 expires_at。
   // 前端据此渲染倒计时；两者任一存在即可，优先用 expires_at 的绝对时间。
   expires_in_seconds?: number;
@@ -44,7 +49,7 @@ export interface OAuthCallbackResponse {
   status: 'ok';
 }
 
-const WEBUI_SUPPORTED: string[] = ['codex', 'anthropic', 'antigravity', 'gemini-cli', 'xai'];
+const WEBUI_SUPPORTED: string[] = ['codex', 'anthropic', 'antigravity', 'gemini-cli', 'xai', 'devin'];
 
 // core 的 OAuth 回调接口对 gemini 使用 `gemini` 作为 provider 名，而认证文件 /
 // auth-url 端点用的是 `gemini-cli`。提交回调时需要把 provider 归一化过去，
@@ -59,8 +64,9 @@ export const isOAuthCancelSuccessful = (response: OAuthCancelResponse) =>
 export const oauthApi = {
   startAuth: (
     provider: OAuthProvider,
-    options?: { note?: string; proxyUrl?: string; authName?: string; projectId?: string }
+    options?: { note?: string; proxyUrl?: string; authName?: string; projectId?: string } & Partial<ApiClientRequestScope>
   ) => {
+    const requestScope = typeof options?.apiBase === 'string' && typeof options.managementKey === 'string' ? {apiBase: options.apiBase, managementKey: options.managementKey} : undefined;
     const params: Record<string, string | boolean> = {};
     if (WEBUI_SUPPORTED.includes(provider)) {
       params.is_webui = true;
@@ -82,25 +88,34 @@ export const oauthApi = {
       params.proxy_url = options.proxyUrl;
     }
     return apiClient.get<OAuthStartResponse>(`/${provider}-auth-url`, {
+      ...(requestScope ? createScopedApiRequestConfig(requestScope) : {}),
       params: Object.keys(params).length ? params : undefined,
     });
   },
 
-  getAuthStatus: (state: string) =>
+  cancelAuth: (state: string, requestScope?: ApiClientRequestScope) =>
+    apiClient.delete<OAuthCancelResponse>('/oauth-session', { ...(requestScope ? createScopedApiRequestConfig(requestScope) : {}), params: { state } }),
+
+  getAuthStatus: (state: string, requestScope?: ApiClientRequestScope) =>
     apiClient.get<OAuthStatusResponse>(`/get-auth-status`, {
+      ...(requestScope ? createScopedApiRequestConfig(requestScope) : {}),
       params: { state },
     }),
 
-  cancelAuth: (state: string) =>
-    apiClient.delete<OAuthCancelResponse>('/oauth-session', {
-      params: { state },
-    }),
-
-  submitCallback: (provider: OAuthProvider, redirectUrl: string) => {
-    const callbackProvider = CALLBACK_PROVIDER_MAP[provider] ?? provider;
-    return apiClient.post<OAuthCallbackResponse>('/oauth-callback', {
-      provider: callbackProvider,
-      redirect_url: redirectUrl,
-    });
+  submitCallback: (
+    provider: OAuthProvider,
+    redirectUrl: string,
+    requestScope?: ApiClientRequestScope
+  ) => {
+    const payload = { provider: CALLBACK_PROVIDER_MAP[provider] ?? provider, redirect_url: redirectUrl };
+    return requestScope
+      ? apiClient.post<OAuthCallbackResponse>('/oauth-callback', payload, createScopedApiRequestConfig(requestScope))
+      : apiClient.post<OAuthCallbackResponse>('/oauth-callback', payload);
   },
+
+  cancelSession: (state: string, requestScope?: ApiClientRequestScope) =>
+    apiClient.delete<OAuthCancelResponse>('/oauth-session', {
+      ...(requestScope ? createScopedApiRequestConfig(requestScope) : {}),
+      params: { state },
+    }),
 };

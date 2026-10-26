@@ -3,11 +3,15 @@
  */
 
 import axios from 'axios';
-import { getLocalSnapshotTime } from '@/utils/localSnapshot';
-import { REQUEST_TIMEOUT_MS } from '@/utils/constants';
 import { getDemoManagerLatestRelease } from '@/features/demo/demoFixtures';
 import { isDemoMode } from '@/features/demo/demoMode';
+const CPA_MANAGER_LATEST_RELEASE_URL = 'https://api.github.com/repos/0xTract0r/CPA-Manager-Plus/releases/latest';
+import { getLocalSnapshotTime } from '@/utils/localSnapshot';
+import { REQUEST_TIMEOUT_MS } from '@/utils/constants';
 import { apiClient } from './client';
+
+export const CPA_MANAGER_UPDATE_INDEX_URL =
+  'https://raw.githubusercontent.com/0xTract0r/CPA-Manager-Plus/update-channel/update-index.json';
 
 export interface ManagerLatestRelease {
   tag_name?: string;
@@ -16,9 +20,6 @@ export interface ManagerLatestRelease {
   published_at?: string;
   [key: string]: unknown;
 }
-
-const CPA_MANAGER_LATEST_RELEASE_URL =
-  'https://api.github.com/repos/seakee/CPA-Manager-Plus/releases/latest';
 
 export const versionApi = {
   checkLatest: () => apiClient.get<Record<string, unknown>>('/latest-version'),
@@ -32,10 +33,14 @@ export const versionApi = {
 
     const response = await axios.get<ManagerLatestRelease>(CPA_MANAGER_LATEST_RELEASE_URL, {
       timeout: REQUEST_TIMEOUT_MS,
-      headers: {
-        Accept: 'application/vnd.github+json'
-      }
     });
     return response.data;
-  }
+  },
+  checkManagerUpdateIndex: async () => {
+    if (getLocalSnapshotTime() !== undefined) return {};
+    const response = await axios.get(CPA_MANAGER_UPDATE_INDEX_URL, {
+      timeout: REQUEST_TIMEOUT_MS,
+    });
+    return response.data;
+  },
 };

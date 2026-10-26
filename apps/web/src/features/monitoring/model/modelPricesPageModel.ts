@@ -1,4 +1,4 @@
-import type { ModelPrice } from '@/utils/usage';
+import type { ModelPrice, ModelPriceContextTier, ModelPriceServiceTier } from '@/utils/usage';
 import type {
   ModelPriceUsageSummaryResponse,
   ModelPriceSyncCandidate,
@@ -7,6 +7,23 @@ import type {
 
 export type ModelPriceFilter = 'all' | 'missing' | 'saved' | 'candidates';
 
+export type PriceRuleDraft = {
+  prompt: string;
+  completion: string;
+  cache: string;
+  cacheRead: string;
+  cacheCreation: string;
+};
+
+export type ContextTierDraft = PriceRuleDraft & {
+  thresholdTokens: string;
+};
+
+export type ServiceTierDraft = PriceRuleDraft & {
+  mode: string;
+  serviceTier: string;
+};
+
 export type PriceDraft = {
   model: string;
   prompt: string;
@@ -14,7 +31,17 @@ export type PriceDraft = {
   cache: string;
   cacheRead: string;
   cacheCreation: string;
+  contextTiers: ContextTierDraft[];
+  serviceTiers: ServiceTierDraft[];
 };
+
+export type PriceDraftValidationError =
+  | 'context_threshold'
+  | 'context_duplicate_threshold'
+  | 'context_price'
+  | 'service_identity'
+  | 'service_duplicate_identity'
+  | 'service_price';
 
 export type ModelPriceRow = {
   model: string;
@@ -33,6 +60,11 @@ export type ModelPriceSummary = {
   candidates: number;
 };
 
+export type ModelPriceCandidateGroup = {
+  source: string;
+  candidates: ModelPriceSyncCandidate[];
+};
+
 export const createEmptyPriceDraft = (): PriceDraft => ({
   model: '',
   prompt: '',
@@ -40,24 +72,60 @@ export const createEmptyPriceDraft = (): PriceDraft => ({
   cache: '',
   cacheRead: '',
   cacheCreation: '',
+  contextTiers: [],
+  serviceTiers: [],
 });
 
 const createConfiguredDraftValue = (value: number | undefined, configured?: boolean): string =>
   configured || Number(value) > 0 ? String(Number(value) || 0) : '';
 
+const createRulePriceDraft = (
+  rule: ModelPriceContextTier | ModelPriceServiceTier
+): PriceRuleDraft => ({
+  prompt: createConfiguredDraftValue(rule.prompt, rule.promptConfigured),
+  completion: createConfiguredDraftValue(rule.completion, rule.completionConfigured),
+  cache: createConfiguredDraftValue(rule.cache, rule.cacheConfigured),
+  cacheRead: createConfiguredDraftValue(rule.cacheRead, rule.cacheReadConfigured),
+  cacheCreation: createConfiguredDraftValue(rule.cacheCreation, rule.cacheCreationConfigured),
+});
+
+export const createEmptyContextTierDraft = (): ContextTierDraft => ({
+  thresholdTokens: '',
+  prompt: '',
+  completion: '',
+  cache: '',
+  cacheRead: '',
+  cacheCreation: '',
+});
+
+export const createEmptyServiceTierDraft = (): ServiceTierDraft => ({
+  mode: '',
+  serviceTier: '',
+  prompt: '',
+  completion: '',
+  cache: '',
+  cacheRead: '',
+  cacheCreation: '',
+});
+
 export const createPriceDraft = (model: string, price?: ModelPrice): PriceDraft => ({
   model,
   prompt: price ? createConfiguredDraftValue(price.prompt, price.promptConfigured) : '',
-  completion: price
-    ? createConfiguredDraftValue(price.completion, price.completionConfigured)
-    : '',
+  completion: price ? createConfiguredDraftValue(price.completion, price.completionConfigured) : '',
   cache: price ? String(price.cache) : '',
-  cacheRead: price
-    ? createConfiguredDraftValue(price.cacheRead, price.cacheReadConfigured)
-    : '',
+  cacheRead: price ? createConfiguredDraftValue(price.cacheRead, price.cacheReadConfigured) : '',
   cacheCreation: price
     ? createConfiguredDraftValue(price.cacheCreation, price.cacheCreationConfigured)
     : '',
+  contextTiers: (price?.contextTiers ?? []).map((tier) => ({
+    thresholdTokens: String(tier.thresholdTokens),
+    ...createRulePriceDraft(tier),
+  })),
+  serviceTiers: (price?.serviceTiers ?? []).map((tier) => ({
+    mode: tier.mode,
+    serviceTier: tier.serviceTier,
+    ...createRulePriceDraft(tier),
+  })),
 });
 
 export const parsePriceValue = (value: string) => {
@@ -65,9 +133,66 @@ export const parsePriceValue = (value: string) => {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
 };
 
+const PRICE_RULE_FIELDS = [
+  'prompt',
+  'completion',
+  'cache',
+  'cacheRead',
+  'cacheCreation',
+] as const satisfies readonly (keyof PriceRuleDraft)[];
+
+const hasConfiguredRulePrice = (draft: PriceRuleDraft) =>
+  PRICE_RULE_FIELDS.some((field) => draft[field].trim() !== '');
+
+const hasInvalidRulePrice = (draft: PriceRuleDraft) =>
+  PRICE_RULE_FIELDS.some((field) => {
+    const value = draft[field].trim();
+    if (!value) return false;
+    const parsed = Number(value);
+    return !Number.isFinite(parsed) || parsed < 0;
+  });
+
+export const validatePriceDraft = (draft: PriceDraft): PriceDraftValidationError | null => {
+  const contextThresholds = new Set<number>();
+  for (const tier of draft.contextTiers) {
+    const threshold = Number(tier.thresholdTokens);
+    if (!Number.isSafeInteger(threshold) || threshold <= 0) return 'context_threshold';
+    if (contextThresholds.has(threshold)) return 'context_duplicate_threshold';
+    contextThresholds.add(threshold);
+    if (!hasConfiguredRulePrice(tier) || hasInvalidRulePrice(tier)) return 'context_price';
+  }
+
+  const serviceIdentifiers = new Set<string>();
+  for (const tier of draft.serviceTiers) {
+    const mode = tier.mode.trim().toLowerCase();
+    const serviceTier = tier.serviceTier.trim().toLowerCase();
+    if (!mode || !serviceTier) return 'service_identity';
+    if (serviceIdentifiers.has(mode) || serviceIdentifiers.has(serviceTier)) {
+      return 'service_duplicate_identity';
+    }
+    serviceIdentifiers.add(mode);
+    serviceIdentifiers.add(serviceTier);
+    if (!hasConfiguredRulePrice(tier) || hasInvalidRulePrice(tier)) return 'service_price';
+  }
+  return null;
+};
+
+const buildRulePrice = (draft: PriceRuleDraft) => ({
+  prompt: parsePriceValue(draft.prompt),
+  completion: parsePriceValue(draft.completion),
+  cache: parsePriceValue(draft.cache),
+  cacheRead: parsePriceValue(draft.cacheRead),
+  cacheCreation: parsePriceValue(draft.cacheCreation),
+  promptConfigured: draft.prompt.trim() !== '',
+  completionConfigured: draft.completion.trim() !== '',
+  cacheConfigured: draft.cache.trim() !== '',
+  cacheReadConfigured: draft.cacheRead.trim() !== '',
+  cacheCreationConfigured: draft.cacheCreation.trim() !== '',
+});
+
 export const buildPriceFromDraft = (draft: PriceDraft): ModelPrice | null => {
   const model = draft.model.trim();
-  if (!model) return null;
+  if (!model || validatePriceDraft(draft)) return null;
   const prompt = parsePriceValue(draft.prompt);
   const completion = parsePriceValue(draft.completion);
   const cache = draft.cache.trim() === '' ? prompt : parsePriceValue(draft.cache);
@@ -82,6 +207,22 @@ export const buildPriceFromDraft = (draft: PriceDraft): ModelPrice | null => {
     cacheReadConfigured: draft.cacheRead.trim() !== '',
     cacheCreationConfigured: draft.cacheCreation.trim() !== '',
     source: 'manual',
+    contextTiers: draft.contextTiers
+      .map((tier) => ({
+        thresholdTokens: Number(tier.thresholdTokens),
+        ...buildRulePrice(tier),
+      }))
+      .sort((left, right) => left.thresholdTokens - right.thresholdTokens),
+    serviceTiers: draft.serviceTiers
+      .map((tier) => ({
+        mode: tier.mode.trim().toLowerCase(),
+        serviceTier: tier.serviceTier.trim().toLowerCase(),
+        ...buildRulePrice(tier),
+      }))
+      .sort(
+        (left, right) =>
+          left.mode.localeCompare(right.mode) || left.serviceTier.localeCompare(right.serviceTier)
+      ),
   };
 };
 
@@ -97,6 +238,31 @@ export const applyCandidatePrice = (
     sourceModelId: candidate.sourceModelId,
   },
 });
+
+export const getModelPriceCandidateSource = (candidate: ModelPriceSyncCandidate) =>
+  candidate.price.source?.trim() || 'sync';
+
+export const getModelPriceCandidateIdentity = (candidate: ModelPriceSyncCandidate) =>
+  JSON.stringify([getModelPriceCandidateSource(candidate), candidate.sourceModelId]);
+
+export const groupModelPriceCandidatesBySource = (
+  candidates: ModelPriceSyncCandidate[]
+): ModelPriceCandidateGroup[] => {
+  const groups = new Map<string, ModelPriceSyncCandidate[]>();
+  candidates.forEach((candidate) => {
+    const source = getModelPriceCandidateSource(candidate);
+    const group = groups.get(source);
+    if (group) {
+      group.push(candidate);
+      return;
+    }
+    groups.set(source, [candidate]);
+  });
+  return Array.from(groups, ([source, sourceCandidates]) => ({
+    source,
+    candidates: sourceCandidates,
+  }));
+};
 
 export const buildSyncPriceModelsFromSummary = (
   summary: ModelPriceUsageSummaryResponse | null,
@@ -123,7 +289,8 @@ export const buildCandidateMap = (candidateSets: ModelPriceSyncCandidateSet[] = 
 export const buildModelPriceRows = (
   summary: ModelPriceUsageSummaryResponse | null,
   prices: Record<string, ModelPrice>,
-  candidateSets: ModelPriceSyncCandidateSet[] = []
+  candidateSets: ModelPriceSyncCandidateSet[] = [],
+  runtimeModels: string[] = []
 ): ModelPriceRow[] => {
   const rowMap = new Map<string, ModelPriceRow>();
   const candidateMap = buildCandidateMap(candidateSets);
@@ -147,6 +314,10 @@ export const buildModelPriceRows = (
 
   Object.keys(prices).forEach(ensureRow);
   candidateMap.forEach((_candidates, model) => ensureRow(model));
+  runtimeModels.forEach((model) => {
+    const trimmed = typeof model === 'string' ? model.trim() : '';
+    if (trimmed) ensureRow(trimmed);
+  });
 
   summary?.models?.forEach((item) => {
     if (!item.model) return;
@@ -198,4 +369,36 @@ export const filterModelPriceRows = (
 export const formatPriceUnit = (value: number | undefined) => {
   const num = Number(value);
   return Number.isFinite(num) ? `$${num.toFixed(4)}/1M` : '--';
+};
+
+export const resolveContextTierDisplayPrice = (
+  price: ModelPrice | undefined,
+  tier: ModelPriceContextTier
+) => ({
+  prompt: tier.promptConfigured ? tier.prompt : price?.prompt,
+  completion: tier.completionConfigured ? tier.completion : price?.completion,
+});
+
+export const resolveServiceTierDisplayPrice = (
+  price: ModelPrice | undefined,
+  tier: ModelPriceServiceTier
+) => ({
+  prompt: tier.promptConfigured ? tier.prompt : price?.prompt,
+  completion: tier.completionConfigured ? tier.completion : price?.completion,
+});
+
+export const formatServiceTierRule = (tier: ModelPriceServiceTier) => {
+  const mode = tier.mode.trim();
+  const serviceTier = tier.serviceTier.trim();
+  if (!mode) return serviceTier || '--';
+  if (!serviceTier || mode.toLowerCase() === serviceTier.toLowerCase()) return mode;
+  return `${mode}/${serviceTier}`;
+};
+
+export const formatContextThreshold = (value: number) => {
+  const tokens = Number(value);
+  if (!Number.isFinite(tokens) || tokens <= 0) return '--';
+  if (tokens >= 1_000_000 && tokens % 1_000_000 === 0) return `${tokens / 1_000_000}M`;
+  if (tokens >= 1_000 && tokens % 1_000 === 0) return `${tokens / 1_000}K`;
+  return tokens.toLocaleString('en-US', { maximumFractionDigits: 0 });
 };

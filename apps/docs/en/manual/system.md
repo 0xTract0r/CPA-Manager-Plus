@@ -2,7 +2,7 @@
 
 System shows what runtime the panel is connected to, which models are visible, and which basic details to collect before troubleshooting.
 
-Use [Logs](./logs.md) for log content. Use [Monitoring](./monitoring.md), [Usage Analytics](./usage-analytics.md), and [Auth Files](./auth-files.md) for requests, cost, and account state.
+Use [Logs](./logs.md) for log content. Use [Monitoring](./monitoring.md), [Usage Analytics](./usage-analytics.md), and [Accounts](./accounts.md) for requests, cost, and account state.
 
 ## Main Content
 
@@ -11,7 +11,7 @@ Use [Logs](./logs.md) for log content. Use [Monitoring](./monitoring.md), [Usage
 - **Clear login storage**: remove saved panel connection state from the browser.
 - **Connection state**: confirm whether the panel is connected to a usable CPA or Manager Server.
 
-The exact content depends on runtime mode. Full Docker, the CPA-hosted panel, native packages, and demo mode expose different capabilities.
+The exact content depends on the usage option. The CPAMP Lightweight Panel connects to CPA, while Full Mode connects to Manager Server; Full Mode can be installed with Docker or a native package. The Live Demo only displays fictional data and is not a runtime mode that can connect to real services.
 
 ## Model List
 
@@ -40,7 +40,7 @@ Before reporting a problem, record:
 
 - CPAMP version and runtime mode.
 - CPA version.
-- Access mode: Full Docker, CPA-hosted panel, native package, or development.
+- Connection target: CPA, Manager Server, or a local development service.
 - Whether the model list loads.
 - Whether login storage was recently cleared or the address changed.
 

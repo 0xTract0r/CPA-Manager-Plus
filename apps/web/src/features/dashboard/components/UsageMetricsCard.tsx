@@ -7,9 +7,12 @@ import {
   IconTimer,
   IconTrendingUp,
 } from '@/components/ui/icons';
+import { useThemeStore } from '@/stores';
 import type { DashboardSummaryResponse } from '@/services/api/usageService';
+import { getDataPalette } from '@/utils/dataPalette';
 import { formatCompactNumber, formatDurationMs, formatUsd } from '@/utils/usage';
 import { formatInUtc8 } from '@/utils/datetime';
+import { ModelPriceAttentionLink } from '@/features/model-price-attention';
 import styles from './UsageMetricsCard.module.scss';
 
 interface UsageMetricsCardProps {
@@ -42,17 +45,27 @@ interface MetricCardProps {
   icon: ReactNode;
   color: string;
   loading: boolean;
+  extraAction?: ReactNode;
 }
 
 type MetricStyle = CSSProperties & Record<'--accent-color', string>;
 type RankStyle = CSSProperties & Record<'--share', number>;
 
-function MetricCard({ label, value, subValue, icon, color, loading }: MetricCardProps) {
+function MetricCard({
+  label,
+  value,
+  subValue,
+  icon,
+  color,
+  loading,
+  extraAction,
+}: MetricCardProps) {
   return (
     <div className={styles.metricCard} style={{ '--accent-color': color } as MetricStyle}>
       <div className={styles.metricHeader}>
         <div className={styles.metricIcon}>{icon}</div>
         <span className={styles.metricLabel}>{label}</span>
+        {extraAction ? <div className={styles.metricExtraAction}>{extraAction}</div> : null}
       </div>
       <div className={styles.metricBody}>
         <div className={styles.metricValue}>{loading ? '...' : value}</div>
@@ -60,7 +73,13 @@ function MetricCard({ label, value, subValue, icon, color, loading }: MetricCard
       </div>
       <div className={styles.metricBgChart}>
         <svg viewBox="0 0 100 30" preserveAspectRatio="none">
-          <path d="M0,25 Q15,5 30,20 T60,10 T100,25" fill="none" stroke={color} strokeWidth="2" opacity="0.2" />
+          <path
+            d="M0,25 Q15,5 30,20 T60,10 T100,25"
+            fill="none"
+            stroke={color}
+            strokeWidth="2"
+            opacity="0.2"
+          />
         </svg>
       </div>
     </div>
@@ -77,6 +96,8 @@ export function UsageMetricsCard({
   mode = 'all',
 }: UsageMetricsCardProps) {
   const { t, i18n } = useTranslation();
+  const resolvedTheme = useThemeStore((state) => state.resolvedTheme);
+  const dataPalette = getDataPalette(resolvedTheme);
   const today = summary?.today;
   const rolling = summary?.rolling_30m;
   const loadingText = loading ? '...' : '-';
@@ -99,7 +120,7 @@ export function UsageMetricsCard({
         ? t('dashboard.metric_failure_count', { value: formatMetric(today.failure_calls) })
         : lastRefreshedText,
       icon: <IconInbox size={20} />,
-      color: '#3b82f6',
+      color: dataPalette.blue,
     },
     {
       label: t('dashboard.rpm_30m'),
@@ -108,7 +129,7 @@ export function UsageMetricsCard({
         ? t('dashboard.metric_rolling_calls', { value: formatMetric(rolling.total_calls) })
         : undefined,
       icon: <IconChartLine size={20} />,
-      color: '#8b5cf6',
+      color: dataPalette.violet,
     },
     {
       label: t('dashboard.tpm_30m'),
@@ -117,7 +138,7 @@ export function UsageMetricsCard({
         ? t('dashboard.metric_rolling_tokens', { value: formatCompactNumber(rolling.total_tokens) })
         : undefined,
       icon: <IconTrendingUp size={20} />,
-      color: '#10b981',
+      color: dataPalette.emerald,
     },
     {
       label: t('dashboard.today_cost'),
@@ -126,7 +147,8 @@ export function UsageMetricsCard({
         ? t('dashboard.metric_total_tokens', { value: formatCompactNumber(today.total_tokens) })
         : undefined,
       icon: <IconDollarSign size={20} />,
-      color: '#f59e0b',
+      color: dataPalette.amber,
+      extraAction: <ModelPriceAttentionLink variant="inline" />,
     },
     {
       label: t('dashboard.success_rate'),
@@ -135,7 +157,7 @@ export function UsageMetricsCard({
         ? `${formatMetric(today.success_calls)} / ${formatMetric(today.total_calls)}`
         : undefined,
       icon: <IconTrendingUp size={20} />,
-      color: '#10b981',
+      color: dataPalette.green,
     },
     {
       label: t('dashboard.avg_latency'),
@@ -146,7 +168,7 @@ export function UsageMetricsCard({
         ? t('dashboard.metric_zero_token_calls', { value: formatMetric(today.zero_token_calls) })
         : undefined,
       icon: <IconTimer size={20} />,
-      color: '#ef4444',
+      color: dataPalette.red,
     },
   ];
 
@@ -155,7 +177,7 @@ export function UsageMetricsCard({
       <>
         <div className={styles.metricsGrid}>
           {metrics.map((m) => (
-            <MetricCard key={m.label} {...m} loading={loading} />
+            <MetricCard key={m.label} {...m} loading={loading && !summary} />
           ))}
         </div>
         {error ? <div className={styles.error}>{error}</div> : null}
@@ -172,34 +194,37 @@ export function UsageMetricsCard({
         <div className={styles.rankList}>
           {(modelCostRank?.length ? modelCostRank : topModels)?.slice(0, 5).map((model, index) => {
             const hasCostShare = 'cost_share' in model && typeof model.cost_share === 'number';
-            const share =
-              hasCostShare
-                ? (model as { cost_share: number }).cost_share
-                : topModels.length
-                  ? model.tokens / Math.max(...topModels.map((item) => item.tokens), 1)
-                  : 0;
+            const share = hasCostShare
+              ? (model as { cost_share: number }).cost_share
+              : topModels.length
+                ? model.tokens / Math.max(...topModels.map((item) => item.tokens), 1)
+                : 0;
             return (
-            <div key={model.model} className={styles.rankItem}>
-              <div className={styles.rankIndex} data-rank={index + 1}>{index + 1}</div>
-              <div className={styles.rankInfo}>
-                <div className={styles.modelName}>{model.model}</div>
-                <div className={styles.rankTrack}>
-                  <div className={styles.rankBar} style={{ '--share': share } as RankStyle} />
+              <div key={model.model} className={styles.rankItem}>
+                <div className={styles.rankIndex} data-rank={index + 1}>
+                  {index + 1}
+                </div>
+                <div className={styles.rankInfo}>
+                  <div className={styles.modelName}>{model.model}</div>
+                  <div className={styles.rankTrack}>
+                    <div className={styles.rankBar} style={{ '--share': share } as RankStyle} />
+                  </div>
+                </div>
+                <div className={styles.rankValue}>
+                  <div className={styles.cost}>{formatUsd(model.cost)}</div>
+                  <div className={styles.share}>
+                    {hasCostShare
+                      ? `${(share * 100).toFixed(1)}%`
+                      : formatCompactNumber(model.tokens)}
+                  </div>
                 </div>
               </div>
-              <div className={styles.rankValue}>
-                <div className={styles.cost}>{formatUsd(model.cost)}</div>
-                <div className={styles.share}>
-                  {hasCostShare
-                    ? `${(share * 100).toFixed(1)}%`
-                    : formatCompactNumber(model.tokens)}
-                </div>
-              </div>
-            </div>
             );
           })}
           {!modelCostRank?.length && topModels.length === 0 ? (
-            <div className={styles.empty}>{loading ? '...' : t('dashboard.no_usage_rank_data')}</div>
+            <div className={styles.empty}>
+              {loading ? '...' : t('dashboard.no_usage_rank_data')}
+            </div>
           ) : null}
         </div>
       </section>

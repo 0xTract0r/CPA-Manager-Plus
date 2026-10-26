@@ -8,6 +8,7 @@ import (
 
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/collector"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/config"
+	sqliterepo "github.com/seakee/cpa-manager-plus/apps/manager-server/internal/repository/sqlite"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/security"
 	bootstrapsvc "github.com/seakee/cpa-manager-plus/apps/manager-server/internal/service/bootstrap"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/store"
@@ -15,6 +16,7 @@ import (
 
 type Options struct {
 	EmbeddedPanel               fs.FS
+	ModelsDevModelPriceSyncURL  *string
 	ModelPriceSyncURL           *string
 	OpenRouterModelPriceSyncURL *string
 	ServiceID                   string
@@ -24,6 +26,14 @@ type Options struct {
 func New(ctx context.Context, cfg config.Config, options Options) (*Context, error) {
 	if cfg.DataKey == "" && cfg.DataKeyPath == "" {
 		cfg.DataKeyPath = filepath.Join(filepath.Dir(cfg.DBPath), "data.key")
+	}
+	if err := sqliterepo.RequireExistingDataKeyForEncryptedCPAConnection(
+		ctx,
+		cfg.DBPath,
+		cfg.DataKey,
+		cfg.DataKeyPath,
+	); err != nil {
+		return nil, err
 	}
 	dataKey, dataKeyCreated, err := security.LoadOrCreateDataKey(cfg.DataKey, cfg.DataKeyPath)
 	if err != nil {
@@ -51,12 +61,13 @@ func New(ctx context.Context, cfg config.Config, options Options) (*Context, err
 	if startedAt <= 0 {
 		startedAt = time.Now().UnixMilli()
 	}
-	appCtx := FromExisting(
+	appCtx := FromExistingWithModelsDev(
 		cfg,
 		st,
 		manager,
 		startedAt,
 		options.EmbeddedPanel,
+		options.ModelsDevModelPriceSyncURL,
 		options.ModelPriceSyncURL,
 		options.OpenRouterModelPriceSyncURL,
 		serviceID,

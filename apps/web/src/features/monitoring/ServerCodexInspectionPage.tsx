@@ -1,6 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { authFilesApi } from '@/services/api';
 import type { AuthFileItem } from '@/types';
@@ -9,30 +18,28 @@ import {
   maskAccountEmailsInText,
   resolveAuthFileAccountIdentity,
 } from '@/utils/accountIdentity';
-import {
-  IconChartLine,
-  IconCheck,
-  IconInbox,
-  IconRefreshCw,
-  IconShield,
-  IconTrash2,
-} from '@/components/ui/icons';
+import { IconRefreshCw, IconShield, IconTrash2 } from '@/components/ui/icons';
 import { Input } from '@/components/ui/Input';
 import { Select, type SelectOption } from '@/components/ui/Select';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { CodexInspectionConfigOverview } from '@/features/monitoring/components/CodexInspectionConfigOverview';
-import { CodexInspectionModeTabs } from '@/features/monitoring/components/CodexInspectionModeTabs';
+import { CodexInspectionLogsPanel } from '@/features/monitoring/components/CodexInspectionLogsPanel';
 import { Panel } from '@/features/monitoring/components/CodexInspectionPanels';
 import { CodexInspectionResultsPanel } from '@/features/monitoring/components/CodexInspectionResultsPanel';
+import { CodexInspectionStopButton } from '@/features/monitoring/components/CodexInspectionStopButton';
 import { InspectionConfigDrawer } from '@/features/monitoring/components/InspectionConfigDrawer';
 import { InspectionConfigFields } from '@/features/monitoring/components/InspectionConfigFields';
+import {
+  SummaryCard as MonitoringSummaryCard,
+  type SummaryCardProps as MonitoringSummaryCardProps,
+} from '@/features/monitoring/components/MonitoringShared';
 import { CodexReauthDialog } from '@/features/oauth/CodexReauthDialog';
 import {
   createCodexReauthTargetFromAuthFile,
   type CodexReauthTarget,
 } from '@/features/oauth/codexReauthModel';
-import { formatPercent } from '@/features/monitoring/components/accountOverviewPresentation';
 import {
+  createCodexInspectionConnectionFingerprint,
   type CodexInspectionAction,
   type CodexInspectionResultItem,
   type CodexInspectionRunResult,
@@ -41,28 +48,49 @@ import {
   CODEX_INSPECTION_RESULT_PAGE_SIZE_OPTIONS,
   buildCodexInspectionPaginationState,
   buildConfigOverviewItems,
-  type CodexInspectionSummaryAccent,
   countHandlingStates,
   filterInspectionResults,
   formatActionLabel,
+  formatInspectionLogsForClipboard,
+  formatPercent,
   formatTimestamp,
   getActionFilterCounts,
   getCanonicalServerCodexInspectionActionIds,
   getMixedServerCodexInspectionActionIds,
   isActionableServerCodexInspectionResult,
+  isHandledServerCodexInspectionResult,
+  isPendingServerReauthResult,
   normalizeServerCodexInspectionActionStatus,
+  toServerInspectionLogViewEntry,
   type ActionFilter,
   type HandlingFilter,
+  type InspectionLogLevelFilter,
   type StatusTone,
   validateInspectionConfigDraft,
   validateInspectionConfigFields,
 } from '@/features/monitoring/model/codexInspectionPresentation';
+import {
+  createServerCredentialInspectionSnapshot,
+  isCompletedCredentialInspectionRun,
+  type CredentialInspectionSnapshot,
+  type CredentialInspectionTarget,
+} from '@/features/monitoring/model/credentialInspectionSnapshot';
+import {
+  DEFAULT_CODEX_INSPECTION_SETTINGS,
+  codexInspectionTargetTypesToSelection,
+  normalizeCodexInspectionTargetTypes,
+} from '@/features/monitoring/model/codexInspectionSettings';
+import {
+  findCancellableRun,
+  getRunStatusLabel,
+  hasActiveRun,
+  isActiveRun,
+} from '@/features/monitoring/model/serverCodexInspectionLifecycle';
 import { usePanelFeatureAvailability } from '@/hooks/usePanelFeatureAvailability';
 import {
   getUsageServiceErrorCode,
   monitoringAnalyticsApi,
   usageServiceApi,
-  type CodexInspectionLog,
   type CodexInspectionResult,
   type CodexInspectionRun,
   type CodexInspectionRunDetail,
@@ -82,8 +110,9 @@ import {
   getHeaderSnapshotRecoverAtMs,
   getHeaderSnapshotTraceId,
   getHeaderSnapshotUsedPercent,
-  getUsageHeaderSnapshotForIdentity,
+  getUsageHeaderSnapshotMatchForIdentity,
 } from '@/utils/usageHeaderSnapshots';
+import { getPlanPresentation } from '@/utils/plans';
 import styles from './CodexInspectionPage.module.scss';
 
 type ServerCodexInspectionDraft = {
@@ -92,15 +121,20 @@ type ServerCodexInspectionDraft = {
   intervalMinutes: string;
   timePoints: string;
   timeZone: string;
-  targetType: string;
+  targetTypes: string;
   workers: string;
   deleteWorkers: string;
   timeout: string;
   retries: string;
   userAgent: string;
+  xaiInferenceUserAgent: string;
+  xaiInferenceEnabled: boolean;
+  xaiInferenceModel: string;
+  xaiInferencePrompt: string;
   usedPercentThreshold: string;
   sampleSize: string;
   autoActionMode: string;
+  autoRecoverEnabled: boolean;
 };
 
 type NormalizedServerCodexInspectionConfig = {
@@ -111,15 +145,21 @@ type NormalizedServerCodexInspectionConfig = {
     timePoints: string[];
     timeZone: string;
   };
+  targetTypes: string[];
   targetType: string;
   workers: number;
   deleteWorkers: number;
   timeout: number;
   retries: number;
   userAgent: string;
+  xaiInferenceUserAgent: string;
+  xaiInferenceEnabled: boolean;
+  xaiInferenceModel: string;
+  xaiInferencePrompt: string;
   usedPercentThreshold: number;
   sampleSize: number;
   autoActionMode: string;
+  autoRecoverEnabled: boolean;
 };
 
 const DEFAULT_SERVER_CODEX_CONFIG: NormalizedServerCodexInspectionConfig = {
@@ -130,18 +170,25 @@ const DEFAULT_SERVER_CODEX_CONFIG: NormalizedServerCodexInspectionConfig = {
     timePoints: [],
     timeZone: '',
   },
+  targetTypes: ['codex'],
   targetType: 'codex',
   workers: 4,
   deleteWorkers: 4,
   timeout: 15000,
   retries: 0,
   userAgent: 'codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal',
+  xaiInferenceUserAgent: DEFAULT_CODEX_INSPECTION_SETTINGS.xaiInferenceUserAgent,
+  xaiInferenceEnabled: false,
+  xaiInferenceModel: DEFAULT_CODEX_INSPECTION_SETTINGS.xaiInferenceModel,
+  xaiInferencePrompt: DEFAULT_CODEX_INSPECTION_SETTINGS.xaiInferencePrompt,
   usedPercentThreshold: 100,
   sampleSize: 0,
   autoActionMode: 'none',
+  autoRecoverEnabled: false,
 };
 
 const RUNS_LIMIT = 30;
+const EMPTY_CODEX_INSPECTION_RUNS: CodexInspectionRun[] = [];
 
 const COMMON_TIME_ZONES: ReadonlyArray<string> = [
   'UTC',
@@ -194,7 +241,20 @@ const resolveServerCodexConfig = (
           ? schedule.timeZone
           : DEFAULT_SERVER_CODEX_CONFIG.schedule.timeZone,
     },
-    targetType: config?.targetType || DEFAULT_SERVER_CODEX_CONFIG.targetType,
+    targetTypes: (() => {
+      const targetTypes = normalizeCodexInspectionTargetTypes(
+        config?.targetTypes,
+        config?.targetType
+      );
+      return targetTypes.length > 0 ? targetTypes : DEFAULT_SERVER_CODEX_CONFIG.targetTypes;
+    })(),
+    targetType: (() => {
+      const targetTypes = normalizeCodexInspectionTargetTypes(
+        config?.targetTypes,
+        config?.targetType
+      );
+      return targetTypes[0] ?? DEFAULT_SERVER_CODEX_CONFIG.targetType;
+    })(),
     workers:
       config?.workers && config.workers > 0 ? config.workers : DEFAULT_SERVER_CODEX_CONFIG.workers,
     deleteWorkers:
@@ -208,6 +268,13 @@ const resolveServerCodexConfig = (
         ? config.retries
         : DEFAULT_SERVER_CODEX_CONFIG.retries,
     userAgent: config?.userAgent || DEFAULT_SERVER_CODEX_CONFIG.userAgent,
+    xaiInferenceUserAgent:
+      config?.xaiInferenceUserAgent || DEFAULT_SERVER_CODEX_CONFIG.xaiInferenceUserAgent,
+    xaiInferenceEnabled:
+      config?.xaiInferenceEnabled ?? DEFAULT_SERVER_CODEX_CONFIG.xaiInferenceEnabled,
+    xaiInferenceModel: config?.xaiInferenceModel || DEFAULT_SERVER_CODEX_CONFIG.xaiInferenceModel,
+    xaiInferencePrompt:
+      config?.xaiInferencePrompt || DEFAULT_SERVER_CODEX_CONFIG.xaiInferencePrompt,
     usedPercentThreshold:
       config?.usedPercentThreshold !== undefined
         ? config.usedPercentThreshold
@@ -217,6 +284,8 @@ const resolveServerCodexConfig = (
         ? config.sampleSize
         : DEFAULT_SERVER_CODEX_CONFIG.sampleSize,
     autoActionMode: config?.autoActionMode || DEFAULT_SERVER_CODEX_CONFIG.autoActionMode,
+    autoRecoverEnabled:
+      config?.autoRecoverEnabled ?? DEFAULT_SERVER_CODEX_CONFIG.autoRecoverEnabled,
   };
 };
 
@@ -228,15 +297,20 @@ const toDraft = (config?: ManagerCodexInspectionConfig | null): ServerCodexInspe
     intervalMinutes: String(resolved.schedule.intervalMinutes),
     timePoints: resolved.schedule.timePoints.join(', '),
     timeZone: resolved.schedule.timeZone,
-    targetType: resolved.targetType,
+    targetTypes: codexInspectionTargetTypesToSelection(resolved.targetTypes, resolved.targetType),
     workers: String(resolved.workers),
     deleteWorkers: String(resolved.deleteWorkers),
     timeout: String(resolved.timeout),
     retries: String(resolved.retries),
     userAgent: resolved.userAgent,
+    xaiInferenceUserAgent: resolved.xaiInferenceUserAgent,
+    xaiInferenceEnabled: resolved.xaiInferenceEnabled,
+    xaiInferenceModel: resolved.xaiInferenceModel,
+    xaiInferencePrompt: resolved.xaiInferencePrompt,
     usedPercentThreshold: String(resolved.usedPercentThreshold),
     sampleSize: String(resolved.sampleSize),
     autoActionMode: resolved.autoActionMode,
+    autoRecoverEnabled: resolved.autoRecoverEnabled,
   };
 };
 
@@ -317,15 +391,21 @@ const createConfigFromDraft = (
             timePoints,
             timeZone: draft.timeZone.trim(),
           },
-    targetType: validation.values.targetType,
+    targetTypes: validation.values.targetTypes,
+    targetType: validation.values.targetTypes[0],
     workers: validation.values.workers,
     deleteWorkers: validation.values.deleteWorkers,
     timeout: validation.values.timeout,
     retries: validation.values.retries,
     userAgent: validation.values.userAgent,
+    xaiInferenceUserAgent: validation.values.xaiInferenceUserAgent,
+    xaiInferenceEnabled: validation.values.xaiInferenceEnabled,
+    xaiInferenceModel: validation.values.xaiInferenceModel,
+    xaiInferencePrompt: validation.values.xaiInferencePrompt,
     usedPercentThreshold: validation.values.usedPercentThreshold,
     sampleSize: validation.values.sampleSize,
     autoActionMode: validation.values.autoActionMode,
+    autoRecoverEnabled: validation.values.autoRecoverEnabled,
   };
 };
 
@@ -337,48 +417,20 @@ const statusToneClass: Record<StatusTone, string> = {
   bad: styles['tone-bad'],
 };
 
-const summaryAccentClassMap: Record<CodexInspectionSummaryAccent, string> = {
-  blue: styles.summaryAccentBlue,
-  cyan: styles.summaryAccentCyan,
-  red: styles.summaryAccentRed,
-  amber: styles.summaryAccentAmber,
-  green: styles.summaryAccentGreen,
-  violet: styles.summaryAccentViolet,
-};
-
-const logLevelClass: Record<string, string> = {
-  info: styles.logInfo,
-  success: styles.logSuccess,
-  warning: styles.logWarning,
-  error: styles.logError,
-};
-
 function getRunTone(run?: CodexInspectionRun | null): StatusTone {
   switch (run?.status) {
     case 'completed':
+    case 'cancelled':
       return 'good';
     case 'failed':
       return 'bad';
     case 'running':
+    case 'cancelling':
       return 'info';
+    case 'interrupted':
+      return 'warn';
     default:
       return 'idle';
-  }
-}
-
-function getRunStatusLabel(
-  run: CodexInspectionRun | null | undefined,
-  t: ReturnType<typeof useTranslation>['t']
-) {
-  switch (run?.status) {
-    case 'completed':
-      return t('monitoring.codex_inspection_status_success');
-    case 'failed':
-      return t('monitoring.codex_inspection_status_error');
-    case 'running':
-      return t('monitoring.codex_inspection_status_running');
-    default:
-      return t('monitoring.codex_inspection_status_idle');
   }
 }
 
@@ -399,34 +451,6 @@ function formatTrigger(
   if (run.triggerType === 'scheduled')
     return t('monitoring.server_codex_inspection_trigger_scheduled');
   return t('monitoring.server_codex_inspection_trigger_manual');
-}
-
-function formatResultStateHeader(
-  run: CodexInspectionRun | null | undefined,
-  t: ReturnType<typeof useTranslation>['t']
-) {
-  if (run?.triggerType === 'scheduled') {
-    return t('monitoring.server_codex_inspection_result_state_scheduled');
-  }
-  if (run?.triggerType === 'manual') {
-    return t('monitoring.server_codex_inspection_result_state_manual');
-  }
-  return t('monitoring.server_codex_inspection_result_state_snapshot');
-}
-
-function formatResultsDescription(
-  run: CodexInspectionRun | null | undefined,
-  locale: string,
-  t: ReturnType<typeof useTranslation>['t']
-) {
-  const time = run?.finishedAtMs ? formatTimestamp(run.finishedAtMs, locale) : t('common.not_set');
-  if (run?.triggerType === 'manual') {
-    return t('monitoring.server_codex_inspection_results_desc_manual', { time });
-  }
-  if (run?.triggerType === 'scheduled') {
-    return t('monitoring.server_codex_inspection_results_desc_scheduled', { time });
-  }
-  return t('monitoring.server_codex_inspection_results_desc');
 }
 
 function formatSchedule(
@@ -452,15 +476,20 @@ function getComparableConfig(config: NormalizedServerCodexInspectionConfig) {
     intervalMinutes: config.schedule.intervalMinutes,
     timePoints: normalizeTimePointList(config.schedule.timePoints),
     timeZone: (config.schedule.timeZone || '').trim(),
-    targetType: config.targetType.trim(),
+    targetTypes: normalizeCodexInspectionTargetTypes(config.targetTypes, config.targetType),
     workers: config.workers,
     deleteWorkers: config.deleteWorkers,
     timeout: config.timeout,
     retries: config.retries,
     userAgent: config.userAgent.trim(),
+    xaiInferenceUserAgent: config.xaiInferenceUserAgent.trim(),
+    xaiInferenceEnabled: config.xaiInferenceEnabled,
+    xaiInferenceModel: config.xaiInferenceModel.trim(),
+    xaiInferencePrompt: config.xaiInferencePrompt.trim(),
     usedPercentThreshold: config.usedPercentThreshold,
     sampleSize: config.sampleSize,
     autoActionMode: config.autoActionMode,
+    autoRecoverEnabled: config.autoRecoverEnabled,
   };
 }
 
@@ -484,7 +513,7 @@ function resolveActionLabel(action: string, t: ReturnType<typeof useTranslation>
   return action || t('common.not_set');
 }
 
-function formatServerActionStatusLabel(
+function formatServerTerminalActionStatusLabel(
   item: CodexInspectionResult,
   t: ReturnType<typeof useTranslation>['t']
 ) {
@@ -500,40 +529,7 @@ function formatServerActionStatusLabel(
   if (status === 'skipped') {
     return t('monitoring.server_codex_inspection_action_status_skipped');
   }
-  if (status === 'needs_review') {
-    return t('monitoring.server_codex_inspection_action_status_needs_review');
-  }
-  if (status === 'pending') {
-    return t('monitoring.server_codex_inspection_action_status_pending');
-  }
   return '';
-}
-
-function formatServerResultStateToken(
-  value: string | undefined,
-  t: ReturnType<typeof useTranslation>['t']
-) {
-  const normalized = (value ?? '').trim().toLowerCase();
-  if (!normalized) return '';
-  if (normalized === 'active') return t('monitoring.state_active');
-  if (normalized === 'disabled') return t('monitoring.state_disabled');
-  if (normalized === 'inactive') return t('monitoring.state_inactive');
-  if (normalized === 'enabled') return t('monitoring.codex_inspection_state_enabled');
-  return value?.trim() ?? '';
-}
-
-function formatServerResultStateDetail(
-  item: CodexInspectionResult,
-  t: ReturnType<typeof useTranslation>['t']
-) {
-  const errorText = item.actionError || item.errorDetail || item.error;
-  if (errorText) return errorText;
-
-  return (
-    formatServerResultStateToken(item.status, t) ||
-    formatServerResultStateToken(item.state, t) ||
-    '--'
-  );
 }
 
 function normalizeServerResultAction(action: string): CodexInspectionAction {
@@ -566,17 +562,31 @@ function formatObservedHeaderRecoverAt(value: number | null, locale: string) {
 
 function buildObservedHeaderEvidence(
   snapshot: UsageHeaderSnapshot | undefined,
+  provider: string,
   locale: string,
   t: ReturnType<typeof useTranslation>['t']
 ) {
   if (!snapshot) return [];
   const evidence: string[] = [];
+  const observedAt = formatObservedHeaderRecoverAt(snapshot.timestamp_ms, locale);
+  if (observedAt) {
+    evidence.push(
+      t('monitoring.codex_inspection_observed_header_at', {
+        time: observedAt,
+      })
+    );
+  }
+  const planLabel = getPlanPresentation({
+    provider,
+    planType: getHeaderSnapshotPlanType(snapshot),
+    t,
+  })?.fullLabel;
   const quotaParts = [
-    getHeaderSnapshotPlanType(snapshot),
+    planLabel,
     (() => {
       const usedPercent = getHeaderSnapshotUsedPercent(snapshot);
       return typeof usedPercent === 'number' && Number.isFinite(usedPercent)
-        ? formatPercent(usedPercent / 100)
+        ? formatPercent(usedPercent)
         : '';
     })(),
     (() => {
@@ -606,32 +616,38 @@ function buildObservedHeaderEvidence(
   return evidence;
 }
 
-function toServerResultItem(
+// eslint-disable-next-line react-refresh/only-export-components -- pure mapper is exported for unit testing
+export function toServerResultItem(
   item: CodexInspectionResult,
   t: ReturnType<typeof useTranslation>['t'],
   snapshot: UsageHeaderSnapshot | undefined,
   locale: string,
   authFile?: AuthFileItem
 ): CodexInspectionResultItem {
-  const actionStatusLabel = formatServerActionStatusLabel(item, t);
-  const reasonParts = [item.actionReason, actionStatusLabel].filter(Boolean);
-  const observedHeaderEvidence = buildObservedHeaderEvidence(snapshot, locale, t);
+  const actionReason = item.actionReason?.startsWith('monitoring.')
+    ? t(item.actionReason)
+    : item.actionReason;
+  const observedHeaderEvidence = buildObservedHeaderEvidence(snapshot, item.provider, locale, t);
   return {
     key: `server-${item.id || item.accountKey}`,
+    runtimeId: item.runtimeId ?? null,
     fileName: item.fileName,
     displayAccount: item.displayAccount,
+    accountSnapshot: item.accountSnapshot ?? null,
     authIndex: item.authIndex ?? null,
     accountId: item.accountId ?? null,
     provider: item.provider,
     disabled: item.disabled,
+    autoRecoverOwned: item.autoRecoverEligible === true,
     status: item.status ?? '',
     state: item.state ?? '',
     raw: authFile ?? (item as unknown as CodexInspectionResultItem['raw']),
     action: normalizeServerResultAction(item.action),
-    actionReason: reasonParts.join(' · '),
+    actionReason,
     statusCode: item.statusCode ?? null,
     usedPercent: item.usedPercent ?? null,
     isQuota: item.isQuota,
+    autoRecoverEligible: item.autoRecoverEligible === true,
     error: item.error ?? '',
     planType: item.planType ?? null,
     quotaWindows: item.quotaWindows?.map((window) => ({
@@ -640,10 +656,16 @@ function toServerResultItem(
       labelParams: window.labelParams,
       usedPercent: window.usedPercent ?? null,
       resetLabel: window.resetLabel ?? '',
+      resetAtMs: window.resetAtMs ?? null,
+      resetAccuracy: window.resetAccuracy,
       limitWindowSeconds: window.limitWindowSeconds ?? null,
+      modelScope: window.modelScope,
+      providerWindowAliases: window.providerWindowAliases,
     })),
+    quotaInventoryObserved: item.quotaInventoryObserved,
     errorKind: item.errorKind,
-    errorDetail: item.actionError || item.errorDetail || '',
+    errorDetail: item.errorDetail || '',
+    actionHandled: isHandledServerCodexInspectionResult(item),
     observedHeaderEvidence,
     observedHeaderAtMs: snapshot?.timestamp_ms ?? null,
   };
@@ -690,10 +712,31 @@ function formatServiceHost(base: string): string {
   }
 }
 
-export function ServerCodexInspectionPage() {
+interface ServerCodexInspectionPageProps {
+  embedded?: boolean;
+  modeControl?: ReactNode;
+  onSnapshotChange?: (snapshot: CredentialInspectionSnapshot) => void;
+  onCredentialsChanged?: (
+    target?: CodexReauthTarget | null,
+    snapshot?: CredentialInspectionSnapshot | null
+  ) => void | Promise<void>;
+  onCodexReauthStart?: (target: CodexReauthTarget) => boolean | void;
+  onOpenCredential?: (target: CredentialInspectionTarget) => void;
+}
+
+export function ServerCodexInspectionPage({
+  embedded = false,
+  modeControl,
+  onSnapshotChange,
+  onCredentialsChanged,
+  onCodexReauthStart,
+  onOpenCredential,
+}: ServerCodexInspectionPageProps = {}) {
   const { t, i18n } = useTranslation();
   // 订阅全局时区：切换时区时巡检运行时间/观测 recover 时间戳随之重渲染，无需刷新。
   useTimezone();
+  const navigate = useNavigate();
+  const apiBase = useAuthStore((state) => state.apiBase);
   const managementKey = useAuthStore((state) => state.managementKey);
   const featureAvailability = usePanelFeatureAvailability();
   const showNotification = useNotificationStore((state) => state.showNotification);
@@ -710,6 +753,7 @@ export function ServerCodexInspectionPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState('');
   const [logsCollapsed, setLogsCollapsed] = useState(false);
   const [actionFilter, setActionFilter] = useState<ActionFilter>('all');
@@ -718,9 +762,7 @@ export function ServerCodexInspectionPage() {
   const [resultPageSize, setResultPageSize] = useState<number>(
     CODEX_INSPECTION_RESULT_PAGE_SIZE_OPTIONS[0]
   );
-  const [logLevelFilter, setLogLevelFilter] = useState<
-    'all' | 'info' | 'success' | 'warning' | 'error'
-  >('all');
+  const [logLevelFilter, setLogLevelFilter] = useState<InspectionLogLevelFilter>('all');
   const [executingResultIds, setExecutingResultIds] = useState<Set<number>>(() => new Set());
   const [executingAllActions, setExecutingAllActions] = useState(false);
   const [configDrawerOpen, setConfigDrawerOpen] = useState(false);
@@ -728,18 +770,126 @@ export function ServerCodexInspectionPage() {
   const [codexReauthTarget, setCodexReauthTarget] = useState<CodexReauthTarget | null>(null);
   const refreshInFlightRef = useRef(false);
   const actionInFlightRef = useRef(false);
+  const runsContextRef = useRef<object | null>(null);
+  const detailContextRef = useRef<object | null>(null);
+  const detailRequestGenerationRef = useRef(0);
+  const runListMutationGenerationRef = useRef(0);
+  const selectedRunIdRef = useRef<number | null>(null);
+  const logListRef = useRef<HTMLDivElement | null>(null);
+  const previousServerLogCursorRef = useRef<{
+    runId: number | null;
+    latestLogId: number | null;
+  }>({ runId: null, latestLogId: null });
+
+  const selectRunId = useCallback((id: number | null) => {
+    selectedRunIdRef.current = id;
+    detailRequestGenerationRef.current += 1;
+    detailContextRef.current = null;
+    setDetail(null);
+    setSelectedRunId(id);
+  }, []);
+
+  const managerConnectionScopeKey = useMemo(
+    () =>
+      [
+        featureAvailability.checking ? 'checking' : 'ready',
+        featureAvailability.serverCodexInspectionAvailable ? 'available' : 'unavailable',
+        createCodexInspectionConnectionFingerprint(
+          featureAvailability.managerServiceBase,
+          managementKey
+        ) ?? 'disconnected',
+        apiBase,
+      ].join('\u001f'),
+    [
+      apiBase,
+      featureAvailability.checking,
+      featureAvailability.managerServiceBase,
+      featureAvailability.serverCodexInspectionAvailable,
+      managementKey,
+    ]
+  );
+  const authFilesRequestScope = useMemo(
+    () => ({ apiBase, managementKey }),
+    [apiBase, managementKey]
+  );
+  const managerConnectionIdentity = useMemo<object>(
+    () => ({ scopeKey: managerConnectionScopeKey }),
+    [managerConnectionScopeKey]
+  );
+  const activeManagerConnectionIdentityRef = useRef(managerConnectionIdentity);
+  activeManagerConnectionIdentityRef.current = managerConnectionIdentity;
+
+  useLayoutEffect(() => {
+    detailRequestGenerationRef.current += 1;
+    runListMutationGenerationRef.current += 1;
+    refreshInFlightRef.current = false;
+    actionInFlightRef.current = false;
+    selectedRunIdRef.current = null;
+    runsContextRef.current = null;
+    detailContextRef.current = null;
+    setServiceBase('');
+    setManagerConfig(null);
+    setDraft(toDraft(null));
+    setRuns([]);
+    setDetail(null);
+    setHeaderSnapshots([]);
+    setSelectedRunId(null);
+    setExecutingResultIds(new Set());
+    setExecutingAllActions(false);
+    setSaving(false);
+    setRunning(false);
+    setCancelling(false);
+    setError('');
+    setConfigDrawerOpen(false);
+    setCodexReauthTarget(null);
+  }, [managerConnectionIdentity]);
+
+  useEffect(() => {
+    if (!detail || !onSnapshotChange || !isCompletedCredentialInspectionRun(detail.run)) return;
+    if (detailContextRef.current !== managerConnectionIdentity) return;
+    if (runsContextRef.current !== managerConnectionIdentity) return;
+    const snapshot = createServerCredentialInspectionSnapshot(detail, runs);
+    if (snapshot) onSnapshotChange(snapshot);
+  }, [detail, managerConnectionIdentity, onSnapshotChange, runs]);
 
   const loadRunDetail = useCallback(
     async (base: string, id: number) => {
-      const nextDetail = await usageServiceApi.getCodexInspectionRun(base, managementKey, id);
+      if (selectedRunIdRef.current !== id) return null;
+      const connectionContext = managerConnectionIdentity;
+      if (activeManagerConnectionIdentityRef.current !== connectionContext) return null;
+      const requestGeneration = ++detailRequestGenerationRef.current;
+      let nextDetail: CodexInspectionRunDetail;
+      try {
+        nextDetail = await usageServiceApi.getCodexInspectionRun(base, managementKey, id);
+      } catch (error) {
+        if (
+          requestGeneration !== detailRequestGenerationRef.current ||
+          activeManagerConnectionIdentityRef.current !== connectionContext ||
+          selectedRunIdRef.current !== id
+        ) {
+          return null;
+        }
+        throw error;
+      }
+      if (
+        requestGeneration !== detailRequestGenerationRef.current ||
+        activeManagerConnectionIdentityRef.current !== connectionContext ||
+        selectedRunIdRef.current !== id
+      ) {
+        return null;
+      }
+      detailContextRef.current = connectionContext;
       setDetail(nextDetail);
-      setSelectedRunId(nextDetail.run.id);
       return nextDetail;
     },
-    [managementKey]
+    [managementKey, managerConnectionIdentity]
   );
 
   const loadPageData = useCallback(async () => {
+    const connectionContext = managerConnectionIdentity;
+    const isCurrentConnection = () =>
+      activeManagerConnectionIdentityRef.current === connectionContext;
+    if (!isCurrentConnection()) return;
     setLoading(true);
     setError('');
     try {
@@ -748,6 +898,7 @@ export function ServerCodexInspectionPage() {
         throw new Error(t('monitoring.server_codex_inspection_service_unavailable'));
       }
       const response = await usageServiceApi.getManagerConfig(resolvedBase, managementKey);
+      if (!isCurrentConnection()) return;
       const responseConfig = response.config;
 
       setServiceBase(resolvedBase);
@@ -759,33 +910,42 @@ export function ServerCodexInspectionPage() {
         monitoringAnalyticsApi
           .getHeaderSnapshots(resolvedBase, managementKey, { days: 30, limit: 1000 })
           .catch(() => ({ items: [] as UsageHeaderSnapshot[] })),
-        authFilesApi.list().catch(() => ({ files: [] as AuthFileItem[] })),
+        authFilesApi.list(authFilesRequestScope).catch(() => ({ files: [] as AuthFileItem[] })),
       ]);
+      if (!isCurrentConnection()) return;
+      runsContextRef.current = connectionContext;
       setHeaderSnapshots(snapshotsResponse.items ?? []);
       setAuthFiles(authFilesResponse.files ?? []);
       setRuns(runsResponse.items);
       const nextSelectedId = runsResponse.items[0]?.id;
       if (nextSelectedId) {
+        selectRunId(nextSelectedId);
         await loadRunDetail(resolvedBase, nextSelectedId);
       } else {
+        detailContextRef.current = null;
         setDetail(null);
-        setSelectedRunId(null);
+        selectRunId(null);
       }
     } catch (error: unknown) {
+      if (!isCurrentConnection()) return;
       setError(getUsageServiceDisplayError(error, t));
+      runsContextRef.current = null;
+      detailContextRef.current = null;
       setRuns([]);
       setDetail(null);
       setHeaderSnapshots([]);
       setAuthFiles([]);
-      setSelectedRunId(null);
+      selectRunId(null);
     } finally {
-      setLoading(false);
+      if (isCurrentConnection()) setLoading(false);
     }
   }, [
     featureAvailability.managerServiceBase,
     featureAvailability.serverCodexInspectionAvailable,
     loadRunDetail,
     managementKey,
+    managerConnectionIdentity,
+    selectRunId,
     t,
   ]);
 
@@ -826,34 +986,50 @@ export function ServerCodexInspectionPage() {
     (!normalizedDraftConfig || !configsEquivalent(selectedConfig, normalizedDraftConfig))
   );
   const savedScheduleLabel = formatSchedule(selectedConfig, t);
-  const hasRunningRun =
-    runs.some((run) => run.status === 'running') || detail?.run.status === 'running';
-  const latestRun = runs[0] ?? null;
-  const activeRun = detail?.run ?? latestRun;
+  const currentRuns = useMemo(
+    () =>
+      runsContextRef.current === managerConnectionIdentity ? runs : EMPTY_CODEX_INSPECTION_RUNS,
+    [managerConnectionIdentity, runs]
+  );
+  const currentDetail = detailContextRef.current === managerConnectionIdentity ? detail : null;
+  const serverLogEntries = useMemo(
+    () =>
+      (currentDetail?.logs ?? []).map((entry) =>
+        toServerInspectionLogViewEntry(entry, currentDetail?.run, t)
+      ),
+    [currentDetail, t]
+  );
+  useEffect(() => {
+    setLogLevelFilter('all');
+  }, [currentDetail?.run.id]);
+  const hasRunningRun = hasActiveRun(currentRuns, currentDetail?.run);
+  const latestRun = currentRuns[0] ?? null;
+  const activeRun = currentDetail?.run ?? latestRun;
+  const cancellableRun = findCancellableRun(currentRuns, activeRun);
   const activeTone = getRunTone(activeRun);
-  const actionCounts = activeRun
-    ? activeRun.deleteCount +
-      activeRun.disableCount +
-      activeRun.enableCount +
-      (activeRun.reauthCount ?? 0)
-    : 0;
 
-  const resultRows = useMemo(() => detail?.results ?? [], [detail?.results]);
+  const resultRows = useMemo(() => currentDetail?.results ?? [], [currentDetail?.results]);
+  const headerSnapshotCutoffMs =
+    currentDetail?.run.finishedAtMs ?? currentDetail?.run.updatedAtMs ?? Number.POSITIVE_INFINITY;
   const headerSnapshotLookup = useMemo(
-    () => buildUsageHeaderSnapshotLookup(headerSnapshots),
-    [headerSnapshots]
+    () =>
+      buildUsageHeaderSnapshotLookup(
+        headerSnapshots.filter((snapshot) => snapshot.timestamp_ms <= headerSnapshotCutoffMs)
+      ),
+    [headerSnapshotCutoffMs, headerSnapshots]
   );
   const resultItems = useMemo(
     () =>
-      resultRows.map((item) =>
-        toServerResultItem(
+      resultRows.map((item) => {
+        const snapshotMatch = getUsageHeaderSnapshotMatchForIdentity(headerSnapshotLookup, {
+          fileName: item.fileName,
+          authIndex: item.authIndex,
+          account: item.accountId || item.displayAccount,
+        });
+        return toServerResultItem(
           item,
           t,
-          getUsageHeaderSnapshotForIdentity(headerSnapshotLookup, {
-            fileName: item.fileName,
-            authIndex: item.authIndex,
-            account: item.accountId || item.displayAccount,
-          }),
+          snapshotMatch.confidence === 'high' ? snapshotMatch.snapshot : undefined,
           i18n.language,
           findAuthFileForIdentity(authFiles, {
             authIndex: item.authIndex,
@@ -862,8 +1038,8 @@ export function ServerCodexInspectionPage() {
             accountId: item.accountId,
             provider: item.provider,
           })
-        )
-      ),
+        );
+      }),
     [authFiles, headerSnapshotLookup, i18n.language, resultRows, t]
   );
   const resultByKey = useMemo(() => {
@@ -884,7 +1060,7 @@ export function ServerCodexInspectionPage() {
 
   useEffect(() => {
     setResultPage(1);
-  }, [actionFilter, handlingFilter, detail?.run.id]);
+  }, [actionFilter, currentDetail?.run.id, handlingFilter]);
 
   useEffect(() => {
     if (resultPage === resultPagination.currentPage) return;
@@ -938,13 +1114,17 @@ export function ServerCodexInspectionPage() {
   const refreshRuns = useCallback(
     async (options?: { silent?: boolean }) => {
       if (refreshInFlightRef.current) return;
+      const connectionContext = managerConnectionIdentity;
+      const isCurrentConnection = () =>
+        activeManagerConnectionIdentityRef.current === connectionContext;
+      if (!isCurrentConnection()) return;
       refreshInFlightRef.current = true;
       const silent = options?.silent ?? false;
       if (!serviceBase) {
         try {
           await loadPageData();
         } finally {
-          refreshInFlightRef.current = false;
+          if (isCurrentConnection()) refreshInFlightRef.current = false;
         }
         return;
       }
@@ -953,55 +1133,90 @@ export function ServerCodexInspectionPage() {
         setError('');
       }
       try {
+        const mutationGeneration = runListMutationGenerationRef.current;
         const response = await usageServiceApi.listCodexInspectionRuns(
           serviceBase,
           managementKey,
           RUNS_LIMIT
         );
+        // A start/cancel response is newer than any list request that began
+        // before that lifecycle mutation completed. Discard the stale snapshot
+        // so it cannot resurrect a running action after cancellation.
+        if (!isCurrentConnection() || mutationGeneration !== runListMutationGenerationRef.current) {
+          return;
+        }
+        runsContextRef.current = connectionContext;
         setRuns(response.items);
+        const currentSelectedRunId = selectedRunIdRef.current;
         const selectionStillValid =
-          selectedRunId != null && response.items.some((run) => run.id === selectedRunId);
+          currentSelectedRunId != null &&
+          response.items.some((run) => run.id === currentSelectedRunId);
         if (selectionStillValid) {
           // 静默轮询时保留用户正在查看的历史详情,避免每 30s 重建详情导致结果表/日志
           // 重渲染、打断操作;但正在运行的巡检或尚无详情时仍需刷新以获取最新进度。
-          const watchingRunning = detail?.run.status === 'running';
-          if (!silent || !detail || watchingRunning) {
-            await loadRunDetail(serviceBase, selectedRunId);
+          const watchingRunning = isActiveRun(currentDetail?.run);
+          if (!silent || !currentDetail || watchingRunning) {
+            await loadRunDetail(serviceBase, currentSelectedRunId);
           }
         } else {
           const fallbackId = response.items[0]?.id;
           if (fallbackId) {
+            selectRunId(fallbackId);
             await loadRunDetail(serviceBase, fallbackId);
           } else {
+            detailContextRef.current = null;
             setDetail(null);
-            setSelectedRunId(null);
+            selectRunId(null);
           }
         }
       } catch (error: unknown) {
-        if (!silent) setError(getUsageServiceDisplayError(error, t));
+        if (isCurrentConnection() && !silent) setError(getUsageServiceDisplayError(error, t));
       } finally {
-        if (!silent) setLoading(false);
-        refreshInFlightRef.current = false;
+        if (isCurrentConnection()) {
+          if (!silent) setLoading(false);
+          refreshInFlightRef.current = false;
+        }
       }
     },
-    [detail, loadPageData, loadRunDetail, managementKey, selectedRunId, serviceBase, t]
+    [
+      currentDetail,
+      loadPageData,
+      loadRunDetail,
+      managementKey,
+      managerConnectionIdentity,
+      selectRunId,
+      serviceBase,
+      t,
+    ]
   );
 
   useEffect(() => {
     if (!serviceBase || (!selectedConfig.enabled && !hasRunningRun)) return;
     const timer = window.setInterval(() => {
-      if (saving || running || actionInFlightRef.current) return;
+      if (saving || running || cancelling || actionInFlightRef.current) return;
       void refreshRuns({ silent: true });
     }, 30_000);
 
     return () => window.clearInterval(timer);
-  }, [hasRunningRun, refreshRuns, running, saving, selectedConfig.enabled, serviceBase]);
+  }, [
+    cancelling,
+    hasRunningRun,
+    refreshRuns,
+    running,
+    saving,
+    selectedConfig.enabled,
+    serviceBase,
+  ]);
 
   const handleSave = async () => {
     if (!serviceBase || !managerConfig) {
       showNotification(t('monitoring.server_codex_inspection_service_unavailable'), 'warning');
       return;
     }
+    const connectionContext = managerConnectionIdentity;
+    const isCurrentConnection = () =>
+      activeManagerConnectionIdentityRef.current === connectionContext;
+    if (!isCurrentConnection()) return;
     const codexInspection = createConfigFromDraft(draft, t);
     if (!codexInspection) {
       showNotification(t('monitoring.server_codex_inspection_config_invalid'), 'warning');
@@ -1017,22 +1232,25 @@ export function ServerCodexInspectionPage() {
         },
         managementKey
       );
+      if (!isCurrentConnection()) return;
       setManagerConfig(response.config);
       setDraft(toDraft(response.config.codexInspection));
       showNotification(t('monitoring.server_codex_inspection_config_saved'), 'success');
       setConfigDrawerOpen(false);
     } catch (error: unknown) {
+      if (!isCurrentConnection()) return;
       showNotification(
         `${t('notification.save_failed')}: ${getUsageServiceDisplayError(error, t)}`,
         'error'
       );
     } finally {
-      setSaving(false);
+      if (isCurrentConnection()) setSaving(false);
     }
   };
 
   const handleCloseConfigDrawer = useCallback(() => {
     if (hasUnsavedChanges) {
+      const connectionContext = managerConnectionIdentity;
       showConfirmation({
         title: t('monitoring.server_codex_inspection_close_confirm_title'),
         message: t('monitoring.server_codex_inspection_close_unsaved_hint'),
@@ -1040,6 +1258,7 @@ export function ServerCodexInspectionPage() {
         cancelText: t('common.cancel'),
         variant: 'danger',
         onConfirm: () => {
+          if (activeManagerConnectionIdentityRef.current !== connectionContext) return;
           setDraft(toDraft(managerConfig?.codexInspection));
           setConfigDrawerOpen(false);
         },
@@ -1047,7 +1266,7 @@ export function ServerCodexInspectionPage() {
       return;
     }
     setConfigDrawerOpen(false);
-  }, [hasUnsavedChanges, managerConfig, showConfirmation, t]);
+  }, [hasUnsavedChanges, managerConfig, managerConnectionIdentity, showConfirmation, t]);
 
   const openConfigDrawer = useCallback((field?: string) => {
     setConfigFocusField(field ?? null);
@@ -1059,20 +1278,47 @@ export function ServerCodexInspectionPage() {
       showNotification(t('monitoring.server_codex_inspection_service_unavailable'), 'warning');
       return;
     }
+    const connectionContext = managerConnectionIdentity;
+    const isCurrentConnection = () =>
+      activeManagerConnectionIdentityRef.current === connectionContext;
+    if (!isCurrentConnection()) return;
     setRunning(true);
     setError('');
     try {
       const nextDetail = await usageServiceApi.runCodexInspection(serviceBase, managementKey);
+      if (!isCurrentConnection()) return;
+      const mutationGeneration = ++runListMutationGenerationRef.current;
+      selectRunId(nextDetail.run.id);
+      detailContextRef.current = connectionContext;
       setDetail(nextDetail);
-      setSelectedRunId(nextDetail.run.id);
-      const response = await usageServiceApi.listCodexInspectionRuns(
-        serviceBase,
-        managementKey,
-        RUNS_LIMIT
-      );
-      setRuns(response.items);
-      showNotification(t('monitoring.server_codex_inspection_run_success'), 'success');
+      showNotification(t('monitoring.server_codex_inspection_run_started'), 'success');
+      try {
+        const response = await usageServiceApi.listCodexInspectionRuns(
+          serviceBase,
+          managementKey,
+          RUNS_LIMIT
+        );
+        if (!isCurrentConnection() || mutationGeneration !== runListMutationGenerationRef.current) {
+          return;
+        }
+        runsContextRef.current = connectionContext;
+        setRuns(response.items);
+        const refreshedRun = response.items.find((item) => item.id === nextDetail.run.id);
+        if (refreshedRun) {
+          setDetail((current) =>
+            current?.run.id === refreshedRun.id ? { ...current, run: refreshedRun } : current
+          );
+        }
+        // A small inspection may finish between the asynchronous start response
+        // and this list refresh. Reload its detail so the page does not retain a
+        // synthetic running state with empty results after the run is terminal.
+        await loadRunDetail(serviceBase, nextDetail.run.id);
+      } catch {
+        // Starting already succeeded. Reconciliation failure must not be shown
+        // as a failed start; a later poll/manual refresh can retry it.
+      }
     } catch (error: unknown) {
+      if (!isCurrentConnection()) return;
       const message = getUsageServiceDisplayError(error, t);
       showNotification(
         `${t('monitoring.server_codex_inspection_run_failed')}: ${message}`,
@@ -1080,29 +1326,158 @@ export function ServerCodexInspectionPage() {
       );
       await refreshRuns();
     } finally {
-      setRunning(false);
+      if (isCurrentConnection()) setRunning(false);
     }
-  }, [managementKey, refreshRuns, serviceBase, showNotification, t]);
+  }, [
+    loadRunDetail,
+    managementKey,
+    managerConnectionIdentity,
+    refreshRuns,
+    selectRunId,
+    serviceBase,
+    showNotification,
+    t,
+  ]);
 
   const handleRunNow = () => {
+    const connectionContext = managerConnectionIdentity;
     showConfirmation({
       title: t('monitoring.server_codex_inspection_run_confirm_title'),
       message: t('monitoring.server_codex_inspection_run_confirm_body'),
       confirmText: t('monitoring.server_codex_inspection_run_now'),
       cancelText: t('common.cancel'),
       variant: selectedConfig.autoActionMode === 'delete' ? 'danger' : 'primary',
-      onConfirm: executeServerRun,
+      onConfirm: () => {
+        if (activeManagerConnectionIdentityRef.current !== connectionContext) return;
+        void executeServerRun();
+      },
+    });
+  };
+
+  const executeServerCancel = useCallback(async () => {
+    if (!serviceBase || !cancellableRun) return;
+    const connectionContext = managerConnectionIdentity;
+    const isCurrentConnection = () =>
+      activeManagerConnectionIdentityRef.current === connectionContext;
+    if (!isCurrentConnection()) return;
+    const requestedRunId = cancellableRun.id;
+    // Keep a user's history selection stable while the cancel request is in
+    // flight. A response for the active run may update the detail view only
+    // when that same run is still selected; otherwise the user's history view
+    // must remain untouched.
+    setCancelling(true);
+    try {
+      const nextDetail = await usageServiceApi.cancelCodexInspectionRun(
+        serviceBase,
+        managementKey,
+        requestedRunId
+      );
+      if (!isCurrentConnection()) return;
+      ++runListMutationGenerationRef.current;
+      runsContextRef.current = connectionContext;
+      setRuns((current) => {
+        let found = false;
+        const updated = current.map((item) => {
+          if (item.id !== nextDetail.run.id) return item;
+          found = true;
+          return nextDetail.run;
+        });
+        return found ? updated : [nextDetail.run, ...updated];
+      });
+      if (selectedRunIdRef.current === requestedRunId) {
+        selectRunId(nextDetail.run.id);
+        detailContextRef.current = connectionContext;
+        setDetail(nextDetail);
+      }
+      showNotification(t('monitoring.server_codex_inspection_cancel_requested'), 'success');
+      await refreshRuns({ silent: true });
+    } catch (error: unknown) {
+      if (!isCurrentConnection()) return;
+      showNotification(
+        `${t('monitoring.server_codex_inspection_cancel_failed')}: ${getUsageServiceDisplayError(error, t)}`,
+        'error'
+      );
+      // A conflict normally means the worker committed a newer terminal state.
+      // Bypass the ordinary in-flight refresh guard so a pre-cancel poll cannot
+      // leave the page on a stale running snapshot.
+      const mutationGeneration = ++runListMutationGenerationRef.current;
+      try {
+        const response = await usageServiceApi.listCodexInspectionRuns(
+          serviceBase,
+          managementKey,
+          RUNS_LIMIT
+        );
+        if (isCurrentConnection() && mutationGeneration === runListMutationGenerationRef.current) {
+          runsContextRef.current = connectionContext;
+          setRuns(response.items);
+        }
+      } catch {
+        // The original cancellation error remains the user-facing failure. A
+        // later poll/manual refresh can retry list reconciliation.
+      }
+      if (selectedRunIdRef.current === requestedRunId) {
+        try {
+          await loadRunDetail(serviceBase, requestedRunId);
+        } catch {
+          // Keep the cancellation error as the primary notification.
+        }
+      }
+    } finally {
+      if (isCurrentConnection()) setCancelling(false);
+    }
+  }, [
+    cancellableRun,
+    loadRunDetail,
+    managementKey,
+    managerConnectionIdentity,
+    refreshRuns,
+    selectRunId,
+    selectedRunIdRef,
+    serviceBase,
+    showNotification,
+    t,
+  ]);
+
+  const handleCancelRun = () => {
+    if (!cancellableRun || cancellableRun.status === 'cancelling') return;
+    const connectionContext = managerConnectionIdentity;
+    showConfirmation({
+      title: t('monitoring.server_codex_inspection_cancel_confirm_title'),
+      message: t('monitoring.server_codex_inspection_cancel_confirm_body'),
+      confirmText: t('monitoring.server_codex_inspection_stop'),
+      cancelText: t('common.cancel'),
+      variant: 'danger',
+      onConfirm: () => {
+        if (activeManagerConnectionIdentityRef.current !== connectionContext) return;
+        void executeServerCancel();
+      },
     });
   };
 
   const executeServerActions = useCallback(
-    async (targets: CodexInspectionResult[], scope: 'single' | 'bulk') => {
-      if (!serviceBase || !detail) {
+    async (
+      targets: CodexInspectionResult[],
+      scope: 'single' | 'bulk',
+      overrideAction?: 'delete'
+    ) => {
+      if (!serviceBase || !currentDetail) {
         showNotification(t('monitoring.server_codex_inspection_service_unavailable'), 'warning');
         return;
       }
+      const connectionContext = managerConnectionIdentity;
+      const isCurrentConnection = () =>
+        activeManagerConnectionIdentityRef.current === connectionContext;
+      if (!isCurrentConnection()) return;
       const resultIds = Array.from(
-        new Set(targets.filter(isActionableServerCodexInspectionResult).map((item) => item.id))
+        new Set(
+          targets
+            .filter((item) =>
+              overrideAction === 'delete'
+                ? item.action === 'reauth' && item.id > 0
+                : isActionableServerCodexInspectionResult(item)
+            )
+            .map((item) => item.id)
+        )
       );
       if (resultIds.length === 0) {
         showNotification(t('monitoring.server_codex_inspection_no_actions'), 'warning');
@@ -1115,48 +1490,120 @@ export function ServerCodexInspectionPage() {
         const response = await usageServiceApi.executeCodexInspectionActions(
           serviceBase,
           managementKey,
-          detail.run.id,
-          resultIds
+          currentDetail.run.id,
+          resultIds,
+          overrideAction === 'delete'
+            ? resultIds.map((resultId) => ({ resultId, action: 'delete' as const }))
+            : []
         );
+        if (!isCurrentConnection()) return;
+        selectRunId(response.detail.run.id);
+        detailContextRef.current = connectionContext;
         setDetail(response.detail);
-        setSelectedRunId(response.detail.run.id);
+        const actionSnapshot = createServerCredentialInspectionSnapshot(response.detail, [
+          response.detail.run,
+          ...currentRuns.filter((run) => run.id !== response.detail.run.id),
+        ]);
+        let synchronizationWarning = '';
+        try {
+          await onCredentialsChanged?.(undefined, actionSnapshot);
+        } catch (error: unknown) {
+          if (!isCurrentConnection()) return;
+          synchronizationWarning = `${t('notification.refresh_failed')}: ${getUsageServiceDisplayError(error, t)}`;
+        }
+        if (!isCurrentConnection()) return;
 
-        const runsResponse = await usageServiceApi.listCodexInspectionRuns(
-          serviceBase,
-          managementKey,
-          RUNS_LIMIT
+        try {
+          const runsResponse = await usageServiceApi.listCodexInspectionRuns(
+            serviceBase,
+            managementKey,
+            RUNS_LIMIT
+          );
+          if (!isCurrentConnection()) return;
+          runsContextRef.current = connectionContext;
+          setRuns(runsResponse.items);
+        } catch {
+          // The credential action already succeeded. A later poll or manual refresh can
+          // reconcile the history list without misreporting the mutation as failed.
+        }
+        if (!isCurrentConnection()) return;
+
+        const outcomeSummary = response.outcomes.reduce(
+          (summary, outcome) => {
+            switch (outcome.status) {
+              case 'success':
+                summary.success += 1;
+                break;
+              case 'skipped':
+                summary.skipped += 1;
+                break;
+              case 'needs_review':
+                summary.needsReview += 1;
+                break;
+              case 'failed':
+                summary.failed += 1;
+                break;
+              default:
+                if (outcome.success) summary.success += 1;
+                else summary.failed += 1;
+            }
+            return summary;
+          },
+          { success: 0, skipped: 0, needsReview: 0, failed: 0 }
         );
-        setRuns(runsResponse.items);
-
-        const failed = response.outcomes.filter((item) => !item.success);
-        if (failed.length > 0) {
+        const hasNonSuccessOutcome =
+          outcomeSummary.failed > 0 || outcomeSummary.skipped > 0 || outcomeSummary.needsReview > 0;
+        if (hasNonSuccessOutcome) {
           showNotification(
-            t('monitoring.server_codex_inspection_execute_partial', {
-              failed: failed.length,
-              total: response.outcomes.length,
-            }),
+            [
+              t('monitoring.codex_inspection_log_manual_completed', {
+                success: outcomeSummary.success,
+                skipped: outcomeSummary.skipped,
+                review: outcomeSummary.needsReview,
+                failed: outcomeSummary.failed,
+              }),
+              synchronizationWarning,
+            ]
+              .filter(Boolean)
+              .join('；'),
             'warning'
           );
+        } else if (synchronizationWarning) {
+          showNotification(synchronizationWarning, 'warning');
         } else {
           showNotification(t('monitoring.server_codex_inspection_execute_success'), 'success');
         }
       } catch (error: unknown) {
+        if (!isCurrentConnection()) return;
         showNotification(
           `${t('monitoring.server_codex_inspection_execute_failed')}: ${getUsageServiceDisplayError(error, t)}`,
           'error'
         );
       } finally {
-        actionInFlightRef.current = false;
-        setExecutingResultIds(new Set());
-        setExecutingAllActions(false);
+        if (isCurrentConnection()) {
+          actionInFlightRef.current = false;
+          setExecutingResultIds(new Set());
+          setExecutingAllActions(false);
+        }
       }
     },
-    [detail, managementKey, serviceBase, showNotification, t]
+    [
+      currentDetail,
+      currentRuns,
+      managementKey,
+      managerConnectionIdentity,
+      onCredentialsChanged,
+      selectRunId,
+      serviceBase,
+      showNotification,
+      t,
+    ]
   );
 
   const handleExecuteServerActions = useCallback(
     (targets: CodexInspectionResult[], scope: 'single' | 'bulk') => {
       if (targets.length === 0) return;
+      const connectionContext = managerConnectionIdentity;
       const counts = countServerResultActions(targets);
       const hasDelete = targets.some((item) => item.action === 'delete');
       const first = targets[0];
@@ -1193,14 +1640,21 @@ export function ServerCodexInspectionPage() {
             : resolveActionLabel(first.action, t),
         cancelText: t('common.cancel'),
         variant: hasDelete ? 'danger' : 'primary',
-        onConfirm: () => executeServerActions(targets, scope),
+        onConfirm: () => {
+          if (activeManagerConnectionIdentityRef.current !== connectionContext) return;
+          void executeServerActions(targets, scope);
+        },
       });
     },
-    [authFiles, executeServerActions, showConfirmation, t]
+    [authFiles, executeServerActions, managerConnectionIdentity, showConfirmation, t]
   );
 
   const handleOpenCodexReauth = useCallback(
     (item: CodexInspectionResult) => {
+      if (item.provider === 'xai') {
+        navigate('/oauth#oauth-provider-xai');
+        return;
+      }
       const authFile = findAuthFileForIdentity(authFiles, {
         authIndex: item.authIndex,
         fileName: item.fileName,
@@ -1209,28 +1663,79 @@ export function ServerCodexInspectionPage() {
         provider: item.provider,
       });
       const identityTarget = authFile ? createCodexReauthTargetFromAuthFile(authFile) : null;
-      setCodexReauthTarget({
+      const target: CodexReauthTarget = {
         ...identityTarget,
         account: identityTarget?.account || item.displayAccount || item.accountId || item.fileName,
         fileName: item.fileName,
+        runtimeId: item.runtimeId ?? null,
+        provider: item.provider ?? 'codex',
         authIndex: item.authIndex ?? null,
         accountId: item.accountId ?? null,
+        accountSnapshot: item.accountSnapshot ?? null,
+      };
+      if (onCodexReauthStart?.(target) === false) return;
+      setCodexReauthTarget(target);
+    },
+    [authFiles, navigate, onCodexReauthStart]
+  );
+
+  const handleDeleteServerReauth = useCallback(
+    (targets: CodexInspectionResult[], scope: 'single' | 'bulk') => {
+      if (targets.length === 0) return;
+      const connectionContext = managerConnectionIdentity;
+      const first = targets[0];
+      showConfirmation({
+        title:
+          scope === 'bulk'
+            ? t('monitoring.codex_inspection_delete_reauth_confirm_title')
+            : t('monitoring.codex_inspection_delete_reauth_single_title'),
+        message:
+          scope === 'bulk'
+            ? t('monitoring.codex_inspection_delete_reauth_confirm_body', {
+                count: targets.length,
+              })
+            : t('monitoring.codex_inspection_delete_reauth_single_body', {
+                account: first.displayAccount,
+                file: first.fileName,
+              }),
+        confirmText: t('monitoring.codex_inspection_action_delete'),
+        cancelText: t('common.cancel'),
+        variant: 'danger',
+        onConfirm: () => {
+          if (activeManagerConnectionIdentityRef.current !== connectionContext) return;
+          void executeServerActions(targets, scope, 'delete');
+        },
       });
     },
-    [authFiles]
+    [executeServerActions, managerConnectionIdentity, showConfirmation, t]
   );
 
   const handleCodexReauthSuccess = useCallback(async () => {
+    const connectionContext = managerConnectionIdentity;
+    if (activeManagerConnectionIdentityRef.current !== connectionContext) return;
     await refreshRuns({ silent: true });
+    if (activeManagerConnectionIdentityRef.current !== connectionContext) return;
+    await onCredentialsChanged?.(codexReauthTarget);
+    if (activeManagerConnectionIdentityRef.current !== connectionContext) return;
     showNotification(t('codex_reauth.rerun_hint'), 'success');
-  }, [refreshRuns, showNotification, t]);
+  }, [
+    codexReauthTarget,
+    managerConnectionIdentity,
+    onCredentialsChanged,
+    refreshRuns,
+    showNotification,
+    t,
+  ]);
 
   const handleSelectRun = async (runID: number) => {
     if (!serviceBase || runID === selectedRunId) return;
-    setSelectedRunId(runID);
+    const connectionContext = managerConnectionIdentity;
+    if (activeManagerConnectionIdentityRef.current !== connectionContext) return;
+    selectRunId(runID);
     try {
       await loadRunDetail(serviceBase, runID);
     } catch (error: unknown) {
+      if (activeManagerConnectionIdentityRef.current !== connectionContext) return;
       showNotification(getUsageServiceDisplayError(error, t), 'error');
     }
   };
@@ -1255,35 +1760,26 @@ export function ServerCodexInspectionPage() {
 
     return (
       <Panel className={styles.statusPanel}>
-        <div className={styles.statusBar}>
-          <div className={styles.statusInfo}>
-            <span className={`${styles.statusBadge} ${statusToneClass[activeTone]}`}>
-              <span className={styles.statusDot} aria-hidden="true" />
-              {getRunStatusLabel(activeRun, t)}
-            </span>
-            <span
-              className={`${styles.statusBadge} ${
-                selectedConfig.enabled ? statusToneClass.good : statusToneClass.idle
-              }`}
-            >
-              <span className={styles.statusDot} aria-hidden="true" />
-              {selectedConfig.enabled
-                ? t('monitoring.server_codex_inspection_schedule_enabled')
-                : t('monitoring.server_codex_inspection_schedule_disabled')}
-            </span>
-            <div className={styles.statusMeta}>
-              <span>
-                {t('monitoring.server_codex_inspection_last_run')}: {lastRunTime}
-                {activeRun?.finishedAtMs ? ` · ${durationLabel}` : ''}
-              </span>
-              {serviceHost ? (
-                <span className={styles.statusMetaHost} title={serviceBase}>
-                  {serviceHost}
-                </span>
-              ) : null}
-            </div>
-          </div>
-          <div className={styles.statusActions}>
+        <div className={styles.statusPanelHeader}>
+          {modeControl ? <div className={styles.statusPanelTabs}>{modeControl}</div> : <div />}
+          <div className={styles.statusPanelActions}>
+            <details className={`${styles.infoNote} ${styles.infoNoteCompact}`}>
+              <summary>{t('monitoring.server_codex_inspection_info_summary')}</summary>
+              <ul className={styles.infoNoteList}>
+                <li>
+                  <strong>{t('monitoring.server_codex_inspection_worker_poll')}:</strong>{' '}
+                  {t('monitoring.server_codex_inspection_effect_hint')}
+                </li>
+                <li>
+                  <strong>{t('monitoring.server_codex_inspection_time_basis')}:</strong>{' '}
+                  {t('monitoring.server_codex_inspection_server_time_hint')}
+                </li>
+                <li>
+                  <strong>{t('monitoring.server_codex_inspection_history_refresh')}:</strong>{' '}
+                  {t('monitoring.server_codex_inspection_auto_refresh_hint')}
+                </li>
+              </ul>
+            </details>
             <Button
               variant="secondary"
               size="sm"
@@ -1292,133 +1788,151 @@ export function ServerCodexInspectionPage() {
             >
               {t('common.refresh')}
             </Button>
+            <Button variant="secondary" size="sm" onClick={() => openConfigDrawer()}>
+              {t('monitoring.codex_inspection_config_overview_edit')}
+            </Button>
             <Button
               size="sm"
               onClick={handleRunNow}
               loading={running}
-              disabled={!serviceBase || running}
+              disabled={!serviceBase || running || hasRunningRun}
             >
               {t('monitoring.server_codex_inspection_run_now')}
             </Button>
+            <CodexInspectionStopButton
+              run={cancellableRun}
+              busy={cancelling}
+              onClick={handleCancelRun}
+              t={t}
+            />
           </div>
         </div>
 
-        <details className={styles.infoNote}>
-          <summary>{t('monitoring.server_codex_inspection_info_summary')}</summary>
-          <ul className={styles.infoNoteList}>
-            <li>
-              <strong>{t('monitoring.server_codex_inspection_worker_poll')}:</strong>{' '}
-              {t('monitoring.server_codex_inspection_effect_hint')}
-            </li>
-            <li>
-              <strong>{t('monitoring.server_codex_inspection_time_basis')}:</strong>{' '}
-              {t('monitoring.server_codex_inspection_server_time_hint')}
-            </li>
-            <li>
-              <strong>{t('monitoring.server_codex_inspection_history_refresh')}:</strong>{' '}
-              {t('monitoring.server_codex_inspection_auto_refresh_hint')}
-            </li>
-          </ul>
-        </details>
-
-        <CodexInspectionConfigOverview
-          title={t('monitoring.codex_inspection_config_overview_title')}
-          editLabel={t('monitoring.codex_inspection_config_overview_edit')}
-          ariaLabel={t('monitoring.server_codex_inspection_config_summary_title')}
-          items={configOverviewItems}
-          onEdit={openConfigDrawer}
-        />
-
-        <div className={styles.summaryGrid}>
-          {[
-            {
-              key: 'probe-total',
-              label: t('monitoring.codex_inspection_total_accounts'),
-              value: activeRun ? String(activeRun.probeSetCount) : summaryBlankValue,
-              meta: t('monitoring.server_codex_inspection_total_files', {
-                count: activeRun?.totalFiles ?? 0,
-              }),
-              Icon: IconInbox,
-              accent: 'blue' as const,
-            },
-            {
-              key: 'sampled',
-              label: t('monitoring.codex_inspection_sampled_accounts'),
-              value: activeRun ? String(activeRun.sampledCount) : summaryBlankValue,
-              meta: formatTrigger(activeRun, t),
-              Icon: IconChartLine,
-              accent: 'cyan' as const,
-            },
-            {
-              key: 'delete',
-              label: t('monitoring.codex_inspection_delete_count'),
-              value: activeRun ? String(activeRun.deleteCount) : summaryBlankValue,
-              meta: t('monitoring.server_codex_inspection_action_total_value', {
-                count: actionCounts,
-              }),
-              tone: 'bad',
-              Icon: IconTrash2,
-              accent: 'red' as const,
-            },
-            {
-              key: 'disable',
-              label: t('monitoring.codex_inspection_disable_count'),
-              value: activeRun ? String(activeRun.disableCount) : summaryBlankValue,
-              meta: `${t('monitoring.codex_inspection_threshold')}: ${selectedConfig.usedPercentThreshold}%`,
-              tone: 'warn',
-              Icon: IconShield,
-              accent: 'amber' as const,
-            },
-            {
-              key: 'enable',
-              label: t('monitoring.codex_inspection_enable_count'),
-              value: activeRun ? String(activeRun.enableCount) : summaryBlankValue,
-              meta: t('monitoring.server_codex_inspection_keep_count', {
-                count: activeRun?.keepCount ?? 0,
-              }),
-              tone: 'good',
-              Icon: IconCheck,
-              accent: 'green' as const,
-            },
-            {
-              key: 'reauth',
-              label: t('monitoring.codex_inspection_reauth_count'),
-              value: activeRun ? String(activeRun.reauthCount) : summaryBlankValue,
-              meta: t('monitoring.codex_inspection_action_reauth'),
-              tone: 'info',
-              Icon: IconRefreshCw,
-              accent: 'violet' as const,
-            },
-          ].map((card) => {
-            const SummaryIcon = card.Icon;
-            return (
-              <div
-                key={card.key}
-                className={[
-                  styles.summaryCard,
-                  summaryAccentClassMap[card.accent],
-                  card.tone ? styles[`tone-${card.tone}`] : '',
-                ]
-                  .filter(Boolean)
-                  .join(' ')}
-              >
-                <div className={styles.summaryHeader}>
-                  <span className={styles.summaryIcon}>
-                    <SummaryIcon size={18} />
-                  </span>
-                  <span className={styles.summaryLabel} title={card.label}>
-                    {card.label}
-                  </span>
-                </div>
-                <div className={styles.summaryBody}>
-                  <strong className={styles.summaryValue}>{card.value}</strong>
-                  <span className={styles.summaryMeta} title={card.meta}>
-                    {card.meta}
-                  </span>
-                </div>
+        <div className={styles.statusPanelBody}>
+          <div className={styles.statusMetricsRow}>
+            <div className={styles.statusMetric}>
+              <span className={styles.statusMetricLabel}>{t('common.status')}</span>
+              <span className={styles.statusMetricValue}>
+                <span
+                  className={styles.statusDot}
+                  aria-hidden="true"
+                  style={{
+                    color: `var(--inspect-${activeTone === 'good' ? 'green' : activeTone === 'bad' ? 'red' : activeTone === 'warn' ? 'amber' : activeTone === 'info' ? 'accent' : 'muted'})`,
+                    background: 'currentColor',
+                  }}
+                />
+                {getRunStatusLabel(activeRun, t)}
+              </span>
+            </div>
+            <div className={styles.statusMetric}>
+              <span className={styles.statusMetricLabel}>
+                {t('monitoring.server_codex_inspection_last_run')}
+              </span>
+              <span className={styles.statusMetricValue}>
+                {lastRunTime} {activeRun?.finishedAtMs ? ` · ${durationLabel}` : ''}
+              </span>
+            </div>
+            {serviceHost ? (
+              <div className={styles.statusMetric}>
+                <span className={styles.statusMetricLabel}>
+                  {t('monitoring.server_codex_inspection_host')}
+                </span>
+                <span className={styles.statusMetricValue} title={serviceBase}>
+                  {serviceHost}
+                </span>
               </div>
-            );
-          })}
+            ) : null}
+          </div>
+
+          {!selectedConfig.enabled ? (
+            <div className={styles.statusAlertBanner}>
+              ⚠️ {t('monitoring.server_codex_inspection_schedule_disabled')}
+            </div>
+          ) : null}
+
+          <CodexInspectionConfigOverview
+            title={t('monitoring.codex_inspection_config_overview_title')}
+            editLabel={t('monitoring.codex_inspection_config_overview_edit')}
+            copyLabel={t('monitoring.codex_inspection_settings_copy_prompt')}
+            copiedLabel={t('common.copied')}
+            ariaLabel={t('monitoring.server_codex_inspection_config_summary_title')}
+            items={configOverviewItems}
+            onEdit={openConfigDrawer}
+            compact
+            embedded
+            hideHeader
+          />
+
+          <section className={styles.summaryGrid}>
+            {[
+              {
+                key: 'probe-total',
+                label: t('monitoring.codex_inspection_total_accounts'),
+                value: activeRun ? String(activeRun.probeSetCount) : summaryBlankValue,
+                meta: t('monitoring.server_codex_inspection_total_files', {
+                  count: activeRun?.totalFiles ?? 0,
+                }),
+                icon: 'probe' as const,
+                accent: 'blue' as const,
+              },
+              {
+                key: 'sampled',
+                label: t('monitoring.codex_inspection_sampled_accounts'),
+                value: activeRun ? String(activeRun.sampledCount) : summaryBlankValue,
+                meta: getRunStatusLabel(activeRun, t),
+                icon: 'sampled' as const,
+                accent: 'cyan' as const,
+              },
+              {
+                key: 'delete',
+                label: t('monitoring.codex_inspection_delete_count'),
+                value: activeRun ? String(activeRun.deleteCount) : summaryBlankValue,
+                meta: t('monitoring.codex_inspection_delete_meta'),
+                tone: 'bad' as const,
+                icon: 'delete' as const,
+                accent: 'red' as const,
+              },
+              {
+                key: 'disable',
+                label: t('monitoring.codex_inspection_disable_count'),
+                value: activeRun ? String(activeRun.disableCount) : summaryBlankValue,
+                meta: `${t('monitoring.codex_inspection_threshold')} ${selectedConfig.usedPercentThreshold}%`,
+                tone: 'warn' as const,
+                icon: 'disable' as const,
+                accent: 'amber' as const,
+              },
+              {
+                key: 'enable',
+                label: t('monitoring.codex_inspection_enable_count'),
+                value: activeRun ? String(activeRun.enableCount) : summaryBlankValue,
+                meta: t('monitoring.codex_inspection_enable_meta'),
+                tone: 'good' as const,
+                icon: 'enable' as const,
+                accent: 'green' as const,
+              },
+              {
+                key: 'reauth',
+                label: t('monitoring.codex_inspection_reauth_count'),
+                value: activeRun ? String(activeRun.reauthCount) : summaryBlankValue,
+                meta: t('monitoring.codex_inspection_reauth_meta'),
+                icon: 'reauth' as const,
+                accent: 'violet' as const,
+              },
+            ].map((card) => {
+              const tone: MonitoringSummaryCardProps['tone'] = card.tone;
+              return (
+                <MonitoringSummaryCard
+                  key={card.key}
+                  label={card.label}
+                  value={card.value}
+                  meta={card.meta}
+                  icon={card.icon}
+                  accent={card.accent}
+                  tone={tone}
+                />
+              );
+            })}
+          </section>
         </div>
       </Panel>
     );
@@ -1531,18 +2045,18 @@ export function ServerCodexInspectionPage() {
                 />
               </div>
             ) : (
-              <>
-                <div className={`${styles.serverField} ${styles.serverFieldHalf}`}>
+              <div className={styles.scheduleTimePointFields}>
+                <div className={styles.scheduleTimePointField}>
                   <Input
                     id="timePoints"
                     label={t('monitoring.server_codex_inspection_time_points')}
                     value={draft.timePoints}
                     onChange={(event) => updateDraft('timePoints', event.target.value)}
                     placeholder="09:00, 13:30, 22:00"
-                    hint={t('monitoring.server_codex_inspection_time_points_hint')}
+                    aria-describedby="timePoints-hint"
                   />
                 </div>
-                <div className={`${styles.serverField} ${styles.serverFieldHalf}`}>
+                <div className={styles.scheduleTimePointField}>
                   <span className={styles.serverFieldLabel}>
                     {t('monitoring.server_codex_inspection_time_zone')}
                   </span>
@@ -1551,9 +2065,14 @@ export function ServerCodexInspectionPage() {
                     options={timeZoneOptions}
                     onChange={(value) => updateDraft('timeZone', value)}
                     ariaLabel={t('monitoring.server_codex_inspection_time_zone')}
+                    triggerClassName={styles.configSelectTrigger}
+                    dropdownClassName={styles.configSelectDropdown}
                   />
                 </div>
-              </>
+                <div id="timePoints-hint" className={styles.scheduleTimePointHint}>
+                  {t('monitoring.server_codex_inspection_time_points_hint')}
+                </div>
+              </div>
             )}
           </div>
         </section>
@@ -1563,24 +2082,23 @@ export function ServerCodexInspectionPage() {
           errors={fieldErrors}
           t={t}
           onFieldChange={(field, value) => updateDraft(field, value)}
+          onXaiInferenceEnabledChange={(value) => updateDraft('xaiInferenceEnabled', value)}
           onAutoActionModeChange={(value) => updateDraft('autoActionMode', value)}
+          onAutoRecoverEnabledChange={(value) => updateDraft('autoRecoverEnabled', value)}
         />
       </InspectionConfigDrawer>
     );
   };
 
   const renderRunsPanel = () => (
-    <Panel
-      title={t('monitoring.server_codex_inspection_history_title')}
-      subtitle={t('monitoring.server_codex_inspection_history_desc')}
-    >
-      {runs.length > 0 ? (
+    <Panel title={t('monitoring.server_codex_inspection_history_title')}>
+      {currentRuns.length > 0 ? (
         <div
           className={styles.runHistoryList}
           role="tablist"
           aria-label={t('monitoring.server_codex_inspection_history_title')}
         >
-          {runs.map((run) => {
+          {currentRuns.map((run) => {
             const tone = getRunTone(run);
             const selected = run.id === selectedRunId;
             const ariaLabel = `${getRunStatusLabel(run, t)} · #${run.id} · ${formatTimestamp(run.startedAtMs, i18n.language)}`;
@@ -1661,8 +2179,12 @@ export function ServerCodexInspectionPage() {
     const canonicalExecutableIds = getCanonicalServerCodexInspectionActionIds(resultRows);
     const mixedActionIds = getMixedServerCodexInspectionActionIds(resultRows);
     const executableResults = resultRows.filter((item) => canonicalExecutableIds.has(item.id));
-    const canExecuteActions = detail?.run.status === 'completed';
-    const resultsRun = detail?.run ?? null;
+    const reauthResults = resultRows.filter(isPendingServerReauthResult);
+    const canExecuteActions = currentDetail?.run.status === 'completed';
+    const resultsRun = currentDetail?.run ?? null;
+    const resultsConfig = resolveServerCodexConfig(
+      resultsRun?.settings ?? managerConfig?.codexInspection
+    );
     const actionFilterCounts = getActionFilterCounts(resultItems);
     const handlingFilterCounts = countHandlingStates(resultItems);
     const panelResult: CodexInspectionRunResult | null = resultsRun
@@ -1670,14 +2192,19 @@ export function ServerCodexInspectionPage() {
           settings: {
             baseUrl: serviceBase,
             token: '',
-            targetType: selectedConfig.targetType,
-            workers: selectedConfig.workers,
-            deleteWorkers: selectedConfig.deleteWorkers,
-            timeout: selectedConfig.timeout,
-            retries: selectedConfig.retries,
-            userAgent: selectedConfig.userAgent,
-            usedPercentThreshold: selectedConfig.usedPercentThreshold,
-            sampleSize: selectedConfig.sampleSize,
+            targetTypes: resultsConfig.targetTypes,
+            targetType: resultsConfig.targetType,
+            workers: resultsConfig.workers,
+            deleteWorkers: resultsConfig.deleteWorkers,
+            timeout: resultsConfig.timeout,
+            retries: resultsConfig.retries,
+            userAgent: resultsConfig.userAgent,
+            xaiInferenceUserAgent: resultsConfig.xaiInferenceUserAgent,
+            xaiInferenceEnabled: resultsConfig.xaiInferenceEnabled,
+            xaiInferenceModel: resultsConfig.xaiInferenceModel,
+            xaiInferencePrompt: resultsConfig.xaiInferencePrompt,
+            usedPercentThreshold: resultsConfig.usedPercentThreshold,
+            sampleSize: resultsConfig.sampleSize,
           },
           files: [],
           results: resultItems,
@@ -1692,8 +2219,8 @@ export function ServerCodexInspectionPage() {
             enableCount: resultsRun.enableCount,
             reauthCount: resultsRun.reauthCount,
             keepCount: resultsRun.keepCount,
-            usedPercentThreshold: selectedConfig.usedPercentThreshold,
-            sampled: selectedConfig.sampleSize > 0,
+            usedPercentThreshold: resultsConfig.usedPercentThreshold,
+            sampled: resultsConfig.sampleSize > 0,
             plannedActionPreview: [],
           },
           startedAt: resultsRun.startedAtMs,
@@ -1734,23 +2261,34 @@ export function ServerCodexInspectionPage() {
     const renderOperation = (item: CodexInspectionResultItem) => {
       const source = resultByKey.get(item.key);
       if (!source) {
-        return (
-          <span className={styles.primaryReason}>{t('monitoring.codex_inspection_no_action')}</span>
-        );
+        return null;
       }
 
       const actionStatus = normalizeServerCodexInspectionActionStatus(source);
-      const detailText = formatServerResultStateDetail(source, t);
-      const showDetail =
-        detailText &&
-        detailText !== '--' &&
-        !source.actionError &&
-        !source.errorDetail &&
-        !source.error;
+      const terminalStatusLabel = formatServerTerminalActionStatusLabel(source, t);
+      const actionError = source.actionError?.trim() ?? '';
+      const needsReview = actionStatus === 'needs_review' || mixedActionIds.has(source.id);
+      const hasFileLevelAction = isActionableServerCodexInspectionResult(source);
+      const pendingReauth = isPendingServerReauthResult(source);
+      const hasOperation =
+        Boolean(terminalStatusLabel) ||
+        canonicalExecutableIds.has(source.id) ||
+        needsReview ||
+        hasFileLevelAction ||
+        pendingReauth;
+
+      if (!hasOperation) return null;
 
       return (
         <div className={styles.serverResultOperation}>
-          {showDetail ? <span className={styles.primaryReason}>{detailText}</span> : null}
+          {terminalStatusLabel ? (
+            <span className={styles.primaryReason}>{terminalStatusLabel}</span>
+          ) : null}
+          {actionError ? (
+            <small className={styles.primaryReason} title={actionError}>
+              {actionError}
+            </small>
+          ) : null}
           {canonicalExecutableIds.has(source.id) ? (
             <Button
               size="xs"
@@ -1766,28 +2304,38 @@ export function ServerCodexInspectionPage() {
               })()}
               {resolveActionLabel(source.action, t)}
             </Button>
-          ) : actionStatus === 'needs_review' || mixedActionIds.has(source.id) ? (
+          ) : needsReview ? (
             <span className={styles.primaryReason}>
               {t('monitoring.server_codex_inspection_action_needs_review_hint')}
             </span>
-          ) : isActionableServerCodexInspectionResult(source) ? (
+          ) : hasFileLevelAction ? (
             <span className={styles.primaryReason}>
               {t('monitoring.server_codex_inspection_file_level_action_hint')}
             </span>
-          ) : source.action === 'reauth' ? (
-            <Button
-              size="xs"
-              variant="secondary"
-              className={styles.serverResultActionButton}
-              onClick={() => handleOpenCodexReauth(source)}
-            >
-              <IconRefreshCw size={13} />
-              {t('codex_reauth.button')}
-            </Button>
-          ) : source.action === 'keep' ? (
-            <span className={styles.primaryReason}>
-              {t('monitoring.codex_inspection_no_action')}
-            </span>
+          ) : pendingReauth ? (
+            <div className={styles.resultsHeaderActions}>
+              <Button
+                size="xs"
+                variant="secondary"
+                className={styles.serverResultActionButton}
+                onClick={() => handleOpenCodexReauth(source)}
+              >
+                <IconRefreshCw size={13} />
+                {t(
+                  source.provider === 'xai' ? 'auth_login.xai_oauth_button' : 'codex_reauth.button'
+                )}
+              </Button>
+              <Button
+                size="xs"
+                variant="danger"
+                className={styles.serverResultActionButton}
+                onClick={() => handleDeleteServerReauth([source], 'single')}
+                disabled={!canExecuteActions || executingResultIds.size > 0}
+              >
+                <IconTrash2 size={13} />
+                {t('monitoring.codex_inspection_action_delete')}
+              </Button>
+            </div>
           ) : null}
         </div>
       );
@@ -1797,9 +2345,9 @@ export function ServerCodexInspectionPage() {
       <CodexInspectionResultsPanel
         result={panelResult}
         filteredResults={resultPagination.pageItems}
-        suggestedResults={resultItems.filter((item) => item.action !== 'keep')}
         pendingActionCount={executableResults.length}
-        manualActionCount={actionFilterCounts.reauth}
+        manualActionCount={reauthResults.length}
+        reauthActionCount={reauthResults.length}
         handlingFilterCounts={handlingFilterCounts}
         filterCounts={actionFilterCounts}
         handlingFilter={handlingFilter}
@@ -1811,8 +2359,7 @@ export function ServerCodexInspectionPage() {
         isInspectionInFlight={Boolean(hasRunningRun)}
         t={t}
         title={t('monitoring.codex_inspection_results_title')}
-        subtitle={formatResultsDescription(resultsRun, i18n.language, t)}
-        stateHeaderLabel={formatResultStateHeader(resultsRun, t)}
+        xaiInferenceEnabled={resultsConfig.xaiInferenceEnabled}
         onActionFilterChange={setActionFilter}
         onHandlingFilterChange={setHandlingFilter}
         onPageChange={setResultPage}
@@ -1823,6 +2370,24 @@ export function ServerCodexInspectionPage() {
           const source = resultByKey.get(item.key);
           if (source) handleOpenCodexReauth(source);
         }}
+        onDeleteReauthPlanned={
+          reauthResults.length > 0
+            ? () => handleDeleteServerReauth(reauthResults, 'bulk')
+            : undefined
+        }
+        onOpenCredential={
+          onOpenCredential
+            ? (item) =>
+                onOpenCredential({
+                  fileName: item.fileName,
+                  runtimeId: item.runtimeId ?? null,
+                  provider: item.provider,
+                  authIndex: item.authIndex ?? null,
+                  accountId: item.accountId ?? null,
+                  accountSnapshot: item.accountSnapshot ?? null,
+                })
+            : undefined
+        }
         filterLabel={filterLabel}
         handlingFilterLabel={handlingFilterLabel}
         renderOperation={renderOperation}
@@ -1830,153 +2395,46 @@ export function ServerCodexInspectionPage() {
     );
   };
 
-  const handleCopyLogs = useCallback(
-    async (logs: CodexInspectionLog[]) => {
-      if (!logs.length) return;
-      const lines = logs.map((entry) => {
-        const ts = new Date(entry.createdAtMs).toISOString();
-        const detail = entry.detail
-          ? ` ${typeof entry.detail === 'string' ? entry.detail : JSON.stringify(entry.detail)}`
-          : '';
-        return maskAccountEmailsInText(`[${ts}] [${entry.level}] ${entry.message}${detail}`);
-      });
-      try {
-        await navigator.clipboard.writeText(lines.join('\n'));
-        showNotification(t('monitoring.server_codex_inspection_logs_copied'), 'success');
-      } catch {
-        showNotification(t('monitoring.server_codex_inspection_logs_copy_failed'), 'error');
-      }
-    },
-    [showNotification, t]
-  );
+  const scrollLogsToBottom = useCallback(() => {
+    const element = logListRef.current;
+    if (!element) return;
+    element.scrollTop = element.scrollHeight;
+  }, []);
 
-  const renderLogsPanel = (logs: CodexInspectionLog[]) => {
-    const counts: Record<'all' | 'info' | 'success' | 'warning' | 'error', number> = {
-      all: logs.length,
-      info: 0,
-      success: 0,
-      warning: 0,
-      error: 0,
-    };
-    for (const entry of logs) {
-      if (
-        entry.level === 'info' ||
-        entry.level === 'success' ||
-        entry.level === 'warning' ||
-        entry.level === 'error'
-      ) {
-        counts[entry.level] += 1;
-      }
+  useEffect(() => {
+    if (logsCollapsed) return;
+    const runId = currentDetail?.run.id ?? null;
+    const latestLogId = currentDetail?.logs[currentDetail.logs.length - 1]?.id ?? null;
+    const previous = previousServerLogCursorRef.current;
+    previousServerLogCursorRef.current = { runId, latestLogId };
+    if (latestLogId === null) return;
+    if (previous.runId === runId && previous.latestLogId === latestLogId) return;
+    scrollLogsToBottom();
+  }, [currentDetail?.logs, currentDetail?.run.id, logsCollapsed, scrollLogsToBottom]);
+
+  const handleJumpToLatestLog = useCallback(() => {
+    if (logsCollapsed) {
+      setLogsCollapsed(false);
+      requestAnimationFrame(scrollLogsToBottom);
+      return;
     }
-    const filterOptions: ReadonlyArray<{ value: typeof logLevelFilter; label: string }> = [
-      { value: 'all', label: t('monitoring.server_codex_inspection_filter_all') },
-      { value: 'info', label: t('monitoring.server_codex_inspection_log_level_info') },
-      { value: 'success', label: t('monitoring.server_codex_inspection_log_level_success') },
-      { value: 'warning', label: t('monitoring.server_codex_inspection_log_level_warning') },
-      { value: 'error', label: t('monitoring.server_codex_inspection_log_level_error') },
-    ];
-    const filtered =
-      logLevelFilter === 'all' ? logs : logs.filter((entry) => entry.level === logLevelFilter);
-    return (
-      <Panel
-        title={t('monitoring.codex_inspection_logs_title')}
-        subtitle={t('monitoring.server_codex_inspection_logs_desc')}
-        extra={
-          <div className={styles.logToolbar}>
-            {logs.length > 0 ? (
-              <div
-                className={styles.logFilterGroup}
-                role="tablist"
-                aria-label={t('monitoring.codex_inspection_logs_title')}
-              >
-                <div className={styles.segmentedControl}>
-                  {filterOptions.map((opt) => {
-                    const active = logLevelFilter === opt.value;
-                    return (
-                      <button
-                        key={opt.value}
-                        type="button"
-                        role="tab"
-                        aria-selected={active}
-                        className={`${styles.segmentButton} ${active ? styles.segmentButtonActive : ''}`}
-                        onClick={() => setLogLevelFilter(opt.value)}
-                      >
-                        {opt.label}
-                        <span className={styles.segmentCount}>{counts[opt.value]}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ) : (
-              <span />
-            )}
-            <div className={styles.logToolbarRight}>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => void handleCopyLogs(logs)}
-                disabled={logs.length === 0}
-                aria-label={t('monitoring.server_codex_inspection_logs_copy')}
-              >
-                {t('monitoring.server_codex_inspection_logs_copy')}
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setLogsCollapsed((previous) => !previous)}
-                disabled={logs.length === 0}
-              >
-                {logsCollapsed
-                  ? t('monitoring.codex_inspection_expand_logs')
-                  : t('monitoring.codex_inspection_fold_logs')}
-              </Button>
-            </div>
-          </div>
-        }
-      >
-        {!logsCollapsed ? (
-          <div className={styles.logList}>
-            {filtered.length > 0 ? (
-              filtered.map((entry) => (
-                <div
-                  key={entry.id}
-                  className={`${styles.logRow} ${logLevelClass[entry.level] ?? styles.logInfo}`}
-                >
-                  <span className={styles.logTime}>
-                    {formatTimestamp(entry.createdAtMs, i18n.language)}
-                  </span>
-                  <span className={styles.logMessage}>
-                    {maskAccountEmailsInText(entry.message)}
-                    {entry.detail ? (
-                      <small className={styles.serverLogDetail}>
-                        {typeof entry.detail === 'string'
-                          ? maskAccountEmailsInText(entry.detail)
-                          : maskAccountEmailsInText(JSON.stringify(entry.detail))}
-                      </small>
-                    ) : null}
-                  </span>
-                </div>
-              ))
-            ) : (
-              <div className={styles.emptyBlockSmall}>
-                {t('monitoring.codex_inspection_logs_empty')}
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className={styles.logCollapsedBar}>
-            <span>{t('monitoring.codex_inspection_logs_collapsed', { count: logs.length })}</span>
-          </div>
-        )}
-      </Panel>
-    );
-  };
+    scrollLogsToBottom();
+  }, [logsCollapsed, scrollLogsToBottom]);
+
+  const handleCopyLogs = useCallback(async () => {
+    if (serverLogEntries.length === 0) return;
+    try {
+      await navigator.clipboard.writeText(
+        maskAccountEmailsInText(formatInspectionLogsForClipboard(serverLogEntries))
+      );
+      showNotification(t('monitoring.codex_inspection_logs_copied'), 'success');
+    } catch {
+      showNotification(t('monitoring.codex_inspection_logs_copy_failed'), 'error');
+    }
+  }, [serverLogEntries, showNotification, t]);
 
   return (
-    <div className={styles.page}>
-      <CodexInspectionModeTabs activeMode="server" />
-
+    <div className={styles.page} data-embedded={embedded || undefined}>
       {error ? (
         <div className={styles.topErrorBar} role="alert" aria-live="polite">
           <span>{error}</span>
@@ -1996,19 +2454,31 @@ export function ServerCodexInspectionPage() {
       <div className={styles.serverDetailGrid}>
         {renderRunsPanel()}
         <div className={styles.serverDetailPanels}>
-          {detail?.run.error ? (
+          {currentDetail?.run.error ? (
             <div className={styles.serverError} role="alert">
-              {detail.run.error}
+              {currentDetail.run.error}
             </div>
           ) : null}
           {renderResultsPanel()}
-          {renderLogsPanel(detail?.logs ?? [])}
+          <CodexInspectionLogsPanel
+            logs={serverLogEntries}
+            logsCollapsed={logsCollapsed}
+            levelFilter={logLevelFilter}
+            logListRef={logListRef}
+            locale={i18n.language}
+            t={t}
+            onLevelFilterChange={setLogLevelFilter}
+            onCopyLogs={() => void handleCopyLogs()}
+            onJumpToLatest={handleJumpToLatestLog}
+            onToggleCollapsed={() => setLogsCollapsed((previous) => !previous)}
+          />
         </div>
       </div>
       {renderConfigDrawer()}
       <CodexReauthDialog
         open={Boolean(codexReauthTarget)}
         target={codexReauthTarget}
+        requestScope={authFilesRequestScope}
         onClose={() => setCodexReauthTarget(null)}
         onSuccess={handleCodexReauthSuccess}
       />
