@@ -397,6 +397,10 @@
   --primary-hover: #7f7a74;
   --primary-active: #726d67;
   --primary-contrast: #ffffff;
+  // 新版实心按钮沿用牛皮纸主题，不继承默认数据蓝。
+  --primary-solid: var(--primary-color);
+  --primary-solid-hover: var(--primary-hover);
+  --primary-solid-active: var(--primary-active);
   --primary-soft: var(--color-primary-light-8);
   --primary-subtle: var(--color-primary-light-9);
   --primary-ring: rgba(139, 134, 128, 0.22);

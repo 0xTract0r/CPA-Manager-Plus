@@ -1878,9 +1878,12 @@ function TokenStructureChart({ timeline }: { timeline: UsageTimelinePoint[] }) {
       animationDuration: 260,
       backgroundColor: 'transparent',
       color: chartTheme.tokenStructureColors,
-      grid: { bottom: 34, containLabel: true, left: 8, right: 18, top: 18 },
+      grid: { bottom: 44, containLabel: true, left: 8, right: 18, top: 18 },
       legend: {
         bottom: 0,
+        type: 'scroll',
+        left: 8,
+        right: 8,
         icon: 'circle',
         itemHeight: 8,
         itemWidth: 8,
@@ -1919,6 +1922,7 @@ function TokenStructureChart({ timeline }: { timeline: UsageTimelinePoint[] }) {
           fontSize: 11,
           fontWeight: 700,
           hideOverlap: true,
+          showMaxLabel: false,
         },
         axisLine: { lineStyle: { color: chartTheme.surface.axisLine } },
         axisTick: { show: false },
@@ -2012,9 +2016,12 @@ function EntityTrendChart({
       color: series.map(
         (_, index) => chartTheme.categoryPalette[index % chartTheme.categoryPalette.length]
       ),
-      grid: { bottom: 34, containLabel: true, left: 8, right: 18, top: 18 },
+      grid: { bottom: 44, containLabel: true, left: 8, right: 18, top: 18 },
       legend: {
         bottom: 0,
+        type: 'scroll',
+        left: 8,
+        right: 8,
         icon: 'circle',
         itemHeight: 8,
         itemWidth: 8,
@@ -2050,6 +2057,7 @@ function EntityTrendChart({
           fontSize: 11,
           fontWeight: 700,
           hideOverlap: true,
+          showMaxLabel: false,
         },
         axisLine: { lineStyle: { color: chartTheme.surface.axisLine } },
         axisTick: { show: false },

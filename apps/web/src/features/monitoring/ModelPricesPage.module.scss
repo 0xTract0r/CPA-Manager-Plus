@@ -7,9 +7,9 @@
   --pricing-line-strong: var(--border-primary);
   --pricing-ink: var(--text-primary);
   --pricing-muted: var(--text-secondary);
-  --pricing-accent: var(--data-blue-base);
-  --pricing-accent-strong: var(--data-blue-dark-2);
-  --pricing-accent-soft: var(--data-badge-info-bg);
+  --pricing-accent: var(--primary-color);
+  --pricing-accent-strong: var(--primary-active);
+  --pricing-accent-soft: var(--color-primary-light-9);
   --pricing-red: var(--data-red-base);
   display: grid;
   gap: 10px;

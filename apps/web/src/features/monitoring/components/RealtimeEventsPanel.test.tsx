@@ -998,8 +998,28 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).toContain('1.5 s');
     expect(markup).toContain('>TTFT</span><span class=');
     expect(markup).toContain('>--</span>');
-    expect(markup).toContain('>Elapsed</span><span class=');
+    expect(markup).toContain('>Elapsed</span>');
     expect(markup).toContain('>1.5 s</span>');
+  });
+
+  it.each([
+    ['missing', null, '--'],
+    ['zero', 0, '0 ms'],
+    ['measured', 500, '500 ms'],
+  ])('keeps %s TTFT values label-free under the paired table header', (_case, ttftMs, value) => {
+    const markup = renderPanel(baseRow({ ttftMs }));
+    const cell = markup.match(
+      new RegExp(`<td class="${styles.realtimeLatencyColumn}">([\\s\\S]*?)</td>`)
+    )?.[1];
+
+    expect(cell).toBeDefined();
+    expect(markup).toContain('>TTFT</span>');
+    expect(markup).toContain('>Elapsed</span>');
+    expect(cell).not.toContain('TTFT');
+    expect(cell).not.toContain('Elapsed');
+    expect(cell).toContain(value);
+    expect(cell).toContain('1.5 s');
+    expect(cell).toContain('｜');
   });
 
   it('keeps latency warning and error tone classes on plain text metrics', () => {

@@ -2091,29 +2091,28 @@ export function RealtimeEventsPanel({
                   </td>
                   <td className={styles.realtimeLatencyColumn}>
                     <div className={styles.realtimeMetricCell}>
-                      <span className={styles.realtimeMetricLine}>
-                        <span className={styles.realtimeMetricLabel}>
-                          {t('monitoring.ttft_short')}
-                        </span>
-                        <span
-                          className={[styles.realtimeMetricText, ttftToneClass]
-                            .filter(Boolean)
-                            .join(' ')}
-                        >
-                          {hasTtftMs ? formatRealtimeCompactDuration(row.ttftMs, locale) : '--'}
-                        </span>
+                      <span
+                        className={[
+                          styles.realtimeMetricText,
+                          styles.realtimeMetricLeft,
+                          ttftToneClass,
+                        ]
+                          .filter(Boolean)
+                          .join(' ')}
+                      >
+                        {hasTtftMs ? formatRealtimeCompactDuration(row.ttftMs, locale) : '--'}
                       </span>
-                      <span className={styles.realtimeMetricLine}>
-                        <span className={styles.realtimeMetricLabel}>
-                          {t('monitoring.elapsed_short')}
-                        </span>
-                        <span
-                          className={[styles.realtimeMetricText, latencyToneClass]
-                            .filter(Boolean)
-                            .join(' ')}
-                        >
-                          {formatRealtimeCompactDuration(row.latencyMs, locale)}
-                        </span>
+                      <span className={styles.realtimeMetricSeparator}>｜</span>
+                      <span
+                        className={[
+                          styles.realtimeMetricText,
+                          styles.realtimeMetricRight,
+                          latencyToneClass,
+                        ]
+                          .filter(Boolean)
+                          .join(' ')}
+                      >
+                        {formatRealtimeCompactDuration(row.latencyMs, locale)}
                       </span>
                     </div>
                   </td>

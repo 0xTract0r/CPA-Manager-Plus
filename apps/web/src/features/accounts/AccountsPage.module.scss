@@ -9,7 +9,7 @@
   --accounts-strong-border: var(--border-primary);
   --accounts-text: var(--text-primary);
   --accounts-muted: var(--text-secondary);
-  --accounts-brand: var(--data-blue-base);
+  --accounts-brand: var(--primary-color);
   --accounts-brand-active: var(--primary-active, var(--primary-color));
   --accounts-primary: var(--accounts-brand);
   --accounts-success: var(--data-green-base);
@@ -1825,12 +1825,12 @@
 }
 
 .accountIconButtonRefresh:global(.btn) {
-  background: color-mix(in srgb, var(--accounts-info) 10%, var(--bg-primary));
-  color: var(--accounts-info);
+  background: color-mix(in srgb, var(--accounts-brand) 10%, var(--bg-primary));
+  color: var(--accounts-brand);
 
   &:hover {
-    border-color: color-mix(in srgb, var(--accounts-info) 24%, transparent);
-    background: color-mix(in srgb, var(--accounts-info) 16%, var(--bg-primary));
+    border-color: color-mix(in srgb, var(--accounts-brand) 24%, transparent);
+    background: color-mix(in srgb, var(--accounts-brand) 16%, var(--bg-primary));
   }
 }
 

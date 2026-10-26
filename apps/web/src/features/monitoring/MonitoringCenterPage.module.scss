@@ -13,9 +13,9 @@
   --monitor-muted: var(--text-secondary);
   --monitor-line: var(--border-color);
   --monitor-line-strong: var(--border-primary);
-  --monitor-accent: var(--data-blue-base);
-  --monitor-accent-strong: var(--data-blue-dark-2);
-  --monitor-accent-soft: var(--data-badge-info-bg);
+  --monitor-accent: var(--primary-color);
+  --monitor-accent-strong: var(--primary-active);
+  --monitor-accent-soft: var(--color-primary-light-9);
   --monitor-cyan: var(--data-cyan-base);
   --monitor-green: var(--data-green-base);
   --monitor-amber: var(--data-amber-base);
@@ -2379,7 +2379,7 @@
   text-align: center;
 }
 
-// 兜底：即使 .realtimeMetricCell 的 minmax(38px,...) 轨道下限在极端超长取值
+// 兜底：即使 .realtimeMetricCell 的 minmax(54px,...) 轨道下限在极端超长取值
 // （理论上限如 "199.9 s"）下仍不够，也用省略号原地裁切，绝不溢出到相邻列/分隔符上。
 .realtimeMetricText {
   overflow: hidden;
@@ -2389,13 +2389,15 @@
   line-height: 1.25;
 }
 
-.realtimeMetricLabel {
-  min-width: 0;
-  text-align: left;
-}
-
 .realtimeMetricText {
   min-width: 0;
+}
+
+.realtimeMetricLeft {
+  text-align: right;
+}
+
+.realtimeMetricRight {
   text-align: left;
 }
 
@@ -3446,8 +3448,4 @@
   font-variant-numeric: tabular-nums;
   line-height: 1.25;
   white-space: nowrap;
-}
-
-.realtimeMetricLine {
-  display: contents;
 }

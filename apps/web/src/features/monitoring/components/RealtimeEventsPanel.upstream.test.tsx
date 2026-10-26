@@ -705,7 +705,7 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).toContain('1.5 s');
     expect(markup).toContain('>TTFT</span><span class=');
     expect(markup).toContain('>--</span>');
-    expect(markup).toContain('>Elapsed</span><span class=');
+    expect(markup).toContain('>Elapsed</span>');
     expect(markup).toContain('>1.5 s</span>');
   });
 
