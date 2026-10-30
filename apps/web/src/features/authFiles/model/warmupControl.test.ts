@@ -42,3 +42,10 @@ describe('account speed and warm-up draft', () => {
     });
   });
 });
+
+it('explicitly clears a preset without requiring a numeric edit', () => {
+  const preset = { ...control, speed_profile: 'high' as const };
+  expect(warmupControlPatch(preset, { ...warmupControlDraft(preset), speed: null })).toEqual({
+    speed_profile: null,
+  });
+});

@@ -77,6 +77,19 @@ export function validLimitConstraints(policy?: AccountLimitPolicy | null) {
     );
   });
 }
+/** 仅校验服务端给出的输入边界，不推算调度规则。 */
+export function validLimitValue(
+  policy: AccountLimitPolicy,
+  name: AccountLimitField,
+  item: LimitDraft[AccountLimitField]
+): boolean {
+  if (item.mode === 'inherit') return true;
+  const field = policy.fields[name];
+  const value = Number(item.value);
+  return (
+    !!item.value.trim() && Number.isSafeInteger(value) && value >= field.min! && value <= field.max!
+  );
+}
 export function limitPatch(
   policy: AccountLimitPolicy,
   draft: LimitDraft,
@@ -88,17 +101,9 @@ export function limitPatch(
   const temporary: Partial<Record<AccountLimitField, number>> = {};
   let tempChanged = false;
   for (const name of LIMIT_FIELDS) {
-    const field = policy.fields[name];
     const item = draft[name];
     const value = Number(item.value);
-    if (
-      item.mode !== 'inherit' &&
-      (!item.value.trim() ||
-        !Number.isSafeInteger(value) ||
-        value < field.min! ||
-        value > field.max!)
-    )
-      throw new Error('range');
+    if (!validLimitValue(policy, name, item)) throw new Error('range');
     const changed =
       item.mode !== initial[name].mode ||
       (item.mode !== 'inherit' && Number(initial[name].value) !== value);

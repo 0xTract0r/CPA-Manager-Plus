@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import type { AuthFileAccountScheduling, AuthFileItem } from '@/types';
 import { AccountLimitsModal } from './AccountLimitsModal';
 import { AccountPacingRecovery } from './AccountPacingRecovery';
-import { AccountSchedulingPanel } from './AccountSchedulingPanel';
+import { AccountSchedulingEditor } from './AccountSchedulingEditor';
 import { Modal } from '@/components/ui/Modal';
 
 const { showConfirmation } = vi.hoisted(() => ({ showConfirmation: vi.fn() }));
@@ -13,7 +13,7 @@ vi.mock('@/components/ui/Modal', () => ({
   Modal: ({ children }: { children: ReactNode }) => <section>{children}</section>,
 }));
 vi.mock('./AccountPacingRecovery', () => ({ AccountPacingRecovery: () => null }));
-vi.mock('./AccountSchedulingPanel', () => ({ AccountSchedulingPanel: () => null }));
+vi.mock('./AccountSchedulingEditor', () => ({ AccountSchedulingEditor: () => null }));
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }));
@@ -43,9 +43,9 @@ it('keeps recovery and editor sibling keys distinct before and after saving', ()
       />
     );
   });
-  act(() => view.root.findByType(AccountSchedulingPanel).props.onApplied(saved));
+  act(() => view.root.findByType(AccountSchedulingEditor).props.onApplied(saved));
   expect(view.root.findByType(AccountPacingRecovery).props.file.account_scheduling).toBe(saved);
-  expect(view.root.findByType(AccountSchedulingPanel).props.initialScheduling).toBe(saved);
+  expect(view.root.findByType(AccountSchedulingEditor).props.initialScheduling).toBe(saved);
   expect(onApplied).toHaveBeenCalledWith('one.json', saved);
   expect(consoleError.mock.calls.flat().join(' ')).not.toMatch(/same key/i);
   act(() => view.unmount());
@@ -67,7 +67,9 @@ it('keeps closing stable while committing the latest callbacks and form guards',
   });
   const close = view.root.findByType(Modal).props.onClose;
   act(() =>
-    view.root.findByType(AccountSchedulingPanel).props.onStateChange({ dirty: false, saving: true })
+    view.root
+      .findByType(AccountSchedulingEditor)
+      .props.onStateChange({ dirty: false, saving: true })
   );
   act(() => view.update(<AccountLimitsModal {...props} onClose={latestClose} />));
   expect(view.root.findByType(Modal).props.onClose).toBe(close);
@@ -75,7 +77,9 @@ it('keeps closing stable while committing the latest callbacks and form guards',
   expect(initialClose).not.toHaveBeenCalled();
   expect(latestClose).not.toHaveBeenCalled();
   act(() =>
-    view.root.findByType(AccountSchedulingPanel).props.onStateChange({ dirty: true, saving: false })
+    view.root
+      .findByType(AccountSchedulingEditor)
+      .props.onStateChange({ dirty: true, saving: false })
   );
   act(() => close());
   expect(showConfirmation).toHaveBeenCalledTimes(1);

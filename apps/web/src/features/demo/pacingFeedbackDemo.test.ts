@@ -53,6 +53,57 @@ it('settles at the old capacity before edits and never returns discarded credit'
   expect(JSON.stringify(captured)).toBe(capturedJson);
 });
 
+it('previews cloned scheduling with no policy, credit or peer mutation and matches one save', async () => {
+  const { demo, file, patch } = await setup();
+  const before = JSON.stringify(file('local-account-3').account_scheduling);
+  const peer = JSON.stringify(file('local-account-4').account_scheduling);
+  const changes = {
+    speed_profile: 'high' as const,
+    warmup_period_days: 30,
+    warmup_mode: 'mature' as const,
+  };
+  const preview = demo.handlePacingFeedbackRequest(
+    'post',
+    '/auth-files/account-scheduling/preview',
+    new URLSearchParams(),
+    { name: 'local-account-3.json', auth_index: 'local-account-3', ...changes }
+  ) as {
+    preview: boolean;
+    account_scheduling: AuthFileAccountScheduling;
+    current_account_scheduling: AuthFileAccountScheduling;
+  };
+  expect(preview.preview).toBe(true);
+  expect(preview.account_scheduling.warmup?.mature).toBe(true);
+  expect(preview.account_scheduling).not.toHaveProperty('warmup_traffic_pacing');
+  expect(preview.account_scheduling).not.toHaveProperty('sessions_total');
+  expect(JSON.stringify(file('local-account-3').account_scheduling)).toBe(before);
+  expect(JSON.stringify(file('local-account-4').account_scheduling)).toBe(peer);
+  const saved = patch('local-account-3', changes);
+  expect(saved.warmup_control).toEqual(preview.account_scheduling.warmup_control);
+  expect(saved.effective_limits).toEqual(preview.account_scheduling.effective_limits);
+});
+
+it('allows explicit null profile with numeric custom changes, rejecting only nonempty mixed presets', async () => {
+  const { demo, patch } = await setup();
+  patch('local-account-3', { speed_profile: 'high' });
+  const preview = demo.handlePacingFeedbackRequest(
+    'post',
+    '/auth-files/account-scheduling/preview',
+    new URLSearchParams(),
+    {
+      name: 'local-account-3.json',
+      auth_index: 'local-account-3',
+      speed_profile: null,
+      limit_overrides: { rpm: 7 },
+    }
+  ) as { account_scheduling: AuthFileAccountScheduling };
+  expect(preview.account_scheduling.warmup_control?.speed_profile).toBeNull();
+  expect(preview.account_scheduling.limit_policy?.fields.rpm.fixed).toBe(7);
+  expect(() =>
+    patch('local-account-3', { speed_profile: 'high', limit_overrides: { rpm: 7 } })
+  ).toThrow('Mixed speed');
+});
+
 it('provides eight production-shaped scenarios and keeps history provenance separate', async () => {
   const { demo, file } = await setup();
   const files = demo.getPacingFeedbackFiles().files;

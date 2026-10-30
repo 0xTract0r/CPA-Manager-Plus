@@ -112,6 +112,7 @@ describe('speed and warm-up editor', () => {
     expect(patch).toHaveBeenLastCalledWith({
       name: 'one.json',
       auth_index: 'one',
+      speed_profile: null,
       limit_overrides: { rpm: 5 },
     });
     expect(view.root.findByProps({ 'data-testid': 'speed-profile-high' }).props.checked).toBe(

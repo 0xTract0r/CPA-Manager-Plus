@@ -567,6 +567,13 @@ export interface AuthFileAccountSchedulingResponse {
   account_scheduling: AuthFileAccountScheduling;
 }
 
+/** 无写入候选：只包含规则，不将候选上限解释为当前余额或用量。 */
+export interface AuthFileAccountSchedulingPreviewResponse extends AuthFileAccountSchedulingResponse {
+  preview: true;
+  auth_index: string;
+  current_account_scheduling: AuthFileAccountScheduling;
+}
+
 export type AccountLimitField = 'rpm' | 'concurrency' | 'request_capacity' | 'max_active_bindings';
 export interface AccountLimitValue {
   baseline: number | null;

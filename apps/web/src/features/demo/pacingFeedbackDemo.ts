@@ -109,11 +109,11 @@ const refreshDemoControl = (account: DemoAccount) => {
   };
   control.effective_period_days = period;
   control.profiles = demoProfiles(scheduling);
-  if (control.speed_profile) {
-    const profile = control.profiles.find((row) => row.id === control.speed_profile)!;
+  {
+    const profile = control.profiles.find((row) => row.id === (control.speed_profile ?? 'medium'))!;
     for (const name of LIMIT_FIELDS) scheduling.limit_policy!.fields[name].baseline = profile[name];
     account.dailyBudget = profile.daily_budget;
-    scheduling.rate_scale = 1;
+    if (control.speed_profile) scheduling.rate_scale = 1;
     scheduling.warmup.daily_budget = profile.daily_budget;
   }
 };
@@ -780,6 +780,134 @@ export const getPacingFeedbackAnalytics = (
     events: { items: items as MonitoringAnalyticsEventRow[], next_before_ms: 0, has_more: false },
   };
 };
+
+const applyDemoScheduling = (
+  account: DemoAccount,
+  request: AuthFileAccountSchedulingPatchRequest
+) => {
+  const legacy =
+    request.rate_scale !== undefined ||
+    request.limit_overrides !== undefined ||
+    request.temporary_limits !== undefined;
+  if (request.speed_profile != null && legacy) throw new Error('Mixed speed and legacy limits');
+  if (
+    request.speed_profile != null &&
+    !['low', 'medium', 'high', 'extreme'].includes(request.speed_profile)
+  )
+    throw new Error('Invalid profile');
+  if (
+    request.warmup_period_days != null &&
+    (!Number.isSafeInteger(request.warmup_period_days) ||
+      request.warmup_period_days < 1 ||
+      request.warmup_period_days > 365)
+  )
+    throw new Error('Invalid period');
+  if (request.warmup_mode != null && !['auto', 'mature'].includes(request.warmup_mode))
+    throw new Error('Invalid warmup mode');
+  const policy = clone(account.file.account_scheduling!.limit_policy!);
+  let temporaryDeadline = account.temporaryDeadline;
+  let temporaryIssued = account.temporaryIssued;
+  const apply = (
+    values: Partial<Record<AccountLimitField, number | null>>,
+    kind: 'fixed' | 'temporary'
+  ) => {
+    for (const [key, value] of Object.entries(values)) {
+      const field = policy.fields[key as AccountLimitField];
+      if (
+        !field ||
+        (value !== null &&
+          (!Number.isSafeInteger(value) || value < field.min! || value > field.max!)) ||
+        (kind === 'temporary' && value === null)
+      )
+        throw new Error('Invalid local limit');
+      field[kind] = value;
+    }
+  };
+  if (request.limit_overrides !== undefined)
+    apply(
+      request.limit_overrides ?? Object.fromEntries(LIMIT_FIELDS.map((name) => [name, null])),
+      'fixed'
+    );
+  if (request.temporary_limits !== undefined) {
+    LIMIT_FIELDS.forEach((name) => {
+      policy.fields[name].temporary = null;
+    });
+    if (request.temporary_limits === null) {
+      policy.temporary_status = 'ended';
+      policy.temporary_end_reason = 'manual';
+    } else {
+      if (
+        ![5, 15, 30].includes(request.temporary_limits.duration_minutes) ||
+        !Object.keys(request.temporary_limits.overrides).length
+      )
+        throw new Error('Invalid duration');
+      apply(request.temporary_limits.overrides, 'temporary');
+      policy.temporary_status = 'active';
+      policy.temporary_end_reason = null;
+      policy.temporary_issued_at = new Date().toISOString();
+      policy.temporary_expires_at = new Date(
+        Date.now() + request.temporary_limits.duration_minutes * 60000
+      ).toISOString();
+      temporaryIssued = account === simulation ? story.now : performance.now();
+      temporaryDeadline = temporaryIssued + request.temporary_limits.duration_minutes * 60000;
+    }
+  }
+  const scheduling = account.file.account_scheduling!;
+  const control = scheduling.warmup_control!;
+  if (legacy) {
+    control.speed_profile = null;
+    control.source = 'legacy';
+  }
+  if (request.speed_profile !== undefined) {
+    control.speed_profile = request.speed_profile;
+    control.source = request.speed_profile ? 'profile' : 'legacy';
+    if (request.speed_profile) {
+      for (const name of LIMIT_FIELDS) {
+        policy.fields[name].fixed = null;
+        policy.fields[name].temporary = null;
+      }
+      policy.temporary_status = 'none';
+      policy.temporary_expires_at = null;
+      policy.temporary_issued_at = null;
+      temporaryDeadline = 0;
+    }
+  }
+  if (request.warmup_mode !== undefined) {
+    control.warmup_mode = request.warmup_mode ?? 'auto';
+    control.manual_mature = control.warmup_mode === 'mature';
+  }
+  if (request.warmup_period_days !== undefined)
+    control.warmup_period_days = request.warmup_period_days;
+  if (request.first_production_at !== undefined) {
+    scheduling.first_production_at = request.first_production_at;
+    scheduling.warmup = {
+      ...scheduling.warmup,
+      age_days: request.first_production_at
+        ? Math.max(0, (Date.now() - Date.parse(request.first_production_at)) / 86400000)
+        : null,
+    };
+  }
+  if (request.rate_scale !== undefined) scheduling.rate_scale = request.rate_scale ?? 1;
+  if (request.tier_override !== undefined) {
+    scheduling.tier_source = request.tier_override ? 'override' : 'auto';
+    if (request.tier_override) scheduling.subscription_tier = request.tier_override;
+  }
+  account.file.account_scheduling!.limit_policy = policy;
+  account.temporaryDeadline = temporaryDeadline;
+  account.temporaryIssued = temporaryIssued;
+  if (
+    request.speed_profile !== undefined ||
+    request.warmup_mode !== undefined ||
+    request.warmup_period_days !== undefined ||
+    request.first_production_at !== undefined
+  )
+    refreshDemoControl(account);
+  return {
+    name: account.file.name,
+    auth_index: account.file.auth_index,
+    account_scheduling: simulatedFile(account).account_scheduling,
+  };
+};
 export function handlePacingFeedbackRequest(
   method: string,
   pathname: string,
@@ -808,6 +936,45 @@ export function handlePacingFeedbackRequest(
       account_scheduling: file.account_scheduling,
     };
   }
+  if (pathname === '/auth-files/account-scheduling/preview' && method === 'post') {
+    const request = data as AuthFileAccountSchedulingPatchRequest;
+    const account = demoAccounts.get(String(request.auth_index));
+    if (!account || account.file.name !== request.name)
+      throw Object.assign(new Error('Local preview identity mismatch'), { status: 404 });
+    const scenario = new URLSearchParams(window.location.search).get('pacing-scenario');
+    if (scenario === 'preview-error') throw new Error('Local simulated preview failure');
+    if (scenario === 'preview-unsupported')
+      throw Object.assign(new Error('Preview not supported'), { status: 404 });
+    const staticView = (view: NonNullable<AuthFileItem['account_scheduling']>) =>
+      Object.fromEntries(
+        [
+          'subscription_tier',
+          'tier_source',
+          'first_production_at',
+          'rate_scale',
+          'limit_policy',
+          'warmup_control',
+          'warmup',
+          'effective_limits',
+          'in_distress',
+          'warmup_health_stage_cap',
+          'warmup_last_distress_at',
+        ]
+          .filter((key) => view[key] !== undefined)
+          .map((key) => [key, clone(view[key])])
+      ) as NonNullable<AuthFileItem['account_scheduling']>;
+
+    // 预览与保存复用同一mock apply，仅改隔离副本，不触碰demoAccounts/余额/临时层。
+    const current = staticView(simulatedFile(clone(account)).account_scheduling!);
+    const candidate = applyDemoScheduling(clone(account), request).account_scheduling!;
+    return {
+      name: request.name,
+      auth_index: String(request.auth_index),
+      preview: true,
+      current_account_scheduling: current,
+      account_scheduling: staticView(candidate),
+    };
+  }
   if (pathname === '/auth-files/account-scheduling' && method === 'patch') {
     const request = data as AuthFileAccountSchedulingPatchRequest;
     const account = demoAccounts.get(String(request.auth_index));
@@ -819,129 +986,7 @@ export function handlePacingFeedbackRequest(
       syncStory();
       expire(account, story.now);
     } else expire(account);
-    const legacy =
-      request.rate_scale !== undefined ||
-      request.limit_overrides !== undefined ||
-      request.temporary_limits !== undefined;
-    if (request.speed_profile !== undefined && legacy)
-      throw new Error('Mixed speed and legacy limits');
-    if (
-      request.speed_profile != null &&
-      !['low', 'medium', 'high', 'extreme'].includes(request.speed_profile)
-    )
-      throw new Error('Invalid profile');
-    if (
-      request.warmup_period_days != null &&
-      (!Number.isSafeInteger(request.warmup_period_days) ||
-        request.warmup_period_days < 1 ||
-        request.warmup_period_days > 365)
-    )
-      throw new Error('Invalid period');
-    if (request.warmup_mode != null && !['auto', 'mature'].includes(request.warmup_mode))
-      throw new Error('Invalid warmup mode');
-    const policy = clone(account.file.account_scheduling!.limit_policy!);
-    let temporaryDeadline = account.temporaryDeadline;
-    let temporaryIssued = account.temporaryIssued;
-    const apply = (
-      values: Partial<Record<AccountLimitField, number | null>>,
-      kind: 'fixed' | 'temporary'
-    ) => {
-      for (const [key, value] of Object.entries(values)) {
-        const field = policy.fields[key as AccountLimitField];
-        if (
-          !field ||
-          (value !== null &&
-            (!Number.isSafeInteger(value) || value < field.min! || value > field.max!)) ||
-          (kind === 'temporary' && value === null)
-        )
-          throw new Error('Invalid local limit');
-        field[kind] = value;
-      }
-    };
-    if (request.limit_overrides !== undefined)
-      apply(
-        request.limit_overrides ?? Object.fromEntries(LIMIT_FIELDS.map((name) => [name, null])),
-        'fixed'
-      );
-    if (request.temporary_limits !== undefined) {
-      LIMIT_FIELDS.forEach((name) => {
-        policy.fields[name].temporary = null;
-      });
-      if (request.temporary_limits === null) {
-        policy.temporary_status = 'ended';
-        policy.temporary_end_reason = 'manual';
-      } else {
-        if (
-          ![5, 15, 30].includes(request.temporary_limits.duration_minutes) ||
-          !Object.keys(request.temporary_limits.overrides).length
-        )
-          throw new Error('Invalid duration');
-        apply(request.temporary_limits.overrides, 'temporary');
-        policy.temporary_status = 'active';
-        policy.temporary_end_reason = null;
-        policy.temporary_issued_at = new Date().toISOString();
-        policy.temporary_expires_at = new Date(
-          Date.now() + request.temporary_limits.duration_minutes * 60000
-        ).toISOString();
-        temporaryIssued = account === simulation ? story.now : performance.now();
-        temporaryDeadline = temporaryIssued + request.temporary_limits.duration_minutes * 60000;
-      }
-    }
-    const scheduling = account.file.account_scheduling!;
-    const control = scheduling.warmup_control!;
-    if (legacy) {
-      control.speed_profile = null;
-      control.source = 'legacy';
-    }
-    if (request.speed_profile !== undefined) {
-      control.speed_profile = request.speed_profile;
-      control.source = request.speed_profile ? 'profile' : 'legacy';
-      if (request.speed_profile) {
-        for (const name of LIMIT_FIELDS) {
-          policy.fields[name].fixed = null;
-          policy.fields[name].temporary = null;
-        }
-        policy.temporary_status = 'none';
-        policy.temporary_expires_at = null;
-        policy.temporary_issued_at = null;
-        temporaryDeadline = 0;
-      }
-    }
-    if (request.warmup_mode !== undefined) {
-      control.warmup_mode = request.warmup_mode ?? 'auto';
-      control.manual_mature = control.warmup_mode === 'mature';
-    }
-    if (request.warmup_period_days !== undefined)
-      control.warmup_period_days = request.warmup_period_days;
-    if (request.first_production_at !== undefined) {
-      scheduling.first_production_at = request.first_production_at;
-      scheduling.warmup = {
-        ...scheduling.warmup,
-        age_days: request.first_production_at
-          ? Math.max(0, (Date.now() - Date.parse(request.first_production_at)) / 86400000)
-          : null,
-      };
-    }
-    if (request.rate_scale !== undefined) scheduling.rate_scale = request.rate_scale ?? 1;
-    if (request.tier_override !== undefined) {
-      scheduling.tier_source = request.tier_override ? 'override' : 'auto';
-      if (request.tier_override) scheduling.subscription_tier = request.tier_override;
-    }
-    account.file.account_scheduling!.limit_policy = policy;
-    account.temporaryDeadline = temporaryDeadline;
-    account.temporaryIssued = temporaryIssued;
-    if (
-      request.speed_profile !== undefined ||
-      request.warmup_mode !== undefined ||
-      request.warmup_period_days !== undefined ||
-      request.first_production_at !== undefined
-    )
-      refreshDemoControl(account);
-    return {
-      name: account.file.name,
-      auth_index: account.file.auth_index,
-      account_scheduling: simulatedFile(account).account_scheduling,
-    };
+    return applyDemoScheduling(account, request);
   }
   return undefined;
 }
