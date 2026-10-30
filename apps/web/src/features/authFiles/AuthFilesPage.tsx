@@ -51,7 +51,9 @@ import {
   type QuotaProviderType,
   type ResolvedTheme,
 } from '@/features/authFiles/constants';
+import { getPacingPreviewMeta, DemoPacingControls } from '@/features/demo/demoFixtures';
 import { WarmupPacingModal } from '@/features/authFiles/components/WarmupPacing';
+import { AccountLimitsModal } from '@/features/authFiles/components/AccountLimitsModal';
 import { AuthFileCard } from '@/features/authFiles/components/AuthFileCard';
 import { AuthJsonPasteModal } from '@/features/authFiles/components/AuthJsonPasteModal';
 import { AuthFileModelsModal } from '@/features/authFiles/components/AuthFileModelsModal';
@@ -213,7 +215,7 @@ const getQuotaCooldownContextKey = (managerServiceBase: string, managementKey: s
   `${managerServiceBase}\u0000${managementKey}`;
 
 export function AuthFilesPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   // 订阅全局时区：切换时区时整页（含 AuthFileCard 的时间戳）随之重渲染，无需刷新。
   useTimezone();
   const showNotification = useNotificationStore((state) => state.showNotification);
@@ -250,6 +252,10 @@ export function AuthFilesPage() {
   const [uiStateHydrated, setUiStateHydrated] = useState(false);
   const [authJsonPasteOpen, setAuthJsonPasteOpen] = useState(false);
   const [pacingFileKey, setPacingFileKey] = useState<string | null>(null);
+  const [accountLimits, setAccountLimits] = useState<{
+    file: AuthFileItem;
+    source: 'settings' | 'pacing';
+  } | null>(null);
   const [batchPriorityOpen, setBatchPriorityOpen] = useState(false);
   const [batchPriorityValue, setBatchPriorityValue] = useState('');
   const [codexReauthTarget, setCodexReauthTarget] = useState<CodexReauthTarget | null>(null);
@@ -1783,6 +1789,24 @@ export function AuthFilesPage() {
 
   return (
     <div className={styles.container}>
+      {getPacingPreviewMeta() && (
+        <div role="status" data-testid="pacing-preview-notice">
+          {t('auth_files.pacing.local_preview_sources', {
+            defaultValue:
+              '本地隔离预览：APUS-01、APUS-03、AC-13、AC-16的账号与历史来自脱敏采样；AC-13/AC-16的可编辑上限及后续状态仅为本地模拟。QA-*和“本地模拟”账号及历史为合成场景。所有更改只影响页面内存，卡片成功/失败总计未加载。采样时间',
+          })}{' '}
+          ·{' '}
+          {new Intl.DateTimeFormat(i18n?.language || undefined, {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false,
+          }).format(new Date(getPacingPreviewMeta()!.captured_at))}
+          <DemoPacingControls onRefresh={loadFiles} active={isCurrentLayer} />
+        </div>
+      )}
       <section className={styles.authFilesShell}>
         {error && <div className={styles.errorBox}>{error}</div>}
 
@@ -2119,7 +2143,32 @@ export function AuthFilesPage() {
         file={pacingFileKey === null ? null : (fileBySelectionKey.get(pacingFileKey) ?? null)}
         open={pacingFileKey !== null}
         onClose={() => setPacingFileKey(null)}
+        onOpenLimits={(file) => {
+          setPacingFileKey(null);
+          setAccountLimits({ file, source: 'pacing' });
+        }}
       />
+      {accountLimits && (
+        <AccountLimitsModal
+          key={getAuthFileSelectionKey(accountLimits.file)}
+          file={accountLimits.file}
+          disabled={disableControls}
+          backLabel={t(
+            `auth_files.pacing.${accountLimits.source === 'settings' ? 'back_settings' : 'back_detail'}`
+          )}
+          onClose={() => setAccountLimits(null)}
+          onBack={() => {
+            const file =
+              fileBySelectionKey.get(getAuthFileSelectionKey(accountLimits.file)) ??
+              accountLimits.file;
+            const source = accountLimits.source;
+            setAccountLimits(null);
+            if (source === 'pacing') setPacingFileKey(getAuthFileSelectionKey(file));
+            else void openAccountSettingsEditor(file);
+          }}
+          onApplied={updateFileAccountScheduling}
+        />
+      )}
       <AuthFileModelsModal
         open={modelsModalOpen}
         fileName={modelsFileName}
@@ -2143,7 +2192,12 @@ export function AuthFilesPage() {
         onSave={() => void handleAccountSettingsSaveWithAuditReload()}
         onChange={handleAccountSettingsChange}
         onProxyBlur={() => void handleAccountSettingsProxyBlur()}
-        onSchedulingApplied={updateFileAccountScheduling}
+        onOpenLimits={() => {
+          if (!accountSettingsEditor?.file || accountSettingsDirty || accountSettingsEditor.saving)
+            return;
+          setAccountLimits({ file: accountSettingsEditor.file, source: 'settings' });
+          closeAccountSettingsEditor();
+        }}
       />
 
       <TestMessageModal

@@ -1,3 +1,6 @@
+export { DemoPacingControls } from './DemoPacingControls';
+import { isPacingFeedbackDemo, getPacingFeedbackFiles, getPacingFeedbackAnalytics, handlePacingFeedbackRequest, getPacingPreviewMeta, withPacingFeedbackConfig, getPacingStoryState, controlPacingStory } from './pacingFeedbackDemo';
+export { getPacingPreviewMeta, handlePacingFeedbackRequest, getPacingStoryState, controlPacingStory };
 import pacingFixtures from './pacingFixtures.json';
 import { demoPerformance, withDemoTelemetry } from '@/features/performance/demoPerformance';
 import type {
@@ -2879,9 +2882,10 @@ const demoAccountCandidates: AccountActionCandidate[] = [
   },
 ];
 
-export const getDemoRawConfig = () => clone(initialRawConfig);
+export const getDemoRawConfig = () => withPacingFeedbackConfig(clone(initialRawConfig));
 export const getDemoProviderModels = () => clone(demoProviderModels);
 export const getDemoAuthFiles = () => {
+  if (isPacingFeedbackDemo()) return getPacingFeedbackFiles();
   // 独立 UI 验收样本仅进入 demo/test 构建，由内存 handler 返回，无模型请求。
   if (typeof window !== 'undefined') {
     const params = new URLSearchParams(window.location.search);
@@ -2928,7 +2932,7 @@ export const getDemoPluginStore = () => clone(demoPluginStore);
 export const getDemoManagerConfig = () => clone(demoManagerConfig);
 export const getDemoDashboardSummary = () => clone(dashboardBase());
 export const getDemoMonitoringAnalytics = (request?: MonitoringAnalyticsRequest) =>
-  clone(buildMonitoringAnalytics(undefined, request));
+  isPacingFeedbackDemo() ? getPacingFeedbackAnalytics(request) : clone(buildMonitoringAnalytics(undefined, request));
 export const getDemoModelPrices = () => clone(demoModelPrices);
 export const getDemoModelPriceUsageSummary = () => clone(demoModelPriceUsageSummary);
 export const getDemoUsagePayload = () => {

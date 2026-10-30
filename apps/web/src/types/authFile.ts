@@ -364,6 +364,7 @@ export interface AuthFileAccountScheduling {
   warmup?: AuthFileAccountWarmup | null;
   /** 纯只读配速快照；旧 core 缺字段时保持未知。 */
   warmup_traffic_pacing?: AuthFileWarmupTrafficPacing | null;
+  limit_policy?: AccountLimitPolicy | null;
   /**
    * 账号「首次投产时间」锚点（RFC3339 字符串或 null）。养号曲线以此为起点计算
    * age_days / warmup.stage。未显式设置时 core 在账号首次服务时自动打戳，此时该
@@ -421,6 +422,10 @@ export interface AuthFileWarmupTrafficPacing {
   inflight: number | null;
   concurrency_limit: number | null;
   pending_requests: number | null;
+  sent_attempts_60s?: number | null;
+  unsent_reservations?: number | null;
+  recovered_holds?: number | null;
+  waiting_requests?: number | null;
   blocking_reasons: string[];
 }
 
@@ -522,6 +527,11 @@ export interface AuthFileAccountSchedulingPatchRequest {
   tier_override?: AuthFileAccountSchedulingTierOverride | null;
   rate_scale?: number | null;
   first_production_at?: string | null;
+  limit_overrides?: Partial<Record<AccountLimitField, number | null>> | null;
+  temporary_limits?: {
+    duration_minutes: 5 | 15 | 30;
+    overrides: Partial<Record<AccountLimitField, number>>;
+  } | null;
 }
 
 /**
@@ -531,5 +541,33 @@ export interface AuthFileAccountSchedulingPatchRequest {
  */
 export interface AuthFileAccountSchedulingResponse {
   name?: string;
+  account_scheduling: AuthFileAccountScheduling;
+}
+
+export type AccountLimitField = 'rpm' | 'concurrency' | 'request_capacity' | 'max_active_bindings';
+export interface AccountLimitValue {
+  baseline: number | null;
+  fixed: number | null;
+  temporary: number | null;
+  effective: number | null;
+  source: 'baseline' | 'fixed' | 'temporary' | 'restricted';
+  min: number | null;
+  max: number | null;
+}
+export interface AccountLimitPolicy {
+  fields: Record<AccountLimitField, AccountLimitValue>;
+  temporary_status: 'none' | 'active' | 'expired' | 'ended' | 'restart_expired';
+  temporary_issued_at: string | null;
+  temporary_expires_at: string | null;
+  temporary_end_reason: string | null;
+  restricted_reasons: string[];
+}
+export interface WarmupPacingResponse {
+  name: string;
+  auth_index: string;
+  disabled: boolean;
+  status: string;
+  unavailable: boolean;
+  availability_reason?: string;
   account_scheduling: AuthFileAccountScheduling;
 }

@@ -5,6 +5,7 @@
 import { apiClient } from './client';
 import type {
   AuthFileAccountSchedulingPatchRequest,
+  WarmupPacingResponse,
   AuthFileAccountSchedulingResponse,
   AuthFileAccountSettings,
   AuthFileAccountSettingsPatchRequest,
@@ -679,6 +680,12 @@ const OAUTH_MODEL_ALIAS_ENDPOINT = '/oauth-model-alias';
 
 export const authFilesApi = {
   list: async () => dedupeAuthFilesResponse(await apiClient.get<AuthFilesResponse>('/auth-files')),
+
+  getWarmupPacing: (name: string, authIndex: string, signal?: AbortSignal) =>
+    apiClient.get<WarmupPacingResponse>('/auth-files/warmup-pacing', {
+      params: { name, auth_index: authIndex },
+      signal,
+    }),
 
   // --- 迁移自 cpa fork：账号设置 / 状态刷新 / 测试消息 / 历史查询 ---
 

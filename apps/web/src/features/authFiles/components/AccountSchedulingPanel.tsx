@@ -1,14 +1,12 @@
 /**
- * 账号设置弹窗内的「调度旋钮」控件：设置/清除 tier_override 与 rate_scale，
+ * 独立「调度与上限」窗口内的控件：设置/清除 tier_override 与 rate_scale，
  * 调用独立的 `PATCH /auth-files/account-scheduling` 端点（core §8.3/§8.4/§8.5，
  * 见 useAccountSchedulingControls 顶部注释）。
  *
- * Claude 专属：调用方（AuthFilesAccountSettingsModal）只在 isClaudeProvider 时
- * 挂载本组件，本组件自身不重复判断 provider（跟 fast 面板对 codex 的门控对称：
- * 那个用 isCodexProvider 挂 AccountFastImpactPanel，这个用 isClaudeProvider 挂
- * 本组件）。
+ * Claude 专属：账号设置与配速详情按provider提供入口，共用AccountLimitsModal；
+ * 基础设置不再内嵌完整策略表单。
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -19,6 +17,7 @@ import {
 } from '@/features/authFiles/hooks/useAccountSchedulingControls';
 import type { AuthFileAccountScheduling } from '@/types/authFile';
 import styles from './AccountSchedulingPanel.module.scss';
+import { AccountLimitPolicyPanel } from './AccountLimitPolicyPanel';
 
 export interface AccountSchedulingPanelProps {
   fileName: string;
@@ -28,6 +27,7 @@ export interface AccountSchedulingPanelProps {
   disabled?: boolean;
   /** 应用成功后回调（父页面据此刷新账号列表，让卡片徽标跟着变）。 */
   onApplied?: (view: AuthFileAccountScheduling) => void;
+  onStateChange?: (state: { dirty: boolean; saving: boolean }) => void;
 }
 
 function formatRateScale(value: number | undefined | null): string {
@@ -114,7 +114,11 @@ function deriveBaseBurst(
 ): number | null {
   if (typeof effectiveBurst !== 'number' || !Number.isFinite(effectiveBurst)) return null;
   if (effectiveBurst === 0) return 0;
-  if (typeof savedRateScale !== 'number' || !Number.isFinite(savedRateScale) || savedRateScale <= 0) {
+  if (
+    typeof savedRateScale !== 'number' ||
+    !Number.isFinite(savedRateScale) ||
+    savedRateScale <= 0
+  ) {
     return null;
   }
   return Math.round(effectiveBurst / savedRateScale);
@@ -199,6 +203,7 @@ interface AnchorCandidate {
 export function AccountSchedulingPanel(props: AccountSchedulingPanelProps) {
   const { fileName, authIndex, initialScheduling, disabled = false, onApplied } = props;
   const { t, i18n } = useTranslation();
+  const [limitState, setLimitState] = useState({ dirty: false, saving: false });
   const locale = i18n?.language || i18n?.resolvedLanguage || 'en';
   const {
     tierOverride,
@@ -216,6 +221,12 @@ export function AccountSchedulingPanel(props: AccountSchedulingPanelProps) {
     legalTierValues,
     applyScheduling,
   } = useAccountSchedulingControls({ fileName, authIndex, initialScheduling, onApplied });
+  useEffect(() => {
+    props.onStateChange?.({
+      dirty: dirty || limitState.dirty,
+      saving: saving || limitState.saving,
+    });
+  }, [dirty, saving, limitState, props.onStateChange]);
 
   const tierOptions: SelectOption[] = [
     {
@@ -238,7 +249,7 @@ export function AccountSchedulingPanel(props: AccountSchedulingPanelProps) {
 
   const isOverride = view?.tier_source === 'override';
   const effectiveRateScaleText = formatRateScale(view?.rate_scale);
-  const controlsDisabled = disabled || saving;
+  const controlsDisabled = disabled || saving || limitState.dirty || limitState.saving;
 
   // 「清除锚点」是破坏性且不可撤销的（清空 = 回落自动铸造，丢弃当前锚点值且找不回
   // 原值），做成两步确认防手滑：第一次点武装成「确认清除?」，第二次点才真正清空。
@@ -265,10 +276,13 @@ export function AccountSchedulingPanel(props: AccountSchedulingPanelProps) {
     setFirstProductionAtText('');
   };
 
-  const clearTooltip = t('auth_files.account_settings_scheduling_first_production_at_clear_tooltip', {
-    defaultValue:
-      'Clearing resets the anchor to auto (re-stamped with the actual time on the next successful serve). It does not restore the previous value.',
-  });
+  const clearTooltip = t(
+    'auth_files.account_settings_scheduling_first_production_at_clear_tooltip',
+    {
+      defaultValue:
+        'Clearing resets the anchor to auto (re-stamped with the actual time on the next successful serve). It does not restore the previous value.',
+    }
+  );
 
   // 「候选锚点一键选择」：把这个账号真实拥有的、贴近服务锚点语义的时间戳摆出来，
   // 点一下就把日期输入设成该值（走现有 Apply → PATCH set 路径），免手打/猜。候选值
@@ -288,9 +302,12 @@ export function AccountSchedulingPanel(props: AccountSchedulingPanelProps) {
       // 最贴锚点语义 → 推荐候选，用 primary 变体高亮。后端投影是 high-water 的
       // last_activity_at（CLI 设备版本高水位、仅版本升级时更新），只用过一个版本的号
       // ≈ 首次服务，升级过的老号可能偏晚。
-      labelText: t('auth_files.account_settings_scheduling_first_production_at_candidate_last_activity', {
-        defaultValue: 'Last activity',
-      }),
+      labelText: t(
+        'auth_files.account_settings_scheduling_first_production_at_candidate_last_activity',
+        {
+          defaultValue: 'Last activity',
+        }
+      ),
       datetimeLocal: lastActivityLocal,
       displayText: lastActivityLocal.replace('T', ' '),
       variant: 'primary',
@@ -301,9 +318,12 @@ export function AccountSchedulingPanel(props: AccountSchedulingPanelProps) {
     anchorCandidates.push({
       key: 'first-auth',
       testId: 'account-settings-scheduling-first-production-at-candidate-first-auth',
-      labelText: t('auth_files.account_settings_scheduling_first_production_at_candidate_first_auth', {
-        defaultValue: 'First authenticated',
-      }),
+      labelText: t(
+        'auth_files.account_settings_scheduling_first_production_at_candidate_first_auth',
+        {
+          defaultValue: 'First authenticated',
+        }
+      ),
       datetimeLocal: firstAuthLocal,
       displayText: firstAuthLocal.replace('T', ' '),
       variant: 'secondary',
@@ -383,11 +403,15 @@ export function AccountSchedulingPanel(props: AccountSchedulingPanelProps) {
         rpm: formatEffectiveLimitNumber(effectiveLimits?.rpm, locale),
         burst: formatEffectiveLimitNumber(effectiveLimits?.burst, locale),
         concurrency: formatEffectiveLimitNumber(effectiveLimits?.concurrency, locale),
-        dailyBudget: formatEffectiveBudget(effectiveLimits?.daily_budget, locale, effectiveUnlimitedText),
+        dailyBudget: formatEffectiveBudget(
+          effectiveLimits?.daily_budget,
+          locale,
+          effectiveUnlimitedText
+        ),
         tokenDailyBudget: formatEffectiveBudget(
           effectiveLimits?.token_daily_budget,
           locale,
-          effectiveUnlimitedText
+          t('auth_files.pacing.local_limit_off', { defaultValue: 'No local cap configured' })
         ),
         defaultValue:
           'Effective limits: rpm {{rpm}} · burst {{burst}} · concurrency {{concurrency}} · daily budget {{dailyBudget}} · token daily budget {{tokenDailyBudget}}',
@@ -418,248 +442,277 @@ export function AccountSchedulingPanel(props: AccountSchedulingPanelProps) {
     : null;
 
   return (
-    <div className={styles.panel} data-testid="account-settings-scheduling-panel">
-      <div className={styles.panelHeader}>
-        <strong>
-          {t('auth_files.account_settings_scheduling_title', {
-            defaultValue: 'Adaptive scheduling overrides',
-          })}
-        </strong>
-        <span
-          className={`status-badge ${isOverride ? 'success' : 'muted'}`}
-          data-testid="account-settings-scheduling-tier-status"
-        >
-          {isOverride
-            ? t('auth_files.account_settings_scheduling_tier_manual_badge', {
-                defaultValue: 'Manual tier override',
-              })
-            : t('auth_files.account_settings_scheduling_tier_auto_badge', {
-                defaultValue: 'Auto-detected tier',
-              })}
-        </span>
-      </div>
+    <AccountLimitPolicyPanel
+      {...props}
+      disabled={disabled || dirty || saving}
+      onStateChange={setLimitState}
+      advancedSettings={
+        <details className={styles.legacyAdvanced} data-testid="legacy-scheduling-advanced">
+          <summary>{t('auth_files.pacing.advanced')}</summary>
+          <p className={styles.advancedHint}>{t('auth_files.pacing.legacy_save_note')}</p>
+          <div className={styles.panel} data-testid="account-settings-scheduling-panel">
+            <div className={styles.panelHeader}>
+              <strong>
+                {t('auth_files.account_settings_scheduling_title', {
+                  defaultValue: 'Adaptive scheduling overrides',
+                })}
+              </strong>
+              <span
+                className={`status-badge ${isOverride ? 'success' : 'muted'}`}
+                data-testid="account-settings-scheduling-tier-status"
+              >
+                {isOverride
+                  ? t('auth_files.account_settings_scheduling_tier_manual_badge', {
+                      defaultValue: 'Manual tier override',
+                    })
+                  : t('auth_files.account_settings_scheduling_tier_auto_badge', {
+                      defaultValue: 'Auto-detected tier',
+                    })}
+              </span>
+            </div>
 
-      <div className={styles.controlsGrid}>
-        <div className={styles.row}>
-          <label htmlFor="account-scheduling-tier-select">
-            {t('auth_files.account_settings_scheduling_tier_label', {
-              defaultValue: 'Subscription tier override',
-            })}
-          </label>
-          <Select
-            id="account-scheduling-tier-select"
-            value={tierOverride}
-            options={tierOptions}
-            onChange={(value) => setTierOverride(value as AccountTierOverrideChoice)}
-            disabled={controlsDisabled}
-            ariaLabel={t('auth_files.account_settings_scheduling_tier_label', {
-              defaultValue: 'Subscription tier override',
-            })}
-            fullWidth
-          />
-          <div className="hint">
-            {t('auth_files.account_settings_scheduling_tier_hint', {
-              defaultValue:
-                'Auto detects the tier from the upstream plan. Picking a tier forces it for scheduling regardless of what auto-detection would resolve to; pick Auto to clear the override.',
-            })}
-          </div>
-        </div>
+            <div className={styles.controlsGrid}>
+              <div className={styles.row}>
+                <label htmlFor="account-scheduling-tier-select">
+                  {t('auth_files.account_settings_scheduling_tier_label', {
+                    defaultValue: 'Subscription tier override',
+                  })}
+                </label>
+                <Select
+                  id="account-scheduling-tier-select"
+                  value={tierOverride}
+                  options={tierOptions}
+                  onChange={(value) => setTierOverride(value as AccountTierOverrideChoice)}
+                  disabled={controlsDisabled}
+                  ariaLabel={t('auth_files.account_settings_scheduling_tier_label', {
+                    defaultValue: 'Subscription tier override',
+                  })}
+                  fullWidth
+                />
+                <div className="hint">
+                  {t('auth_files.account_settings_scheduling_tier_hint', {
+                    defaultValue:
+                      'Auto detects the tier from the upstream plan. Picking a tier forces it for scheduling regardless of what auto-detection would resolve to; pick Auto to clear the override.',
+                  })}
+                </div>
+              </div>
 
-        <div className={styles.row}>
-          <Input
-            label={t('auth_files.account_settings_scheduling_rate_scale_label', {
-              defaultValue: 'Rate scale',
-            })}
-            type="number"
-            step={0.1}
-            min={0}
-            placeholder="1.0"
-            value={rateScaleText}
-            disabled={controlsDisabled}
-            data-testid="account-settings-scheduling-rate-scale-input"
-            onChange={(e) => setRateScaleText(e.target.value)}
-            hint={t('auth_files.account_settings_scheduling_rate_scale_hint', {
-              defaultValue: 'Test-only rate multiplier; 1.0 = no effect.',
-            })}
-            error={rateScaleError ?? undefined}
-          />
-          {/* 实时预览：随输入现算「这个乘子会带来的生效上限」，不用保存/不发请求就能看到。
+              <div className={styles.row}>
+                <Input
+                  label={t('auth_files.account_settings_scheduling_rate_scale_label', {
+                    defaultValue: 'Rate scale',
+                  })}
+                  type="number"
+                  step={0.1}
+                  min={0}
+                  placeholder="1.0"
+                  value={rateScaleText}
+                  disabled={controlsDisabled}
+                  data-testid="account-settings-scheduling-rate-scale-input"
+                  onChange={(e) => setRateScaleText(e.target.value)}
+                  hint={t('auth_files.account_settings_scheduling_rate_scale_hint', {
+                    defaultValue:
+                      'Scales RPM, legacy burst, concurrency and daily request/token budgets in production; it does not change pacing capacity or active groups.',
+                  })}
+                  error={rateScaleError ?? undefined}
+                />
+                {/* 实时预览：随输入现算「这个乘子会带来的生效上限」，不用保存/不发请求就能看到。
               客户端估算（标「未保存」区分 footer 那个读已保存值的 effective_limits），输入
               非法或 warmup 基准缺失（老 core 未投影）时整行不渲染，不臆造。 */}
-          {ratePreviewText && (
-            <div className="hint" data-testid="account-settings-scheduling-rate-scale-preview">
-              {ratePreviewText}
-            </div>
-          )}
-          {/* 「恢复默认」按钮移出 Input 的 48px 绝对定位 rightElement 悬浮槽（那会盖住
+                {ratePreviewText && (
+                  <div
+                    className="hint"
+                    data-testid="account-settings-scheduling-rate-scale-preview"
+                  >
+                    {ratePreviewText}
+                  </div>
+                )}
+                {/* 「恢复默认」按钮移出 Input 的 48px 绝对定位 rightElement 悬浮槽（那会盖住
               数字步进器），改放输入框下方独立一行的常规 flow 布局。 */}
-          <div className={styles.fieldActions}>
-            <Button
-              type="button"
-              variant="ghost"
-              size="xs"
-              data-testid="account-settings-scheduling-rate-scale-reset"
-              disabled={controlsDisabled || rateScaleText.trim() === ''}
-              onClick={() => setRateScaleText('')}
-            >
-              {t('auth_files.account_settings_scheduling_rate_scale_reset', {
-                defaultValue: 'Reset to default',
-              })}
-            </Button>
-          </div>
-        </div>
-      </div>
+                <div className={styles.fieldActions}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    data-testid="account-settings-scheduling-rate-scale-reset"
+                    disabled={controlsDisabled || rateScaleText.trim() === ''}
+                    onClick={() => setRateScaleText('')}
+                  >
+                    {t('auth_files.account_settings_scheduling_rate_scale_reset', {
+                      defaultValue: 'Reset to default',
+                    })}
+                  </Button>
+                </div>
+              </div>
+            </div>
 
-      <div className={styles.row}>
-        <Input
-          label={t('auth_files.account_settings_scheduling_first_production_at_label', {
-            defaultValue: 'First production date (warm-up anchor)',
-          })}
-          type="datetime-local"
-          max={nowDatetimeLocal()}
-          value={firstProductionAtText}
-          disabled={controlsDisabled}
-          data-testid="account-settings-scheduling-first-production-at-input"
-          onChange={(e) => handleFirstProductionChange(e.target.value)}
-          hint={t('auth_files.account_settings_scheduling_first_production_at_hint', {
-            defaultValue:
-              'Empty = auto warm-up as a new account (the default for new accounts). To migrate an account that was already serving in production before adaptive scheduling, set its real serve time by picking a candidate above: "Last activity" = derived from this account\'s CLI device-version changes (for an account that only ever used one version this ≈ its first serve; for an upgraded older account it may be later than the true first serve); "First authenticated" = the current identity assignment time (updated after an identity rotation), not strictly the first-ever authentication; "Current time" = stamp now. Setting it earlier than reality makes the account look overly mature and skips warm-up (ban risk) — when unsure, use "Last activity" or "Current time", or leave it empty. "Clear" resets it back to auto.',
-          })}
-          error={firstProductionAtError ?? undefined}
-        />
-        {/* 候选锚点一键选择：展示该账号真实拥有的时间戳（最近活动 / 首次认证 /
+            <div className={styles.row}>
+              <Input
+                label={t('auth_files.account_settings_scheduling_first_production_at_label', {
+                  defaultValue: 'First production date (warm-up anchor)',
+                })}
+                type="datetime-local"
+                max={nowDatetimeLocal()}
+                value={firstProductionAtText}
+                disabled={controlsDisabled}
+                data-testid="account-settings-scheduling-first-production-at-input"
+                onChange={(e) => handleFirstProductionChange(e.target.value)}
+                hint={t('auth_files.account_settings_scheduling_first_production_at_hint', {
+                  defaultValue:
+                    'Empty = auto warm-up as a new account (the default for new accounts). To migrate an account that was already serving in production before adaptive scheduling, set its real serve time by picking a candidate above: "Last activity" = derived from this account\'s CLI device-version changes (for an account that only ever used one version this ≈ its first serve; for an upgraded older account it may be later than the true first serve); "First authenticated" = the current identity assignment time (updated after an identity rotation), not strictly the first-ever authentication; "Current time" = stamp now. Setting it earlier than reality makes the account look overly mature and skips warm-up (ban risk) — when unsure, use "Last activity" or "Current time", or leave it empty. "Clear" resets it back to auto.',
+                })}
+                error={firstProductionAtError ?? undefined}
+              />
+              {/* 候选锚点一键选择：展示该账号真实拥有的时间戳（最近活动 / 首次认证 /
             当前时间），点一下就把日期输入设成对应值，免手打/猜。每个按钮显示
             含义标签 + 具体时间，让用户看清在选什么；点选走现有 Apply → PATCH set。 */}
-        <div
-          className={styles.candidates}
-          data-testid="account-settings-scheduling-first-production-at-candidates"
-        >
-          <span className={styles.candidatesLabel}>
-            {t('auth_files.account_settings_scheduling_first_production_at_candidates_label', {
-              defaultValue: 'Pick a timestamp this account already has:',
-            })}
-          </span>
-          <div className={styles.candidateButtons}>
-            {anchorCandidates.map((candidate) => (
-              <Button
-                key={candidate.key}
-                type="button"
-                variant={candidate.variant}
-                size="xs"
-                data-testid={candidate.testId}
-                title={`${candidate.labelText} · ${candidate.displayText}`}
-                disabled={controlsDisabled}
-                onClick={() => handleFirstProductionChange(candidate.datetimeLocal)}
+              <div
+                className={styles.candidates}
+                data-testid="account-settings-scheduling-first-production-at-candidates"
               >
-                {candidate.labelText}
-                <span className={styles.candidateTime}> · {candidate.displayText}</span>
-              </Button>
-            ))}
-          </div>
-        </div>
-        {/* 「设为当前时间」和「清除」都移出 Input 的绝对定位 rightElement 悬浮槽（那会
+                <span className={styles.candidatesLabel}>
+                  {t(
+                    'auth_files.account_settings_scheduling_first_production_at_candidates_label',
+                    {
+                      defaultValue: 'Pick a timestamp this account already has:',
+                    }
+                  )}
+                </span>
+                <div className={styles.candidateButtons}>
+                  {anchorCandidates.map((candidate) => (
+                    <Button
+                      key={candidate.key}
+                      type="button"
+                      variant={candidate.variant}
+                      size="xs"
+                      data-testid={candidate.testId}
+                      title={`${candidate.labelText} · ${candidate.displayText}`}
+                      disabled={controlsDisabled}
+                      onClick={() => handleFirstProductionChange(candidate.datetimeLocal)}
+                    >
+                      {candidate.labelText}
+                      <span className={styles.candidateTime}> · {candidate.displayText}</span>
+                    </Button>
+                  ))}
+                </div>
+              </div>
+              {/* 「设为当前时间」和「清除」都移出 Input 的绝对定位 rightElement 悬浮槽（那会
             盖住原生日期/日历选择器），改放输入框下方独立一行；清除做成两步确认（破坏性、
             不可撤销）以区别于设为当前时间与手动选日期。空值时不渲染「清除」按钮，改在
             原位显示「当前已是自动」状态文字，避免变灰按钮被误读成坏掉的「恢复」。 */}
-        <div className={styles.fieldActions}>
-          <Button
-            type="button"
-            variant="ghost"
-            size="xs"
-            data-testid="account-settings-scheduling-first-production-at-set-now"
-            disabled={controlsDisabled}
-            onClick={handleSetNow}
-          >
-            {t('auth_files.account_settings_scheduling_first_production_at_set_now', {
-              defaultValue: 'Set to now',
-            })}
-          </Button>
-          {hasFirstProductionValue ? (
-            <Button
-              type="button"
-              variant={showClearConfirm ? 'danger' : 'ghost'}
-              size="xs"
-              data-testid="account-settings-scheduling-first-production-at-clear"
-              title={clearTooltip}
-              disabled={controlsDisabled}
-              onClick={handleClearClick}
-            >
-              {showClearConfirm
-                ? t('auth_files.account_settings_scheduling_first_production_at_clear_confirm', {
-                    defaultValue: 'Confirm clear?',
-                  })
-                : t('auth_files.account_settings_scheduling_first_production_at_clear', {
-                    defaultValue: 'Clear',
+              <div className={styles.fieldActions}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="xs"
+                  data-testid="account-settings-scheduling-first-production-at-set-now"
+                  disabled={controlsDisabled}
+                  onClick={handleSetNow}
+                >
+                  {t('auth_files.account_settings_scheduling_first_production_at_set_now', {
+                    defaultValue: 'Set to now',
                   })}
-            </Button>
-          ) : (
-            <span
-              className={styles.autoStatus}
-              data-testid="account-settings-scheduling-first-production-at-auto-status"
-            >
-              {autoStatusText}
-            </span>
-          )}
-        </div>
-        <div
-          className={styles.effectiveState}
-          data-testid="account-settings-scheduling-first-production-at-status"
-        >
-          {hasFirstProductionValue && anchorStatusText && <span>{anchorStatusText}</span>}
-          {warmupStatusText && <span>{warmupStatusText}</span>}
-        </div>
-      </div>
+                </Button>
+                {hasFirstProductionValue ? (
+                  <Button
+                    type="button"
+                    variant={showClearConfirm ? 'danger' : 'ghost'}
+                    size="xs"
+                    data-testid="account-settings-scheduling-first-production-at-clear"
+                    title={clearTooltip}
+                    disabled={controlsDisabled}
+                    onClick={handleClearClick}
+                  >
+                    {showClearConfirm
+                      ? t(
+                          'auth_files.account_settings_scheduling_first_production_at_clear_confirm',
+                          {
+                            defaultValue: 'Confirm clear?',
+                          }
+                        )
+                      : t('auth_files.account_settings_scheduling_first_production_at_clear', {
+                          defaultValue: 'Clear',
+                        })}
+                  </Button>
+                ) : (
+                  <span
+                    className={styles.autoStatus}
+                    data-testid="account-settings-scheduling-first-production-at-auto-status"
+                  >
+                    {autoStatusText}
+                  </span>
+                )}
+              </div>
+              <div
+                className={styles.effectiveState}
+                data-testid="account-settings-scheduling-first-production-at-status"
+              >
+                {hasFirstProductionValue && anchorStatusText && <span>{anchorStatusText}</span>}
+                {warmupStatusText && <span>{warmupStatusText}</span>}
+              </div>
+            </div>
 
-      {errorMessage && (
-        <div className="error-box" data-testid="account-settings-scheduling-error">
-          {errorMessage}
-          {legalTierValues && legalTierValues.length > 0 && (
-            <span data-testid="account-settings-scheduling-legal-values">
-              {' '}
-              {legalTierValues.join(', ')}
-            </span>
-          )}
-        </div>
-      )}
+            {errorMessage && (
+              <div className="error-box" data-testid="account-settings-scheduling-error">
+                {errorMessage}
+                {legalTierValues && legalTierValues.length > 0 && (
+                  <span data-testid="account-settings-scheduling-legal-values">
+                    {' '}
+                    {legalTierValues.join(', ')}
+                  </span>
+                )}
+              </div>
+            )}
 
-      <div className={styles.footer}>
-        <div className={styles.effectiveState} data-testid="account-settings-scheduling-effective">
-          <span>
-            {t('auth_files.account_settings_scheduling_effective_rate', {
-              rate: effectiveRateScaleText,
-              defaultValue: 'Effective rate scale: {{rate}}',
-            })}
-          </span>
-          {/* effective_limits 是 additive 投影，老 core 未下发时 effectiveLimitsText
+            <div className={styles.footer}>
+              <div
+                className={styles.effectiveState}
+                data-testid="account-settings-scheduling-effective"
+              >
+                <span>
+                  {t('auth_files.account_settings_scheduling_effective_rate', {
+                    rate: effectiveRateScaleText,
+                    defaultValue: 'Effective rate scale: {{rate}}',
+                  })}
+                </span>
+                {/* effective_limits 是 additive 投影，老 core 未下发时 effectiveLimitsText
               为 null，这块连同下面的养号压速提示一起不渲染（优雅降级）。 */}
-          {effectiveLimitsText && (
-            <span data-testid="account-settings-scheduling-effective-limits">
-              {effectiveLimitsText}
-            </span>
-          )}
-          {showEffectivePacingNote && (
-            <span data-testid="account-settings-scheduling-effective-limits-pacing-note">
-              {t('auth_files.account_settings_scheduling_effective_pacing_note', {
-                defaultValue:
-                  'Warm-up account: actual rpm may be further reduced by dynamic pacing.',
-              })}
-            </span>
-          )}
-        </div>
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          onClick={() => void applyScheduling()}
-          loading={saving}
-          disabled={
-            controlsDisabled || !dirty || Boolean(rateScaleError) || Boolean(firstProductionAtError)
-          }
-          data-testid="account-settings-scheduling-apply"
-        >
-          {t('auth_files.account_settings_scheduling_apply', { defaultValue: 'Apply scheduling' })}
-        </Button>
-      </div>
-    </div>
+                {effectiveLimitsText && (
+                  <span data-testid="account-settings-scheduling-effective-limits">
+                    {effectiveLimitsText}
+                  </span>
+                )}
+                {showEffectivePacingNote && (
+                  <span data-testid="account-settings-scheduling-effective-limits-pacing-note">
+                    {t('auth_files.account_settings_scheduling_effective_pacing_note', {
+                      defaultValue:
+                        'Warm-up account: actual rpm may be further reduced by dynamic pacing.',
+                    })}
+                  </span>
+                )}
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => void applyScheduling()}
+                loading={saving}
+                disabled={
+                  controlsDisabled ||
+                  !dirty ||
+                  Boolean(rateScaleError) ||
+                  Boolean(firstProductionAtError)
+                }
+                data-testid="account-settings-scheduling-apply"
+              >
+                {t('auth_files.account_settings_scheduling_apply', {
+                  defaultValue: 'Apply scheduling',
+                })}
+              </Button>
+            </div>
+          </div>
+        </details>
+      }
+    />
   );
 }

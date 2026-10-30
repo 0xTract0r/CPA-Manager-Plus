@@ -19,6 +19,10 @@ const forbiddenMarkers = [
   'demo-request-',
   'demo-event-',
   'demo-trace-',
+  'demo-pacing-controls',
+  'demo-pacing-story-state',
+  'local-simulation',
+  'QA-TEMP',
 ];
 
 if (!existsSync(bundlePath)) {

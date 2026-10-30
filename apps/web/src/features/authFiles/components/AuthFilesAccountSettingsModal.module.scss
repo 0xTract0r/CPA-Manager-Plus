@@ -6,6 +6,7 @@
 // 弹窗根容器 hook：仅用于账号设置弹窗，不影响其它 Modal 调用。
 .accountSettingsModal {
   width: 100%;
+  background: var(--app-surface-strong, var(--bg-primary));
 }
 
 .accountSettingsEditor {
