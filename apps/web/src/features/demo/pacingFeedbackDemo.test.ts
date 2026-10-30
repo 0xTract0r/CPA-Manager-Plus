@@ -32,6 +32,52 @@ const setup = async () => {
   return { demo, file, patch };
 };
 
+it.each(captured.files.map((account) => [account.note, account.auth_index]))(
+  'provides the current editor contract for the ordinary %s account entry',
+  async (_note, id) => {
+    const { demo, file } = await setup();
+    const current = file(id);
+    const before = JSON.stringify(current);
+    expect(current.account_scheduling?.warmup_control?.effective_period_days).toBe(60);
+    expect(current.account_scheduling?.warmup_control?.profiles).toHaveLength(4);
+    expect(current.account_scheduling?.limit_policy?.fields.rpm.effective).toBe(
+      current.account_scheduling?.effective_limits?.rpm
+    );
+    const preview = demo.handlePacingFeedbackRequest(
+      'post',
+      '/auth-files/account-scheduling/preview',
+      new URLSearchParams(),
+      { name: current.name, auth_index: id }
+    ) as { preview: boolean; account_scheduling: AuthFileAccountScheduling };
+    expect(preview.preview).toBe(true);
+    expect(preview.account_scheduling.effective_limits).toEqual(
+      current.account_scheduling?.effective_limits
+    );
+    expect(JSON.stringify(file(id))).toBe(before);
+    expect(JSON.stringify(captured)).toBe(capturedJson);
+  }
+);
+
+it('keeps the mature account limits and reauth status when editing its local policy', async () => {
+  const { file, patch } = await setup();
+  const original = captured.files[0];
+  const current = file(original.auth_index);
+  expect(current.account_scheduling?.effective_limits).toMatchObject({
+    rpm: 135,
+    concurrency: 12,
+    daily_budget: 0,
+    pacing_applies: false,
+  });
+  expect(current.account_scheduling?.first_production_at).toBeTruthy();
+  const saved = patch(original.auth_index, { warmup_mode: 'mature' });
+  expect(saved.effective_limits).toMatchObject({ rpm: 135, concurrency: 12, daily_budget: 0 });
+  expect(file(original.auth_index)).toMatchObject({
+    status: original.status,
+    unavailable: true,
+    availability_reason: 'reauth_required',
+  });
+});
+
 it('settles at the old capacity before edits and never returns discarded credit', async () => {
   const { file, patch } = await setup();
   const snapshot = () => file('local-simulation').account_scheduling!.warmup_traffic_pacing!;
@@ -143,7 +189,11 @@ it('provides eight production-shaped scenarios and keeps history provenance sepa
   const files = demo.getPacingFeedbackFiles().files;
   expect(files).toHaveLength(15);
   expect(new Set(files.map((item) => item.auth_index)).size).toBe(15);
-  expect(files.slice(0, 2)).toEqual(captured.files.slice(0, 2));
+  for (const [index, original] of captured.files.entries()) {
+    const identityAndStatus = { ...original, account_scheduling: expect.any(Object) };
+    expect(files[index]).toMatchObject(identityAndStatus);
+  }
+  expect(JSON.stringify(captured)).toBe(capturedJson);
   expect(file('local-account-1').availability_reason).toBe('reauth_required');
   expect(file('local-account-2').disabled).toBe(true);
   expect(file('local-account-3').account_scheduling!.limit_policy).toBeTruthy();

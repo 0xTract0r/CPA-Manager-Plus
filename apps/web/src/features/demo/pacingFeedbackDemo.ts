@@ -112,6 +112,12 @@ const refreshDemoControl = (account: DemoAccount) => {
   {
     const profile = control.profiles.find((row) => row.id === (control.speed_profile ?? 'medium'))!;
     for (const name of LIMIT_FIELDS) scheduling.limit_policy!.fields[name].baseline = profile[name];
+    // 成熟号原有整体倍率仍有效，补齐演示契约不能将135/12悄悄改成45/4。
+    if (mature && !control.speed_profile) {
+      const scale = scheduling.rate_scale ?? 1;
+      scheduling.limit_policy!.fields.rpm.baseline = Math.round(profile.rpm * scale);
+      scheduling.limit_policy!.fields.concurrency.baseline = Math.ceil(profile.concurrency * scale);
+    }
     account.dailyBudget = profile.daily_budget;
     if (control.speed_profile) scheduling.rate_scale = 1;
     scheduling.warmup.daily_budget = profile.daily_budget;
@@ -123,8 +129,8 @@ const addEditableAccount = (file: AuthFileItem, synthetic = false) => {
   const scheduling = copy.account_scheduling!;
   const pacing = scheduling.warmup_traffic_pacing!;
   const baselines = {
-    rpm: pacing.rpm_limit ?? 5,
-    concurrency: pacing.concurrency_limit ?? 1,
+    rpm: pacing.rpm_limit ?? scheduling.effective_limits?.rpm ?? 5,
+    concurrency: pacing.concurrency_limit ?? scheduling.effective_limits?.concurrency ?? 1,
     request_capacity: pacing.request_capacity ?? 8,
     max_active_bindings: pacing.max_active_binding_groups ?? 1,
   };
@@ -165,7 +171,7 @@ const addEditableAccount = (file: AuthFileItem, synthetic = false) => {
       capacity: baselines.request_capacity,
       balance: pacing.request_balance ?? 0,
     },
-    dailyBudget: pacing.daily_request_budget ?? 500,
+    dailyBudget: pacing.daily_request_budget ?? scheduling.effective_limits?.daily_budget ?? 500,
     temporaryDeadline: 0,
     temporaryIssued: 0,
     synthetic,
@@ -179,8 +185,8 @@ const addEditableAccount = (file: AuthFileItem, synthetic = false) => {
   return account;
 };
 
-// 原始捕获JSON不变。仅AC-13/AC-16叠加可编辑的本地策略与后续内存状态。
-for (const file of captured.files.slice(2, 4)) {
+// 四个普通账号入口统一补齐当前编辑契约；不改原始采样JSON或认证/停用状态。
+for (const file of captured.files) {
   const copy = clone(file) as AuthFileItem;
   const sample = budgetPolicy.accounts.find((account) => account.alias === copy.note)!;
   const scheduling = copy.account_scheduling!;
