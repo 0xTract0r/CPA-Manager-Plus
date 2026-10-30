@@ -112,9 +112,17 @@ const refreshDemoControl = (account: DemoAccount) => {
   {
     const profile = control.profiles.find((row) => row.id === (control.speed_profile ?? 'medium'))!;
     for (const name of LIMIT_FIELDS) scheduling.limit_policy!.fields[name].baseline = profile[name];
-    account.dailyBudget = profile.daily_budget;
+    // 与core legacy规则一致：RPM直接乘，整数正数四舍五入且最少1；预设不叠乘旧倍率。
+    const scale = control.speed_profile ? 1 : (scheduling.rate_scale ?? budgetPolicy.rate_scale);
+    const scaleInt = (value: number) => (value > 0 ? Math.max(1, Math.round(value * scale)) : 0);
+    scheduling.limit_policy!.fields.rpm.baseline = profile.rpm * scale;
+    scheduling.limit_policy!.fields.concurrency.baseline = scaleInt(profile.concurrency);
+    account.dailyBudget = scaleInt(profile.daily_budget);
     if (control.speed_profile) scheduling.rate_scale = 1;
-    scheduling.warmup.daily_budget = profile.daily_budget;
+    const stage = control.profiles.find((row) => row.id === 'medium')!;
+    scheduling.warmup.rpm_limit = stage.rpm;
+    scheduling.warmup.concurrency_limit = stage.concurrency;
+    scheduling.warmup.daily_budget = stage.daily_budget;
   }
 };
 
@@ -123,8 +131,8 @@ const addEditableAccount = (file: AuthFileItem, synthetic = false) => {
   const scheduling = copy.account_scheduling!;
   const pacing = scheduling.warmup_traffic_pacing!;
   const baselines = {
-    rpm: pacing.rpm_limit ?? 5,
-    concurrency: pacing.concurrency_limit ?? 1,
+    rpm: pacing.rpm_limit ?? scheduling.effective_limits?.rpm ?? 5,
+    concurrency: pacing.concurrency_limit ?? scheduling.effective_limits?.concurrency ?? 1,
     request_capacity: pacing.request_capacity ?? 8,
     max_active_bindings: pacing.max_active_binding_groups ?? 1,
   };
@@ -165,7 +173,7 @@ const addEditableAccount = (file: AuthFileItem, synthetic = false) => {
       capacity: baselines.request_capacity,
       balance: pacing.request_balance ?? 0,
     },
-    dailyBudget: pacing.daily_request_budget ?? 500,
+    dailyBudget: pacing.daily_request_budget ?? scheduling.effective_limits?.daily_budget ?? 500,
     temporaryDeadline: 0,
     temporaryIssued: 0,
     synthetic,
@@ -179,8 +187,8 @@ const addEditableAccount = (file: AuthFileItem, synthetic = false) => {
   return account;
 };
 
-// 原始捕获JSON不变。仅AC-13/AC-16叠加可编辑的本地策略与后续内存状态。
-for (const file of captured.files.slice(2, 4)) {
+// 四个普通账号入口统一补齐当前编辑契约；不改原始采样JSON或认证/停用状态。
+for (const file of captured.files) {
   const copy = clone(file) as AuthFileItem;
   const sample = budgetPolicy.accounts.find((account) => account.alias === copy.note)!;
   const scheduling = copy.account_scheduling!;
@@ -653,7 +661,7 @@ const simulatedFile = (account: DemoAccount) => {
     ),
     refill_per_hour: refillPerHour,
     daily_request_budget: account.dailyBudget,
-    rpm_limit: policy.fields.rpm.effective,
+    rpm_limit: Math.max(1, Math.floor(policy.fields.rpm.effective!)),
     concurrency_limit: policy.fields.concurrency.effective,
     max_active_binding_groups: policy.fields.max_active_bindings.effective,
   });
@@ -721,6 +729,7 @@ const simulatedFile = (account: DemoAccount) => {
       status: 'not_applicable',
       reason: 'mature',
       request_balance: null,
+      rpm_limit: null,
       refill_per_hour: null,
       admission_balance_eta_seconds: null,
     });
@@ -732,7 +741,7 @@ const simulatedFile = (account: DemoAccount) => {
   pacing.blocking_reasons = blocking;
   scheduling.effective_limits = {
     ...scheduling.effective_limits,
-    rpm: policy.fields.rpm.effective!,
+    rpm: Math.round(policy.fields.rpm.effective!),
     concurrency: policy.fields.concurrency.effective!,
     daily_budget: scheduling.warmup?.mature ? 0 : account.dailyBudget,
     pacing_applies: scheduling.warmup?.mature !== true,
@@ -902,6 +911,7 @@ const applyDemoScheduling = (
     request.speed_profile !== undefined ||
     request.warmup_mode !== undefined ||
     request.warmup_period_days !== undefined ||
+    request.rate_scale !== undefined ||
     request.first_production_at !== undefined
   )
     refreshDemoControl(account);
