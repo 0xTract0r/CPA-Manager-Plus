@@ -98,12 +98,17 @@ export function MonitoringActionBar({
   const syncProgressLabel = usageSyncProgress
     ? t('usage_stats.sync_core_history_progress', {
         added: usageSyncProgress.added,
-        batch: usageSyncCancelling ? usageSyncProgress.batchCount : usageSyncProgress.batchCount + 1,
+        batch: usageSyncCancelling
+          ? usageSyncProgress.batchCount
+          : usageSyncProgress.batchCount + 1,
       })
     : '';
 
   return (
-    <section className={styles.actionBar} aria-label={t('common.action')}>
+    <section
+      className={`${styles.actionBar} ${styles.monitorActionBar}`}
+      aria-label={t('common.action')}
+    >
       <div className={styles.actionGroup}>
         <button
           type="button"
@@ -135,10 +140,15 @@ export function MonitoringActionBar({
         </button>
         {usageSyncingFromCore ? (
           <div className={styles.syncProgressGroup}>
-            <span className={`${styles.actionButton} ${styles.syncProgressButton}`} aria-live="polite">
+            <span
+              className={`${styles.actionButton} ${styles.syncProgressButton}`}
+              aria-live="polite"
+            >
               <IconRefreshCw size={16} className={styles.syncProgressSpinner} />
               <span>
-                {usageSyncCancelling ? t('usage_stats.sync_core_history_cancelling') : syncProgressLabel}
+                {usageSyncCancelling
+                  ? t('usage_stats.sync_core_history_cancelling')
+                  : syncProgressLabel}
               </span>
             </span>
             <button
