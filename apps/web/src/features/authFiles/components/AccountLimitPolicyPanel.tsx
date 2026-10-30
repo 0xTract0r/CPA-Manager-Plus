@@ -12,7 +12,12 @@ import {
   type LimitDraft,
   type LimitPreset,
 } from '../model/accountLimitPolicy';
-import { SPEED_PROFILES, warmupControlDraft, warmupControlPatch } from '../model/warmupControl';
+import {
+  SPEED_PROFILES,
+  composeSchedulingPatch,
+  warmupControlDraft,
+  warmupControlPatch,
+} from '../model/warmupControl';
 import { formatDateTime } from '@/utils/format';
 import styles from './WarmupPacing.module.scss';
 import { AccountWarmupSummary } from './AccountWarmupSummary';
@@ -118,7 +123,9 @@ export function AccountLimitPolicyPanel({
       const result = await authFilesApi.updateAccountScheduling({
         name: fileName,
         auth_index: String(authIndex),
-        ...(end ? { temporary_limits: null } : { ...patch!, ...controlPatch }),
+        ...composeSchedulingPatch(
+          end ? { temporary_limits: null } : { ...patch!, ...controlPatch }
+        ),
       });
       if (!result.account_scheduling?.limit_policy) throw new Error('missing authoritative policy');
       setView(result.account_scheduling);

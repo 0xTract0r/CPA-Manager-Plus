@@ -446,6 +446,18 @@
 .dialogSurface {
   background: var(--app-surface-strong, var(--bg-primary));
 }
+.limitsNavigation {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin-bottom: 6px;
+}
+.scopeNote {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
 .history {
   border-top: 1px solid var(--border-subtle);
   margin-top: 16px;
