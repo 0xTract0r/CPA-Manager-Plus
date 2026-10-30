@@ -246,7 +246,8 @@
 .actionBar {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
+  // 对齐两侧第一行；右侧状态或日志链接换行时，不能按整块高度把左侧按钮下移。
+  align-items: start;
   gap: 10px;
   min-width: 0;
   padding: 8px 10px;
