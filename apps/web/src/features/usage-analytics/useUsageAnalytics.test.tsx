@@ -153,6 +153,7 @@ describe('useUsageAnalytics request orchestration', () => {
     expect(fast?.searchQuery).toBe('');
     expect(fast?.fromMs).toBe(1000);
     expect(fast?.toMs).toBe(9000);
+    expect(fast?.fastImpactOptions).toEqual({ mode: 'tier', metric: 'end_to_end_tps' });
     expect(lastParams(params => Boolean(params.include?.filter_selectors))?.fromMs).toBeNull();
     expect(latestResult?.fastFilters.model).toBe('all');
     expect(latestResult?.fastFilters.status).toBe('all');
@@ -166,6 +167,28 @@ describe('useUsageAnalytics request orchestration', () => {
     expect(lastParams(params => params.include?.fast_impact === false)?.fromMs).toBeNull();
     await act(async () => { latestResult?.setFilters({ authIndex: 'codex-b' }); });
     expect(lastParams(params => Boolean(params.include?.fast_impact))?.filters).toEqual({ auth_indices: ['codex-b'], providers: ['codex'] });
+  });
+
+  it('scopes the Fast account to its tab and restores it only when returning', async () => {
+    await renderHook('/usage-analytics?tab=codexFast&auth_index=codex-a');
+    expect(lastParams(params => Boolean(params.include?.fast_impact))?.filters).toEqual({
+      auth_indices: ['codex-a'],
+      providers: ['codex'],
+    });
+
+    await act(async () => { latestResult?.setActiveTab('models'); });
+    expect(latestResult?.activeTab).toBe('models');
+    expect(latestResult?.filters.authIndex).toBeUndefined();
+    expect(latestResult?.filters.provider).toBe('all');
+    expect(lastParams(params => Boolean(params.include?.model_stats))?.filters).not.toHaveProperty('auth_indices');
+    expect(lastParams(params => Boolean(params.include?.model_stats))?.filters).not.toHaveProperty('providers');
+
+    await act(async () => { latestResult?.setActiveTab('codexFast'); });
+    expect(latestResult?.fastFilters.authIndex).toBe('codex-a');
+    expect(lastParams(params => Boolean(params.include?.fast_impact))?.filters).toEqual({
+      auth_indices: ['codex-a'],
+      providers: ['codex'],
+    });
   });
 
   it('keeps full-text search and adds note matches as an OR identity scope', async () => {

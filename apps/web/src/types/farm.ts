@@ -427,12 +427,13 @@ export interface FarmAccountEntry {
   //  - created_at：core 侧该 auth 记录首次装载时间的近似值（RFC3339），**不是**
   //    Anthropic profile 的账号注册时间（真源需 quota snapshots 端点，编排器未
   //    接入，见 dto.go 诚实边界注释），前端展示不应称其为「账号注册时间」。
-  //  - first_identity_at：首次登录/接入时间（源自
-  //    account_settings.runtime_identity.current.created_at，RFC3339），是 #50
-  //    描述「首次登录」的等价字段。
+  //  - first_identity_at：当前运行身份创建时间（源自
+  //    account_settings.runtime_identity.current.created_at，RFC3339），身份轮换会刷新。
   // 两者均 omitempty，缺失时前端展示 '—'，不伪造。
   created_at?: string;
   first_identity_at?: string;
+  // 持久化首次成功服务时间；存活起点优先使用，避免装载/身份轮换重置时长。
+  first_production_at?: string;
   // R5-1（AC11）新增账号级时间字段（编排器 accountView 透传，Wave1 起补齐）：
   //  - account_registered_at：Anthropic profile 的**真实注册时间**（RFC3339），
   //    区别于 created_at（core 装载近似值）。「创建」列优先展示此字段，缺失才

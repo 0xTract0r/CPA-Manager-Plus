@@ -45,6 +45,27 @@ func TestFastImpactModelsCohortsQuantilesAndMissing(t *testing.T) {
 	if r.Models[0].Status != "upgrade_required" || r.Models[0].Tiers["unknown"].Attempts != 2 {
 		t.Fatal("legacy guessed tier")
 	}
+	if r.TierCoverage.UnknownAttempts != 2 || r.TierCoverage.DefaultAttempts != 0 || r.TierCoverage.KnownFromMS != 0 {
+		t.Fatalf("legacy coverage=%+v", r.TierCoverage)
+	}
+}
+
+func TestFastImpactTierCoverageTracksKnownCollectionWindow(t *testing.T) {
+	a := fastTestEvent(0, "A", "default", 20)
+	b := fastTestEvent(1, "A", "priority", 40)
+	c := fastTestEvent(2, "A", "flex", 30)
+	unknown := fastTestEvent(3, "A", "default", 10)
+	unknown.Telemetry = nil
+	prewarm := fastTestEvent(4, "A", "priority", 40)
+	prewarm.Telemetry.FastContext.RequestKind = "prewarm"
+	r := BuildFastImpact([]Event{unknown, c, b, a, prewarm}, 1, 999999, FastImpactOptions{})
+	coverage := r.TierCoverage
+	if coverage.DefaultAttempts != 1 || coverage.PriorityAttempts != 1 || coverage.FlexAttempts != 1 || coverage.UnknownAttempts != 1 {
+		t.Fatalf("coverage=%+v", coverage)
+	}
+	if coverage.KnownFromMS != fastStart(a) || coverage.KnownToMS != fastStart(c) {
+		t.Fatalf("known window=%+v", coverage)
+	}
 }
 func TestFastImpactInvalidMetricsAndLoadMismatch(t *testing.T) {
 	a, b := fastTestEvent(1, "A", "default", 20), fastTestEvent(2, "A", "priority", 40)

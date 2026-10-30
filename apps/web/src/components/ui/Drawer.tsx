@@ -148,9 +148,31 @@ export function Drawer({
     if (!open) return;
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      // 嵌套抽屉仅由最上层处理键盘，防止背景对话框抢焦点。
+      const panel = panelRef.current;
+      const dialogs = document.querySelectorAll('[role="dialog"][aria-modal="true"]');
+      if (!panel || dialogs[dialogs.length - 1] !== panel) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         handleClose();
+      }
+      if (event.key === 'Tab') {
+        const focusable = Array.from(panel.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])'
+        )).filter((element) => element.tabIndex >= 0 && element.getClientRects().length > 0);
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        const active = document.activeElement;
+        if (!first || !last) {
+          event.preventDefault();
+          panel.focus();
+        } else if (event.shiftKey && (active === first || active === panel || !panel.contains(active))) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && (active === last || active === panel || !panel.contains(active))) {
+          event.preventDefault();
+          first.focus();
+        }
       }
     };
 

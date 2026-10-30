@@ -1,4 +1,5 @@
 import { FastImpactPanel } from '@/features/fast-impact/FastImpactPanel';
+import { getLocalSnapshotTime } from '@/utils/localSnapshot';
 import { PerformancePanel } from '@/features/performance/PerformancePanel';
 import { isDemoMode, prefixRouteBase } from '@/features/demo/demoMode';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
@@ -2826,7 +2827,6 @@ function UsageAnalyticsPageInner() {
 
           {usage.activeTab !== 'codexFast' && (
           <div className={styles.filterBar}>
-            {usage.filters.authIndex && usage.filters.authIndex !== 'all' && usage.filters.performanceView !== 'fast' && <span>{t('fast_impact.account')}: {usage.performanceAuthFiles.find(a => String(a.auth_index ?? a.authIndex) === usage.filters.authIndex)?.note || usage.filters.authIndex}</span>}
             <div className={styles.scopeSearchBar}>
               <IconSearch size={16} />
               <input
@@ -3017,6 +3017,7 @@ function UsageAnalyticsPageInner() {
       {usage.activeTab === 'codexFast' && (
         <section className={styles.tablePanel}>
           <FastImpactPanel
+            snapshotAt={getLocalSnapshotTime()}
             data={usage.fastImpact}
             filters={usage.fastFilters}
             accounts={usage.performanceAuthFiles}

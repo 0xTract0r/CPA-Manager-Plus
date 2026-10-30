@@ -3,6 +3,7 @@
  */
 
 import axios from 'axios';
+import { getLocalSnapshotTime } from '@/utils/localSnapshot';
 import { REQUEST_TIMEOUT_MS } from '@/utils/constants';
 import { getDemoManagerLatestRelease } from '@/features/demo/demoFixtures';
 import { isDemoMode } from '@/features/demo/demoMode';
@@ -23,6 +24,8 @@ export const versionApi = {
   checkLatest: () => apiClient.get<Record<string, unknown>>('/latest-version'),
 
   checkManagerLatest: async () => {
+    // 只读快照没有在线更新状态，避免后台访问外部发布服务。
+    if (getLocalSnapshotTime() !== undefined) return {};
     if (__DEMO_SITE__ && isDemoMode()) {
       return getDemoManagerLatestRelease();
     }
