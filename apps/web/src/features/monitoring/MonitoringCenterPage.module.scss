@@ -246,7 +246,7 @@
 .actionBar {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  // 对齐两侧第一行；右侧状态或日志链接换行时，不能按整块高度把左侧按钮下移。
+  // 共用工具栏默认网格；请求监控的自适应换行见 .monitorActionBar。
   align-items: start;
   gap: 10px;
   min-width: 0;
@@ -281,6 +281,34 @@
 
   .statusBar {
     min-width: 0;
+  }
+}
+
+// 操作和状态都按完整内容宽度参与换行；挤不下时整组使用下一行，
+// 避免状态被固定双列压到半幅、单侧叠三行而另一侧留下大片空白。
+.monitorActionBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+
+  > .actionGroup,
+  > .actionBarMeta {
+    flex: 1 1 max-content;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  // 只在监控工具栏中合并布局层级，让状态 chip 与日志入口一起换行。
+  // 保留原 DOM、颜色、字号与其他页面共用状态条的布局。
+  .actionBarMeta .statusBar,
+  .actionBarMeta .statusMeta {
+    display: contents;
+  }
+
+  .statusMeta > span {
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 }
 

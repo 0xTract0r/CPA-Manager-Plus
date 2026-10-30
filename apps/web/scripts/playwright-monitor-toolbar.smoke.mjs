@@ -1,5 +1,5 @@
 /**
- * 请求监控顶部首行对齐回归，需先启动管理页面。
+ * 请求监控工具栏紧凑换行回归，需先启动管理页面。
  * CPAMP_UI_BASE=http://127.0.0.1:4178 PLAYWRIGHT_MODULE=/path/to/playwright \
  *   node scripts/playwright-monitor-toolbar.smoke.mjs
  *
@@ -119,7 +119,7 @@ const scenarios =
     : [{ logging: null, catchup: null }];
 const widths = [
   1920, 1600, 1499, 1498, 1440, 1366, 1343, 1342, 1280, 1220, 1218, 1180, 1100, 1064, 1062, 1024,
-  768, 390,
+  911, 768, 390,
 ];
 
 try {
@@ -179,6 +179,28 @@ try {
             (node) => node.textContent.trim() === '价格'
           );
           const bounds = rect(el);
+          const itemRects = (nodes) => [...nodes].map(rect).filter((box) => box.width > 0);
+          const actionItems = itemRects(group.querySelectorAll('button, a'));
+          const statusItems = itemRects(
+            meta.querySelectorAll('div[class*="statusMeta"] > span, a')
+          );
+          const rowCount = (items) => {
+            const rows = [];
+            for (const item of items) {
+              if (!rows.some((y) => Math.abs(y - item.y) <= 2)) rows.push(item.y);
+            }
+            return rows.length;
+          };
+          const css = getComputedStyle(el);
+          const innerWidth =
+            bounds.width -
+            parseFloat(css.paddingLeft) -
+            parseFloat(css.paddingRight) -
+            parseFloat(css.borderLeftWidth) -
+            parseFloat(css.borderRightWidth);
+          const statusSingleRowWidth =
+            statusItems.reduce((sum, item) => sum + item.width, 0) +
+            Math.max(0, statusItems.length - 1) * 8;
           const childrenOverflow = [...el.querySelectorAll('button, a, span')].some((node) => {
             if (node.closest('[role="tooltip"]')) return false;
             const box = node.getBoundingClientRect();
@@ -192,7 +214,15 @@ try {
             firstAction: rect(firstAction),
             badge: rect(badge),
             price: price ? rect(price) : null,
-            columns: getComputedStyle(el).gridTemplateColumns.split(/\s+/).length,
+            toolbar: bounds,
+            innerWidth,
+            actionRows: rowCount(actionItems),
+            statusRows: rowCount(statusItems),
+            statusSingleRowWidth,
+            columns:
+              Math.abs(meta.getBoundingClientRect().y - group.getBoundingClientRect().y) <= 2
+                ? 2
+                : 1,
             childrenOverflow,
             pageOverflow: document.documentElement.scrollWidth > window.innerWidth + 1,
           };
@@ -200,6 +230,16 @@ try {
         const detail = { width, collapsed, ...item, ...geometry };
         report.cases.push(detail);
         if (geometry.columns > 1) {
+          assert.equal(
+            geometry.actionRows,
+            1,
+            `Side-by-side actions must stay on one row: ${JSON.stringify(detail)}`
+          );
+          assert.equal(
+            geometry.statusRows,
+            1,
+            `Side-by-side status must stay on one row: ${JSON.stringify(detail)}`
+          );
           assert(
             Math.abs(geometry.firstAction.cy - geometry.badge.cy) <= 2,
             `First row misaligned: ${JSON.stringify(detail)}`
@@ -214,6 +254,21 @@ try {
           assert(
             geometry.meta.y >= geometry.group.bottom - 1,
             `Stacked groups overlap: ${JSON.stringify(detail)}`
+          );
+          assert(
+            Math.abs(geometry.group.width - geometry.innerWidth) <= 2,
+            `Stacked actions must use full width: ${JSON.stringify(detail)}`
+          );
+          assert(
+            Math.abs(geometry.meta.width - geometry.innerWidth) <= 2,
+            `Stacked status must use full width: ${JSON.stringify(detail)}`
+          );
+        }
+        if (geometry.statusSingleRowWidth <= geometry.innerWidth + 1) {
+          assert.equal(
+            geometry.statusRows,
+            1,
+            `Status can fit a full row but wraps prematurely: ${JSON.stringify(detail)}`
           );
         }
         assert(
