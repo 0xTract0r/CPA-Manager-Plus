@@ -6,7 +6,7 @@ import { useNotificationStore } from '@/stores';
 import type { AuthFileItem, AuthFileAccountScheduling } from '@/types';
 import { getAuthFilePatchTarget } from '../model/authFilesPageModel';
 import { AccountPacingRecovery } from './AccountPacingRecovery';
-import { AccountSchedulingPanel } from './AccountSchedulingPanel';
+import { AccountSchedulingEditor } from './AccountSchedulingEditor';
 import styles from './WarmupPacing.module.scss';
 
 /** 两个入口共用同一编辑器；保存只写当前账号，返回保留来源。 */
@@ -60,16 +60,20 @@ export function AccountLimitsModal({
       title={`${file.note || file.name} · ${t('auth_files.pacing.limits_title')}`}
     >
       <div data-testid="account-limits-editor" data-account-name={target.name}>
-        <Button variant="ghost" size="sm" disabled={formState.saving} onClick={() => leave(true)}>
-          {backLabel}
-        </Button>
+        <div className={styles.limitsNavigation}>
+          <Button variant="ghost" size="sm" disabled={formState.saving} onClick={() => leave(true)}>
+            {backLabel}
+          </Button>
+          <span className={styles.scopeNote}>
+            {t('auth_files.scheduling_editor.account_scope')}
+          </span>
+        </div>
         <AccountPacingRecovery
           key={`recovery-${saved?.revision ?? 0}`}
           file={saved ? { ...file, account_scheduling: saved.view } : file}
         />
-        {saved && <p role="status">{t('auth_files.pacing.saved_account_only')}</p>}
-        <AccountSchedulingPanel
-          key={`panel-${saved?.revision ?? 0}`}
+        <AccountSchedulingEditor
+          key={`editor-${target.name}-${target.authIndex}`}
           fileName={target.name}
           authIndex={target.authIndex}
           initialScheduling={saved?.view ?? file.account_scheduling}

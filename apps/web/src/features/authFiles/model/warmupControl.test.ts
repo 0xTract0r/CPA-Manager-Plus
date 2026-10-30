@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AccountWarmupControl } from '@/types/authFile';
-import { warmupControlDraft, warmupControlPatch } from './warmupControl';
+import { composeSchedulingPatch, warmupControlDraft, warmupControlPatch } from './warmupControl';
 const control: AccountWarmupControl = {
   speed_profile: null,
   warmup_mode: 'auto',
@@ -40,5 +40,28 @@ describe('account speed and warm-up draft', () => {
     expect(warmupControlPatch(manual, { speed: null, mode: 'auto', days: '30' })).toEqual({
       warmup_mode: 'auto',
     });
+  });
+});
+
+it('explicitly clears a preset without requiring a numeric edit', () => {
+  const preset = { ...control, speed_profile: 'high' as const };
+  expect(warmupControlPatch(preset, { ...warmupControlDraft(preset), speed: null })).toEqual({
+    speed_profile: null,
+  });
+});
+
+it.each(['rate_scale', 'limit_overrides', 'temporary_limits'] as const)(
+  'omits explicit null profile when legacy field %s is present, including null',
+  (field) => {
+    const patch = { speed_profile: null, [field]: null };
+    expect(composeSchedulingPatch(patch)).toEqual({ [field]: null });
+    expect(patch).toHaveProperty('speed_profile', null);
+    expect(() => composeSchedulingPatch({ ...patch, speed_profile: 'high' })).toThrow('speed');
+  }
+);
+it('keeps a standalone explicit clear when composing a control-only patch', () => {
+  expect(composeSchedulingPatch({ speed_profile: null, warmup_mode: 'mature' })).toEqual({
+    speed_profile: null,
+    warmup_mode: 'mature',
   });
 });

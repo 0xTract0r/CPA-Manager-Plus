@@ -22,6 +22,10 @@ export function warmupControlDraft(control?: AccountWarmupControl | null): Warmu
     days: String(control?.warmup_period_days ?? control?.effective_period_days ?? ''),
   };
 }
+export function validWarmupPeriod(days: string): boolean {
+  const value = Number(days);
+  return !!days.trim() && Number.isSafeInteger(value) && value >= 1 && value <= 365;
+}
 export function warmupControlPatch(
   control: AccountWarmupControl,
   draft: WarmupControlDraft
@@ -30,14 +34,7 @@ export function warmupControlPatch(
   'speed_profile' | 'warmup_mode' | 'warmup_period_days'
 > {
   const initial = warmupControlDraft(control);
-  if (
-    draft.mode === 'days' &&
-    (!draft.days.trim() ||
-      !Number.isSafeInteger(Number(draft.days)) ||
-      Number(draft.days) < 1 ||
-      Number(draft.days) > 365)
-  )
-    throw new Error('period');
+  if (draft.mode === 'days' && !validWarmupPeriod(draft.days)) throw new Error('period');
   const period =
     draft.mode === 'days'
       ? Number(draft.days)
@@ -46,10 +43,20 @@ export function warmupControlPatch(
         : null;
   const mode = draft.mode === 'mature' ? 'mature' : 'auto';
   return {
-    ...(draft.speed !== initial.speed && draft.speed !== null
-      ? { speed_profile: draft.speed }
-      : {}),
+    ...(draft.speed !== initial.speed ? { speed_profile: draft.speed } : {}),
     ...(mode !== control.warmup_mode ? { warmup_mode: mode } : {}),
     ...(period !== control.warmup_period_days ? { warmup_period_days: period } : {}),
   };
+}
+
+/** legacy字段会由core隐式清档位；显式null仅用于单独切回自定义。 */
+export function composeSchedulingPatch(
+  patch: Omit<AuthFileAccountSchedulingPatchRequest, 'name' | 'auth_index'>
+): Omit<AuthFileAccountSchedulingPatchRequest, 'name' | 'auth_index'> {
+  const result = { ...patch };
+  if (['rate_scale', 'limit_overrides', 'temporary_limits'].some((key) => key in result)) {
+    if (result.speed_profile != null) throw new Error('speed');
+    delete result.speed_profile;
+  }
+  return result;
 }

@@ -7,6 +7,7 @@ import type {
   AuthFileAccountSchedulingPatchRequest,
   WarmupPacingResponse,
   AuthFileAccountSchedulingResponse,
+  AuthFileAccountSchedulingPreviewResponse,
   AuthFileAccountSettings,
   AuthFileAccountSettingsPatchRequest,
   AuthFileAccountSettingsResponse,
@@ -720,6 +721,16 @@ export const authFilesApi = {
     request: AuthFileAccountSchedulingPatchRequest
   ): Promise<AuthFileAccountSchedulingResponse> =>
     apiClient.patch<AuthFileAccountSchedulingResponse>('/auth-files/account-scheduling', request),
+
+  previewAccountScheduling: (
+    request: AuthFileAccountSchedulingPatchRequest,
+    signal?: AbortSignal
+  ) =>
+    apiClient.post<AuthFileAccountSchedulingPreviewResponse>(
+      '/auth-files/account-scheduling/preview',
+      request,
+      { signal }
+    ),
 
   refreshStatus: async (name: string, options: AuthFileStatusRefreshOptions = {}) => {
     const payload = await apiClient.post<AuthFileStatusRefreshResponse>(
