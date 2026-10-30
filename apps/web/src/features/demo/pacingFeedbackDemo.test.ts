@@ -78,6 +78,61 @@ it('keeps the mature account limits and reauth status when editing its local pol
   });
 });
 
+it.each([
+  { scale: 2, rpm: 90, baseline: 90, concurrency: 8 },
+  { scale: 1.1, rpm: 50, baseline: 49.5, concurrency: 4 },
+  { scale: null, rpm: 45, baseline: 45, concurrency: 4 },
+])(
+  'recomputes mature preview and save when rate scale is $scale',
+  async ({ scale, rpm, baseline, concurrency }) => {
+    const { demo, file, patch } = await setup();
+    const current = file('local-account-1');
+    const preview = demo.handlePacingFeedbackRequest(
+      'post',
+      '/auth-files/account-scheduling/preview',
+      new URLSearchParams(),
+      { name: current.name, auth_index: current.auth_index, rate_scale: scale }
+    ) as { account_scheduling: AuthFileAccountScheduling };
+    expect(preview.account_scheduling.effective_limits).toMatchObject({
+      rpm,
+      concurrency,
+      daily_budget: 0,
+    });
+    expect(preview.account_scheduling.limit_policy?.fields.rpm.baseline).toBeCloseTo(baseline);
+    expect(file('local-account-1').account_scheduling?.effective_limits?.rpm).toBe(135);
+    expect(patch('local-account-1', { rate_scale: scale }).effective_limits).toEqual(
+      preview.account_scheduling.effective_limits
+    );
+  }
+);
+
+it('preserves fixed and temporary precedence when the mature baseline changes', async () => {
+  const { patch } = await setup();
+  patch('local-account-1', { limit_overrides: { rpm: 8 } });
+  const saved = patch('local-account-1', { rate_scale: 2 });
+  expect(saved.limit_policy?.fields.rpm).toMatchObject({ baseline: 90, fixed: 8, effective: 8 });
+  expect(saved.effective_limits).toMatchObject({ rpm: 8, concurrency: 8 });
+  patch('local-account-1', { temporary_limits: { duration_minutes: 15, overrides: { rpm: 10 } } });
+  const temporary = patch('local-account-1', { rate_scale: null });
+  expect(temporary.limit_policy?.fields.rpm).toMatchObject({
+    baseline: 45,
+    fixed: 8,
+    temporary: 10,
+    effective: 10,
+  });
+});
+
+it('scales warming RPM, rounded concurrency and day budget without scaling capacity or groups', async () => {
+  const { patch } = await setup();
+  const saved = patch('local-account-3', { rate_scale: 1.5 });
+  expect(saved.effective_limits).toMatchObject({ rpm: 8, concurrency: 2, daily_budget: 750 });
+  expect(saved.limit_policy?.fields.rpm).toMatchObject({ baseline: 7.5, effective: 7.5 });
+  expect(saved.warmup_traffic_pacing?.rpm_limit).toBe(7);
+  expect(saved.warmup?.daily_budget).toBe(500);
+  expect(saved.limit_policy?.fields.request_capacity.baseline).toBe(8);
+  expect(saved.limit_policy?.fields.max_active_bindings.baseline).toBe(1);
+});
+
 it('settles at the old capacity before edits and never returns discarded credit', async () => {
   const { file, patch } = await setup();
   const snapshot = () => file('local-simulation').account_scheduling!.warmup_traffic_pacing!;
@@ -184,7 +239,7 @@ it.each([
   }
 );
 
-it('provides eight production-shaped scenarios and keeps history provenance separate', async () => {
+it('provides fifteen production-shaped scenarios and keeps history provenance separate', async () => {
   const { demo, file } = await setup();
   const files = demo.getPacingFeedbackFiles().files;
   expect(files).toHaveLength(15);

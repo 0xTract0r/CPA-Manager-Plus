@@ -112,15 +112,17 @@ const refreshDemoControl = (account: DemoAccount) => {
   {
     const profile = control.profiles.find((row) => row.id === (control.speed_profile ?? 'medium'))!;
     for (const name of LIMIT_FIELDS) scheduling.limit_policy!.fields[name].baseline = profile[name];
-    // 成熟号原有整体倍率仍有效，补齐演示契约不能将135/12悄悄改成45/4。
-    if (mature && !control.speed_profile) {
-      const scale = scheduling.rate_scale ?? 1;
-      scheduling.limit_policy!.fields.rpm.baseline = Math.round(profile.rpm * scale);
-      scheduling.limit_policy!.fields.concurrency.baseline = Math.ceil(profile.concurrency * scale);
-    }
-    account.dailyBudget = profile.daily_budget;
+    // 与core legacy规则一致：RPM直接乘，整数正数四舍五入且最少1；预设不叠乘旧倍率。
+    const scale = control.speed_profile ? 1 : (scheduling.rate_scale ?? budgetPolicy.rate_scale);
+    const scaleInt = (value: number) => (value > 0 ? Math.max(1, Math.round(value * scale)) : 0);
+    scheduling.limit_policy!.fields.rpm.baseline = profile.rpm * scale;
+    scheduling.limit_policy!.fields.concurrency.baseline = scaleInt(profile.concurrency);
+    account.dailyBudget = scaleInt(profile.daily_budget);
     if (control.speed_profile) scheduling.rate_scale = 1;
-    scheduling.warmup.daily_budget = profile.daily_budget;
+    const stage = control.profiles.find((row) => row.id === 'medium')!;
+    scheduling.warmup.rpm_limit = stage.rpm;
+    scheduling.warmup.concurrency_limit = stage.concurrency;
+    scheduling.warmup.daily_budget = stage.daily_budget;
   }
 };
 
@@ -659,7 +661,7 @@ const simulatedFile = (account: DemoAccount) => {
     ),
     refill_per_hour: refillPerHour,
     daily_request_budget: account.dailyBudget,
-    rpm_limit: policy.fields.rpm.effective,
+    rpm_limit: Math.max(1, Math.floor(policy.fields.rpm.effective!)),
     concurrency_limit: policy.fields.concurrency.effective,
     max_active_binding_groups: policy.fields.max_active_bindings.effective,
   });
@@ -727,6 +729,7 @@ const simulatedFile = (account: DemoAccount) => {
       status: 'not_applicable',
       reason: 'mature',
       request_balance: null,
+      rpm_limit: null,
       refill_per_hour: null,
       admission_balance_eta_seconds: null,
     });
@@ -738,7 +741,7 @@ const simulatedFile = (account: DemoAccount) => {
   pacing.blocking_reasons = blocking;
   scheduling.effective_limits = {
     ...scheduling.effective_limits,
-    rpm: policy.fields.rpm.effective!,
+    rpm: Math.round(policy.fields.rpm.effective!),
     concurrency: policy.fields.concurrency.effective!,
     daily_budget: scheduling.warmup?.mature ? 0 : account.dailyBudget,
     pacing_applies: scheduling.warmup?.mature !== true,
@@ -908,6 +911,7 @@ const applyDemoScheduling = (
     request.speed_profile !== undefined ||
     request.warmup_mode !== undefined ||
     request.warmup_period_days !== undefined ||
+    request.rate_scale !== undefined ||
     request.first_production_at !== undefined
   )
     refreshDemoControl(account);
