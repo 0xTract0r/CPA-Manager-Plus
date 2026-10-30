@@ -83,26 +83,60 @@ it('previews cloned scheduling with no policy, credit or peer mutation and match
   expect(saved.effective_limits).toEqual(preview.account_scheduling.effective_limits);
 });
 
-it('allows explicit null profile with numeric custom changes, rejecting only nonempty mixed presets', async () => {
-  const { demo, patch } = await setup();
-  patch('local-account-3', { speed_profile: 'high' });
-  const preview = demo.handlePacingFeedbackRequest(
-    'post',
-    '/auth-files/account-scheduling/preview',
-    new URLSearchParams(),
-    {
-      name: 'local-account-3.json',
-      auth_index: 'local-account-3',
-      speed_profile: null,
-      limit_overrides: { rpm: 7 },
+it('rejects any profile field mixed with legacy controls, including explicit nulls', async () => {
+  const { demo, file, patch } = await setup();
+  const before = JSON.stringify(file('local-account-3').account_scheduling);
+  for (const speed of [null, 'high'] as const)
+    for (const changes of [
+      { limit_overrides: { rpm: 7 } },
+      { limit_overrides: null },
+      { temporary_limits: { duration_minutes: 15 as const, overrides: { rpm: 7 } } },
+      { temporary_limits: null },
+      { rate_scale: 1.25 },
+      { rate_scale: null },
+    ]) {
+      const mixed = { speed_profile: speed, ...changes };
+      expect(() => patch('local-account-3', mixed)).toThrow('Mixed speed');
+      expect(() =>
+        demo.handlePacingFeedbackRequest(
+          'post',
+          '/auth-files/account-scheduling/preview',
+          new URLSearchParams(),
+          { name: 'local-account-3.json', auth_index: 'local-account-3', ...mixed }
+        )
+      ).toThrow('Mixed speed');
     }
-  ) as { account_scheduling: AuthFileAccountScheduling };
-  expect(preview.account_scheduling.warmup_control?.speed_profile).toBeNull();
-  expect(preview.account_scheduling.limit_policy?.fields.rpm.fixed).toBe(7);
-  expect(() =>
-    patch('local-account-3', { speed_profile: 'high', limit_overrides: { rpm: 7 } })
-  ).toThrow('Mixed speed');
+  expect(JSON.stringify(file('local-account-3').account_scheduling)).toBe(before);
 });
+it.each([
+  { kind: 'fixed', changes: { limit_overrides: { rpm: 7 } } },
+  {
+    kind: 'temporary',
+    changes: { temporary_limits: { duration_minutes: 15 as const, overrides: { rpm: 7 } } },
+  },
+  { kind: 'rate', changes: { rate_scale: 1.25 } },
+])(
+  'implicitly clears the old preset for numeric-only $kind preview and save',
+  async ({ changes }) => {
+    const { demo, file, patch } = await setup();
+    patch('local-account-3', { speed_profile: 'high' });
+    const preview = demo.handlePacingFeedbackRequest(
+      'post',
+      '/auth-files/account-scheduling/preview',
+      new URLSearchParams(),
+      { name: 'local-account-3.json', auth_index: 'local-account-3', ...changes }
+    ) as { account_scheduling: AuthFileAccountScheduling };
+    expect(preview.account_scheduling.warmup_control).toMatchObject({
+      speed_profile: null,
+      source: 'legacy',
+    });
+    expect(file('local-account-3').account_scheduling!.warmup_control!.speed_profile).toBe('high');
+    const saved = patch('local-account-3', changes);
+    expect(saved.warmup_control).toEqual(preview.account_scheduling.warmup_control);
+    expect(saved.limit_policy).toEqual(preview.account_scheduling.limit_policy);
+    expect(saved.rate_scale).toBe(preview.account_scheduling.rate_scale);
+  }
+);
 
 it('provides eight production-shaped scenarios and keeps history provenance separate', async () => {
   const { demo, file } = await setup();

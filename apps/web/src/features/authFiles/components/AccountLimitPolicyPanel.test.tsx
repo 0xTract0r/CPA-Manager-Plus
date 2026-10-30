@@ -92,34 +92,38 @@ describe('speed and warm-up editor', () => {
     expect(view.root.findByProps({ 'data-testid': 'speed-profile-high' }).props.checked).toBe(true);
     act(() => view.unmount());
   });
-  it('uses only legacy fields for numeric edits and echoes the custom profile state', async () => {
-    const baseline = scheduling();
-    baseline.warmup_control!.speed_profile = 'high';
-    patch.mockResolvedValue({
-      account_scheduling: {
-        ...baseline,
-        warmup_control: { ...baseline.warmup_control!, speed_profile: null, source: 'legacy' },
-      },
-    });
-    const view = render(baseline);
-    act(() => view.root.findAllByType('select')[0].props.onChange({ target: { value: 'fixed' } }));
-    act(() =>
-      view.root.findByProps({ id: 'limit-rpm' }).props.onChange({ target: { value: '5' } })
-    );
-    await act(async () =>
-      view.root.findByProps({ 'data-testid': 'apply-account-limits' }).props.onClick()
-    );
-    expect(patch).toHaveBeenLastCalledWith({
-      name: 'one.json',
-      auth_index: 'one',
-      speed_profile: null,
-      limit_overrides: { rpm: 5 },
-    });
-    expect(view.root.findByProps({ 'data-testid': 'speed-profile-high' }).props.checked).toBe(
-      false
-    );
-    act(() => view.unmount());
-  });
+  it.each(['fixed', 'temporary'] as const)(
+    'uses only legacy fields for %s edits and echoes the custom profile state',
+    async (mode) => {
+      const baseline = scheduling();
+      baseline.warmup_control!.speed_profile = 'high';
+      patch.mockResolvedValue({
+        account_scheduling: {
+          ...baseline,
+          warmup_control: { ...baseline.warmup_control!, speed_profile: null, source: 'legacy' },
+        },
+      });
+      const view = render(baseline);
+      act(() => view.root.findAllByType('select')[0].props.onChange({ target: { value: mode } }));
+      act(() =>
+        view.root.findByProps({ id: 'limit-rpm' }).props.onChange({ target: { value: '5' } })
+      );
+      await act(async () =>
+        view.root.findByProps({ 'data-testid': 'apply-account-limits' }).props.onClick()
+      );
+      expect(patch).toHaveBeenLastCalledWith({
+        name: 'one.json',
+        auth_index: 'one',
+        ...(mode === 'fixed'
+          ? { limit_overrides: { rpm: 5 } }
+          : { temporary_limits: { duration_minutes: 15, overrides: { rpm: 5 } } }),
+      });
+      expect(view.root.findByProps({ 'data-testid': 'speed-profile-high' }).props.checked).toBe(
+        false
+      );
+      act(() => view.unmount());
+    }
+  );
   it('disables new controls when the server projection is absent', () => {
     const baseline = scheduling();
     delete baseline.warmup_control;

@@ -279,6 +279,41 @@ describe('unified scheduling editor', () => {
     act(() => by('speed-profile-low').props.onChange());
     expect(by('apply-account-limits').props.children).not.toContain('saved_button');
   });
+  it.each(['fixed', 'temporary', 'rate'] as const)(
+    'previews and saves one identical legal body for preset to custom %s',
+    async (kind) => {
+      const view = editorFixture();
+      view.warmup_control!.speed_profile = 'high';
+      mocks.preview.mockResolvedValue(response(view));
+      mount(view);
+      await tick();
+      act(() => by('editor-source-custom').props.onChange());
+      act(() => {
+        if (kind === 'rate') by('editor-rate').props.onChange({ target: { value: '1.25' } });
+        else by('editor-limit-mode-rpm').props.onChange({ target: { value: kind } });
+      });
+      if (kind !== 'rate')
+        act(() => by('editor-limit-rpm').props.onChange({ target: { value: '7' } }));
+      await tick();
+      const request = mocks.preview.mock.lastCall![0];
+      expect(request).toEqual({
+        name: 'one.json',
+        auth_index: 'one',
+        ...(kind === 'rate'
+          ? { rate_scale: 1.25 }
+          : kind === 'fixed'
+            ? { limit_overrides: { rpm: 7 } }
+            : { temporary_limits: { duration_minutes: 15, overrides: { rpm: 7 } } }),
+      });
+      const saved = editorFixture();
+      saved.warmup_control!.speed_profile = null;
+      saved.warmup_control!.source = 'legacy';
+      mocks.save.mockResolvedValue({ account_scheduling: saved });
+      await act(async () => by('apply-account-limits').props.onClick());
+      expect(mocks.save).toHaveBeenCalledExactlyOnceWith(request);
+      expect(by('speed-profile-high').props.checked).toBe(false);
+    }
+  );
   it.each(['0', '101'])(
     'links invalid custom RPM %s to its field and blocks preview/save',
     async (value) => {

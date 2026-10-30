@@ -26,6 +26,34 @@ describe('unified scheduling patch', () => {
     draft.warmup.speed = null;
     expect(schedulingPatch(view, draft)).toEqual({ speed_profile: null });
   });
+  it.each(['fixed', 'temporary', 'rate'] as const)(
+    'uses only legacy controls when changing an existing preset to custom %s',
+    (kind) => {
+      const view = editorFixture();
+      view.warmup_control!.speed_profile = 'high';
+      const draft = schedulingDraft(view);
+      draft.source = 'custom';
+      draft.warmup.speed = null;
+      if (kind === 'rate') draft.rate = '1.25';
+      else draft.limits.rpm = { mode: kind, value: '7' };
+      expect(schedulingPatch(view, draft)).toEqual(
+        kind === 'rate'
+          ? { rate_scale: 1.25 }
+          : kind === 'fixed'
+            ? { limit_overrides: { rpm: 7 } }
+            : { temporary_limits: { duration_minutes: 15, overrides: { rpm: 7 } } }
+      );
+    }
+  );
+  it('omits profile when clearing an old rate through custom mode', () => {
+    const view = editorFixture();
+    view.warmup_control!.speed_profile = 'high';
+    const draft = schedulingDraft(view);
+    draft.source = 'custom';
+    draft.warmup.speed = null;
+    draft.rate = '';
+    expect(schedulingPatch(view, draft)).toEqual({ rate_scale: null });
+  });
   it('never mixes preset with legacy numeric fields, including null', () => {
     const view = editorFixture();
     view.limit_policy!.fields.rpm.fixed = 8;

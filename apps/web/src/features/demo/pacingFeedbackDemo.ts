@@ -789,7 +789,8 @@ const applyDemoScheduling = (
     request.rate_scale !== undefined ||
     request.limit_overrides !== undefined ||
     request.temporary_limits !== undefined;
-  if (request.speed_profile != null && legacy) throw new Error('Mixed speed and legacy limits');
+  if (request.speed_profile !== undefined && legacy)
+    throw new Error('Mixed speed and legacy limits');
   if (
     request.speed_profile != null &&
     !['low', 'medium', 'high', 'extreme'].includes(request.speed_profile)
@@ -854,6 +855,7 @@ const applyDemoScheduling = (
   }
   const scheduling = account.file.account_scheduling!;
   const control = scheduling.warmup_control!;
+  const clearedProfile = legacy && control.speed_profile != null;
   if (legacy) {
     control.speed_profile = null;
     control.source = 'legacy';
@@ -896,6 +898,7 @@ const applyDemoScheduling = (
   account.temporaryDeadline = temporaryDeadline;
   account.temporaryIssued = temporaryIssued;
   if (
+    clearedProfile ||
     request.speed_profile !== undefined ||
     request.warmup_mode !== undefined ||
     request.warmup_period_days !== undefined ||

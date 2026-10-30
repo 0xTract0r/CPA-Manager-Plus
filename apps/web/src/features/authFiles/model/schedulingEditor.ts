@@ -12,6 +12,7 @@ import {
   type LimitDraft,
 } from './accountLimitPolicy';
 import {
+  composeSchedulingPatch,
   warmupControlDraft,
   warmupControlPatch,
   validWarmupPeriod,
@@ -155,5 +156,5 @@ export function schedulingPatch(
       patch.first_production_at = date.toISOString();
     }
   }
-  return patch;
+  return composeSchedulingPatch(patch);
 }

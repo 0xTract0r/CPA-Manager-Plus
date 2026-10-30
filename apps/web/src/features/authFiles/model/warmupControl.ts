@@ -48,3 +48,15 @@ export function warmupControlPatch(
     ...(period !== control.warmup_period_days ? { warmup_period_days: period } : {}),
   };
 }
+
+/** legacy字段会由core隐式清档位；显式null仅用于单独切回自定义。 */
+export function composeSchedulingPatch(
+  patch: Omit<AuthFileAccountSchedulingPatchRequest, 'name' | 'auth_index'>
+): Omit<AuthFileAccountSchedulingPatchRequest, 'name' | 'auth_index'> {
+  const result = { ...patch };
+  if (['rate_scale', 'limit_overrides', 'temporary_limits'].some((key) => key in result)) {
+    if (result.speed_profile != null) throw new Error('speed');
+    delete result.speed_profile;
+  }
+  return result;
+}
