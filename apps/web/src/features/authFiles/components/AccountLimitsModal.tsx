@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/Button';
 import { useNotificationStore } from '@/stores';
 import type { AuthFileItem, AuthFileAccountScheduling } from '@/types';
 import { getAuthFilePatchTarget } from '../model/authFilesPageModel';
+import { AccountPacingRecovery } from './AccountPacingRecovery';
 import { AccountSchedulingPanel } from './AccountSchedulingPanel';
 import styles from './WarmupPacing.module.scss';
 
@@ -60,9 +61,13 @@ export function AccountLimitsModal({
         <Button variant="ghost" size="sm" disabled={formState.saving} onClick={() => leave(true)}>
           {backLabel}
         </Button>
+        <AccountPacingRecovery
+          key={`recovery-${saved?.revision ?? 0}`}
+          file={saved ? { ...file, account_scheduling: saved.view } : file}
+        />
         {saved && <p role="status">{t('auth_files.pacing.saved_account_only')}</p>}
         <AccountSchedulingPanel
-          key={saved?.revision ?? 0}
+          key={`panel-${saved?.revision ?? 0}`}
           fileName={target.name}
           authIndex={target.authIndex}
           initialScheduling={saved?.view ?? file.account_scheduling}

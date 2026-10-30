@@ -365,6 +365,8 @@ export interface AuthFileAccountScheduling {
   /** 纯只读配速快照；旧 core 缺字段时保持未知。 */
   warmup_traffic_pacing?: AuthFileWarmupTrafficPacing | null;
   limit_policy?: AccountLimitPolicy | null;
+  /** 服务端权威速度与养号控制；缺失时禁用新增操作。 */
+  warmup_control?: AccountWarmupControl | null;
   /**
    * 账号「首次投产时间」锚点（RFC3339 字符串或 null）。养号曲线以此为起点计算
    * age_days / warmup.stage。未显式设置时 core 在账号首次服务时自动打戳，此时该
@@ -400,6 +402,24 @@ export interface AuthFileAccountScheduling {
   /** 按空闲窗口判定已关闭（超时）的会话数（<= sessions_total）。 */
   sessions_closed?: number;
   [key: string]: unknown;
+}
+
+export type AccountSpeedProfile = 'low' | 'medium' | 'high' | 'extreme';
+export interface AccountWarmupControl {
+  speed_profile: AccountSpeedProfile | null;
+  warmup_mode: 'auto' | 'mature';
+  warmup_period_days: number | null;
+  effective_period_days: number | null;
+  source: 'legacy' | 'profile';
+  manual_mature: boolean;
+  profiles: {
+    id: AccountSpeedProfile;
+    rpm: number;
+    daily_budget: number;
+    concurrency: number;
+    request_capacity: number;
+    max_active_bindings: number;
+  }[];
 }
 
 /** 配速快照中的动态值不可用时为 null，不能当作零。 */
@@ -526,6 +546,9 @@ export interface AuthFileAccountSchedulingPatchRequest {
   auth_index?: string | number;
   tier_override?: AuthFileAccountSchedulingTierOverride | null;
   rate_scale?: number | null;
+  speed_profile?: AccountSpeedProfile | null;
+  warmup_period_days?: number | null;
+  warmup_mode?: 'auto' | 'mature' | null;
   first_production_at?: string | null;
   limit_overrides?: Partial<Record<AccountLimitField, number | null>> | null;
   temporary_limits?: {

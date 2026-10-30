@@ -56,8 +56,8 @@ it('settles at the old capacity before edits and never returns discarded credit'
 it('provides eight production-shaped scenarios and keeps history provenance separate', async () => {
   const { demo, file } = await setup();
   const files = demo.getPacingFeedbackFiles().files;
-  expect(files).toHaveLength(8);
-  expect(new Set(files.map((item) => item.auth_index)).size).toBe(8);
+  expect(files).toHaveLength(15);
+  expect(new Set(files.map((item) => item.auth_index)).size).toBe(15);
   expect(files.slice(0, 2)).toEqual(captured.files.slice(0, 2));
   expect(file('local-account-1').availability_reason).toBe('reauth_required');
   expect(file('local-account-2').disabled).toBe(true);
@@ -94,7 +94,11 @@ it('provides eight production-shaped scenarios and keeps history provenance sepa
     } else if (index === 'local-simulation') {
       expect(rows).toHaveLength(0);
     } else {
-      expect(rows.length).toBeGreaterThanOrEqual(3);
+      if (
+        !index.startsWith('local-speed-') &&
+        !['local-no-anchor', 'local-custom-period', 'local-manual-mature'].includes(index)
+      )
+        expect(rows.length).toBeGreaterThanOrEqual(3);
       expect(rows.length).toBeLessThanOrEqual(5);
       expect(rows.every((row) => row.source === 'synthetic-local')).toBe(true);
     }
@@ -282,6 +286,13 @@ it('uses existing token/window contracts for synthetic enabled, disabled and unk
     'local-queue',
     'local-temporary',
     'local-empty',
+    'local-speed-low',
+    'local-speed-medium',
+    'local-speed-high',
+    'local-speed-extreme',
+    'local-no-anchor',
+    'local-custom-period',
+    'local-manual-mature',
   ]);
   const counts = files.map(
     (account) =>
@@ -480,4 +491,40 @@ it('uses a manually edited effective RPM without increasing refill or exceeding 
   expect(rows.length).toBeGreaterThanOrEqual(2);
   for (let index = 1; index < rows.length; index++)
     expect(rows[index - 1].timestamp_ms - rows[index].timestamp_ms).toBeGreaterThanOrEqual(60000);
+});
+
+it('projects four speeds and warm-up scenarios with isolated atomic updates', async () => {
+  const { file, patch } = await setup();
+  const before = JSON.stringify(file('local-account-4').account_scheduling!.warmup_control);
+  const custom = patch('local-account-3', { speed_profile: 'high', warmup_period_days: 30 });
+  expect(custom.warmup_control).toMatchObject({
+    speed_profile: 'high',
+    warmup_period_days: 30,
+    effective_period_days: 30,
+    source: 'profile',
+  });
+  expect(custom.warmup_control!.profiles.map((row) => row.id)).toEqual([
+    'low',
+    'medium',
+    'high',
+    'extreme',
+  ]);
+  expect(JSON.stringify(file('local-account-4').account_scheduling!.warmup_control)).toBe(before);
+  const anchor = custom.first_production_at;
+  const mature = patch('local-account-3', { warmup_mode: 'mature' });
+  expect(mature.warmup?.mature).toBe(true);
+  expect(mature.warmup_traffic_pacing?.reason).toBe('mature');
+  expect(mature.first_production_at).toBe(anchor);
+  const automatic = patch('local-account-3', { warmup_mode: 'auto' });
+  expect(automatic.warmup?.mature).toBe(false);
+  expect(automatic.warmup_control?.warmup_period_days).toBe(30);
+  expect(automatic.first_production_at).toBe(anchor);
+  const legacy = patch('local-account-3', { limit_overrides: { concurrency: 2 } });
+  expect(legacy.warmup_control?.speed_profile).toBeNull();
+  expect(legacy.warmup_control?.source).toBe('legacy');
+  expect(file('local-no-anchor').account_scheduling!.warmup?.age_days).toBeNull();
+  expect(() => patch('local-account-3', { speed_profile: 'low', rate_scale: 1 })).toThrow(
+    'Mixed speed'
+  );
+  expect(() => patch('local-account-3', { warmup_period_days: 366 })).toThrow('Invalid period');
 });

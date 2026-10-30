@@ -6,6 +6,7 @@ import type {
   AuthFileAccountSchedulingPatchRequest,
   AccountLimitPolicy,
   AccountLimitField,
+  AccountWarmupControl,
 } from '@/types';
 import type {
   MonitoringAnalyticsRequest,
@@ -22,7 +23,7 @@ export const getPacingPreviewMeta = () =>
   isPacingFeedbackDemo()
     ? {
         captured_at: captured.captured_at,
-        source: `4 sanitized accounts + 4 synthetic scenarios; budget policy sampled ${budgetPolicy.read_at}; subsequent policy/status changes are local simulations`,
+        source: `4 sanitized accounts + 11 synthetic scenarios; budget policy sampled ${budgetPolicy.read_at}; subsequent policy/status changes are local simulations`,
       }
     : null;
 
@@ -57,6 +58,66 @@ const demoAccounts = new Map<string, DemoAccount>();
 const syntheticEvents: MonitoringAnalyticsEventRow[] = [];
 const accountKey = (file: AuthFileItem) => String(file.auth_index);
 
+// 以下速度投影只用于本地演示，正式 UI 始终读取服务端 effective_limits。
+const demoProfiles = (
+  scheduling: NonNullable<AuthFileItem['account_scheduling']>
+): AccountWarmupControl['profiles'] => {
+  const period = scheduling.warmup_control?.effective_period_days ?? 60;
+  const mature = scheduling.warmup?.mature === true;
+  const fraction = (scheduling.warmup?.age_days ?? 0) / period;
+  const stage =
+    budgetPolicy.warmup_curve.find((row) => fraction < row['max-age-days'] / 60) ??
+    budgetPolicy.warmup_curve[4];
+  const threshold = scheduling.warmup_traffic_pacing?.min_admission_requests ?? 4;
+  return (['low', 'medium', 'high', 'extreme'] as const).map((id, index) => {
+    const scale = [0.5, 1, 1.5, 2][index];
+    return {
+      id,
+      rpm: mature
+        ? budgetPolicy.mature_limits['rpm-limit']
+        : Math.max(1, Math.round(stage['rpm-limit'] * scale)),
+      daily_budget: mature ? 0 : Math.max(1, Math.round(stage['daily-budget'] * scale)),
+      concurrency: mature
+        ? budgetPolicy.mature_limits['concurrency-limit']
+        : Math.min(4, Math.max(1, Math.ceil(stage['concurrency-limit'] * scale))),
+      request_capacity: mature ? 8 : Math.max(threshold, Math.round(8 * scale)),
+      max_active_bindings: mature ? 1 : [1, 1, 2, 4][index],
+    };
+  });
+};
+const refreshDemoControl = (account: DemoAccount) => {
+  const scheduling = account.file.account_scheduling!;
+  const control = scheduling.warmup_control!;
+  const period = control.warmup_period_days ?? 60;
+  const age = scheduling.warmup?.age_days;
+  const restricted = Boolean(scheduling.limit_policy?.restricted_reasons.length);
+  const mature = !restricted && (control.manual_mature || (age != null && age >= period));
+  scheduling.warmup = {
+    ...scheduling.warmup,
+    mature,
+    stage: mature
+      ? 'mature'
+      : age == null
+        ? 'cold'
+        : age / period < 7 / 60
+          ? 'day0-7'
+          : age / period < 14 / 60
+            ? 'day7-14'
+            : age / period < 30 / 60
+              ? 'day14-30'
+              : 'day30-60',
+  };
+  control.effective_period_days = period;
+  control.profiles = demoProfiles(scheduling);
+  if (control.speed_profile) {
+    const profile = control.profiles.find((row) => row.id === control.speed_profile)!;
+    for (const name of LIMIT_FIELDS) scheduling.limit_policy!.fields[name].baseline = profile[name];
+    account.dailyBudget = profile.daily_budget;
+    scheduling.rate_scale = 1;
+    scheduling.warmup.daily_budget = profile.daily_budget;
+  }
+};
+
 const addEditableAccount = (file: AuthFileItem, synthetic = false) => {
   const copy = clone(file);
   const scheduling = copy.account_scheduling!;
@@ -87,6 +148,15 @@ const addEditableAccount = (file: AuthFileItem, synthetic = false) => {
     temporary_expires_at: null,
     temporary_end_reason: null,
     restricted_reasons: [],
+  };
+  scheduling.warmup_control = {
+    speed_profile: null,
+    warmup_mode: 'auto',
+    warmup_period_days: null,
+    effective_period_days: 60,
+    source: 'legacy',
+    manual_mature: false,
+    profiles: demoProfiles(scheduling),
   };
   const account: DemoAccount = {
     file: copy,
@@ -190,6 +260,40 @@ temporary.groups = 1;
 const empty = makeSynthetic('local-empty', 'QA-EMPTY · 余额耗尽', 'pro');
 empty.bucket.balance = 0;
 empty.recovered = 1;
+
+const speedScenarios = (['low', 'medium', 'high', 'extreme'] as const).map((speed, index) => {
+  const account = makeSynthetic('local-speed-' + speed, '速度演示 · ' + speed, 'max_5x');
+  const scheduling = account.file.account_scheduling!;
+  scheduling.first_production_at = new Date(
+    Date.now() - [2, 10, 20, 45][index] * 86400000
+  ).toISOString();
+  scheduling.warmup = { ...scheduling.warmup, age_days: [2, 10, 20, 45][index] };
+  Object.assign(scheduling.warmup_control!, { speed_profile: speed, source: 'profile' });
+  refreshDemoControl(account);
+  return account;
+});
+const unanchored = makeSynthetic('local-no-anchor', '养号演示 · 尚未首投', 'pro');
+unanchored.file.account_scheduling!.first_production_at = null;
+unanchored.file.account_scheduling!.warmup = {
+  ...unanchored.file.account_scheduling!.warmup,
+  age_days: null,
+  mature: false,
+  stage: 'cold',
+};
+const customPeriod = makeSynthetic('local-custom-period', '养号演示 · 30 天', 'max_5x');
+Object.assign(customPeriod.file.account_scheduling!.warmup_control!, {
+  warmup_period_days: 30,
+  effective_period_days: 30,
+});
+refreshDemoControl(customPeriod);
+const manualMature = makeSynthetic('local-manual-mature', '养号演示 · 手动成熟', 'max_5x');
+Object.assign(manualMature.file.account_scheduling!.warmup_control!, {
+  warmup_mode: 'mature',
+  manual_mature: true,
+  speed_profile: 'medium',
+  source: 'profile',
+});
+refreshDemoControl(manualMature);
 
 // 订阅窗口严格使用现有core投影；百分比仅为模拟利用率，不是每日百分比硬上限。
 const simulatedQuota = (fiveHour: number, sevenDay: number) => {
@@ -612,11 +716,26 @@ const simulatedFile = (account: DemoAccount) => {
     if (account.groups >= policy.fields.max_active_bindings.effective!)
       blocking.push('active_groups');
   }
+  if (scheduling.warmup?.mature === true) {
+    Object.assign(pacing, {
+      status: 'not_applicable',
+      reason: 'mature',
+      request_balance: null,
+      refill_per_hour: null,
+      admission_balance_eta_seconds: null,
+    });
+    blocking.length = 0;
+  } else if (scheduling.warmup_control?.manual_mature === false) {
+    pacing.status = 'active';
+    pacing.reason = 'observed';
+  }
   pacing.blocking_reasons = blocking;
   scheduling.effective_limits = {
     ...scheduling.effective_limits,
     rpm: policy.fields.rpm.effective!,
     concurrency: policy.fields.concurrency.effective!,
+    daily_budget: scheduling.warmup?.mature ? 0 : account.dailyBudget,
+    pacing_applies: scheduling.warmup?.mature !== true,
   };
   if (
     accountKey(file) === 'local-simulation' &&
@@ -634,7 +753,16 @@ export const getPacingFeedbackFiles = () => ({
       const account = demoAccounts.get(String(file.auth_index));
       return account ? simulatedFile(account) : (clone(file) as AuthFileItem);
     }),
-    ...[simulation, queued, temporary, empty].map(simulatedFile),
+    ...[
+      simulation,
+      queued,
+      temporary,
+      empty,
+      ...speedScenarios,
+      unanchored,
+      customPeriod,
+      manualMature,
+    ].map(simulatedFile),
   ],
 });
 export const getPacingFeedbackAnalytics = (
@@ -691,6 +819,26 @@ export function handlePacingFeedbackRequest(
       syncStory();
       expire(account, story.now);
     } else expire(account);
+    const legacy =
+      request.rate_scale !== undefined ||
+      request.limit_overrides !== undefined ||
+      request.temporary_limits !== undefined;
+    if (request.speed_profile !== undefined && legacy)
+      throw new Error('Mixed speed and legacy limits');
+    if (
+      request.speed_profile != null &&
+      !['low', 'medium', 'high', 'extreme'].includes(request.speed_profile)
+    )
+      throw new Error('Invalid profile');
+    if (
+      request.warmup_period_days != null &&
+      (!Number.isSafeInteger(request.warmup_period_days) ||
+        request.warmup_period_days < 1 ||
+        request.warmup_period_days > 365)
+    )
+      throw new Error('Invalid period');
+    if (request.warmup_mode != null && !['auto', 'mature'].includes(request.warmup_mode))
+      throw new Error('Invalid warmup mode');
     const policy = clone(account.file.account_scheduling!.limit_policy!);
     let temporaryDeadline = account.temporaryDeadline;
     let temporaryIssued = account.temporaryIssued;
@@ -739,9 +887,56 @@ export function handlePacingFeedbackRequest(
         temporaryDeadline = temporaryIssued + request.temporary_limits.duration_minutes * 60000;
       }
     }
+    const scheduling = account.file.account_scheduling!;
+    const control = scheduling.warmup_control!;
+    if (legacy) {
+      control.speed_profile = null;
+      control.source = 'legacy';
+    }
+    if (request.speed_profile !== undefined) {
+      control.speed_profile = request.speed_profile;
+      control.source = request.speed_profile ? 'profile' : 'legacy';
+      if (request.speed_profile) {
+        for (const name of LIMIT_FIELDS) {
+          policy.fields[name].fixed = null;
+          policy.fields[name].temporary = null;
+        }
+        policy.temporary_status = 'none';
+        policy.temporary_expires_at = null;
+        policy.temporary_issued_at = null;
+        temporaryDeadline = 0;
+      }
+    }
+    if (request.warmup_mode !== undefined) {
+      control.warmup_mode = request.warmup_mode ?? 'auto';
+      control.manual_mature = control.warmup_mode === 'mature';
+    }
+    if (request.warmup_period_days !== undefined)
+      control.warmup_period_days = request.warmup_period_days;
+    if (request.first_production_at !== undefined) {
+      scheduling.first_production_at = request.first_production_at;
+      scheduling.warmup = {
+        ...scheduling.warmup,
+        age_days: request.first_production_at
+          ? Math.max(0, (Date.now() - Date.parse(request.first_production_at)) / 86400000)
+          : null,
+      };
+    }
+    if (request.rate_scale !== undefined) scheduling.rate_scale = request.rate_scale ?? 1;
+    if (request.tier_override !== undefined) {
+      scheduling.tier_source = request.tier_override ? 'override' : 'auto';
+      if (request.tier_override) scheduling.subscription_tier = request.tier_override;
+    }
     account.file.account_scheduling!.limit_policy = policy;
     account.temporaryDeadline = temporaryDeadline;
     account.temporaryIssued = temporaryIssued;
+    if (
+      request.speed_profile !== undefined ||
+      request.warmup_mode !== undefined ||
+      request.warmup_period_days !== undefined ||
+      request.first_production_at !== undefined
+    )
+      refreshDemoControl(account);
     return {
       name: account.file.name,
       auth_index: account.file.auth_index,

@@ -621,3 +621,99 @@
     font-size: 28px;
   }
 }
+
+.speedPicker {
+  border: 0;
+  margin: 16px 0;
+  padding: 0;
+  min-width: 0;
+  legend {
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 10px;
+  }
+  p {
+    font-size: 11px;
+    margin: 8px 0;
+  }
+}
+.speedOptions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+  label {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    background: var(--surface-subtle);
+    padding: 12px 6px;
+    cursor: pointer;
+    color: var(--text-primary);
+  }
+  label[data-selected='true'] {
+    border-color: var(--color-primary);
+    background: color-mix(in srgb, var(--color-primary) 7%, var(--surface-subtle));
+  }
+  label:has(input:focus-visible) {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+  input {
+    margin: 0;
+    accent-color: var(--color-primary);
+  }
+  small {
+    font-size: 10px;
+    color: var(--text-secondary);
+  }
+  label:has(input:disabled) {
+    opacity: 0.55;
+    cursor: default;
+  }
+}
+.duration input {
+  width: 78px;
+  min-width: 0;
+  padding: 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--surface-subtle);
+  color: var(--text-primary);
+  font: inherit;
+}
+.recoverySummary {
+  margin: 12px 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--text-secondary);
+  background: var(--surface-subtle);
+  font-size: 11px;
+  line-height: 1.6;
+  > div:first-child {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 4px 12px;
+  }
+  strong {
+    color: var(--text-primary);
+    font-weight: 500;
+  }
+}
+.recoveryTrack {
+  height: 4px;
+  background: var(--border-subtle);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-top: 7px;
+}
+@media (max-width: 480px) {
+  .speedOptions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

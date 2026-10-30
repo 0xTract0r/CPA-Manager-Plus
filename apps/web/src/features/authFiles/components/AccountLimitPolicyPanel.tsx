@@ -12,6 +12,7 @@ import {
   type LimitDraft,
   type LimitPreset,
 } from '../model/accountLimitPolicy';
+import { SPEED_PROFILES, warmupControlDraft, warmupControlPatch } from '../model/warmupControl';
 import { formatDateTime } from '@/utils/format';
 import styles from './WarmupPacing.module.scss';
 import { AccountWarmupSummary } from './AccountWarmupSummary';
@@ -45,6 +46,8 @@ export function AccountLimitPolicyPanel({
     t('auth_files.pacing.' + name, options);
   const [view, setView] = useState(initialScheduling);
   const policy = view?.limit_policy;
+  const control = view?.warmup_control;
+  const [warmupDraft, setWarmupDraft] = useState(() => warmupControlDraft(control));
   const [draft, setDraft] = useState(() => limitDraft(policy));
   const [selected, setSelected] = useState<LimitPreset | 'custom' | null>(null);
   const [scope, setScope] = useState<'temporary' | 'fixed'>('temporary');
@@ -60,7 +63,19 @@ export function AccountLimitPolicyPanel({
   } catch {
     /* 无效高级输入保留在草稿里，同时阻止提交。 */
   }
-  const dirty = Boolean(patch && Object.keys(patch).length);
+  let controlPatch: ReturnType<typeof warmupControlPatch> | null = null;
+  try {
+    if (control) controlPatch = warmupControlPatch(control, warmupDraft);
+  } catch {
+    /* 保留无效草稿。 */
+  }
+  const controlInitial = warmupControlDraft(control);
+  const controlChanged =
+    warmupDraft.mode !== controlInitial.mode ||
+    warmupDraft.speed !== controlInitial.speed ||
+    (warmupDraft.mode === 'days' && warmupDraft.days !== controlInitial.days);
+  const controlDirty = Boolean(controlPatch && Object.keys(controlPatch).length);
+  const dirty = Boolean((patch && Object.keys(patch).length) || controlDirty);
   const initial = limitDraft(policy);
   const changed = LIMIT_FIELDS.filter(
     (name) =>
@@ -68,7 +83,7 @@ export function AccountLimitPolicyPanel({
       (draft[name].mode !== 'inherit' && Number(draft[name].value) !== Number(initial[name].value))
   );
   const hasTemporary = Boolean(patch?.temporary_limits);
-  const hasChanges = changed.length > 0;
+  const hasChanges = changed.length > 0 || controlChanged;
   useEffect(() => {
     onStateChange?.({ dirty: hasChanges, saving });
   }, [hasChanges, saving, onStateChange]);
@@ -78,30 +93,38 @@ export function AccountLimitPolicyPanel({
     if (!policy || locked) return;
     const next = presetLimitDraft(policy, id, nextScope);
     if (next) {
+      setWarmupDraft((old) => ({ ...old, speed: null }));
       setSelected(id);
       setDraft(next);
       setError(false);
     }
   };
   const setField = (name: AccountLimitField, next: Partial<LimitDraft[AccountLimitField]>) => {
+    setWarmupDraft((old) => ({ ...old, speed: null }));
     setSelected('custom');
     setError(false);
     setDraft((old) => ({ ...old, [name]: { ...old[name], ...next } }));
   };
   const save = async (end = false) => {
-    if (locked || (end && hasChanges) || (!end && (!patch || !dirty))) return;
+    if (
+      locked ||
+      (end && hasChanges) ||
+      (!end && (!patch || !dirty || (controlChanged && !controlPatch)))
+    )
+      return;
     setSaving(true);
     setError(false);
     try {
       const result = await authFilesApi.updateAccountScheduling({
         name: fileName,
         auth_index: String(authIndex),
-        ...(end ? { temporary_limits: null } : patch!),
+        ...(end ? { temporary_limits: null } : { ...patch!, ...controlPatch }),
       });
       if (!result.account_scheduling?.limit_policy) throw new Error('missing authoritative policy');
       setView(result.account_scheduling);
       setDraft(limitDraft(result.account_scheduling.limit_policy));
       setSelected(null);
+      setWarmupDraft(warmupControlDraft(result.account_scheduling.warmup_control));
       onApplied?.(result.account_scheduling);
     } catch {
       setError(true);
@@ -119,22 +142,87 @@ export function AccountLimitPolicyPanel({
     <section className={styles.policy} data-testid="account-limit-policy">
       <div className={styles.policyIntro}>
         <p>{k('account_only_scope')}</p>
-        <dl className={styles.currentLimits}>
-          {LIMIT_FIELDS.map((name) => (
-            <div key={name}>
-              <dt>{k('short_' + name)}</dt>
-              <dd>
-                {policy?.fields?.[name]?.effective ?? '—'} <span>{k('unit_' + name)}</span>
-              </dd>
-            </div>
-          ))}
-        </dl>
-        <AccountWarmupSummary view={view} />
+        <AccountWarmupSummary view={view} compact />
         <details className={styles.advancedLimits} data-testid="rate-explanation-disclosure">
           <summary>{k('rate_details')}</summary>
           <PacingRateExplanation snapshot={view?.warmup_traffic_pacing} compact />
         </details>
       </div>
+      <fieldset
+        className={styles.speedPicker}
+        disabled={locked || !control}
+        data-testid="speed-profile-picker"
+      >
+        <legend>{k('speed_title')}</legend>
+        <div className={styles.speedOptions}>
+          {SPEED_PROFILES.map((id) => (
+            <label key={id} data-selected={warmupDraft.speed === id}>
+              <input
+                type="radio"
+                name={'speed-' + fileName}
+                value={id}
+                checked={warmupDraft.speed === id}
+                disabled={locked || !control?.profiles.some((profile) => profile.id === id)}
+                data-testid={'speed-profile-' + id}
+                onChange={() => {
+                  setWarmupDraft((old) => ({ ...old, speed: id }));
+                  setDraft(limitDraft(policy));
+                  setSelected(null);
+                  setError(false);
+                }}
+              />
+              <strong>{k('speed_' + id)}</strong>
+              {id === 'medium' && <small>{k('suggested')}</small>}
+            </label>
+          ))}
+        </div>
+        <p>
+          {!control
+            ? k('control_missing')
+            : warmupDraft.speed === null
+              ? k('speed_custom')
+              : k('speed_profile_note')}
+        </p>
+      </fieldset>
+      <fieldset
+        className={styles.scopePicker}
+        disabled={locked || !control}
+        data-testid="warmup-mode-picker"
+      >
+        <legend>{k('warmup_mode_title')}</legend>
+        <div className={styles.scopeOptions}>
+          {(['auto', 'days', 'mature'] as const).map((mode) => (
+            <label key={mode} data-selected={warmupDraft.mode === mode}>
+              <input
+                type="radio"
+                name={'warmup-mode-' + fileName}
+                value={mode}
+                checked={warmupDraft.mode === mode}
+                data-testid={'warmup-mode-' + mode}
+                onChange={() => setWarmupDraft((old) => ({ ...old, mode }))}
+              />
+              {k('warmup_mode_' + mode)}
+            </label>
+          ))}
+        </div>
+        {warmupDraft.mode === 'days' && (
+          <label className={styles.duration}>
+            {k('warmup_days')}
+            <input
+              type="number"
+              min={1}
+              max={365}
+              step={1}
+              value={warmupDraft.days}
+              data-testid="warmup-period-days"
+              aria-invalid={!controlPatch}
+              onChange={(event) => setWarmupDraft((old) => ({ ...old, days: event.target.value }))}
+            />
+            <small>{k('warmup_days_range')}</small>
+          </label>
+        )}
+        <p>{k(warmupDraft.mode === 'mature' ? 'warmup_manual_note' : 'warmup_auto_note')}</p>
+      </fieldset>
       {!constraints && (
         <p className={styles.policyNotice} role="status">
           {k('constraints_missing')}
@@ -263,6 +351,17 @@ export function AccountLimitPolicyPanel({
           {selected === 'custom' && <span>{k('custom_selected')}</span>}
         </summary>
         <p>{k('advanced_help')}</p>
+        <dl className={styles.currentLimits}>
+          {LIMIT_FIELDS.map((name) => (
+            <div key={name}>
+              <dt>{k('short_' + name)}</dt>
+              <dd>
+                {policy?.fields?.[name]?.effective ?? '—'} <span>{k('unit_' + name)}</span>
+              </dd>
+            </div>
+          ))}
+        </dl>
+
         {LIMIT_FIELDS.map((name) => {
           const field = policy?.fields[name];
           const item = draft[name];
@@ -358,7 +457,7 @@ export function AccountLimitPolicyPanel({
         )}
       </details>
       {advancedSettings}
-      {(selected !== null || hasChanges) && (
+      {(selected !== null || changed.length > 0) && (
         <div className={styles.planPreview} data-testid="limit-plan-preview" aria-live="polite">
           <strong>
             {dirty
@@ -416,17 +515,24 @@ export function AccountLimitPolicyPanel({
         )}
         <Button
           data-testid="apply-account-limits"
-          disabled={locked || !dirty || !patch}
+          disabled={locked || !dirty || !patch || (controlChanged && !controlPatch)}
           onClick={() => void save()}
         >
-          {saving ? k('saving') : dirty ? applyLabel : k('save_limits')}
+          {saving
+            ? k('saving')
+            : controlDirty
+              ? k('save_speed_warmup')
+              : dirty
+                ? applyLabel
+                : k('save_limits')}
         </Button>
-        {changed.length > 0 && (
+        {hasChanges && (
           <Button
             variant="ghost"
             disabled={saving}
             onClick={() => {
               setDraft(limitDraft(policy));
+              setWarmupDraft(warmupControlDraft(control));
               setSelected(null);
               setError(false);
             }}

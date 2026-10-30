@@ -45,7 +45,14 @@ export function deriveWarmupProgress(
   const age = nonnegative(view?.warmup?.age_days);
   const days = age === null ? null : Math.floor(age);
   const last = curve?.[curve.length - 1];
-  const total = last && last.end > 0 ? last.end : null;
+  const projected = nonnegative(view?.warmup_control?.effective_period_days);
+  const total = view?.warmup_control
+    ? projected && projected > 0
+      ? projected
+      : null
+    : last && last.end > 0
+      ? last.end
+      : null;
   const anchor =
     typeof view?.first_production_at === 'string' && !view.first_production_at.startsWith('0001-')
       ? Date.parse(view.first_production_at)
@@ -54,7 +61,7 @@ export function deriveWarmupProgress(
   return {
     age: days,
     total,
-    unbounded: last?.end === 0,
+    unbounded: view?.warmup_control ? projected === null : last?.end === 0,
     percent: days !== null && total !== null ? Math.min(100, (days / total) * 100) : null,
     expectedAt:
       Number.isFinite(end) && end <= 8640000000000000 ? new Date(end).toISOString() : null,

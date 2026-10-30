@@ -38,13 +38,15 @@ export function AccountWarmupSummary({
     value === null ? k('unknown') : value === 0 ? k('local_limit_off') : value.toLocaleString();
   const windows = quotaWindowSummaries(view);
   const title =
-    view?.warmup?.mature === true
-      ? k('warmup_mature')
-      : progress.age === null
-        ? k('warmup_no_anchor')
-        : progress.total === null
-          ? k('warmup_age_only', { age: progress.age })
-          : k('warmup_age_total', { age: progress.age, total: progress.total });
+    view?.warmup_control?.manual_mature && view?.warmup?.mature !== true
+      ? k('manual_mature_restricted')
+      : view?.warmup?.mature === true
+        ? k('warmup_mature')
+        : progress.age === null
+          ? k('warmup_no_anchor')
+          : progress.total === null
+            ? k('warmup_age_only', { age: progress.age })
+            : k('warmup_age_total', { age: progress.age, total: progress.total });
   if (compact)
     return (
       <div className={styles.compactSummary} data-testid="account-scheduling-summary">
@@ -108,7 +110,7 @@ export function AccountWarmupSummary({
       </p>
       <details className={styles.policyExplanation}>
         <summary>{k('stage_quota_details')}</summary>
-        {curve && (
+        {curve && view?.warmup_control?.warmup_period_days == null && (
           <ol className={styles.stageList}>
             {curve.map((stage) => (
               <li key={stage.name} data-current={stage.name === view?.warmup?.stage}>

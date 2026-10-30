@@ -1793,7 +1793,7 @@ export function AuthFilesPage() {
         <div role="status" data-testid="pacing-preview-notice">
           {t('auth_files.pacing.local_preview_sources', {
             defaultValue:
-              '本地隔离预览：APUS-01、APUS-03、AC-13、AC-16的账号与历史来自脱敏采样；AC-13/AC-16的可编辑上限及后续状态仅为本地模拟。QA-*和“本地模拟”账号及历史为合成场景。所有更改只影响页面内存，卡片成功/失败总计未加载。采样时间',
+              '本地隔离预览：APUS-01、APUS-03、AC-13、AC-16的账号与历史来自脱敏采样；AC-13/AC-16的可编辑上限及后续状态仅为本地模拟。其余速度演示、养号演示、QA-*和“本地模拟”账号及历史均为合成场景。所有更改只影响页面内存，卡片成功/失败总计未加载。采样时间',
           })}{' '}
           ·{' '}
           {new Intl.DateTimeFormat(i18n?.language || undefined, {

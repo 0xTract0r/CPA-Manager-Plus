@@ -21,6 +21,26 @@ describe('warmup policy facts', () => {
     expect(p.age).toBe(8);
     expect(p.expectedAt).toBe('2026-10-01T00:00:00.000Z');
   });
+  it('uses the authoritative per-account period before the global curve', () => {
+    const p = deriveWarmupProgress(
+      {
+        first_production_at: '2026-09-01T00:00:00Z',
+        warmup: { age_days: 8 },
+        warmup_control: {
+          speed_profile: 'medium',
+          warmup_mode: 'auto',
+          warmup_period_days: 30,
+          effective_period_days: 30,
+          source: 'profile',
+          manual_mature: false,
+          profiles: [],
+        },
+      },
+      parseWarmupCurve(config(60))
+    );
+    expect(p.total).toBe(30);
+    expect(p.expectedAt).toBe('2026-10-01T00:00:00.000Z');
+  });
   it('does not invent duration or maturity time when config or anchor is missing', () => {
     const p = deriveWarmupProgress({ warmup: { age_days: 11 } }, null);
     expect(p.total).toBeNull();
