@@ -52,3 +52,25 @@ export const displayPacingBalance = (value: unknown): string => {
   const shifted = Number(`${coefficient}e${Number(exponent) + 2}`);
   return String(Number.isFinite(shifted) ? Math.floor(shifted) / 100 : number);
 };
+
+/** 补额与峰值分开；只换算服务端完整精度的补额值，不把RPM当长期吞吐。 */
+export function pacingRateSummary(snapshot?: AuthFileWarmupTrafficPacing | null) {
+  const active = pacingStatus(snapshot) === 'active';
+  const hourly = active ? pacingNumber(snapshot?.refill_per_hour) : null;
+  const refill = hourly !== null && hourly > 0 ? hourly : null;
+  const rawThreshold = pacingNumber(snapshot?.min_admission_requests);
+  const threshold =
+    rawThreshold !== null && Number.isInteger(rawThreshold) && rawThreshold >= 1
+      ? rawThreshold
+      : null;
+  return {
+    peakRPM: pacingNumber(snapshot?.rpm_limit),
+    hourly: refill,
+    perMinute: refill === null ? null : refill / 60,
+    secondsPerCredit: refill === null ? null : Math.ceil(3600 / refill),
+    threshold,
+    capacity: pacingNumber(snapshot?.request_capacity),
+    emptyToNewSessionSeconds:
+      refill === null || threshold === null ? null : Math.ceil((threshold * 3600) / refill),
+  };
+}

@@ -49,3 +49,23 @@ export const getDemoManagerLatestRelease = () => ({
 });
 export const getDemoConfigYaml = () => '';
 export const getDemoApiCallResult = () => emptyObject;
+
+export const getPacingPreviewMeta = (): { captured_at: string; source: string } | null => null;
+export const handlePacingFeedbackRequest = (..._args: unknown[]): unknown => undefined;
+
+export const getPacingStoryState = (): {
+  account_file_name: string;
+  paused: boolean;
+  elapsed_seconds: number;
+  fast_forwarded_seconds: number;
+  phase: string;
+  completed: number;
+  total: number;
+} | null => null;
+export const controlPacingStory = (_action: 'pause' | 'resume' | 'replay' | 'advance'): void => {};
+
+export const DemoPacingControls = (_props: {
+  onRefresh: () => unknown;
+  active?: boolean;
+  accountFileName?: string;
+}) => null;

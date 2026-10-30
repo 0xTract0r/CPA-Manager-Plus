@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { getDemoAuthFiles } from '@/features/demo/demoFixtures';
+vi.mock('./AccountWarmupSummary', () => ({ AccountWarmupSummary: () => null }));
 import type { AuthFileAccountScheduling } from '@/types/authFile';
 
 // AccountSchedulingPanel：调度旋钮（tier_override / rate_scale）UI 层验证——
@@ -732,10 +733,10 @@ describe('AccountSchedulingPanel', () => {
     panel.renderer.unmount();
   });
 
-  it('[生效上限] renders the effective-limits line for a mature account, with budgets shown as "unlimited" not 0', () => {
+  it('[生效上限] distinguishes an unconfigured local token cap from upstream quota', () => {
     const panel = mountPanel({ initialScheduling: matureEffectiveLimitsScheduling });
     expect(panel.getText()).toContain(
-      'Effective limits: rpm 180 · burst 40 · concurrency 16 · daily budget unlimited · token daily budget unlimited'
+      'Effective limits: rpm 180 · burst 40 · concurrency 16 · daily budget unlimited · token daily budget No local cap configured'
     );
     // mature 号（pacing_applies=false）不显示养号压速提示。
     const pacingNote = panel.renderer.root.findAll(
