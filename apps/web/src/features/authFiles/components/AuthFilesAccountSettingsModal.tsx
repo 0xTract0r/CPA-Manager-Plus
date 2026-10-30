@@ -15,7 +15,7 @@
  *     「例行版本刷新」分类展示）
  */
 import { useTranslation } from 'react-i18next';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import CodeMirror from '@uiw/react-codemirror';
 import { json } from '@codemirror/lang-json';
 import { search, searchKeymap, highlightSelectionMatches } from '@codemirror/search';
@@ -1272,7 +1272,9 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
   } = props;
   // 列表轮询会换父回调；稳定Modal回调，避免重新渲染取消350ms关闭动画。
   const closeRef = useRef(onClose);
-  closeRef.current = onClose;
+  useLayoutEffect(() => {
+    closeRef.current = onClose;
+  }, [onClose]);
   const handleModalClose = useCallback(() => closeRef.current(), []);
 
   // 原始 auth JSON 含明文 access_token，属敏感暴露面。native <details> 折叠时仍会把

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
@@ -33,7 +33,9 @@ export function AccountLimitsModal({
   );
   const target = getAuthFilePatchTarget(file);
   const latest = useRef({ formState, onClose, onBack, showConfirmation, t });
-  latest.current = { formState, onClose, onBack, showConfirmation, t };
+  useLayoutEffect(() => {
+    latest.current = { formState, onClose, onBack, showConfirmation, t };
+  }, [formState, onClose, onBack, showConfirmation, t]);
   const leave = useCallback((back: boolean) => {
     const current = latest.current;
     if (current.formState.saving) return;

@@ -81,7 +81,9 @@ export function WarmupPacingModal({
 }) {
   const { t } = useTranslation();
   const closeRef = useRef(onClose);
-  closeRef.current = onClose;
+  useLayoutEffect(() => {
+    closeRef.current = onClose;
+  }, [onClose]);
   // 每秒倒计时会重渲染；稳定回调，避免重置Modal尚未结束的关闭动画。
   const handleClose = useCallback(() => {
     closeRef.current();

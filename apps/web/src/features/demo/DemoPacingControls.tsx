@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { getPacingStoryState, controlPacingStory } from '@/features/demo/demoFixtures';
 
@@ -22,7 +22,9 @@ export function DemoPacingControls({
   accountFileName?: string;
 }) {
   const refreshRef = useRef(onRefresh);
-  refreshRef.current = onRefresh;
+  useLayoutEffect(() => {
+    refreshRef.current = onRefresh;
+  }, [onRefresh]);
   const [state, setState] = useState(getPacingStoryState);
   useEffect(() => {
     const initial = getPacingStoryState();
