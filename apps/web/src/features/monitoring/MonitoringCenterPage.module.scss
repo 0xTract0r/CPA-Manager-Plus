@@ -284,31 +284,75 @@
   }
 }
 
-// 操作和状态都按完整内容宽度参与换行；挤不下时整组使用下一行，
-// 避免状态被固定双列压到半幅、单侧叠三行而另一侧留下大片空白。
+// 固定信息分工：首排操作靠左、日志靠右；次排状态统一从左排起。
+// 不能再靠整组自动换行生成“上左/下右”的阶梯布局。
 .monitorActionBar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    'actions logs'
+    'status status';
+  gap: 8px;
 
-  > .actionGroup,
-  > .actionBarMeta {
-    flex: 1 1 max-content;
+  > .actionGroup {
+    grid-area: actions;
     min-width: 0;
-    max-width: 100%;
+    justify-content: flex-start;
   }
 
-  // 只在监控工具栏中合并布局层级，让状态 chip 与日志入口一起换行。
-  // 保留原 DOM、颜色、字号与其他页面共用状态条的布局。
+  > .monitorLogsLink {
+    grid-area: logs;
+    align-self: start;
+  }
+
+  > .actionBarMeta {
+    grid-area: status;
+    width: 100%;
+    min-width: 0;
+    justify-content: flex-start;
+    gap: 6px 16px;
+  }
+
+  // 只展平本工具栏的无语义包装；其它页面共用状态条保持原样。
   .actionBarMeta .statusBar,
   .actionBarMeta .statusMeta {
     display: contents;
   }
 
   .statusMeta > span {
+    width: auto;
     max-width: 100%;
+    min-height: 24px;
+    justify-content: flex-start;
     white-space: normal;
     overflow-wrap: anywhere;
+  }
+
+  .statusMeta > span:not(.statusBadge) {
+    padding: 0;
+    background: transparent !important;
+    color: var(--monitor-muted);
+    font-weight: 400;
+  }
+
+  .statusMeta > span.usageCatchUpToneGood {
+    color: var(--monitor-muted) !important;
+  }
+}
+
+.monitorActionBarWithoutLogs {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas:
+    'actions'
+    'status';
+}
+
+@container monitoring-page (max-width: 768px) {
+  .monitorActionBar:not(.monitorActionBarWithoutLogs) {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'actions'
+      'logs'
+      'status';
   }
 }
 

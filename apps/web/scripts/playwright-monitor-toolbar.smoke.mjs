@@ -1,5 +1,5 @@
 /**
- * 请求监控工具栏紧凑换行回归，需先启动管理页面。
+ * 请求监控操作/状态两层布局回归，需先启动管理页面。
  * CPAMP_UI_BASE=http://127.0.0.1:4178 PLAYWRIGHT_MODULE=/path/to/playwright \
  *   node scripts/playwright-monitor-toolbar.smoke.mjs
  *
@@ -152,7 +152,10 @@ try {
       await page.setViewportSize({ width: 1600, height: 1000 });
       // MainLayout 的状态类在布局根上，依据最终 DOM 状态决定是否切换，避免依赖存储键名。
       const isCollapsed = (await page.locator('.sidebar-is-collapsed').count()) > 0;
-      if (Boolean(isCollapsed) !== collapsed) await page.locator('.hamburger-container').click();
+      if (Boolean(isCollapsed) !== collapsed) {
+        await page.locator('.hamburger-container').click();
+        await page.waitForTimeout(350);
+      }
       for (const width of widths) {
         await page.setViewportSize({ width, height: 1000 });
         await page.waitForTimeout(100);
@@ -168,8 +171,10 @@ try {
               bottom: box.bottom,
             };
           };
-          const group = el.children[0];
-          const meta = el.children[1];
+          const group = el.querySelector('[data-testid="monitoring-toolbar-actions"]');
+          const meta = el.querySelector('[data-testid="monitoring-toolbar-status"]');
+          const logs = el.querySelector('[data-testid="monitoring-toolbar-logs"]');
+          if (!group || !meta) throw new Error('Toolbar action/status layer missing');
           const firstAction = group.querySelector('button');
           const badge = [...meta.querySelectorAll('span')].find((node) =>
             /^(已连接|连接中|未连接|已断开)$/.test(node.textContent.trim())
@@ -181,9 +186,8 @@ try {
           const bounds = rect(el);
           const itemRects = (nodes) => [...nodes].map(rect).filter((box) => box.width > 0);
           const actionItems = itemRects(group.querySelectorAll('button, a'));
-          const statusItems = itemRects(
-            meta.querySelectorAll('div[class*="statusMeta"] > span, a')
-          );
+          const statusNodes = [...meta.querySelectorAll('div[class*="statusMeta"] > span')];
+          const statusItems = itemRects(statusNodes);
           const rowCount = (items) => {
             const rows = [];
             for (const item of items) {
@@ -198,9 +202,13 @@ try {
             parseFloat(css.paddingRight) -
             parseFloat(css.borderLeftWidth) -
             parseFloat(css.borderRightWidth);
+          const innerLeft =
+            bounds.x + parseFloat(css.paddingLeft) + parseFloat(css.borderLeftWidth);
+          const columnGap = parseFloat(getComputedStyle(meta).columnGap);
           const statusSingleRowWidth =
             statusItems.reduce((sum, item) => sum + item.width, 0) +
-            Math.max(0, statusItems.length - 1) * 8;
+            Math.max(0, statusItems.length - 1) * columnGap;
+          const ordinaryStatusNodes = statusNodes.filter((node) => !node.contains(badge));
           const childrenOverflow = [...el.querySelectorAll('button, a, span')].some((node) => {
             if (node.closest('[role="tooltip"]')) return false;
             const box = node.getBoundingClientRect();
@@ -211,57 +219,80 @@ try {
           return {
             group: rect(group),
             meta: rect(meta),
+            logs: logs ? rect(logs) : null,
             firstAction: rect(firstAction),
             badge: rect(badge),
             price: price ? rect(price) : null,
             toolbar: bounds,
             innerWidth,
+            innerLeft,
+            rowGap: parseFloat(css.rowGap),
+            firstStatusX: statusItems[0]?.x,
+            normalStatusTransparent: ordinaryStatusNodes.every(
+              (node) => getComputedStyle(node).backgroundColor === 'rgba(0, 0, 0, 0)'
+            ),
+            normalStatusWeight: ordinaryStatusNodes.every(
+              (node) => Number(getComputedStyle(node).fontWeight) <= 400
+            ),
             actionRows: rowCount(actionItems),
             statusRows: rowCount(statusItems),
             statusSingleRowWidth,
-            columns:
-              Math.abs(meta.getBoundingClientRect().y - group.getBoundingClientRect().y) <= 2
-                ? 2
-                : 1,
+            compactViewport: el.parentElement.getBoundingClientRect().width <= 768,
             childrenOverflow,
             pageOverflow: document.documentElement.scrollWidth > window.innerWidth + 1,
           };
         });
         const detail = { width, collapsed, ...item, ...geometry };
         report.cases.push(detail);
-        if (geometry.columns > 1) {
+        assert(
+          Math.abs(geometry.group.x - geometry.innerLeft) <= 2,
+          `Actions must start at the left edge: ${JSON.stringify(detail)}`
+        );
+        assert(
+          Math.abs(geometry.meta.x - geometry.innerLeft) <= 2 &&
+            Math.abs(geometry.firstStatusX - geometry.innerLeft) <= 2,
+          `Status must start at the same left edge: ${JSON.stringify(detail)}`
+        );
+        assert(
+          Math.abs(geometry.meta.width - geometry.innerWidth) <= 2,
+          `Status layer must use full width: ${JSON.stringify(detail)}`
+        );
+        assert(
+          geometry.meta.y >= Math.max(geometry.group.bottom, geometry.logs?.bottom || 0) + 6,
+          `Status must stay below every action: ${JSON.stringify(detail)}`
+        );
+        assert(
+          Math.abs(
+            geometry.meta.y -
+              Math.max(geometry.group.bottom, geometry.logs?.bottom || 0) -
+              geometry.rowGap
+          ) <= 2,
+          `Status layer must not leave an empty grid row: ${JSON.stringify(detail)}`
+        );
+        assert(
+          geometry.normalStatusTransparent && geometry.normalStatusWeight,
+          `Ordinary status must use secondary text, not heavy pills: ${JSON.stringify(detail)}`
+        );
+        if (item.logging !== null) assert.equal(Boolean(geometry.logs), item.logging);
+        if (geometry.logs && !geometry.compactViewport) {
+          assert(
+            Math.abs(geometry.logs.cy - geometry.firstAction.cy) <= 2,
+            `Logs must stay on the action row: ${JSON.stringify(detail)}`
+          );
+          assert(
+            Math.abs(
+              geometry.logs.x + geometry.logs.width - geometry.innerLeft - geometry.innerWidth
+            ) <= 2,
+            `Logs must align to the right edge: ${JSON.stringify(detail)}`
+          );
+          assert(
+            geometry.group.x + geometry.group.width <= geometry.logs.x - 6,
+            `Action group must not overlap logs: ${JSON.stringify(detail)}`
+          );
           assert.equal(
             geometry.actionRows,
             1,
-            `Side-by-side actions must stay on one row: ${JSON.stringify(detail)}`
-          );
-          assert.equal(
-            geometry.statusRows,
-            1,
-            `Side-by-side status must stay on one row: ${JSON.stringify(detail)}`
-          );
-          assert(
-            Math.abs(geometry.firstAction.cy - geometry.badge.cy) <= 2,
-            `First row misaligned: ${JSON.stringify(detail)}`
-          );
-          if (geometry.price && Math.abs(geometry.price.cy - geometry.firstAction.cy) <= 2) {
-            assert(
-              Math.abs(geometry.price.cy - geometry.badge.cy) <= 2,
-              `Price/status misaligned: ${JSON.stringify(detail)}`
-            );
-          }
-        } else {
-          assert(
-            geometry.meta.y >= geometry.group.bottom - 1,
-            `Stacked groups overlap: ${JSON.stringify(detail)}`
-          );
-          assert(
-            Math.abs(geometry.group.width - geometry.innerWidth) <= 2,
-            `Stacked actions must use full width: ${JSON.stringify(detail)}`
-          );
-          assert(
-            Math.abs(geometry.meta.width - geometry.innerWidth) <= 2,
-            `Stacked status must use full width: ${JSON.stringify(detail)}`
+            `Desktop actions must use one row: ${JSON.stringify(detail)}`
           );
         }
         if (geometry.statusSingleRowWidth <= geometry.innerWidth + 1) {
@@ -275,7 +306,7 @@ try {
           !geometry.childrenOverflow && !geometry.pageOverflow,
           `Toolbar overflow: ${JSON.stringify(detail)}`
         );
-        if ([1366, 390].includes(width))
+        if ([1920, 1366, 911, 390].includes(width))
           await bar().screenshot({
             path: path.join(out, `${item.logging}-${item.catchup}-${collapsed}-${width}.png`),
           });
