@@ -284,32 +284,33 @@
   }
 }
 
-// 固定信息分工：首排操作靠左、日志靠右；次排状态统一从左排起。
-// 不能再靠整组自动换行生成“上左/下右”的阶梯布局。
+// 两组按完整内容宽度决定同排或换行。操作组吃掉同行余量，
+// 状态组不增长：宽屏位于右侧，换到下一行时自然从左开始，避免阶梯留白。
 .monitorActionBar {
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-areas:
-    'actions logs'
-    'status status';
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
 
   > .actionGroup {
-    grid-area: actions;
+    flex: 1 1 max-content;
+    width: auto;
     min-width: 0;
+    max-width: 100%;
     justify-content: flex-start;
   }
 
-  > .monitorLogsLink {
-    grid-area: logs;
-    align-self: start;
+  .monitorLogsLink {
+    flex: 0 0 auto;
   }
 
   > .actionBarMeta {
-    grid-area: status;
-    width: 100%;
+    flex: 0 1 max-content;
+    width: auto;
     min-width: 0;
+    max-width: 100%;
     justify-content: flex-start;
-    gap: 6px 16px;
+    gap: 8px;
   }
 
   // 只展平本工具栏的无语义包装；其它页面共用状态条保持原样。
@@ -324,23 +325,6 @@
     justify-content: flex-start;
     white-space: normal;
     overflow-wrap: anywhere;
-  }
-}
-
-.monitorActionBarWithoutLogs {
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-areas:
-    'actions'
-    'status';
-}
-
-@container monitoring-page (max-width: 768px) {
-  .monitorActionBar:not(.monitorActionBarWithoutLogs) {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas:
-      'actions'
-      'logs'
-      'status';
   }
 }
 

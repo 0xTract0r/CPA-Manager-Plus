@@ -106,7 +106,7 @@ export function MonitoringActionBar({
 
   return (
     <section
-      className={`${styles.actionBar} ${styles.monitorActionBar} ${loggingToFile ? '' : styles.monitorActionBarWithoutLogs}`}
+      className={`${styles.actionBar} ${styles.monitorActionBar}`}
       aria-label={t('common.action')}
     >
       <div className={styles.actionGroup} data-testid="monitoring-toolbar-actions">
@@ -219,20 +219,19 @@ export function MonitoringActionBar({
         />
       </div>
 
-      {loggingToFile ? (
-        <Link
-          to="/logs"
-          className={`${styles.actionButton} ${styles.quickNavLink} ${styles.monitorLogsLink}`}
-          data-testid="monitoring-toolbar-logs"
-        >
-          <IconFileText size={16} />
-          <span>{t('monitoring.open_logs')}</span>
-          <IconExternalLink size={14} />
-        </Link>
-      ) : null}
-
       <div className={styles.actionBarMeta} data-testid="monitoring-toolbar-status">
         {statusSummary}
+        {loggingToFile ? (
+          <Link
+            to="/logs"
+            className={`${styles.actionButton} ${styles.quickNavLink} ${styles.monitorLogsLink}`}
+            data-testid="monitoring-toolbar-logs"
+          >
+            <IconFileText size={16} />
+            <span>{t('monitoring.open_logs')}</span>
+            <IconExternalLink size={14} />
+          </Link>
+        ) : null}
       </div>
     </section>
   );

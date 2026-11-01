@@ -1,5 +1,5 @@
 /**
- * 请求监控操作/状态两层布局回归，需先启动管理页面。
+ * 请求监控自适应同排/换行回归，需先启动管理页面。
  * CPAMP_UI_BASE=http://127.0.0.1:4178 PLAYWRIGHT_MODULE=/path/to/playwright \
  *   node scripts/playwright-monitor-toolbar.smoke.mjs
  *
@@ -123,10 +123,10 @@ const scenarios =
     : [{ logging: mode === 'preview' ? true : null, catchup: mode === 'preview' ? true : null }];
 const widths =
   mode === 'preview'
-    ? [1366, 390]
+    ? [1920, 1366, 390]
     : [
-        1920, 1600, 1499, 1498, 1440, 1366, 1343, 1342, 1280, 1220, 1218, 1180, 1100, 1064, 1062,
-        1024, 911, 768, 390,
+        2560, 1920, 1600, 1499, 1498, 1440, 1366, 1343, 1342, 1280, 1220, 1218, 1180, 1100, 1064,
+        1062, 1024, 911, 768, 390,
       ];
 
 try {
@@ -188,7 +188,10 @@ try {
         if (!toolbar) return false;
         return (
           toolbar.textContent.includes('打开日志查看') === logging &&
-          toolbar.textContent.includes('自动补齐：') === catchup
+          toolbar.textContent.includes('自动补齐：') === catchup &&
+          !document
+            .querySelector('[data-testid="monitoring-toolbar-status"]')
+            ?.textContent.includes('--')
         );
       }, item);
     }
@@ -250,9 +253,17 @@ try {
           const innerLeft =
             bounds.x + parseFloat(css.paddingLeft) + parseFloat(css.borderLeftWidth);
           const columnGap = parseFloat(getComputedStyle(meta).columnGap);
+          const actionColumnGap = parseFloat(getComputedStyle(group).columnGap);
+          const actionSingleRowWidth =
+            actionItems.reduce((sum, item) => sum + item.width, 0) +
+            Math.max(0, actionItems.length - 1) * actionColumnGap;
           const statusSingleRowWidth =
             statusItems.reduce((sum, item) => sum + item.width, 0) +
             Math.max(0, statusItems.length - 1) * columnGap;
+          const metaSingleRowWidth =
+            statusSingleRowWidth + (logs ? rect(logs).width + columnGap : 0);
+          const neededSingleRowWidth =
+            actionSingleRowWidth + metaSingleRowWidth + parseFloat(css.columnGap);
           const ordinaryStatusNodes = statusNodes.filter((node) => !node.contains(badge));
           const failure = statusNodes.find((node) => node.className.includes('statusMetaWarn'));
           const catchup = statusNodes.find((node) =>
@@ -286,6 +297,10 @@ try {
             toolbar: bounds,
             innerWidth,
             innerLeft,
+            actionSingleRowWidth,
+            metaSingleRowWidth,
+            neededSingleRowWidth,
+            sameRow: Math.abs(rect(group).y - rect(meta).y) <= 2,
             rowGap: parseFloat(css.rowGap),
             firstStatusX: statusItems[0]?.x,
             statusPillsVisible: ordinaryStatusNodes.every(
@@ -312,27 +327,47 @@ try {
           Math.abs(geometry.group.x - geometry.innerLeft) <= 2,
           `Actions must start at the left edge: ${JSON.stringify(detail)}`
         );
-        assert(
-          Math.abs(geometry.meta.x - geometry.innerLeft) <= 2 &&
-            Math.abs(geometry.firstStatusX - geometry.innerLeft) <= 2,
-          `Status must start at the same left edge: ${JSON.stringify(detail)}`
-        );
-        assert(
-          Math.abs(geometry.meta.width - geometry.innerWidth) <= 2,
-          `Status layer must use full width: ${JSON.stringify(detail)}`
-        );
-        assert(
-          geometry.meta.y >= Math.max(geometry.group.bottom, geometry.logs?.bottom || 0) + 6,
-          `Status must stay below every action: ${JSON.stringify(detail)}`
-        );
-        assert(
-          Math.abs(
-            geometry.meta.y -
-              Math.max(geometry.group.bottom, geometry.logs?.bottom || 0) -
-              geometry.rowGap
-          ) <= 2,
-          `Status layer must not leave an empty grid row: ${JSON.stringify(detail)}`
-        );
+        if (geometry.neededSingleRowWidth <= geometry.innerWidth - 2) {
+          assert(
+            geometry.sameRow,
+            `All controls fit but toolbar is still split: ${JSON.stringify(detail)}`
+          );
+        } else if (geometry.neededSingleRowWidth > geometry.innerWidth + 2) {
+          assert(
+            !geometry.sameRow,
+            `Insufficient room must move the status group: ${JSON.stringify(detail)}`
+          );
+        }
+        if (geometry.sameRow) {
+          assert.equal(
+            geometry.actionRows,
+            1,
+            `Wide actions must use one row: ${JSON.stringify(detail)}`
+          );
+          assert.equal(
+            geometry.statusRows,
+            1,
+            `Wide status must use one row: ${JSON.stringify(detail)}`
+          );
+          assert(
+            Math.abs(geometry.firstAction.cy - geometry.badge.cy) <= 2,
+            `Wide toolbar items must align vertically: ${JSON.stringify(detail)}`
+          );
+          assert(
+            geometry.group.x + geometry.group.width <= geometry.meta.x - 6,
+            `Wide groups must not overlap: ${JSON.stringify(detail)}`
+          );
+        } else {
+          assert(
+            Math.abs(geometry.meta.x - geometry.innerLeft) <= 2 &&
+              Math.abs(geometry.firstStatusX - geometry.innerLeft) <= 2,
+            `Wrapped status must start at the left edge: ${JSON.stringify(detail)}`
+          );
+          assert(
+            Math.abs(geometry.meta.y - geometry.group.bottom - geometry.rowGap) <= 2,
+            `Wrapped status must follow actions without extra empty rows: ${JSON.stringify(detail)}`
+          );
+        }
         assert(
           geometry.statusPillsVisible && geometry.originalStatusWeight,
           `Status must keep the original pills and weight: ${JSON.stringify(detail)}`
@@ -348,39 +383,23 @@ try {
             `Catchup highlight missing: ${JSON.stringify(detail)}`
           );
         if (item.logging !== null) assert.equal(Boolean(geometry.logs), item.logging);
-        if (geometry.logs && !geometry.compactViewport) {
-          assert(
-            Math.abs(geometry.logs.cy - geometry.firstAction.cy) <= 2,
-            `Logs must stay on the action row: ${JSON.stringify(detail)}`
-          );
-          assert(
-            Math.abs(
-              geometry.logs.x + geometry.logs.width - geometry.innerLeft - geometry.innerWidth
-            ) <= 2,
-            `Logs must align to the right edge: ${JSON.stringify(detail)}`
-          );
-          assert(
-            geometry.group.x + geometry.group.width <= geometry.logs.x - 6,
-            `Action group must not overlap logs: ${JSON.stringify(detail)}`
-          );
-          assert.equal(
-            geometry.actionRows,
-            1,
-            `Desktop actions must use one row: ${JSON.stringify(detail)}`
-          );
-        }
-        if (geometry.statusSingleRowWidth <= geometry.innerWidth + 1) {
+        if (geometry.metaSingleRowWidth <= geometry.innerWidth - 2) {
           assert.equal(
             geometry.statusRows,
             1,
-            `Status can fit a full row but wraps prematurely: ${JSON.stringify(detail)}`
+            `Status group fits a full row but wraps prematurely: ${JSON.stringify(detail)}`
           );
+          if (geometry.logs)
+            assert(
+              Math.abs(geometry.logs.cy - geometry.badge.cy) <= 2,
+              `Logs must stay with status when the group fits: ${JSON.stringify(detail)}`
+            );
         }
         assert(
           !geometry.childrenOverflow && !geometry.pageOverflow,
           `Toolbar overflow: ${JSON.stringify(detail)}`
         );
-        if ([1920, 1366, 911, 390].includes(width))
+        if ([2560, 1920, 1366, 911, 390].includes(width))
           await bar().screenshot({
             path: path.join(out, `${item.logging}-${item.catchup}-${collapsed}-${width}.png`),
           });
