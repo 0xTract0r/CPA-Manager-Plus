@@ -3,7 +3,7 @@
  * CPAMP_UI_BASE=http://127.0.0.1:4178 PLAYWRIGHT_MODULE=/path/to/playwright \
  *   node scripts/playwright-monitor-toolbar.smoke.mjs
  *
- * 默认本地模式补入日志开关和自动补齐状态的组合；CPAMP_TOOLBAR_MODE=live 则只读真实接口。
+ * 默认mock覆盖开关组合；preview直接检查人类本地预览（不拦截API/注入存储）；live只读实服。
  * 实例需要登录时从 CPA_MANAGER_ADMIN_KEY 读取密钥，密钥不会写入报告。
  */
 import assert from 'node:assert/strict';
@@ -16,8 +16,11 @@ const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const origin = (process.env.CPAMP_UI_BASE || 'http://127.0.0.1:4178').replace(/\/$/, '');
 const mode = process.env.CPAMP_TOOLBAR_MODE || 'mock';
-assert(['mock', 'live'].includes(mode), 'CPAMP_TOOLBAR_MODE must be mock or live');
-if (mode === 'mock') {
+assert(
+  ['mock', 'preview', 'live'].includes(mode),
+  'CPAMP_TOOLBAR_MODE must be mock, preview or live'
+);
+if (mode !== 'live') {
   assert(
     ['localhost', '127.0.0.1', '[::1]'].includes(new URL(origin).hostname),
     'Mock mode is local only'
@@ -43,13 +46,14 @@ const context = await browser.newContext({
   locale: 'zh-CN',
   timezoneId: 'Asia/Shanghai',
 });
-await context.addInitScript(() => {
-  localStorage.setItem(
-    'cli-proxy-theme',
-    JSON.stringify({ state: { theme: 'wool', resolvedTheme: 'light' }, version: 0 })
-  );
-  localStorage.setItem('cli-proxy-language', 'zh-CN');
-});
+if (mode !== 'preview')
+  await context.addInitScript(() => {
+    localStorage.setItem(
+      'cli-proxy-theme',
+      JSON.stringify({ state: { theme: 'wool', resolvedTheme: 'light' }, version: 0 })
+    );
+    localStorage.setItem('cli-proxy-language', 'zh-CN');
+  });
 let scenario = { logging: true, catchup: true };
 if (mode === 'mock') {
   await context.route('**/*', async (route) => {
@@ -116,13 +120,38 @@ const scenarios =
         { logging: false, catchup: true },
         { logging: false, catchup: false },
       ]
-    : [{ logging: null, catchup: null }];
-const widths = [
-  1920, 1600, 1499, 1498, 1440, 1366, 1343, 1342, 1280, 1220, 1218, 1180, 1100, 1064, 1062, 1024,
-  911, 768, 390,
-];
+    : [{ logging: mode === 'preview' ? true : null, catchup: mode === 'preview' ? true : null }];
+const widths =
+  mode === 'preview'
+    ? [1366, 390]
+    : [
+        1920, 1600, 1499, 1498, 1440, 1366, 1343, 1342, 1280, 1220, 1218, 1180, 1100, 1064, 1062,
+        1024, 911, 768, 390,
+      ];
 
 try {
+  if (mode === 'preview') {
+    const configResponse = await context.request.get(`${origin}/v0/management/config`);
+    const catchupResponse = await context.request.get(
+      `${origin}/v0/management/usage/catchup-status`
+    );
+    assert.equal(configResponse.status(), 200);
+    assert.equal(catchupResponse.status(), 200);
+    const config = await configResponse.json();
+    const catchup = await catchupResponse.json();
+    assert.equal(config['logging-to-file'], true, 'Direct preview must provide logging config');
+    assert.equal(catchup.found, true, 'Direct preview must provide catchup data');
+    assert.equal(catchup.status?.lastStatus, 'ok');
+    assert(Number.isFinite(catchup.status?.lastRunAtMs));
+    assert(Number.isFinite(catchup.status?.lastAdded));
+    report.defaultPreview = {
+      loggingToFile: config['logging-to-file'],
+      found: catchup.found,
+      lastRunAtMs: catchup.status.lastRunAtMs,
+      lastStatus: catchup.status.lastStatus,
+      lastAdded: catchup.status.lastAdded,
+    };
+  }
   await page.goto(`${origin}/management.html#/`, { waitUntil: 'domcontentloaded' });
   if (key) {
     const password = page.locator('input[type="password"]').first();
@@ -133,6 +162,22 @@ try {
   await page.getByTestId('timezone-menu-toggle').waitFor({ state: 'visible', timeout: 30000 });
   await page.getByRole('link', { name: '请求监控', exact: true }).click();
   await bar().waitFor({ state: 'visible' });
+  if (mode === 'preview') {
+    await bar().getByRole('link', { name: '打开日志查看', exact: true }).waitFor();
+    await page.waitForFunction(() => {
+      const status = document.querySelector('[data-testid="monitoring-toolbar-status"]');
+      return status?.textContent.includes('自动补齐：') && !status.textContent.includes('--');
+    });
+    const catchupLabel = bar()
+      .locator('span')
+      .filter({ hasText: /^自动补齐：/ })
+      .last();
+    assert(
+      (await catchupLabel.innerText())
+        .replace(/\s+/g, '')
+        .includes(`补${report.defaultPreview.lastAdded}条`)
+    );
+  }
   for (const item of scenarios) {
     scenario = item;
     if (mode === 'mock') {
@@ -209,6 +254,21 @@ try {
             statusItems.reduce((sum, item) => sum + item.width, 0) +
             Math.max(0, statusItems.length - 1) * columnGap;
           const ordinaryStatusNodes = statusNodes.filter((node) => !node.contains(badge));
+          const failure = statusNodes.find((node) => node.className.includes('statusMetaWarn'));
+          const catchup = statusNodes.find((node) =>
+            node.className.includes('usageCatchUpToneGood')
+          );
+          const toneHighlighted = (node, channel) => {
+            if (!node) return null;
+            const style = getComputedStyle(node);
+            const channels = style.color.match(/[\d.]+/g)?.map(Number);
+            return (
+              style.backgroundColor !== 'rgba(0, 0, 0, 0)' &&
+              channels &&
+              channels[channel] > channels[1 - channel] &&
+              channels[channel] > channels[2]
+            );
+          };
           const childrenOverflow = [...el.querySelectorAll('button, a, span')].some((node) => {
             if (node.closest('[role="tooltip"]')) return false;
             const box = node.getBoundingClientRect();
@@ -228,12 +288,16 @@ try {
             innerLeft,
             rowGap: parseFloat(css.rowGap),
             firstStatusX: statusItems[0]?.x,
-            normalStatusTransparent: ordinaryStatusNodes.every(
-              (node) => getComputedStyle(node).backgroundColor === 'rgba(0, 0, 0, 0)'
+            statusPillsVisible: ordinaryStatusNodes.every(
+              (node) =>
+                getComputedStyle(node).backgroundColor !== 'rgba(0, 0, 0, 0)' &&
+                parseFloat(getComputedStyle(node).paddingLeft) >= 8
             ),
-            normalStatusWeight: ordinaryStatusNodes.every(
-              (node) => Number(getComputedStyle(node).fontWeight) <= 400
+            originalStatusWeight: ordinaryStatusNodes.every(
+              (node) => Number(getComputedStyle(node).fontWeight) >= 600
             ),
+            failureHighlighted: toneHighlighted(failure, 0),
+            catchupHighlighted: toneHighlighted(catchup, 1),
             actionRows: rowCount(actionItems),
             statusRows: rowCount(statusItems),
             statusSingleRowWidth,
@@ -270,9 +334,19 @@ try {
           `Status layer must not leave an empty grid row: ${JSON.stringify(detail)}`
         );
         assert(
-          geometry.normalStatusTransparent && geometry.normalStatusWeight,
-          `Ordinary status must use secondary text, not heavy pills: ${JSON.stringify(detail)}`
+          geometry.statusPillsVisible && geometry.originalStatusWeight,
+          `Status must keep the original pills and weight: ${JSON.stringify(detail)}`
         );
+        assert(
+          geometry.failureHighlighted !== false,
+          `Failure highlight missing: ${JSON.stringify(detail)}`
+        );
+        if (item.catchup === true)
+          assert.equal(
+            geometry.catchupHighlighted,
+            true,
+            `Catchup highlight missing: ${JSON.stringify(detail)}`
+          );
         if (item.logging !== null) assert.equal(Boolean(geometry.logs), item.logging);
         if (geometry.logs && !geometry.compactViewport) {
           assert(

@@ -321,21 +321,9 @@
   .statusMeta > span {
     width: auto;
     max-width: 100%;
-    min-height: 24px;
     justify-content: flex-start;
     white-space: normal;
     overflow-wrap: anywhere;
-  }
-
-  .statusMeta > span:not(.statusBadge) {
-    padding: 0;
-    background: transparent !important;
-    color: var(--monitor-muted);
-    font-weight: 400;
-  }
-
-  .statusMeta > span.usageCatchUpToneGood {
-    color: var(--monitor-muted) !important;
   }
 }
 
