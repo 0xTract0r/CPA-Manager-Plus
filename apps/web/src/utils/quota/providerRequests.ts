@@ -54,7 +54,7 @@ import {
   parseXaiBillingPayload,
 } from './parsers';
 import { resolveCodexChatgptAccountId, resolveCodexPlanType } from './resolvers';
-import { buildCodexQuotaWindowInfos } from './codexQuota';
+import { buildCodexQuotaWindowInfos, resolveCodexCreditsFields } from './codexQuota';
 import {
   buildCodexResetCreditsRequestHeaders,
   buildCodexUsageRequestHeaders,
@@ -71,6 +71,10 @@ export type CodexQuotaData = {
   rateLimitResetCreditsAvailableCount: number | null;
   rateLimitResetCredits: CodexRateLimitResetCredit[];
   rateLimitResetCreditsError: string | null;
+  // wham/usage 的 `credits`（积分余额）；缺失时保持 undefined，不覆盖其他来源的观测值。
+  creditsBalance?: string | null;
+  creditsHasCredits?: boolean | null;
+  creditsUnlimited?: boolean | null;
 };
 
 export type ClaudeQuotaData = {
@@ -385,10 +389,12 @@ export const fetchCodexQuota = async (
   const planType = planTypeFromUsage ?? planTypeFromFile;
   const windows = buildCodexQuotaWindows(payload, t, planType);
   const usageResetCreditsAvailableCount = resolveCodexRateLimitResetCreditsAvailableCount(payload);
+  const credits = resolveCodexCreditsFields(payload);
   const resetCredits = await fetchCodexResetCredits(authIndex, accountId, t);
   return {
     planType,
     windows,
+    ...(credits ?? {}),
     subscriptionActiveUntil: resolveCodexSubscriptionActiveUntil(payload),
     rateLimitResetCreditsAvailableCount: resolveCodexResetCreditsAvailableCount(
       resetCredits,

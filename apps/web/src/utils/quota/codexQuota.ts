@@ -166,6 +166,79 @@ export const deriveCodexRateLimitUsedPercent = (
   return Math.max(...values);
 };
 
+/**
+ * Codex 积分（credits）字段，口径与 usage header snapshot 解析出的
+ * `creditsBalance / creditsHasCredits / creditsUnlimited` 一致：balance 保留原始字符串，
+ * 布尔位缺失时为 null（未知），不臆造成 false。
+ */
+export type CodexCreditsFields = {
+  creditsBalance: string | null;
+  creditsHasCredits: boolean | null;
+  creditsUnlimited: boolean | null;
+};
+
+const readCodexCreditsFlag = (value: unknown): boolean | null => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number' && Number.isFinite(value)) return value !== 0;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['true', '1', 'yes', 'y', 'on'].includes(normalized)) return true;
+    if (['false', '0', 'no', 'n', 'off'].includes(normalized)) return false;
+  }
+  return null;
+};
+
+/**
+ * 从 wham/usage payload（api-call 直调或 core quota_snapshot.usage）提取 `credits`。
+ * 没有任何 credits 信号时返回 null，调用方据此保持旧状态不变。
+ */
+export const resolveCodexCreditsFields = (
+  payload: CodexUsagePayload | null | undefined
+): CodexCreditsFields | null => {
+  const credits = payload?.credits;
+  if (!credits || typeof credits !== 'object') return null;
+
+  const creditsBalance = normalizeStringValue(credits.balance);
+  const creditsHasCredits = readCodexCreditsFlag(credits.has_credits ?? credits.hasCredits);
+  const creditsUnlimited = readCodexCreditsFlag(credits.unlimited);
+  if (creditsBalance === null && creditsHasCredits === null && creditsUnlimited === null) {
+    return null;
+  }
+  return { creditsBalance, creditsHasCredits, creditsUnlimited };
+};
+
+/**
+ * 安全解析积分余额：上游原始值形如 `"59897.4803850000"`；
+ * 非数字、负数、空串、Infinity 一律视为不可用（null），不做取整（取整只在展示层做）。
+ */
+export const parseCodexCreditsBalance = (value: unknown): number | null => {
+  const parsed = normalizeNumberValue(value);
+  if (parsed === null || parsed < 0) return null;
+  return parsed;
+};
+
+export type CodexCreditsDisplay = { kind: 'unlimited' } | { kind: 'balance'; balance: number };
+
+/**
+ * 决定卡片是否显示「积分余额」行：
+ * - unlimited=true → 不限；
+ * - has_credits=true 且余额取整后 > 0 → 显示余额（向下取整，`59897.48` → `59897`）；
+ * - 其余（无数据 / has_credits=false / 余额为 0、不足 1 或不可解析）→ 不显示，
+ *   避免出现「积分余额 0」这种误导展示。
+ */
+export const getCodexCreditsDisplay = (
+  fields: Partial<CodexCreditsFields> | null | undefined
+): CodexCreditsDisplay | null => {
+  if (!fields) return null;
+  if (fields.creditsUnlimited === true) return { kind: 'unlimited' };
+  if (fields.creditsHasCredits !== true) return null;
+  const balance = parseCodexCreditsBalance(fields.creditsBalance);
+  if (balance === null) return null;
+  const flooredBalance = Math.floor(balance);
+  if (flooredBalance <= 0) return null;
+  return { kind: 'balance', balance: flooredBalance };
+};
+
 export const isCodexRateLimitReached = (rateLimit?: CodexRateLimitInfo | null): boolean => {
   if (!rateLimit) return false;
   if (rateLimit.allowed === false) return true;

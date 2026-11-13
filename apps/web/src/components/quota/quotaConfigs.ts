@@ -59,6 +59,7 @@ import {
   fetchKimiQuota,
   fetchXaiQuota,
   buildCodexQuotaWindows,
+  getCodexCreditsDisplay,
   buildGeminiCliQuotaBuckets,
   createStatusError,
   normalizeGeminiCliModelId,
@@ -85,6 +86,7 @@ import {
 } from '@/utils/usageHeaderSnapshots';
 import { normalizeAuthIndex } from '@/utils/authIndex';
 import { formatDateTimeUtc8, formatInUtc8 } from '@/utils/datetime';
+import { formatNumber } from '@/utils/format';
 import type { QuotaRenderHelpers } from './QuotaCard';
 import styles from '@/features/quota/QuotaPage.module.scss';
 
@@ -855,6 +857,74 @@ const renderCodexWindowInfo = (
   );
 };
 
+/** 积分余额展示值：向下取整后按当前界面语言加千分位，例如 `59897.48` → `59,897`。 */
+export const formatCodexCreditsBalance = (balance: number, locale?: string): string =>
+  formatNumber(Math.floor(balance), locale);
+
+const hasExhaustedCodexQuotaWindow = (windows: CodexQuotaWindow[]): boolean =>
+  windows.some(
+    (window) =>
+      typeof window.usedPercent === 'number' &&
+      Number.isFinite(window.usedPercent) &&
+      window.usedPercent >= 100
+  );
+
+/**
+ * 「积分余额」行：只在有积分（has_credits=true 且余额 > 0）或 unlimited=true 时渲染，
+ * 无积分数据 / has_credits=false 时返回 null，旧卡片外观保持不变。任一额度窗口已用尽时
+ * 追加「额度已用完 · 使用积分中」提示，说明此刻请求在消耗积分。
+ */
+const renderCodexCreditsBalance = (
+  quota: CodexQuotaState,
+  windows: CodexQuotaWindow[],
+  t: TFunction,
+  styleMap: QuotaRenderHelpers['styles']
+): ReactNode => {
+  const display = getCodexCreditsDisplay(quota);
+  if (!display) return null;
+
+  const { createElement: h } = React;
+  const valueLabel =
+    display.kind === 'unlimited'
+      ? t('codex_quota.credits_balance_unlimited')
+      : formatCodexCreditsBalance(display.balance);
+  const showInUseHint = hasExhaustedCodexQuotaWindow(windows);
+
+  return h(
+    'div',
+    {
+      key: 'credits-balance',
+      className: styleMap.codexPlanSummary,
+      'data-testid': 'codex-credits-summary',
+    },
+    h(
+      'div',
+      { className: styleMap.codexPlan },
+      h(
+        'span',
+        { className: styleMap.codexPlanItem },
+        h('span', { className: styleMap.codexPlanLabel }, t('codex_quota.credits_balance_label')),
+        h(
+          'span',
+          { className: styleMap.codexPlanValue, 'data-testid': 'codex-credits-balance' },
+          valueLabel
+        )
+      )
+    ),
+    showInUseHint
+      ? h(
+          'div',
+          { className: styleMap.quotaFootnote, 'data-testid': 'codex-credits-in-use-hint' },
+          h(
+            'span',
+            { className: styleMap.quotaFootnoteValue },
+            t('codex_quota.credits_in_use_hint')
+          )
+        )
+      : null
+  );
+};
+
 const renderCodexItems = (
   quota: CodexQuotaState,
   t: TFunction,
@@ -915,10 +985,13 @@ const renderCodexItems = (
     );
   }
 
+  const creditsNode = renderCodexCreditsBalance(quota, windows, t, styleMap);
+
   if (windows.length === 0) {
     nodes.push(
       h('div', { key: 'empty', className: styleMap.quotaMessage }, t('codex_quota.empty_windows'))
     );
+    if (creditsNode) nodes.push(creditsNode);
     return h(Fragment, null, ...nodes);
   }
 
@@ -960,6 +1033,8 @@ const renderCodexItems = (
       );
     })
   );
+
+  if (creditsNode) nodes.push(creditsNode);
 
   return h(Fragment, null, ...nodes);
 };
@@ -1171,6 +1246,9 @@ export const CODEX_CONFIG: QuotaConfig<CodexQuotaState, CodexQuotaData> = {
     rateLimitResetCreditsAvailableCount: data.rateLimitResetCreditsAvailableCount,
     rateLimitResetCredits: data.rateLimitResetCredits,
     rateLimitResetCreditsError: data.rateLimitResetCreditsError,
+    ...(data.creditsBalance !== undefined ? { creditsBalance: data.creditsBalance } : {}),
+    ...(data.creditsHasCredits !== undefined ? { creditsHasCredits: data.creditsHasCredits } : {}),
+    ...(data.creditsUnlimited !== undefined ? { creditsUnlimited: data.creditsUnlimited } : {}),
     ...buildCodexQuotaAuthIdentity(file),
     fetchedAtMs: Date.now(),
   }),

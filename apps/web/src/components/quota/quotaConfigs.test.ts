@@ -1,7 +1,15 @@
+import React from 'react';
+import type { ReactNode } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import type { TFunction } from 'i18next';
 import { describe, expect, it } from 'vitest';
 import type { CodexQuotaState } from '@/types';
+import styles from '@/features/quota/QuotaPage.module.scss';
+import type { QuotaRenderHelpers } from './QuotaCard';
 import {
   CLAUDE_CONFIG,
+  CODEX_CONFIG,
+  formatCodexCreditsBalance,
   getSortedCodexResetCreditExpiries,
   resolveQuotaDisplayState,
 } from './quotaConfigs';
@@ -341,5 +349,139 @@ describe('resolveQuotaDisplayState', () => {
       usedPercent: 30,
       resetLabel: '07/01 01:00',
     });
+  });
+});
+
+describe('CODEX_CONFIG credits balance row', () => {
+  const t = ((key: string) => key) as TFunction;
+  const helpers: QuotaRenderHelpers = {
+    styles,
+    QuotaProgressBar: ({ percent }) =>
+      React.createElement('div', { 'data-progress': percent ?? 'none' }),
+  };
+  const weeklyWindow = (usedPercent: number | null) => ({
+    id: 'weekly',
+    label: 'Weekly limit',
+    labelKey: 'codex_quota.secondary_window',
+    usedPercent,
+    resetLabel: '11/20 08:00',
+    limitWindowSeconds: 604_800,
+  });
+  const renderCodex = (quota: CodexQuotaState) =>
+    renderToStaticMarkup(
+      React.createElement(
+        React.Fragment,
+        null,
+        CODEX_CONFIG.renderQuotaItems(quota, t, helpers) as ReactNode
+      )
+    );
+
+  it('formats the floored balance with thousands separators', () => {
+    expect(formatCodexCreditsBalance(59897.480385, 'en-US')).toBe('59,897');
+    expect(formatCodexCreditsBalance(1234567.9, 'en-US')).toBe('1,234,567');
+  });
+
+  it('renders the balance and the in-use hint when a window is exhausted', () => {
+    const html = renderCodex({
+      status: 'success',
+      planType: 'pro',
+      windows: [weeklyWindow(100)],
+      creditsBalance: '59897.4803850000',
+      creditsHasCredits: true,
+      creditsUnlimited: false,
+    });
+
+    expect(html).toContain('data-testid="codex-credits-summary"');
+    expect(html).toContain('codex_quota.credits_balance_label');
+    expect(html).toMatch(/data-testid="codex-credits-balance">59[,.\u00a0\u202f]?897</);
+    expect(html).toContain('data-testid="codex-credits-in-use-hint"');
+    expect(html).toContain('codex_quota.credits_in_use_hint');
+    // 积分行排在额度窗口之后
+    expect(html.indexOf('codex_quota.secondary_window')).toBeLessThan(
+      html.indexOf('codex-credits-summary')
+    );
+  });
+
+  it('renders the balance without the hint while quota windows still have room', () => {
+    const html = renderCodex({
+      status: 'success',
+      windows: [weeklyWindow(42)],
+      creditsBalance: '18.4',
+      creditsHasCredits: true,
+    });
+
+    expect(html).toContain('data-testid="codex-credits-balance">18<');
+    expect(html).not.toContain('codex-credits-in-use-hint');
+  });
+
+  it('renders unlimited credits', () => {
+    const html = renderCodex({
+      status: 'success',
+      windows: [weeklyWindow(100)],
+      creditsUnlimited: true,
+    });
+
+    expect(html).toContain('codex_quota.credits_balance_unlimited');
+    expect(html).toContain('codex-credits-in-use-hint');
+  });
+
+  it('keeps the legacy card markup unchanged without credits or with has_credits=false', () => {
+    const base: CodexQuotaState = { status: 'success', windows: [weeklyWindow(100)] };
+    const legacyHtml = renderCodex(base);
+
+    expect(legacyHtml).not.toContain('codex-credits');
+    expect(
+      renderCodex({
+        ...base,
+        creditsBalance: '59897.48',
+        creditsHasCredits: false,
+        creditsUnlimited: false,
+      })
+    ).toBe(legacyHtml);
+    expect(
+      renderCodex({
+        ...base,
+        creditsBalance: '0',
+        creditsHasCredits: true,
+        creditsUnlimited: false,
+      })
+    ).toBe(legacyHtml);
+  });
+
+  it('carries api-call credits through buildSuccessState and omits them when absent', () => {
+    const file = { name: 'codex.json', type: 'codex', authIndex: 'auth-1' };
+    const withCredits = CODEX_CONFIG.buildSuccessState(
+      {
+        planType: 'pro',
+        windows: [],
+        subscriptionActiveUntil: null,
+        rateLimitResetCreditsAvailableCount: null,
+        rateLimitResetCredits: [],
+        rateLimitResetCreditsError: null,
+        creditsBalance: '59897.4803850000',
+        creditsHasCredits: true,
+        creditsUnlimited: false,
+      },
+      file
+    );
+    expect(withCredits).toMatchObject({
+      creditsBalance: '59897.4803850000',
+      creditsHasCredits: true,
+      creditsUnlimited: false,
+    });
+
+    const withoutCredits = CODEX_CONFIG.buildSuccessState(
+      {
+        planType: 'pro',
+        windows: [],
+        subscriptionActiveUntil: null,
+        rateLimitResetCreditsAvailableCount: null,
+        rateLimitResetCredits: [],
+        rateLimitResetCreditsError: null,
+      },
+      file
+    );
+    expect(withoutCredits).not.toHaveProperty('creditsBalance');
+    expect(withoutCredits).not.toHaveProperty('creditsHasCredits');
   });
 });

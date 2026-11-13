@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   classifyCodexRateLimitWindows,
   deriveCodexRateLimitUsedPercent,
+  getCodexCreditsDisplay,
   isCodexRateLimitReached,
   buildCodexQuotaWindowInfos,
+  parseCodexCreditsBalance,
+  resolveCodexCreditsFields,
 } from './codexQuota';
 
 describe('buildCodexQuotaWindowInfos', () => {
@@ -207,5 +210,91 @@ describe('buildCodexQuotaWindowInfos', () => {
     expect(classified.weeklyWindow?.used_percent).toBe(65);
     expect(deriveCodexRateLimitUsedPercent(rateLimit)).toBe(100);
     expect(isCodexRateLimitReached(rateLimit)).toBe(true);
+  });
+});
+
+describe('Codex credits parsing', () => {
+  it('extracts credits fields from a wham/usage payload, keeping the raw balance string', () => {
+    expect(
+      resolveCodexCreditsFields({
+        credits: {
+          balance: '59897.4803850000',
+          has_credits: true,
+          unlimited: false,
+          overage_limit_reached: false,
+        },
+      })
+    ).toEqual({
+      creditsBalance: '59897.4803850000',
+      creditsHasCredits: true,
+      creditsUnlimited: false,
+    });
+  });
+
+  it('accepts camelCase / numeric balances and returns null without any credits signal', () => {
+    expect(resolveCodexCreditsFields({ credits: { hasCredits: true, balance: 18.4 } })).toEqual({
+      creditsBalance: '18.4',
+      creditsHasCredits: true,
+      creditsUnlimited: null,
+    });
+    expect(resolveCodexCreditsFields({ plan_type: 'pro' })).toBeNull();
+    expect(resolveCodexCreditsFields({ credits: null })).toBeNull();
+    expect(resolveCodexCreditsFields({ credits: {} })).toBeNull();
+    expect(resolveCodexCreditsFields(null)).toBeNull();
+  });
+
+  it('safely parses the balance string', () => {
+    expect(parseCodexCreditsBalance('59897.4803850000')).toBeCloseTo(59897.480385);
+    expect(parseCodexCreditsBalance(' 0 ')).toBe(0);
+    expect(parseCodexCreditsBalance('')).toBeNull();
+    expect(parseCodexCreditsBalance('abc')).toBeNull();
+    expect(parseCodexCreditsBalance('-5')).toBeNull();
+    expect(parseCodexCreditsBalance('Infinity')).toBeNull();
+    expect(parseCodexCreditsBalance(null)).toBeNull();
+  });
+
+  it('shows the floored balance only when has_credits=true and balance > 0', () => {
+    expect(
+      getCodexCreditsDisplay({
+        creditsBalance: '59897.4803850000',
+        creditsHasCredits: true,
+        creditsUnlimited: false,
+      })
+    ).toEqual({ kind: 'balance', balance: 59897 });
+  });
+
+  it('hides the row when has_credits=false, balance is 0, or data is missing', () => {
+    expect(
+      getCodexCreditsDisplay({
+        creditsBalance: '59897.48',
+        creditsHasCredits: false,
+        creditsUnlimited: false,
+      })
+    ).toBeNull();
+    expect(
+      getCodexCreditsDisplay({
+        creditsBalance: '0',
+        creditsHasCredits: true,
+        creditsUnlimited: false,
+      })
+    ).toBeNull();
+    expect(getCodexCreditsDisplay({ creditsBalance: '0.4', creditsHasCredits: true })).toBeNull();
+    expect(getCodexCreditsDisplay({ creditsHasCredits: true })).toBeNull();
+    expect(getCodexCreditsDisplay({ creditsBalance: '100' })).toBeNull();
+    expect(getCodexCreditsDisplay({})).toBeNull();
+    expect(getCodexCreditsDisplay(null)).toBeNull();
+  });
+
+  it('reports unlimited credits regardless of balance', () => {
+    expect(
+      getCodexCreditsDisplay({
+        creditsBalance: null,
+        creditsHasCredits: true,
+        creditsUnlimited: true,
+      })
+    ).toEqual({ kind: 'unlimited' });
+    expect(getCodexCreditsDisplay({ creditsBalance: '0', creditsUnlimited: true })).toEqual({
+      kind: 'unlimited',
+    });
   });
 });
