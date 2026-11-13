@@ -194,6 +194,68 @@ describe('fetchCodexQuota', () => {
   });
 });
 
+describe('fetchCodexQuota credits', () => {
+  const resetCreditsOk = {
+    statusCode: 200,
+    hasStatusCode: true,
+    header: {},
+    bodyText: '',
+    body: { available_count: 0, credits: [] },
+  };
+
+  it('parses wham/usage credits into the quota data', async () => {
+    mocks.request
+      .mockResolvedValueOnce({
+        statusCode: 200,
+        hasStatusCode: true,
+        header: {},
+        bodyText: '',
+        body: {
+          plan_type: 'pro',
+          credits: {
+            has_credits: true,
+            unlimited: false,
+            overage_limit_reached: false,
+            balance: '59897.4803850000',
+          },
+        },
+      })
+      .mockResolvedValueOnce(resetCreditsOk);
+
+    const result = await fetchCodexQuota(
+      { name: 'codex.json', type: 'codex', authIndex: 'auth-1' },
+      t
+    );
+
+    expect(result).toMatchObject({
+      creditsBalance: '59897.4803850000',
+      creditsHasCredits: true,
+      creditsUnlimited: false,
+    });
+  });
+
+  it('omits credits fields when wham/usage has no credits', async () => {
+    mocks.request
+      .mockResolvedValueOnce({
+        statusCode: 200,
+        hasStatusCode: true,
+        header: {},
+        bodyText: '',
+        body: { plan_type: 'plus' },
+      })
+      .mockResolvedValueOnce(resetCreditsOk);
+
+    const result = await fetchCodexQuota(
+      { name: 'codex.json', type: 'codex', authIndex: 'auth-1' },
+      t
+    );
+
+    expect(result).not.toHaveProperty('creditsBalance');
+    expect(result).not.toHaveProperty('creditsHasCredits');
+    expect(result).not.toHaveProperty('creditsUnlimited');
+  });
+});
+
 describe('fetchClaudeQuota', () => {
   it('keeps usage quota data when profile lookup fails', async () => {
     mocks.request

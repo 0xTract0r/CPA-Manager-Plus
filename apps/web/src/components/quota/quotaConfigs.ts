@@ -59,6 +59,7 @@ import {
   fetchKimiQuota,
   fetchXaiQuota,
   buildCodexQuotaWindows,
+  getCodexCreditsDisplay,
   buildGeminiCliQuotaBuckets,
   createStatusError,
   normalizeGeminiCliModelId,
@@ -85,6 +86,7 @@ import {
 } from '@/utils/usageHeaderSnapshots';
 import { normalizeAuthIndex } from '@/utils/authIndex';
 import { formatDateTimeUtc8, formatInUtc8 } from '@/utils/datetime';
+import { formatNumber } from '@/utils/format';
 import type { QuotaRenderHelpers } from './QuotaCard';
 import styles from '@/features/quota/QuotaPage.module.scss';
 
@@ -611,6 +613,44 @@ const buildCodexQuotaFailureState = (
   };
 };
 
+const CODEX_CREDITS_KEYS = ['creditsBalance', 'creditsHasCredits', 'creditsUnlimited'] as const;
+
+const hasCodexCreditsSignal = (quota: Partial<CodexQuotaState> | undefined): boolean =>
+  Boolean(quota) && CODEX_CREDITS_KEYS.some((key) => hasHeaderValue(quota?.[key]));
+
+/**
+ * 只针对积分三字段（creditsBalance / creditsHasCredits / creditsUnlimited）在请求头观测与
+ * core 快照之间择新：两边都带积分且 core 快照的 observedAtMs（来自 entry.last_refreshed_at）
+ * 比请求头的 observedAtMs（来自 snapshot.timestamp_ms）更新时，改用 core 的积分值，避免账号
+ * 闲置后一直显示几天前的请求头余额。其余字段与原有的 observed 选择 / 合并逻辑保持不变；
+ * 任一边缺时间戳、或某一边没有积分信号时，原样返回 baseObserved。
+ */
+export const preferFresherCodexCredits = <TState extends DisplayQuotaState>(
+  baseObserved: TState | undefined,
+  headerObserved: TState | undefined,
+  coreObserved: TState | undefined
+): TState | undefined => {
+  if (!baseObserved || !headerObserved || !coreObserved) return baseObserved;
+  const header = headerObserved as Partial<CodexQuotaState>;
+  const core = coreObserved as Partial<CodexQuotaState>;
+  if (!hasCodexCreditsSignal(header) || !hasCodexCreditsSignal(core)) return baseObserved;
+
+  const headerAtMs = readFiniteTimestamp(header.observedAtMs);
+  const coreAtMs = readFiniteTimestamp(core.observedAtMs);
+  if (headerAtMs === null || coreAtMs === null) return baseObserved;
+
+  const fresher = coreAtMs > headerAtMs ? core : header;
+  const base = baseObserved as Partial<CodexQuotaState>;
+  if (CODEX_CREDITS_KEYS.every((key) => (base[key] ?? null) === (fresher[key] ?? null))) {
+    return baseObserved;
+  }
+  const next = { ...base } as Record<string, unknown>;
+  CODEX_CREDITS_KEYS.forEach((key) => {
+    next[key] = fresher[key] ?? null;
+  });
+  return next as TState;
+};
+
 export const resolveQuotaDisplayState = <TState extends DisplayQuotaState>(
   activeQuota: TState | undefined,
   observedQuota: TState | undefined
@@ -855,6 +895,113 @@ const renderCodexWindowInfo = (
   );
 };
 
+/**
+ * 「剩余 N%」百分比节点（Codex / Claude 窗口共用，数值口径为 remaining = 100 − used）。
+ * 显式写出「剩余」，避免「0%」被误读为「已用 0%」；剩余（未取整）≤ 0 时复用进度条低阈值的
+ * danger 色（`quotaPercentDepleted`），与「额度已用完」提示同一口径（used ≥ 100）。
+ * 剩余未知时仍显示 `--`。
+ */
+const renderRemainingPercent = (
+  remaining: number | null,
+  t: TFunction,
+  styleMap: QuotaRenderHelpers['styles']
+): ReactNode => {
+  const { createElement: h } = React;
+  if (remaining === null) return h('span', { className: styleMap.quotaPercent }, '--');
+  const rounded = Math.round(remaining);
+  const className =
+    remaining <= 0
+      ? `${styleMap.quotaPercent} ${styleMap.quotaPercentDepleted}`
+      : styleMap.quotaPercent;
+  return h(
+    'span',
+    { className, 'data-testid': 'quota-remaining-percent' },
+    t('codex_quota.remaining_percent_label', { percent: rounded })
+  );
+};
+
+/** 积分余额展示值：向下取整后按当前界面语言加千分位，例如 `59897.48` → `59,897`。 */
+export const formatCodexCreditsBalance = (balance: number, locale?: string): string =>
+  formatNumber(Math.floor(balance), locale);
+
+// Codex 主额度桶（rate_limit 的 primary/secondary）派生出的窗口：5 小时 / 周（team 套餐下
+// secondary 归为月），以及未能按时长归类的主桶通用窗口。代码审查与附加限额窗口不在其中。
+const CODEX_MAIN_QUOTA_WINDOW_IDS = new Set(['five-hour', 'weekly', 'monthly']);
+const CODEX_MAIN_GENERIC_WINDOW_LABEL_KEY = 'codex_quota.generic_window';
+
+const isCodexMainQuotaWindow = (window: CodexQuotaWindow): boolean =>
+  CODEX_MAIN_QUOTA_WINDOW_IDS.has(window.id) ||
+  window.labelKey === CODEX_MAIN_GENERIC_WINDOW_LABEL_KEY;
+
+/** 与 core 侧一致：积分只豁免主额度桶，所以只有主窗口用满才提示「可用积分继续」。 */
+const hasExhaustedCodexMainQuotaWindow = (windows: CodexQuotaWindow[]): boolean =>
+  windows.some(
+    (window) =>
+      isCodexMainQuotaWindow(window) &&
+      typeof window.usedPercent === 'number' &&
+      Number.isFinite(window.usedPercent) &&
+      window.usedPercent >= 100
+  );
+
+/**
+ * 「积分余额」行：与 core 判定一致，仅 has_credits=true 且（unlimited 或余额 > 0）时渲染；
+ * 无积分数据 / has_credits=false 时返回 null，旧卡片外观保持不变。主额度窗口（5 小时 /
+ * 周）任一用尽时追加「额度已用完 · 可用积分继续」提示——卡片拿不到 core 的冷却状态，
+ * 文案只陈述「有积分可用」而不断言「正在扣积分」；代码审查、附加限额窗口用满不触发。
+ */
+const renderCodexCreditsBalance = (
+  quota: CodexQuotaState,
+  windows: CodexQuotaWindow[],
+  t: TFunction,
+  styleMap: QuotaRenderHelpers['styles']
+): ReactNode => {
+  const display = getCodexCreditsDisplay(quota);
+  if (!display) return null;
+
+  const { createElement: h } = React;
+  const valueLabel =
+    display.kind === 'unlimited'
+      ? t('codex_quota.credits_balance_unlimited')
+      : display.kind === 'below-one'
+        ? '<1'
+        : formatCodexCreditsBalance(display.balance);
+  const showInUseHint = hasExhaustedCodexMainQuotaWindow(windows);
+
+  return h(
+    'div',
+    {
+      key: 'credits-balance',
+      className: styleMap.codexPlanSummary,
+      'data-testid': 'codex-credits-summary',
+    },
+    h(
+      'div',
+      { className: styleMap.codexPlan },
+      h(
+        'span',
+        { className: styleMap.codexPlanItem },
+        h('span', { className: styleMap.codexPlanLabel }, t('codex_quota.credits_balance_label')),
+        h(
+          'span',
+          { className: styleMap.codexPlanValue, 'data-testid': 'codex-credits-balance' },
+          valueLabel
+        )
+      )
+    ),
+    showInUseHint
+      ? h(
+          'div',
+          { className: styleMap.quotaFootnote, 'data-testid': 'codex-credits-in-use-hint' },
+          h(
+            'span',
+            { className: styleMap.quotaFootnoteValue },
+            t('codex_quota.credits_in_use_hint')
+          )
+        )
+      : null
+  );
+};
+
 const renderCodexItems = (
   quota: CodexQuotaState,
   t: TFunction,
@@ -915,10 +1062,13 @@ const renderCodexItems = (
     );
   }
 
+  const creditsNode = renderCodexCreditsBalance(quota, windows, t, styleMap);
+
   if (windows.length === 0) {
     nodes.push(
       h('div', { key: 'empty', className: styleMap.quotaMessage }, t('codex_quota.empty_windows'))
     );
+    if (creditsNode) nodes.push(creditsNode);
     return h(Fragment, null, ...nodes);
   }
 
@@ -927,7 +1077,6 @@ const renderCodexItems = (
       const used = window.usedPercent;
       const clampedUsed = used === null ? null : Math.max(0, Math.min(100, used));
       const remaining = clampedUsed === null ? null : Math.max(0, Math.min(100, 100 - clampedUsed));
-      const percentLabel = remaining === null ? '--' : `${Math.round(remaining)}%`;
       const windowLabel = window.labelKey
         ? t(window.labelKey, window.labelParams as Record<string, string | number>)
         : window.label;
@@ -948,7 +1097,7 @@ const renderCodexItems = (
           h(
             'div',
             { className: styleMap.quotaMeta },
-            h('span', { className: styleMap.quotaPercent }, percentLabel),
+            renderRemainingPercent(remaining, t, styleMap),
             h('span', { className: styleMap.quotaReset }, window.resetLabel)
           )
         ),
@@ -960,6 +1109,8 @@ const renderCodexItems = (
       );
     })
   );
+
+  if (creditsNode) nodes.push(creditsNode);
 
   return h(Fragment, null, ...nodes);
 };
@@ -1045,7 +1196,6 @@ const renderClaudeItems = (
       const used = window.usedPercent;
       const clampedUsed = used === null ? null : Math.max(0, Math.min(100, used));
       const remaining = clampedUsed === null ? null : Math.max(0, Math.min(100, 100 - clampedUsed));
-      const percentLabel = remaining === null ? '--' : `${Math.round(remaining)}%`;
       const windowLabel = window.labelKey ? t(window.labelKey) : window.label;
 
       return h(
@@ -1058,7 +1208,7 @@ const renderClaudeItems = (
           h(
             'div',
             { className: styleMap.quotaMeta },
-            h('span', { className: styleMap.quotaPercent }, percentLabel),
+            renderRemainingPercent(remaining, t, styleMap),
             h('span', { className: styleMap.quotaReset }, window.resetLabel)
           )
         ),
@@ -1171,6 +1321,9 @@ export const CODEX_CONFIG: QuotaConfig<CodexQuotaState, CodexQuotaData> = {
     rateLimitResetCreditsAvailableCount: data.rateLimitResetCreditsAvailableCount,
     rateLimitResetCredits: data.rateLimitResetCredits,
     rateLimitResetCreditsError: data.rateLimitResetCreditsError,
+    ...(data.creditsBalance !== undefined ? { creditsBalance: data.creditsBalance } : {}),
+    ...(data.creditsHasCredits !== undefined ? { creditsHasCredits: data.creditsHasCredits } : {}),
+    ...(data.creditsUnlimited !== undefined ? { creditsUnlimited: data.creditsUnlimited } : {}),
     ...buildCodexQuotaAuthIdentity(file),
     fetchedAtMs: Date.now(),
   }),

@@ -26,6 +26,7 @@ import {
   buildQuotaFailureState,
   getQuotaStoreKey,
   getScopedQuotaState,
+  preferFresherCodexCredits,
   resolveQuotaDisplayState,
   type QuotaConfig,
   type QuotaSortMode,
@@ -221,10 +222,15 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
       // 优先采用；但当 core 快照给出 reauth_required / error（账号需重新认证或刷新失败）
       // 时，这类「需处理」状态优先展示，避免被过期的成功头快照掩盖。整条路径只读 core
       // 持久快照与历史头快照，mount 阶段不触发任何真实上游请求。
-      const observedQuota =
+      const baseObservedQuota =
         coreObservedQuota?.status === 'error'
           ? coreObservedQuota
           : (headerObservedQuota ?? coreObservedQuota);
+      // 仅积分三字段按时间戳择新（Codex 专属字段；其他 provider 无积分信号时原样返回）。
+      const observedQuota =
+        baseObservedQuota?.status === 'error'
+          ? baseObservedQuota
+          : preferFresherCodexCredits(baseObservedQuota, headerObservedQuota, coreObservedQuota);
       return resolveQuotaDisplayState(activeQuota, observedQuota);
     },
     [config, getScopedQuota, headerSnapshotLookup, coreQuotaSnapshotLookup, t]

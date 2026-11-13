@@ -3158,11 +3158,33 @@ export const getDemoConfigYaml = () =>
     '  enabled: true',
   ].join('\n');
 
+// 积分余额演示：codex-team-01 周额度已用尽、靠积分继续服务（原始 balance 为上游的
+// 高精度字符串）；codex-fallback-02 没有积分，卡片不应出现积分行。
+const demoCodexCreditsByAuthIndex: Record<
+  string,
+  { weeklyUsedPercent: number; credits: Record<string, unknown> }
+> = {
+  'codex-team-01': {
+    weeklyUsedPercent: 100,
+    credits: {
+      has_credits: true,
+      unlimited: false,
+      overage_limit_reached: false,
+      balance: '59897.4803850000',
+    },
+  },
+  'codex-fallback-02': {
+    weeklyUsedPercent: 0.42,
+    credits: { has_credits: false, unlimited: false, balance: '0' },
+  },
+};
+
 export const getDemoApiCallResult = (payload: DemoApiCallPayload = {}) => {
   const requestUrl = String(payload.url || '');
   let body: unknown = { data: demoProviderModels.map((model) => ({ id: model.name })) };
 
   if (requestUrl.includes('/wham/usage')) {
+    const creditsOverride = demoCodexCreditsByAuthIndex[String(payload.authIndex || '')];
     body = {
       user_id: 'demo-user',
       account_id: 'acct_codex_team',
@@ -3176,7 +3198,7 @@ export const getDemoApiCallResult = (payload: DemoApiCallPayload = {}) => {
           reset_after_seconds: 8280,
         },
         secondary_window: {
-          used_percent: 0.42,
+          used_percent: creditsOverride?.weeklyUsedPercent ?? 0.42,
           limit_window_seconds: 604800,
           reset_after_seconds: 246000,
         },
@@ -3189,7 +3211,7 @@ export const getDemoApiCallResult = (payload: DemoApiCallPayload = {}) => {
           reset_after_seconds: 7200,
         },
       },
-      credits: {
+      credits: creditsOverride?.credits ?? {
         has_credits: true,
         unlimited: false,
         balance: 18.4,
