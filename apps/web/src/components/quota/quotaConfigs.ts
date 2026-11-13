@@ -857,6 +857,30 @@ const renderCodexWindowInfo = (
   );
 };
 
+/**
+ * 「剩余 N%」百分比节点（Codex / Claude 窗口共用，数值口径为 remaining = 100 − used）。
+ * 显式写出「剩余」，避免「0%」被误读为「已用 0%」；剩余为 0 时复用进度条低阈值的
+ * danger 色（`quotaPercentDepleted`）。剩余未知时仍显示 `--`。
+ */
+const renderRemainingPercent = (
+  remaining: number | null,
+  t: TFunction,
+  styleMap: QuotaRenderHelpers['styles']
+): ReactNode => {
+  const { createElement: h } = React;
+  if (remaining === null) return h('span', { className: styleMap.quotaPercent }, '--');
+  const rounded = Math.round(remaining);
+  const className =
+    rounded <= 0
+      ? `${styleMap.quotaPercent} ${styleMap.quotaPercentDepleted}`
+      : styleMap.quotaPercent;
+  return h(
+    'span',
+    { className, 'data-testid': 'quota-remaining-percent' },
+    t('codex_quota.remaining_percent_label', { percent: rounded })
+  );
+};
+
 /** 积分余额展示值：向下取整后按当前界面语言加千分位，例如 `59897.48` → `59,897`。 */
 export const formatCodexCreditsBalance = (balance: number, locale?: string): string =>
   formatNumber(Math.floor(balance), locale);
@@ -1011,7 +1035,6 @@ const renderCodexItems = (
       const used = window.usedPercent;
       const clampedUsed = used === null ? null : Math.max(0, Math.min(100, used));
       const remaining = clampedUsed === null ? null : Math.max(0, Math.min(100, 100 - clampedUsed));
-      const percentLabel = remaining === null ? '--' : `${Math.round(remaining)}%`;
       const windowLabel = window.labelKey
         ? t(window.labelKey, window.labelParams as Record<string, string | number>)
         : window.label;
@@ -1032,7 +1055,7 @@ const renderCodexItems = (
           h(
             'div',
             { className: styleMap.quotaMeta },
-            h('span', { className: styleMap.quotaPercent }, percentLabel),
+            renderRemainingPercent(remaining, t, styleMap),
             h('span', { className: styleMap.quotaReset }, window.resetLabel)
           )
         ),
@@ -1131,7 +1154,6 @@ const renderClaudeItems = (
       const used = window.usedPercent;
       const clampedUsed = used === null ? null : Math.max(0, Math.min(100, used));
       const remaining = clampedUsed === null ? null : Math.max(0, Math.min(100, 100 - clampedUsed));
-      const percentLabel = remaining === null ? '--' : `${Math.round(remaining)}%`;
       const windowLabel = window.labelKey ? t(window.labelKey) : window.label;
 
       return h(
@@ -1144,7 +1166,7 @@ const renderClaudeItems = (
           h(
             'div',
             { className: styleMap.quotaMeta },
-            h('span', { className: styleMap.quotaPercent }, percentLabel),
+            renderRemainingPercent(remaining, t, styleMap),
             h('span', { className: styleMap.quotaReset }, window.resetLabel)
           )
         ),

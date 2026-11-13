@@ -5,6 +5,8 @@ import type { TFunction } from 'i18next';
 import { describe, expect, it } from 'vitest';
 import type { CodexQuotaState } from '@/types';
 import styles from '@/features/quota/QuotaPage.module.scss';
+import zhCN from '@/i18n/locales/zh-CN.json';
+import en from '@/i18n/locales/en.json';
 import type { QuotaRenderHelpers } from './QuotaCard';
 import {
   CLAUDE_CONFIG,
@@ -576,5 +578,105 @@ describe('CODEX_CONFIG credits balance row', () => {
     );
     expect(withoutCredits).not.toHaveProperty('creditsBalance');
     expect(withoutCredits).not.toHaveProperty('creditsHasCredits');
+  });
+});
+
+describe('quota window remaining percent label', () => {
+  // 用真实 locale 文案做插值，断言渲染文本里明确写出「剩余」，避免「0%」被读成「已用 0%」。
+  const makeT = (locale: Record<string, unknown>) =>
+    ((key: string, params?: Record<string, unknown>) => {
+      const value = key
+        .split('.')
+        .reduce<unknown>(
+          (node, part) =>
+            node && typeof node === 'object' ? (node as Record<string, unknown>)[part] : undefined,
+          locale
+        );
+      if (typeof value !== 'string') return key;
+      return value.replace(/\{\{(\w+)\}\}/g, (_match, name: string) =>
+        String(params?.[name] ?? '')
+      );
+    }) as unknown as TFunction;
+  const helpers: QuotaRenderHelpers = {
+    styles,
+    QuotaProgressBar: () => React.createElement('div'),
+  };
+  const render = (node: unknown) =>
+    renderToStaticMarkup(React.createElement(React.Fragment, null, node as ReactNode));
+  const codexQuota: CodexQuotaState = {
+    status: 'success',
+    windows: [
+      {
+        id: 'five-hour',
+        label: '5-hour limit',
+        labelKey: 'codex_quota.primary_window',
+        usedPercent: 37.4,
+        resetLabel: '11/14 04:56',
+        limitWindowSeconds: 18_000,
+      },
+      {
+        id: 'weekly',
+        label: 'Weekly limit',
+        labelKey: 'codex_quota.secondary_window',
+        usedPercent: 100,
+        resetLabel: '11/16 22:58',
+        limitWindowSeconds: 604_800,
+      },
+      {
+        id: 'code-review-five-hour',
+        label: 'Code review 5-hour limit',
+        labelKey: 'codex_quota.code_review_primary_window',
+        usedPercent: null,
+        resetLabel: '-',
+        limitWindowSeconds: 18_000,
+      },
+    ],
+  };
+
+  it('labels Codex window percent as remaining and highlights depleted windows', () => {
+    const html = render(CODEX_CONFIG.renderQuotaItems(codexQuota, makeT(zhCN), helpers));
+
+    expect(html).toContain('剩余 63%');
+    expect(html).toContain('剩余 0%');
+    expect(html).not.toMatch(/>\s*0%\s*</);
+    // 剩余为 0 的那一格使用 danger 修饰类，其他窗口不使用
+    const depletedSpans = html.match(new RegExp(styles.quotaPercentDepleted, 'g')) ?? [];
+    expect(depletedSpans).toHaveLength(1);
+    expect(html).toMatch(
+      new RegExp(`class="${styles.quotaPercent} ${styles.quotaPercentDepleted}"[^>]*>剩余 0%<`)
+    );
+    // 未知剩余仍显示占位
+    expect(html).toContain('>--<');
+  });
+
+  it('uses the English remaining label', () => {
+    const html = render(CODEX_CONFIG.renderQuotaItems(codexQuota, makeT(en), helpers));
+
+    expect(html).toContain('63% left');
+    expect(html).toContain('0% left');
+  });
+
+  it('labels Claude window percent as remaining', () => {
+    const html = render(
+      CLAUDE_CONFIG.renderQuotaItems(
+        {
+          status: 'success',
+          windows: [
+            {
+              id: 'five-hour',
+              label: '5-hour limit',
+              labelKey: 'claude_quota.five_hour',
+              usedPercent: 100,
+              resetLabel: '11/14 04:56',
+            },
+          ],
+        },
+        makeT(zhCN),
+        helpers
+      )
+    );
+
+    expect(html).toContain('剩余 0%');
+    expect(html).toContain(styles.quotaPercentDepleted);
   });
 });

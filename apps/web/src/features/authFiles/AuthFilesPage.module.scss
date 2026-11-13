@@ -755,12 +755,21 @@
 
   @include mobile {
     justify-content: flex-start;
+    // 窄卡上「剩余 N%」与重置时间放不下时，让重置时间整体换到下一行，不横向溢出。
+    flex-wrap: wrap;
+    row-gap: 2px;
+    max-width: 100%;
   }
 }
 
 .quotaPercent {
   font-weight: 600;
   color: var(--text-primary);
+}
+
+// 剩余为 0：复用进度条低阈值（quotaBarFillLow）的 danger 色，提示该窗口已用尽。
+.quotaPercentDepleted {
+  color: var(--danger-color);
 }
 
 .quotaReset {

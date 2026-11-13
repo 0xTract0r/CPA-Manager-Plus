@@ -1788,6 +1788,7 @@
     "credits_balance_label": "Credits balance",
     "credits_balance_unlimited": "Unlimited",
     "credits_in_use_hint": "Quota exhausted · using credits",
+    "remaining_percent_label": "{{percent}}% left",
     "rate_limit_reached_type_label": "Limit reason",
     "primary_over_secondary_limit_label": "Primary/secondary",
     "tooltip_label": "{{label}} details",
