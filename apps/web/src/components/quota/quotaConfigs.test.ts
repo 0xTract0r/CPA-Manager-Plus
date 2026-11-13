@@ -3,7 +3,10 @@ import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { TFunction } from 'i18next';
 import { describe, expect, it } from 'vitest';
-import type { CodexQuotaState } from '@/types';
+import type { AuthFileItem, CodexQuotaState } from '@/types';
+import type { UsageHeaderSnapshot } from '@/services/api/usageService';
+import type { CoreQuotaSnapshotEntry } from '@/services/api/quotaSnapshots';
+import { buildObservedCodexQuotaStateFromCoreSnapshot } from '@/utils/quota/coreQuotaSnapshots';
 import styles from '@/features/quota/QuotaPage.module.scss';
 import zhCN from '@/i18n/locales/zh-CN.json';
 import en from '@/i18n/locales/en.json';
@@ -11,8 +14,10 @@ import type { QuotaRenderHelpers } from './QuotaCard';
 import {
   CLAUDE_CONFIG,
   CODEX_CONFIG,
+  buildObservedCodexQuotaState,
   formatCodexCreditsBalance,
   getSortedCodexResetCreditExpiries,
+  preferFresherCodexCredits,
   resolveQuotaDisplayState,
 } from './quotaConfigs';
 
@@ -509,14 +514,36 @@ describe('CODEX_CONFIG credits balance row', () => {
     expect(fiveHourFull).toContain('data-testid="codex-credits-in-use-hint"');
   });
 
-  it('renders unlimited credits', () => {
+  it('renders unlimited credits only together with has_credits=true', () => {
     const html = renderCodex({
       status: 'success',
       windows: [weeklyWindow(100)],
+      creditsHasCredits: true,
       creditsUnlimited: true,
     });
 
     expect(html).toContain('codex_quota.credits_balance_unlimited');
+    expect(html).toContain('codex-credits-in-use-hint');
+
+    const notEligible = renderCodex({
+      status: 'success',
+      windows: [weeklyWindow(100)],
+      creditsHasCredits: false,
+      creditsUnlimited: true,
+    });
+    expect(notEligible).not.toContain('codex-credits');
+  });
+
+  it('renders <1 for a balance between 0 and 1', () => {
+    const html = renderCodex({
+      status: 'success',
+      windows: [weeklyWindow(100)],
+      creditsBalance: '0.4',
+      creditsHasCredits: true,
+      creditsUnlimited: false,
+    });
+
+    expect(html).toContain('data-testid="codex-credits-balance">&lt;1<');
     expect(html).toContain('codex-credits-in-use-hint');
   });
 
@@ -649,6 +676,32 @@ describe('quota window remaining percent label', () => {
     expect(html).toContain('>--<');
   });
 
+  it('only marks windows depleted when unrounded remaining is <= 0', () => {
+    const html = render(
+      CODEX_CONFIG.renderQuotaItems(
+        {
+          status: 'success',
+          windows: [
+            {
+              id: 'weekly',
+              label: 'Weekly limit',
+              labelKey: 'codex_quota.secondary_window',
+              usedPercent: 99.6,
+              resetLabel: '11/16 22:58',
+              limitWindowSeconds: 604_800,
+            },
+          ],
+        },
+        makeT(zhCN),
+        helpers
+      )
+    );
+
+    // 99.6% 已用 → 剩余 0.4%，取整显示「剩余 0%」，但未用尽，不标红（与「已用完」提示同口径）
+    expect(html).toContain('剩余 0%');
+    expect(html).not.toContain(styles.quotaPercentDepleted);
+  });
+
   it('uses the English remaining label', () => {
     const html = render(CODEX_CONFIG.renderQuotaItems(codexQuota, makeT(en), helpers));
 
@@ -678,5 +731,133 @@ describe('quota window remaining percent label', () => {
 
     expect(html).toContain('剩余 0%');
     expect(html).toContain(styles.quotaPercentDepleted);
+  });
+});
+
+describe('preferFresherCodexCredits', () => {
+  const t = ((key: string) => key) as TFunction;
+  const file: AuthFileItem = { name: 'codex-pro.json', type: 'codex', authIndex: 'auth-1' };
+  const headerSnapshot = (timestampMs: number, balance: string): UsageHeaderSnapshot => ({
+    event_hash: 'event-credits',
+    timestamp_ms: timestampMs,
+    response_metadata: {
+      quota: {
+        plan_type: 'pro',
+        credits_has_credits: true,
+        credits_unlimited: false,
+        credits_balance: balance,
+        primary: { used_percent: 12, window_minutes: 300 },
+        secondary: { used_percent: 100, window_minutes: 10_080 },
+      },
+    },
+  });
+  const coreEntry = (
+    refreshedAt: string,
+    credits: Record<string, unknown>
+  ): CoreQuotaSnapshotEntry => ({
+    name: 'codex-pro.json',
+    auth_index: 'auth-1',
+    provider: 'codex',
+    status: 'ok',
+    plan_type: 'pro',
+    last_refreshed_at: refreshedAt,
+    snapshot: {
+      usage: {
+        plan_type: 'pro',
+        rate_limit: { primary_window: { used_percent: 30, limit_window_seconds: 18_000 } },
+        credits,
+      },
+    },
+  });
+  const resolve = (header: CodexQuotaState | undefined, core: CodexQuotaState | undefined) =>
+    preferFresherCodexCredits(header ?? core, header, core);
+
+  it('uses core snapshot credits when the core snapshot is newer than the header snapshot', () => {
+    const header = buildObservedCodexQuotaState(
+      file,
+      headerSnapshot(Date.parse('2026-11-01T00:00:00Z'), '90000.0'),
+      t
+    );
+    const core = buildObservedCodexQuotaStateFromCoreSnapshot(
+      file,
+      coreEntry('2026-11-13T00:00:00Z', {
+        has_credits: true,
+        unlimited: false,
+        balance: '59897.4803850000',
+      }),
+      t
+    );
+
+    const result = resolve(header, core);
+
+    expect(result).toMatchObject({
+      creditsBalance: '59897.4803850000',
+      creditsHasCredits: true,
+      creditsUnlimited: false,
+    });
+    // 非积分字段仍来自请求头观测（原选择逻辑不变）
+    expect(result?.observedAtMs).toBe(header?.observedAtMs);
+    expect(result?.windows).toEqual(header?.windows);
+  });
+
+  it('keeps header credits when the header snapshot is newer', () => {
+    const header = buildObservedCodexQuotaState(
+      file,
+      headerSnapshot(Date.parse('2026-11-13T06:00:00Z'), '59000.5'),
+      t
+    );
+    const core = buildObservedCodexQuotaStateFromCoreSnapshot(
+      file,
+      coreEntry('2026-11-13T00:00:00Z', { has_credits: true, unlimited: false, balance: '60000' }),
+      t
+    );
+
+    expect(resolve(header, core)).toBe(header);
+  });
+
+  it('switches to core credits that report no credits left', () => {
+    const header = buildObservedCodexQuotaState(
+      file,
+      headerSnapshot(Date.parse('2026-11-01T00:00:00Z'), '120.0'),
+      t
+    );
+    const core = buildObservedCodexQuotaStateFromCoreSnapshot(
+      file,
+      coreEntry('2026-11-13T00:00:00Z', { has_credits: false, unlimited: false, balance: '0' }),
+      t
+    );
+
+    expect(resolve(header, core)).toMatchObject({
+      creditsBalance: '0',
+      creditsHasCredits: false,
+    });
+  });
+
+  it('leaves the observed state untouched when one side lacks credits or timestamps', () => {
+    const header = buildObservedCodexQuotaState(
+      file,
+      headerSnapshot(Date.parse('2026-11-01T00:00:00Z'), '120.0'),
+      t
+    );
+    const coreWithoutCredits = buildObservedCodexQuotaStateFromCoreSnapshot(
+      file,
+      { ...coreEntry('2026-11-13T00:00:00Z', {}), snapshot: { usage: { plan_type: 'pro' } } },
+      t
+    );
+    expect(resolve(header, coreWithoutCredits)).toBe(header);
+
+    const coreWithoutTime = buildObservedCodexQuotaStateFromCoreSnapshot(
+      file,
+      { ...coreEntry('', { has_credits: true, balance: '1' }), last_refreshed_at: undefined },
+      t
+    );
+    expect(resolve(header, coreWithoutTime)).toBe(header);
+
+    const onlyCore = buildObservedCodexQuotaStateFromCoreSnapshot(
+      file,
+      coreEntry('2026-11-13T00:00:00Z', { has_credits: true, balance: '5' }),
+      t
+    );
+    expect(resolve(undefined, onlyCore)).toBe(onlyCore);
   });
 });

@@ -1783,7 +1783,7 @@
     "credits_unlimited": "Без ограничений",
     "credits_balance_label": "Баланс кредитов",
     "credits_balance_unlimited": "Без ограничений",
-    "credits_in_use_hint": "Лимит исчерпан · используются кредиты",
+    "credits_in_use_hint": "Лимит исчерпан · доступны кредиты",
     "remaining_percent_label": "Осталось {{percent}}%",
     "rate_limit_reached_type_label": "Причина лимита",
     "primary_over_secondary_limit_label": "Primary/secondary",

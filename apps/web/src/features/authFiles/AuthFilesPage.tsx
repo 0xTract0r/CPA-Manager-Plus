@@ -30,6 +30,7 @@ import {
   CODEX_CONFIG,
   buildObservedCodexQuotaState,
   getQuotaStoreKey,
+  preferFresherCodexCredits,
   resolveQuotaDisplayState,
 } from '@/components/quota';
 import { copyToClipboard } from '@/utils/clipboard';
@@ -1210,13 +1211,17 @@ export function AuthFilesPage() {
         codexStatusSourcesByAuthFileKey.get(statusKey)?.headerSnapshot,
         t
       );
-      const observedQuota =
-        headerObservedQuota ??
-        buildObservedCodexQuotaStateFromCoreSnapshot(
-          file,
-          getHighConfidenceCoreQuotaSnapshotForAuthFile(coreQuotaSnapshotLookup, file),
-          t
-        );
+      const coreObservedQuota = buildObservedCodexQuotaStateFromCoreSnapshot(
+        file,
+        getHighConfidenceCoreQuotaSnapshotForAuthFile(coreQuotaSnapshotLookup, file),
+        t
+      );
+      // 其余字段仍是请求头优先；仅积分三字段按两边时间戳择新，避免闲置账号显示陈旧余额。
+      const observedQuota = preferFresherCodexCredits(
+        headerObservedQuota ?? coreObservedQuota,
+        headerObservedQuota,
+        coreObservedQuota
+      );
       return resolveQuotaDisplayState(activeQuota, observedQuota);
     },
     [codexStatusSourcesByAuthFileKey, coreQuotaSnapshotLookup, getActiveCodexQuota, t]

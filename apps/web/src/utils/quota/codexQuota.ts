@@ -217,26 +217,29 @@ export const parseCodexCreditsBalance = (value: unknown): number | null => {
   return parsed;
 };
 
-export type CodexCreditsDisplay = { kind: 'unlimited' } | { kind: 'balance'; balance: number };
+export type CodexCreditsDisplay =
+  | { kind: 'unlimited' }
+  | { kind: 'balance'; balance: number }
+  | { kind: 'below-one' };
 
 /**
- * 决定卡片是否显示「积分余额」行：
+ * 决定卡片是否显示「积分余额」行，与 core「有可用积分」判定一致：
+ * has_credits=true 且（unlimited=true 或 balance>0）。
+ * - has_credits 不是 true（含缺失）→ 不显示；
  * - unlimited=true → 不限；
- * - has_credits=true 且余额取整后 > 0 → 显示余额（向下取整，`59897.48` → `59897`）；
- * - 其余（无数据 / has_credits=false / 余额为 0、不足 1 或不可解析）→ 不显示，
- *   避免出现「积分余额 0」这种误导展示。
+ * - balance ≥ 1 → 向下取整显示（`59897.48` → `59897`）；
+ * - 0 < balance < 1 → 显示 `<1`，不隐藏（core 仍视为有积分）；
+ * - balance 为 0 或不可解析 → 不显示。
  */
 export const getCodexCreditsDisplay = (
   fields: Partial<CodexCreditsFields> | null | undefined
 ): CodexCreditsDisplay | null => {
-  if (!fields) return null;
+  if (!fields || fields.creditsHasCredits !== true) return null;
   if (fields.creditsUnlimited === true) return { kind: 'unlimited' };
-  if (fields.creditsHasCredits !== true) return null;
   const balance = parseCodexCreditsBalance(fields.creditsBalance);
-  if (balance === null) return null;
-  const flooredBalance = Math.floor(balance);
-  if (flooredBalance <= 0) return null;
-  return { kind: 'balance', balance: flooredBalance };
+  if (balance === null || balance <= 0) return null;
+  if (balance < 1) return { kind: 'below-one' };
+  return { kind: 'balance', balance: Math.floor(balance) };
 };
 
 export const isCodexRateLimitReached = (rateLimit?: CodexRateLimitInfo | null): boolean => {

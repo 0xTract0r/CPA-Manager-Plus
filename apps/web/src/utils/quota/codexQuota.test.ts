@@ -278,14 +278,14 @@ describe('Codex credits parsing', () => {
         creditsUnlimited: false,
       })
     ).toBeNull();
-    expect(getCodexCreditsDisplay({ creditsBalance: '0.4', creditsHasCredits: true })).toBeNull();
     expect(getCodexCreditsDisplay({ creditsHasCredits: true })).toBeNull();
+    expect(getCodexCreditsDisplay({ creditsBalance: 'abc', creditsHasCredits: true })).toBeNull();
     expect(getCodexCreditsDisplay({ creditsBalance: '100' })).toBeNull();
     expect(getCodexCreditsDisplay({})).toBeNull();
     expect(getCodexCreditsDisplay(null)).toBeNull();
   });
 
-  it('reports unlimited credits regardless of balance', () => {
+  it('reports unlimited credits only when has_credits=true (core semantics)', () => {
     expect(
       getCodexCreditsDisplay({
         creditsBalance: null,
@@ -293,8 +293,35 @@ describe('Codex credits parsing', () => {
         creditsUnlimited: true,
       })
     ).toEqual({ kind: 'unlimited' });
-    expect(getCodexCreditsDisplay({ creditsBalance: '0', creditsUnlimited: true })).toEqual({
-      kind: 'unlimited',
+    expect(
+      getCodexCreditsDisplay({
+        creditsBalance: '0',
+        creditsHasCredits: true,
+        creditsUnlimited: true,
+      })
+    ).toEqual({ kind: 'unlimited' });
+    // unlimited=true 但 has_credits=false → core 不视为有积分，卡片不显示
+    expect(
+      getCodexCreditsDisplay({
+        creditsBalance: '100',
+        creditsHasCredits: false,
+        creditsUnlimited: true,
+      })
+    ).toBeNull();
+    // has_credits 缺失同样不显示
+    expect(getCodexCreditsDisplay({ creditsUnlimited: true })).toBeNull();
+  });
+
+  it('shows a below-one marker for balances between 0 and 1 instead of hiding the row', () => {
+    expect(getCodexCreditsDisplay({ creditsBalance: '0.4', creditsHasCredits: true })).toEqual({
+      kind: 'below-one',
+    });
+    expect(
+      getCodexCreditsDisplay({ creditsBalance: '0.0000001', creditsHasCredits: true })
+    ).toEqual({ kind: 'below-one' });
+    expect(getCodexCreditsDisplay({ creditsBalance: '1', creditsHasCredits: true })).toEqual({
+      kind: 'balance',
+      balance: 1,
     });
   });
 });

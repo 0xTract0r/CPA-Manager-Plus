@@ -14,6 +14,7 @@ export {
   XAI_CONFIG,
   buildObservedCodexQuotaState,
   getQuotaStoreKey,
+  preferFresherCodexCredits,
   resolveQuotaDisplayState,
 } from './quotaConfigs';
 export type { QuotaConfig } from './quotaConfigs';

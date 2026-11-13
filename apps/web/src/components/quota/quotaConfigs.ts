@@ -613,6 +613,44 @@ const buildCodexQuotaFailureState = (
   };
 };
 
+const CODEX_CREDITS_KEYS = ['creditsBalance', 'creditsHasCredits', 'creditsUnlimited'] as const;
+
+const hasCodexCreditsSignal = (quota: Partial<CodexQuotaState> | undefined): boolean =>
+  Boolean(quota) && CODEX_CREDITS_KEYS.some((key) => hasHeaderValue(quota?.[key]));
+
+/**
+ * 只针对积分三字段（creditsBalance / creditsHasCredits / creditsUnlimited）在请求头观测与
+ * core 快照之间择新：两边都带积分且 core 快照的 observedAtMs（来自 entry.last_refreshed_at）
+ * 比请求头的 observedAtMs（来自 snapshot.timestamp_ms）更新时，改用 core 的积分值，避免账号
+ * 闲置后一直显示几天前的请求头余额。其余字段与原有的 observed 选择 / 合并逻辑保持不变；
+ * 任一边缺时间戳、或某一边没有积分信号时，原样返回 baseObserved。
+ */
+export const preferFresherCodexCredits = <TState extends DisplayQuotaState>(
+  baseObserved: TState | undefined,
+  headerObserved: TState | undefined,
+  coreObserved: TState | undefined
+): TState | undefined => {
+  if (!baseObserved || !headerObserved || !coreObserved) return baseObserved;
+  const header = headerObserved as Partial<CodexQuotaState>;
+  const core = coreObserved as Partial<CodexQuotaState>;
+  if (!hasCodexCreditsSignal(header) || !hasCodexCreditsSignal(core)) return baseObserved;
+
+  const headerAtMs = readFiniteTimestamp(header.observedAtMs);
+  const coreAtMs = readFiniteTimestamp(core.observedAtMs);
+  if (headerAtMs === null || coreAtMs === null) return baseObserved;
+
+  const fresher = coreAtMs > headerAtMs ? core : header;
+  const base = baseObserved as Partial<CodexQuotaState>;
+  if (CODEX_CREDITS_KEYS.every((key) => (base[key] ?? null) === (fresher[key] ?? null))) {
+    return baseObserved;
+  }
+  const next = { ...base } as Record<string, unknown>;
+  CODEX_CREDITS_KEYS.forEach((key) => {
+    next[key] = fresher[key] ?? null;
+  });
+  return next as TState;
+};
+
 export const resolveQuotaDisplayState = <TState extends DisplayQuotaState>(
   activeQuota: TState | undefined,
   observedQuota: TState | undefined
@@ -859,8 +897,9 @@ const renderCodexWindowInfo = (
 
 /**
  * 「剩余 N%」百分比节点（Codex / Claude 窗口共用，数值口径为 remaining = 100 − used）。
- * 显式写出「剩余」，避免「0%」被误读为「已用 0%」；剩余为 0 时复用进度条低阈值的
- * danger 色（`quotaPercentDepleted`）。剩余未知时仍显示 `--`。
+ * 显式写出「剩余」，避免「0%」被误读为「已用 0%」；剩余（未取整）≤ 0 时复用进度条低阈值的
+ * danger 色（`quotaPercentDepleted`），与「额度已用完」提示同一口径（used ≥ 100）。
+ * 剩余未知时仍显示 `--`。
  */
 const renderRemainingPercent = (
   remaining: number | null,
@@ -871,7 +910,7 @@ const renderRemainingPercent = (
   if (remaining === null) return h('span', { className: styleMap.quotaPercent }, '--');
   const rounded = Math.round(remaining);
   const className =
-    rounded <= 0
+    remaining <= 0
       ? `${styleMap.quotaPercent} ${styleMap.quotaPercentDepleted}`
       : styleMap.quotaPercent;
   return h(
@@ -894,7 +933,7 @@ const isCodexMainQuotaWindow = (window: CodexQuotaWindow): boolean =>
   CODEX_MAIN_QUOTA_WINDOW_IDS.has(window.id) ||
   window.labelKey === CODEX_MAIN_GENERIC_WINDOW_LABEL_KEY;
 
-/** 与 core 侧一致：积分只豁免主额度桶，所以只有主窗口用满才算「在用积分」。 */
+/** 与 core 侧一致：积分只豁免主额度桶，所以只有主窗口用满才提示「可用积分继续」。 */
 const hasExhaustedCodexMainQuotaWindow = (windows: CodexQuotaWindow[]): boolean =>
   windows.some(
     (window) =>
@@ -905,9 +944,10 @@ const hasExhaustedCodexMainQuotaWindow = (windows: CodexQuotaWindow[]): boolean 
   );
 
 /**
- * 「积分余额」行：只在有积分（has_credits=true 且余额 > 0）或 unlimited=true 时渲染，
+ * 「积分余额」行：与 core 判定一致，仅 has_credits=true 且（unlimited 或余额 > 0）时渲染；
  * 无积分数据 / has_credits=false 时返回 null，旧卡片外观保持不变。主额度窗口（5 小时 /
- * 周）任一用尽时追加「额度已用完 · 使用积分中」提示；代码审查、附加限额窗口用满不触发。
+ * 周）任一用尽时追加「额度已用完 · 可用积分继续」提示——卡片拿不到 core 的冷却状态，
+ * 文案只陈述「有积分可用」而不断言「正在扣积分」；代码审查、附加限额窗口用满不触发。
  */
 const renderCodexCreditsBalance = (
   quota: CodexQuotaState,
@@ -922,7 +962,9 @@ const renderCodexCreditsBalance = (
   const valueLabel =
     display.kind === 'unlimited'
       ? t('codex_quota.credits_balance_unlimited')
-      : formatCodexCreditsBalance(display.balance);
+      : display.kind === 'below-one'
+        ? '<1'
+        : formatCodexCreditsBalance(display.balance);
   const showInUseHint = hasExhaustedCodexMainQuotaWindow(windows);
 
   return h(
