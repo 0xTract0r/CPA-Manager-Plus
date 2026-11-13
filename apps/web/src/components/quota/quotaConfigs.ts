@@ -861,9 +861,20 @@ const renderCodexWindowInfo = (
 export const formatCodexCreditsBalance = (balance: number, locale?: string): string =>
   formatNumber(Math.floor(balance), locale);
 
-const hasExhaustedCodexQuotaWindow = (windows: CodexQuotaWindow[]): boolean =>
+// Codex 主额度桶（rate_limit 的 primary/secondary）派生出的窗口：5 小时 / 周（team 套餐下
+// secondary 归为月），以及未能按时长归类的主桶通用窗口。代码审查与附加限额窗口不在其中。
+const CODEX_MAIN_QUOTA_WINDOW_IDS = new Set(['five-hour', 'weekly', 'monthly']);
+const CODEX_MAIN_GENERIC_WINDOW_LABEL_KEY = 'codex_quota.generic_window';
+
+const isCodexMainQuotaWindow = (window: CodexQuotaWindow): boolean =>
+  CODEX_MAIN_QUOTA_WINDOW_IDS.has(window.id) ||
+  window.labelKey === CODEX_MAIN_GENERIC_WINDOW_LABEL_KEY;
+
+/** 与 core 侧一致：积分只豁免主额度桶，所以只有主窗口用满才算「在用积分」。 */
+const hasExhaustedCodexMainQuotaWindow = (windows: CodexQuotaWindow[]): boolean =>
   windows.some(
     (window) =>
+      isCodexMainQuotaWindow(window) &&
       typeof window.usedPercent === 'number' &&
       Number.isFinite(window.usedPercent) &&
       window.usedPercent >= 100
@@ -871,8 +882,8 @@ const hasExhaustedCodexQuotaWindow = (windows: CodexQuotaWindow[]): boolean =>
 
 /**
  * 「积分余额」行：只在有积分（has_credits=true 且余额 > 0）或 unlimited=true 时渲染，
- * 无积分数据 / has_credits=false 时返回 null，旧卡片外观保持不变。任一额度窗口已用尽时
- * 追加「额度已用完 · 使用积分中」提示，说明此刻请求在消耗积分。
+ * 无积分数据 / has_credits=false 时返回 null，旧卡片外观保持不变。主额度窗口（5 小时 /
+ * 周）任一用尽时追加「额度已用完 · 使用积分中」提示；代码审查、附加限额窗口用满不触发。
  */
 const renderCodexCreditsBalance = (
   quota: CodexQuotaState,
@@ -888,7 +899,7 @@ const renderCodexCreditsBalance = (
     display.kind === 'unlimited'
       ? t('codex_quota.credits_balance_unlimited')
       : formatCodexCreditsBalance(display.balance);
-  const showInUseHint = hasExhaustedCodexQuotaWindow(windows);
+  const showInUseHint = hasExhaustedCodexMainQuotaWindow(windows);
 
   return h(
     'div',

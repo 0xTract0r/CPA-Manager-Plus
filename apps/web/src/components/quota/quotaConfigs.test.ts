@@ -414,6 +414,99 @@ describe('CODEX_CONFIG credits balance row', () => {
     expect(html).not.toContain('codex-credits-in-use-hint');
   });
 
+  it('does not flag credits usage when only the code review window is exhausted', () => {
+    const html = renderCodex({
+      status: 'success',
+      windows: [
+        {
+          id: 'five-hour',
+          label: '5-hour limit',
+          labelKey: 'codex_quota.primary_window',
+          usedPercent: 40,
+          resetLabel: '11/14 04:56',
+          limitWindowSeconds: 18_000,
+        },
+        weeklyWindow(60),
+        {
+          id: 'code-review-five-hour',
+          label: 'Code review 5-hour limit',
+          labelKey: 'codex_quota.code_review_primary_window',
+          usedPercent: 100,
+          resetLabel: '11/14 04:38',
+          limitWindowSeconds: 18_000,
+        },
+      ],
+      creditsBalance: '59897.4803850000',
+      creditsHasCredits: true,
+      creditsUnlimited: false,
+    });
+
+    expect(html).toContain('data-testid="codex-credits-summary"');
+    expect(html).toMatch(/data-testid="codex-credits-balance">59[,.\u00a0\u202f]?897</);
+    expect(html).not.toContain('codex-credits-in-use-hint');
+  });
+
+  it('does not flag credits usage when only an additional limit window is exhausted', () => {
+    const html = renderCodex({
+      status: 'success',
+      windows: [
+        weeklyWindow(10),
+        {
+          id: 'spark-weekly-0',
+          label: 'Spark weekly limit',
+          labelKey: 'codex_quota.additional_secondary_window',
+          labelParams: { name: 'spark' },
+          usedPercent: 100,
+          resetLabel: '11/20 08:00',
+          limitWindowSeconds: 604_800,
+        },
+      ],
+      creditsBalance: '120',
+      creditsHasCredits: true,
+    });
+
+    expect(html).toContain('data-testid="codex-credits-summary"');
+    expect(html).not.toContain('codex-credits-in-use-hint');
+  });
+
+  it('flags credits usage when a main window is exhausted alongside code review', () => {
+    const weeklyFull = renderCodex({
+      status: 'success',
+      windows: [
+        weeklyWindow(100),
+        {
+          id: 'code-review-five-hour',
+          label: 'Code review 5-hour limit',
+          labelKey: 'codex_quota.code_review_primary_window',
+          usedPercent: 20,
+          resetLabel: '11/14 04:38',
+          limitWindowSeconds: 18_000,
+        },
+      ],
+      creditsBalance: '59897.48',
+      creditsHasCredits: true,
+    });
+    expect(weeklyFull).toContain('data-testid="codex-credits-in-use-hint"');
+
+    const fiveHourFull = renderCodex({
+      status: 'success',
+      windows: [
+        {
+          id: 'five-hour',
+          label: '5-hour limit',
+          labelKey: 'codex_quota.primary_window',
+          usedPercent: 100,
+          resetLabel: '11/14 04:56',
+          limitWindowSeconds: 18_000,
+        },
+        weeklyWindow(30),
+      ],
+      creditsBalance: '59897.48',
+      creditsHasCredits: true,
+    });
+    expect(fiveHourFull).toContain('data-testid="codex-credits-in-use-hint"');
+  });
+
   it('renders unlimited credits', () => {
     const html = renderCodex({
       status: 'success',
