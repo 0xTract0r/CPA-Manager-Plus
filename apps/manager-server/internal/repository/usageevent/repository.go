@@ -47,6 +47,7 @@ type Repository interface {
 	EventsPageWithFilter(ctx context.Context, filter AnalyticsFilter, beforeMS int64, beforeID int64, limit int) (EventsPage, error)
 	EventsCountWithFilter(ctx context.Context, filter AnalyticsFilter) (int64, error)
 	LatestHeaderSnapshots(ctx context.Context, sinceMS int64, limit int) ([]HeaderSnapshot, error)
+	CreditsBalanceRows(ctx context.Context, sinceMS int64, untilMS int64, limit int) ([]CreditsBalanceRow, error)
 	ActiveDaysWithFilter(ctx context.Context, filter AnalyticsFilter, location *time.Location) (int64, error)
 	ZeroTokenModelsWithFilter(ctx context.Context, filter AnalyticsFilter) ([]string, error)
 }

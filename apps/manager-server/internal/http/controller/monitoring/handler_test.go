@@ -131,6 +131,55 @@ func TestHandleAnalyticsReportsClientClosedRequestNotServerError(t *testing.T) {
 	}
 }
 
+func TestHandleCreditsHistoryRequiresAuthAndGet(t *testing.T) {
+	st := newHandlerTestStore(t)
+	const adminKey = "cpamp_test_key"
+	credential, err := security.NewAdminCredential(adminKey, "test")
+	if err != nil {
+		t.Fatalf("create admin credential: %v", err)
+	}
+	if err := st.SaveAdminCredential(context.Background(), credential); err != nil {
+		t.Fatalf("save admin credential: %v", err)
+	}
+	handler := &Handler{App: &app.Context{
+		AdminAuthService:  adminauthsvc.New(config.Config{}, st),
+		MonitoringService: monitoringsvc.New(st),
+	}}
+
+	unauthorized := httptest.NewRecorder()
+	handler.Handle(unauthorized, httptest.NewRequest(http.MethodGet, "/v0/management/monitoring/credits-history", nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized status = %d body = %s", unauthorized.Code, unauthorized.Body.String())
+	}
+
+	post := httptest.NewRequest(http.MethodPost, "/v0/management/monitoring/credits-history", nil)
+	post.Header.Set("Authorization", "Bearer "+adminKey)
+	postRecorder := httptest.NewRecorder()
+	handler.Handle(postRecorder, post)
+	if postRecorder.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("post status = %d", postRecorder.Code)
+	}
+
+	badQuery := httptest.NewRequest(http.MethodGet, "/v0/management/monitoring/credits-history?days=abc", nil)
+	badQuery.Header.Set("Authorization", "Bearer "+adminKey)
+	badRecorder := httptest.NewRecorder()
+	handler.Handle(badRecorder, badQuery)
+	if badRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("bad query status = %d", badRecorder.Code)
+	}
+
+	get := httptest.NewRequest(http.MethodGet, "/v0/management/monitoring/credits-history?days=7&max_points=200", nil)
+	get.Header.Set("Authorization", "Bearer "+adminKey)
+	getRecorder := httptest.NewRecorder()
+	handler.Handle(getRecorder, get)
+	if getRecorder.Code != http.StatusOK {
+		t.Fatalf("get status = %d body = %s", getRecorder.Code, getRecorder.Body.String())
+	}
+	if !strings.Contains(getRecorder.Body.String(), `"items":[]`) {
+		t.Fatalf("body = %s", getRecorder.Body.String())
+	}
+}
+
 func newHandlerTestStore(t testing.TB) *store.Store {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "usage.sqlite"))

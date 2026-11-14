@@ -27,6 +27,10 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 		h.handleHeaderSnapshots(w, r)
 		return
 	}
+	if path == "/v0/management/monitoring/credits-history" {
+		h.handleCreditsHistory(w, r)
+		return
+	}
 	if path == "/v0/management/monitoring/account-history" {
 		h.handleAccountHistory(w, r)
 		return
@@ -115,6 +119,34 @@ func (h *Handler) handleHeaderSnapshots(w http.ResponseWriter, r *http.Request) 
 	result, err := h.App.MonitoringService.HeaderSnapshots(r.Context(), monitoringsvc.HeaderSnapshotsRequest{
 		Days:  days,
 		Limit: limit,
+	})
+	if err != nil {
+		response.Error(w, analyticsErrorStatus(err), err)
+		return
+	}
+	response.JSON(w, http.StatusOK, result)
+}
+
+// handleCreditsHistory 只读返回各账号积分余额时间序列（GET，days / max_points 可选）。
+func (h *Handler) handleCreditsHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	query := r.URL.Query()
+	days, err := parseOptionalInt(query.Get("days"))
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	maxPoints, err := parseOptionalInt(query.Get("max_points"))
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	result, err := h.App.MonitoringService.CreditsHistory(r.Context(), monitoringsvc.CreditsHistoryRequest{
+		Days:      days,
+		MaxPoints: maxPoints,
 	})
 	if err != nil {
 		response.Error(w, analyticsErrorStatus(err), err)
