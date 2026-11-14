@@ -236,3 +236,29 @@ describe('credits number formatting', () => {
     expect(formatCodexCreditsRate(4.26, 'en')).toBe('4.3');
   });
 });
+
+describe('buildCodexCreditsHistoryLookup', () => {
+  it('matches by auth file + auth index with high confidence only', async () => {
+    const { buildCodexCreditsHistoryLookup, getCodexCreditsHistoryForAuthFile } = await import(
+      './codexCreditsBurn'
+    );
+    const lookup = buildCodexCreditsHistoryLookup([
+      {
+        auth_file_snapshot: 'Codex-Pro.json',
+        auth_index: 'auth-1',
+        quota_reset_at_ms: 5000,
+        points: [{ timestamp_ms: 1000, balance: 10, quota_exhausted: true }],
+      },
+      { auth_file_snapshot: 'legacy.json', points: [{ timestamp_ms: 1000, balance: 3 }] },
+      { auth_index: 'orphan', points: [{ timestamp_ms: 1000, balance: 3 }] },
+    ]);
+    expect(
+      getCodexCreditsHistoryForAuthFile(lookup, { name: 'codex-pro.json', authIndex: 'auth-1' })
+    ).toMatchObject({ quotaResetAtMs: 5000, unlimited: false, points: [{ balance: 10 }] });
+    expect(
+      getCodexCreditsHistoryForAuthFile(lookup, { name: 'codex-pro.json', authIndex: 'auth-2' })
+    ).toBeUndefined();
+    expect(getCodexCreditsHistoryForAuthFile(lookup, { name: 'legacy.json' })?.points).toHaveLength(1);
+    expect(getCodexCreditsHistoryForAuthFile(lookup, { name: 'other.json' })).toBeUndefined();
+  });
+});

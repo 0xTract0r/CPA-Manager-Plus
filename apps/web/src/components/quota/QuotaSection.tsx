@@ -19,6 +19,10 @@ import {
   getHighConfidenceCoreQuotaSnapshotForAuthFile,
   type CoreQuotaSnapshotLookup,
 } from '@/utils/quota/coreQuotaSnapshots';
+import {
+  getCodexCreditsHistoryForAuthFile,
+  type CodexCreditsHistoryLookup,
+} from '@/utils/quota/codexCreditsBurn';
 import { QuotaCard } from './QuotaCard';
 import type { QuotaStatusState } from './QuotaCard';
 import { useQuotaLoader } from './useQuotaLoader';
@@ -144,6 +148,8 @@ interface QuotaSectionProps<TState extends QuotaStatusState, TData> {
   onAccountDisplayModeChange?: (mode: QuotaAccountDisplayMode) => void;
   headerSnapshotLookup?: UsageHeaderSnapshotLookup;
   coreQuotaSnapshotLookup?: CoreQuotaSnapshotLookup;
+  /** 仅 Codex：只读积分余额时间序列 lookup，挂到展示态上供积分消耗预测使用。 */
+  creditsHistoryLookup?: CodexCreditsHistoryLookup;
 }
 
 export function QuotaSection<TState extends QuotaStatusState, TData>({
@@ -159,6 +165,7 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
   accountDisplayMode,
   headerSnapshotLookup,
   coreQuotaSnapshotLookup,
+  creditsHistoryLookup,
 }: QuotaSectionProps<TState, TData>) {
   const { t } = useTranslation();
   const resolvedTheme: ResolvedTheme = useThemeStore((state) => state.resolvedTheme);
@@ -231,9 +238,12 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
         baseObservedQuota?.status === 'error'
           ? baseObservedQuota
           : preferFresherCodexCredits(baseObservedQuota, headerObservedQuota, coreObservedQuota);
-      return resolveQuotaDisplayState(activeQuota, observedQuota);
+      const displayQuota = resolveQuotaDisplayState(activeQuota, observedQuota);
+      if (config.type !== 'codex' || !creditsHistoryLookup || !displayQuota) return displayQuota;
+      const creditsHistory = getCodexCreditsHistoryForAuthFile(creditsHistoryLookup, file);
+      return creditsHistory ? ({ ...displayQuota, creditsHistory } as TState) : displayQuota;
     },
-    [config, getScopedQuota, headerSnapshotLookup, coreQuotaSnapshotLookup, t]
+    [config, getScopedQuota, headerSnapshotLookup, coreQuotaSnapshotLookup, creditsHistoryLookup, t]
   );
 
   const displayFiles = useMemo(() => {

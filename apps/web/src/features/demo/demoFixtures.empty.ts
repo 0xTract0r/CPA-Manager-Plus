@@ -22,6 +22,7 @@ export const getDemoUsageServiceStatus = () => emptyObject;
 export const getDemoAccountProcessingPolicy = () => emptyObject;
 export const getDemoQuotaCooldowns = () => emptyArray;
 export const getDemoHeaderSnapshots = () => emptyObject;
+export const getDemoCreditsHistory = () => ({ items: [] });
 export const getDemoCodexInspectionRuns = () => ({ items: [] });
 export const getDemoCodexInspectionRun = () => ({ results: [] });
 export const getDemoAccountActionCandidates = () => ({ items: [], pendingCount: 0 });

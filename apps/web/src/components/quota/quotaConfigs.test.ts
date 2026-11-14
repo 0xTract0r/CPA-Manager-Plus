@@ -861,3 +861,142 @@ describe('preferFresherCodexCredits', () => {
     expect(resolve(undefined, onlyCore)).toBe(onlyCore);
   });
 });
+
+describe('CODEX_CONFIG credits burn forecast', () => {
+  const HOUR = 60 * 60 * 1000;
+  // 带 i18n.language 的测试 t，让紧凑格式化按界面语言（中文「万」/ 英文 K）输出。
+  const makeT = (locale: Record<string, unknown>) => {
+    const language = locale === en ? 'en' : 'zh-CN';
+    const translate = ((key: string, params?: Record<string, unknown>) => {
+      const value = key
+        .split('.')
+        .reduce<unknown>(
+          (node, part) =>
+            node && typeof node === 'object' ? (node as Record<string, unknown>)[part] : undefined,
+          locale
+        );
+      if (typeof value !== 'string') return key;
+      return value.replace(/\{\{(\w+)\}\}/g, (_match, name: string) =>
+        String(params?.[name] ?? '')
+      );
+    }) as unknown as TFunction & { i18n?: { language: string } };
+    translate.i18n = { language };
+    return translate as TFunction;
+  };
+  const helpers: QuotaRenderHelpers = {
+    styles,
+    QuotaProgressBar: () => React.createElement('div'),
+  };
+  const render = (quota: CodexQuotaState, locale: Record<string, unknown> = zhCN) =>
+    renderToStaticMarkup(
+      React.createElement(
+        React.Fragment,
+        null,
+        CODEX_CONFIG.renderQuotaItems(quota, makeT(locale), helpers) as ReactNode
+      )
+    );
+  const weekly = (usedPercent: number) => ({
+    id: 'weekly',
+    label: 'Weekly limit',
+    labelKey: 'codex_quota.secondary_window',
+    usedPercent,
+    resetLabel: '11/19 05:18',
+    limitWindowSeconds: 604_800,
+  });
+  const nowMs = Date.now();
+  const series = (balances: number[], spanHours: number, exhaustedFrom = 0) =>
+    balances.map((balance, index) => ({
+      timestampMs: nowMs - ((spanHours * (balances.length - 1 - index)) / (balances.length - 1)) * HOUR,
+      balance,
+      quotaExhausted: index >= exhaustedFrom,
+    }));
+  const quotaWith = (
+    balances: number[],
+    resetInHours: number,
+    overrides: Partial<CodexQuotaState> = {}
+  ): CodexQuotaState => ({
+    status: 'success',
+    windows: [weekly(100)],
+    creditsBalance: String(balances[balances.length - 1]),
+    creditsHasCredits: true,
+    creditsUnlimited: false,
+    creditsHistory: {
+      points: series(balances, 16),
+      quotaResetAtMs: nowMs + resetInHours * HOUR,
+      windowStartMs: null,
+      unlimited: false,
+    },
+    ...overrides,
+  });
+
+  it('renders used, rate, forecast and an "enough" status below the balance row', () => {
+    // 16 小时用掉 3200 → 200/小时；剩 100 小时 → 预测 2 万 / 余额 5.6 万 ≈ 36%
+    const html = render(quotaWith([59200, 58400, 57600, 56800, 56000], 100));
+
+    expect(html).toContain('data-testid="codex-credits-burn"');
+    expect(html).toContain('data-level="ok"');
+    expect(html).toContain('已用 3,200（额度用完后）');
+    expect(html).toContain('约 200/小时');
+    expect(html).toContain('到重置预计再用 ~2万 / 余额 5.6万');
+    expect(html).toContain('data-testid="codex-credits-burn-percent">36%<');
+    expect(html).toContain('>够用<');
+    expect(html).toContain(styles.quotaBarFillHigh);
+    expect(html.indexOf('codex-credits-summary')).toBeLessThan(html.indexOf('codex-credits-burn'));
+  });
+
+  it('marks tight forecasts with the warning color and short ones with a run-out time', () => {
+    const tight = render(quotaWith([12000, 11000, 10000, 9000, 8000], 20));
+    // 250/h × 20h = 5000 / 8000 = 63% → 够用；改 25h → 6250 / 8000 = 78% 偏紧
+    expect(tight).toContain('data-level="ok"');
+    const tight2 = render(quotaWith([12000, 11000, 10000, 9000, 8000], 25));
+    expect(tight2).toContain('data-level="tight"');
+    expect(tight2).toContain('>偏紧<');
+    expect(tight2).toContain(styles.codexCreditsBurnTight);
+    expect(tight2).toContain(styles.quotaBarFillMedium);
+
+    const short = render(quotaWith([12000, 11000, 10000, 9000, 8000], 50), en);
+    expect(short).toContain('data-level="short"');
+    expect(short).toContain('May run out');
+    expect(short).toContain('data-testid="codex-credits-burn-percent">100%<');
+    expect(short).toContain('data-testid="codex-credits-burn-runout"');
+    expect(short).toContain('Runs out ~');
+    expect(short).toContain(styles.quotaBarFillLow);
+  });
+
+  it('labels "recent N hours" when the exhaustion moment is unknown', () => {
+    const quota = quotaWith([14400, 13800, 13200, 12600, 12000], 30);
+    quota.creditsHistory!.points = quota.creditsHistory!.points.map((point) => ({
+      ...point,
+      quotaExhausted: false,
+    }));
+    const html = render(quota);
+    expect(html).toContain('近 16 小时已用 2,400');
+    expect(html).not.toContain('额度用完后');
+  });
+
+  it('shows only the used amount when data is insufficient for a rate', () => {
+    const quota = quotaWith([1000, 990], 30);
+    const html = render(quota);
+    expect(html).toContain('codex-credits-burn-used');
+    expect(html).not.toContain('codex-credits-burn-rate');
+    expect(html).not.toContain('codex-credits-burn-forecast');
+    expect(html).toContain('data-level="none"');
+  });
+
+  it('hides the forecast while main windows still have room, for unlimited, or without credits', () => {
+    const notFull = render(quotaWith([59200, 58400, 57600], 100, { windows: [weekly(60)] }));
+    expect(notFull).toContain('codex-credits-summary');
+    expect(notFull).not.toContain('codex-credits-burn');
+
+    const unlimited = render(quotaWith([59200, 58400, 57600], 100, { creditsUnlimited: true }));
+    expect(unlimited).not.toContain('codex-credits-burn');
+
+    const noCredits = render(quotaWith([59200, 58400, 57600], 100, { creditsHasCredits: false }));
+    expect(noCredits).not.toContain('codex-credits-summary');
+    expect(noCredits).not.toContain('codex-credits-burn');
+
+    const noHistory = render(quotaWith([59200, 58400, 57600], 100, { creditsHistory: null }));
+    expect(noHistory).toContain('codex-credits-summary');
+    expect(noHistory).not.toContain('codex-credits-burn');
+  });
+});

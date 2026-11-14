@@ -3086,6 +3086,67 @@ export const getDemoHeaderSnapshots = (): UsageHeaderSnapshotsResponse => ({
   ],
 });
 
+// 积分余额序列演示（只读 credits-history）：
+// - codex-team-01：生产真实形态，周额度用满后约 17 小时用掉 3,220，预测「够用」；
+// - codex-scaled-06：消耗快、余额少，预测「可能不够」并给出用完时间；
+// - codex-scaled-11：判断不出用满时刻（全为未用满点）→「近 N 小时」，预测「偏紧」。
+const demoCreditsSeries = (spanHours: number, balances: number[], exhaustedFromIndex: number) =>
+  balances.map((balance, index) => ({
+    timestamp_ms:
+      now() - Math.round(((spanHours * (balances.length - 1 - index)) / (balances.length - 1)) * hour),
+    balance,
+    quota_exhausted: index >= exhaustedFromIndex,
+  }));
+
+export const getDemoCreditsHistory = () => ({
+  generated_at_ms: now(),
+  from_ms: now() - 7 * day,
+  to_ms: now(),
+  truncated: false,
+  items: [
+    {
+      account_key: 'codex-team-01.json::codex-team-01',
+      auth_file_snapshot: 'codex-team-01.json',
+      auth_index: 'codex-team-01',
+      provider: 'codex',
+      window_start_ms: now() - 7 * day + 387_720 * 1000,
+      quota_reset_at_ms: now() + 387_720 * 1000,
+      unlimited: false,
+      last_seen_ms: now() - 5 * minute,
+      points: [
+        { timestamp_ms: now() - 19 * hour, balance: 59897.48, quota_exhausted: false },
+        { timestamp_ms: now() - 17 * hour, balance: 59897.48, quota_exhausted: true },
+        { timestamp_ms: now() - 15.6 * hour, balance: 59513, quota_exhausted: true },
+        { timestamp_ms: now() - 13.6 * hour, balance: 58719, quota_exhausted: true },
+        { timestamp_ms: now() - 9.6 * hour, balance: 58175, quota_exhausted: true },
+        { timestamp_ms: now() - 5.6 * hour, balance: 57707, quota_exhausted: true },
+        { timestamp_ms: now() - 1.6 * hour, balance: 56812, quota_exhausted: true },
+        { timestamp_ms: now() - 5 * minute, balance: 56677, quota_exhausted: true },
+      ],
+    },
+    {
+      account_key: 'codex-scaled-06.json::codex-scaled-06',
+      auth_file_snapshot: 'codex-scaled-06.json',
+      auth_index: 'codex-scaled-06',
+      provider: 'codex',
+      quota_reset_at_ms: now() + 60 * hour,
+      unlimited: false,
+      last_seen_ms: now(),
+      points: demoCreditsSeries(10, [10600, 10600, 10120, 9640, 9160, 8680, 8200.25], 1),
+    },
+    {
+      account_key: 'codex-scaled-11.json::codex-scaled-11',
+      auth_file_snapshot: 'codex-scaled-11.json',
+      auth_index: 'codex-scaled-11',
+      provider: 'codex',
+      quota_reset_at_ms: now() + 30 * hour,
+      unlimited: false,
+      last_seen_ms: now(),
+      points: demoCreditsSeries(8, [14400, 13800, 13200, 12600, 12000], 99),
+    },
+  ],
+});
+
 export const getDemoCodexInspectionRuns = (): CodexInspectionRunsResponse => {
   const detail = demoInspectionRunDetail();
   return { items: [detail.run] };
@@ -3162,15 +3223,32 @@ export const getDemoConfigYaml = () =>
 // 高精度字符串）；codex-fallback-02 没有积分，卡片不应出现积分行。
 const demoCodexCreditsByAuthIndex: Record<
   string,
-  { weeklyUsedPercent: number; credits: Record<string, unknown> }
+  {
+    weeklyUsedPercent: number;
+    credits: Record<string, unknown>;
+    weeklyResetAfterSeconds?: number;
+  }
 > = {
+  // 偏紧 / 可能不够两种预测场景（序列见 getDemoCreditsHistory）。
+  'codex-scaled-06': {
+    weeklyUsedPercent: 100,
+    weeklyResetAfterSeconds: 60 * 60 * 60,
+    credits: { has_credits: true, unlimited: false, balance: '8200.25' },
+  },
+  'codex-scaled-11': {
+    weeklyUsedPercent: 100,
+    weeklyResetAfterSeconds: 30 * 60 * 60,
+    credits: { has_credits: true, unlimited: false, balance: '12000' },
+  },
   'codex-team-01': {
     weeklyUsedPercent: 100,
+    // 与生产形态一致：用满后余额降到 56,677，距周重置约 107.7 小时（11-14 17:35 → 11-19 05:18）。
+    weeklyResetAfterSeconds: 387_720,
     credits: {
       has_credits: true,
       unlimited: false,
       overage_limit_reached: false,
-      balance: '59897.4803850000',
+      balance: '56677.3105000000',
     },
   },
   'codex-fallback-02': {
@@ -3200,7 +3278,7 @@ export const getDemoApiCallResult = (payload: DemoApiCallPayload = {}) => {
         secondary_window: {
           used_percent: creditsOverride?.weeklyUsedPercent ?? 0.42,
           limit_window_seconds: 604800,
-          reset_after_seconds: 246000,
+          reset_after_seconds: creditsOverride?.weeklyResetAfterSeconds ?? 246000,
         },
       },
       code_review_rate_limit: {

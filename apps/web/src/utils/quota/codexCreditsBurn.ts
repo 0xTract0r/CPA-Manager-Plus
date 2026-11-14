@@ -164,8 +164,7 @@ export const computeCodexCreditsBurnForecast = (
   // 速率：最近 24 小时（不早于起点）内的消耗 ÷ 实际经过小时数。
   const rateFromMs = Math.max(start.timestampMs, end.timestampMs - RATE_WINDOW_MS);
   const ratePoints = segment.filter((point) => point.timestampMs >= rateFromMs);
-  const rateSpanMs =
-    ratePoints.length > 0 ? end.timestampMs - ratePoints[0].timestampMs : 0;
+  const rateSpanMs = ratePoints.length > 0 ? end.timestampMs - ratePoints[0].timestampMs : 0;
   const changePoints = ratePoints.filter(
     (point, index) => index === 0 || point.balance !== ratePoints[index - 1].balance
   ).length;
@@ -217,4 +216,67 @@ export const formatCodexCreditsRate = (value: number, locale?: string): string =
   const resolvedLocale = locale?.trim() || undefined;
   if (safe >= 10) return Math.round(safe).toLocaleString(resolvedLocale);
   return safe.toLocaleString(resolvedLocale, { maximumFractionDigits: 1 });
+};
+
+type CreditsHistoryItemLike = {
+  auth_file_snapshot?: string;
+  auth_index?: string;
+  quota_reset_at_ms?: number;
+  window_start_ms?: number;
+  unlimited?: boolean;
+  points?: unknown;
+};
+
+export type CodexCreditsHistoryLookup = {
+  byFileAuthIndex: Map<string, CodexCreditsHistory>;
+  byFileName: Map<string, CodexCreditsHistory>;
+};
+
+const lookupKey = (value: unknown): string =>
+  typeof value === 'string' ? value.trim().toLowerCase() : '';
+
+const toCodexCreditsHistory = (item: CreditsHistoryItemLike): CodexCreditsHistory => {
+  const resetAtMs = readFinite(item.quota_reset_at_ms);
+  const windowStartMs = readFinite(item.window_start_ms);
+  return {
+    points: normalizeCodexCreditsPoints(item.points),
+    quotaResetAtMs: resetAtMs !== null && resetAtMs > 0 ? resetAtMs : null,
+    windowStartMs: windowStartMs !== null && windowStartMs > 0 ? windowStartMs : null,
+    unlimited: item.unlimited === true,
+  };
+};
+
+/**
+ * 只按高置信度身份（认证文件名 + auth_index，或无 auth_index 时的文件名）匹配，
+ * 与请求头快照的 high confidence 规则一致，避免把别的账号的序列挂到卡片上。
+ */
+export const buildCodexCreditsHistoryLookup = (
+  items: CreditsHistoryItemLike[] | null | undefined
+): CodexCreditsHistoryLookup => {
+  const lookup: CodexCreditsHistoryLookup = { byFileAuthIndex: new Map(), byFileName: new Map() };
+  (items ?? []).forEach((item) => {
+    const fileName = lookupKey(item.auth_file_snapshot);
+    if (!fileName) return;
+    const history = toCodexCreditsHistory(item);
+    if (history.points.length === 0) return;
+    const authIndex = lookupKey(item.auth_index);
+    if (authIndex) lookup.byFileAuthIndex.set(`${fileName}::${authIndex}`, history);
+    else lookup.byFileName.set(fileName, history);
+  });
+  return lookup;
+};
+
+export const getCodexCreditsHistoryForAuthFile = (
+  lookup: CodexCreditsHistoryLookup | undefined,
+  file: { name?: string; authIndex?: unknown; auth_index?: unknown; 'auth-index'?: unknown }
+): CodexCreditsHistory | undefined => {
+  if (!lookup) return undefined;
+  const fileName = lookupKey(file.name);
+  if (!fileName) return undefined;
+  const rawIndex = file.auth_index ?? file.authIndex ?? file['auth-index'];
+  const authIndex = lookupKey(
+    typeof rawIndex === 'number' ? String(rawIndex) : (rawIndex as string | undefined)
+  );
+  if (authIndex) return lookup.byFileAuthIndex.get(`${fileName}::${authIndex}`);
+  return lookup.byFileName.get(fileName);
 };
