@@ -92,6 +92,10 @@ import { useAuthFilesReauth } from '@/features/authFiles/hooks/useAuthFilesReaut
 import { useAuthFilesAccountSettings } from '@/features/authFiles/hooks/useAuthFilesAccountSettings';
 import { useAuthFilesTestMessage } from '@/features/authFiles/hooks/useAuthFilesTestMessage';
 import { useAuthFilesStatusBarCache } from '@/features/authFiles/hooks/useAuthFilesStatusBarCache';
+import {
+  useCodexCreditsHistoryLookup,
+  withCodexCreditsHistory,
+} from '@/features/authFiles/hooks/useCodexCreditsHistoryLookup';
 import { useAntigravitySubscriptions } from '@/features/authFiles/hooks/useAntigravitySubscriptions';
 import { useFarmEnrolledDisableGuard } from '@/features/farm/hooks/useFarmEnrolledDisableGuard';
 import { useFarmDeploymentEnv } from '@/features/farm/hooks/useFarmDeploymentEnv';
@@ -610,6 +614,9 @@ export function AuthFilesPage() {
   useEffect(() => {
     setPageSizeInput(String(pageSize));
   }, [pageSize]);
+
+  // Codex 积分消耗预测序列：挂载拉一次，之后独立 5 分钟节流，不跟随 60s 轮询。
+  const creditsHistoryLookup = useCodexCreditsHistoryLookup(managerServiceBase, managementKey);
 
   const loadCodexInspectionSnapshots = useCallback(async () => {
     const lastRun = connectionFingerprint
@@ -1222,9 +1229,20 @@ export function AuthFilesPage() {
         headerObservedQuota,
         coreObservedQuota
       );
-      return resolveQuotaDisplayState(activeQuota, observedQuota);
+      // 与配额管理页 QuotaSection 同口径：只给 Codex 卡片挂积分序列，渲染由共用 renderCodexItems 完成。
+      return withCodexCreditsHistory(
+        resolveQuotaDisplayState(activeQuota, observedQuota),
+        creditsHistoryLookup,
+        file
+      );
     },
-    [codexStatusSourcesByAuthFileKey, coreQuotaSnapshotLookup, getActiveCodexQuota, t]
+    [
+      codexStatusSourcesByAuthFileKey,
+      coreQuotaSnapshotLookup,
+      creditsHistoryLookup,
+      getActiveCodexQuota,
+      t,
+    ]
   );
 
   const getActiveClaudeQuota = useCallback(
