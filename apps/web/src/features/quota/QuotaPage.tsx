@@ -359,13 +359,9 @@ export function QuotaPage() {
   }, [t]);
 
   const handleHeaderRefresh = useCallback(async () => {
-    await Promise.all([
-      loadConfig(),
-      loadFiles(),
-      loadHeaderSnapshots(),
-      loadCreditsHistory(),
-      loadQuotaSnapshotStatus(),
-    ]);
+    // 积分序列只用于预测提示，单独触发、不 await，不拖慢刷新按钮。
+    void loadCreditsHistory();
+    await Promise.all([loadConfig(), loadFiles(), loadHeaderSnapshots(), loadQuotaSnapshotStatus()]);
   }, [loadConfig, loadFiles, loadHeaderSnapshots, loadCreditsHistory, loadQuotaSnapshotStatus]);
 
   useHeaderRefresh(handleHeaderRefresh);

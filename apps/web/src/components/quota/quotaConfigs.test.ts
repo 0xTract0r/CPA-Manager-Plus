@@ -921,7 +921,11 @@ describe('CODEX_CONFIG credits burn forecast', () => {
     creditsHasCredits: true,
     creditsUnlimited: false,
     creditsHistory: {
-      points: series(balances, 16),
+      // 首点未用满 → 下一点已用满：形成「额度用完」跳变。
+      points: [
+        { timestampMs: nowMs - 17 * HOUR, balance: balances[0], quotaExhausted: false },
+        ...series(balances, 16),
+      ],
       quotaResetAtMs: nowMs + resetInHours * HOUR,
       windowStartMs: null,
       unlimited: false,
@@ -965,10 +969,8 @@ describe('CODEX_CONFIG credits burn forecast', () => {
 
   it('labels "recent N hours" when the exhaustion moment is unknown', () => {
     const quota = quotaWith([14400, 13800, 13200, 12600, 12000], 30);
-    quota.creditsHistory!.points = quota.creditsHistory!.points.map((point) => ({
-      ...point,
-      quotaExhausted: false,
-    }));
+    // 去掉未用满的首点：序列首点即已用满，判断不了用满时刻 → 「近 N 小时」。
+    quota.creditsHistory!.points = quota.creditsHistory!.points.slice(1);
     const html = render(quota);
     expect(html).toContain('近 16 小时已用 2,400');
     expect(html).not.toContain('额度用完后');

@@ -65,7 +65,7 @@ describe('computeCodexCreditsBurnForecast', () => {
     expect(forecast!.used).toBe(3220);
   });
 
-  it('treats a balance increase as a new start so used never goes negative', () => {
+  it('adds real recharges back so used never goes negative', () => {
     const points = [
       point('2026-11-14T00:00:00+08:00', 1000),
       point('2026-11-14T02:00:00+08:00', 800),
@@ -77,12 +77,83 @@ describe('computeCodexCreditsBurnForecast', () => {
       nowMs: at('2026-11-14T07:00:00+08:00'),
     });
 
+    // 首点就已用满 → 不算「额度用完后」；+4200 为真实充值：已用 = 1000 − 4500 + 4200
     expect(forecast!.startIsExhaustion).toBe(false);
-    expect(forecast!.startBalance).toBe(5000);
-    expect(forecast!.used).toBe(500);
-    expect(forecast!.used).toBeGreaterThanOrEqual(0);
-    // 充值后 4 小时、3 个变化点 → 速率 125/h
-    expect(forecast!.ratePerHour).toBeCloseTo(125, 6);
+    expect(forecast!.startBalance).toBe(1000);
+    expect(forecast!.used).toBe(700);
+    expect(forecast!.ratePerHour).toBeCloseTo(100, 6);
+  });
+
+  describe('15-hour production-like series (3,220 used)', () => {
+    const now = at('2026-11-14T17:35:00+08:00');
+    const base = [
+      point('2026-11-14T02:00:00+08:00', 59897, false),
+      point('2026-11-14T02:35:00+08:00', 59897),
+      point('2026-11-14T04:00:00+08:00', 59513),
+      point('2026-11-14T06:00:00+08:00', 58719),
+      point('2026-11-14T10:00:00+08:00', 58175),
+      point('2026-11-14T12:30:00+08:00', 57870.39),
+      point('2026-11-14T14:00:00+08:00', 57707),
+      point('2026-11-14T16:00:00+08:00', 56812),
+      point('2026-11-14T17:35:00+08:00', 56677),
+    ];
+
+    it('ignores a small concurrent-response jitter (+5)', () => {
+      const withJitter = [
+        ...base.slice(0, 6),
+        point('2026-11-14T12:31:00+08:00', 57875.39),
+        ...base.slice(6),
+      ];
+      const clean = computeCodexCreditsBurnForecast(history(base), { nowMs: now });
+      const jittered = computeCodexCreditsBurnForecast(history(withJitter), { nowMs: now });
+
+      expect(clean!.used).toBeCloseTo(3220, 6);
+      expect(clean!.startIsExhaustion).toBe(true);
+      expect(clean!.ratePerHour).toBeCloseTo(3220 / 15, 6);
+      expect(jittered).toEqual(clean);
+    });
+
+    it('recognizes a +5,000 rise as a recharge', () => {
+      const recharged = [
+        ...base.slice(0, 6),
+        point('2026-11-14T13:00:00+08:00', 62870.39),
+        point('2026-11-14T14:00:00+08:00', 62707),
+        point('2026-11-14T16:00:00+08:00', 61812),
+        point('2026-11-14T17:35:00+08:00', 61677),
+      ];
+      const forecast = computeCodexCreditsBurnForecast(history(recharged), { nowMs: now });
+
+      expect(forecast!.currentBalance).toBe(61677);
+      expect(forecast!.startBalance).toBe(59897);
+      expect(forecast!.used).toBeCloseTo(3220, 6);
+      expect(forecast!.ratePerHour).toBeCloseTo(3220 / 15, 6);
+    });
+  });
+
+  it('uses wall-clock hours for the rate so overnight idle lowers it', () => {
+    const points = [
+      point('2026-11-13T23:00:00+08:00', 10000, false),
+      point('2026-11-14T00:00:00+08:00', 10000),
+      point('2026-11-14T03:00:00+08:00', 9400),
+      point('2026-11-14T06:00:00+08:00', 8800),
+      point('2026-11-14T18:00:00+08:00', 8800),
+    ];
+    const forecast = computeCodexCreditsBurnForecast(history(points), {
+      nowMs: at('2026-11-14T18:00:00+08:00'),
+    });
+
+    // 6 小时内用 1200，之后 12 小时空闲：速率按墙钟 18 小时算，不是 1200 / 6
+    expect(forecast!.used).toBe(1200);
+    expect(forecast!.ratePerHour).toBeCloseTo(1200 / 18, 6);
+  });
+
+  it('labels "recent N hours" when the first point is already exhausted', () => {
+    const points = productionPoints.slice(1);
+    const forecast = computeCodexCreditsBurnForecast(history(points), { nowMs: productionNow });
+
+    expect(forecast!.startIsExhaustion).toBe(false);
+    expect(forecast!.sinceHours).toBe(17);
+    expect(forecast!.used).toBe(3220);
   });
 
   it('only counts the last 24 hours for the rate', () => {

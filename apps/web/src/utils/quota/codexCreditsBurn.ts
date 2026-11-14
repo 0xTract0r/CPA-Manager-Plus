@@ -2,9 +2,10 @@
  * Codex 积分消耗与「够不够用」预测（纯函数，无副作用）。
  *
  * 上游只给当前余额，不给积分总额，所以不算「已用百分比」，而是：
- * - 起点：序列里首个「主窗口已用满 + 有积分」点的余额；判断不了就用首点并标「近 N 小时」；
- * - 已用 = 起点余额 − 当前余额；余额上升（充值）时以上升后的值为新起点，已用不为负；
- * - 速率 = 最近 24 小时消耗 ÷ 实际经过小时数；不足 1 小时或变化点 < 3 时不给速率与预测；
+ * - 起点：首个「未用满 → 已用满」跳变点的余额；找不到跳变（含首点已用满）就用首点并标「近 N 小时」；
+ * - 已用 = 起点余额 − 当前余额 + 期间真实充值量；上升 ≤ max(100, 余额 1%) 视为并发抖动忽略；
+ * - 速率 = rateFrom 前最后一点余额到当前的消耗 ÷ 墙钟小时（rateFrom = max(起点, 现在 − 24h)）；
+ *   不足 1 小时或变化点 < 3 时不给速率与预测；
  * - 预测 = 速率 × 距主窗口重置剩余小时；进度 = 预测 ÷ 当前余额（上限 100%），
  *   < 70% 够用、70%~100% 偏紧、> 100% 可能不够（并给出预计用完时间）。
  */
@@ -81,25 +82,35 @@ export const normalizeCodexCreditsPoints = (raw: unknown): CodexCreditsBalancePo
 };
 
 /**
- * 累计消耗：逐段只累加下降量；余额上升（充值）视为新起点，不产生负消耗。
- * 返回值即「起点余额 − 当前余额」在无充值时的结果。
+ * 充值阈值：上升幅度 > max(100, 当前余额的 1%) 才算真实充值。序列按请求开始时间排序、余额
+ * 在响应时取得，并发请求会产生小幅假上升（生产实测 57870.39 → 57875.03），这类上升视为噪声。
  */
-const sumConsumption = (points: CodexCreditsBalancePoint[]): number => {
+const RECHARGE_MIN_ABS = 100;
+const RECHARGE_MIN_RATIO = 0.01;
+
+const isRecharge = (previousBalance: number, nextBalance: number): boolean =>
+  nextBalance - previousBalance > Math.max(RECHARGE_MIN_ABS, nextBalance * RECHARGE_MIN_RATIO);
+
+/** (fromIndex, toIndex] 区间内真实充值量之和（小幅抖动不计）。 */
+const sumRecharges = (
+  points: CodexCreditsBalancePoint[],
+  fromIndex: number,
+  toIndex: number
+): number => {
   let total = 0;
-  for (let index = 1; index < points.length; index += 1) {
-    const drop = points[index - 1].balance - points[index].balance;
-    if (drop > 0) total += drop;
+  for (let index = fromIndex + 1; index <= toIndex; index += 1) {
+    const rise = points[index].balance - points[index - 1].balance;
+    if (isRecharge(points[index - 1].balance, points[index].balance)) total += rise;
   }
   return total;
 };
 
-/** 自 startIndex 起最后一次余额上升（充值）的位置；没有上升则返回 startIndex。 */
-const lastRechargeIndex = (points: CodexCreditsBalancePoint[], startIndex: number): number => {
-  let result = startIndex;
-  for (let index = startIndex + 1; index < points.length; index += 1) {
-    if (points[index].balance > points[index - 1].balance) result = index;
+/** 首个「前一点未用满 → 当前点已用满」的跳变位置；首点就已用满或没有跳变时返回 -1。 */
+const findExhaustionTransition = (points: CodexCreditsBalancePoint[]): number => {
+  for (let index = 1; index < points.length; index += 1) {
+    if (points[index].quotaExhausted && !points[index - 1].quotaExhausted) return index;
   }
-  return result;
+  return -1;
 };
 
 export const classifyCodexCreditsBurn = (percentUncapped: number): CodexCreditsBurnLevel => {
@@ -136,19 +147,22 @@ export const computeCodexCreditsBurnForecast = (
         ]
       : points;
 
-  const exhaustionIndex = series.findIndex((point) => point.quotaExhausted);
-  const startIsExhaustion = exhaustionIndex >= 0;
-  const baseIndex = startIsExhaustion ? exhaustionIndex : 0;
-  const startIndex = lastRechargeIndex(series, baseIndex);
-  const segment = series.slice(startIndex);
-  const start = segment[0];
-  const end = segment[segment.length - 1];
-  const used = Math.max(0, sumConsumption(segment));
+  // 只有找到「未用满 → 已用满」跳变才把那一刻当作「额度用完后」的起点。
+  const transitionIndex = findExhaustionTransition(series);
+  const lastIndex = series.length - 1;
+  const startIndex = transitionIndex >= 0 ? transitionIndex : 0;
+  const start = series[startIndex];
+  const end = series[lastIndex];
   const currentBalance = end.balance;
+  // 已用 = 起点余额 − 当前余额 + 期间真实充值量（不逐段累加下降，避免抖动重复计数）。
+  const used = Math.max(
+    0,
+    start.balance - currentBalance + sumRecharges(series, startIndex, lastIndex)
+  );
   const sinceHours = Math.max(1, Math.ceil((end.timestampMs - start.timestampMs) / HOUR_MS));
 
   const base: CodexCreditsBurnForecast = {
-    startIsExhaustion: startIsExhaustion && startIndex === baseIndex,
+    startIsExhaustion: transitionIndex >= 0,
     startMs: start.timestampMs,
     startBalance: start.balance,
     currentBalance,
@@ -161,16 +175,25 @@ export const computeCodexCreditsBurnForecast = (
     runOutAtMs: null,
   };
 
-  // 速率：最近 24 小时（不早于起点）内的消耗 ÷ 实际经过小时数。
-  const rateFromMs = Math.max(start.timestampMs, end.timestampMs - RATE_WINDOW_MS);
-  const ratePoints = segment.filter((point) => point.timestampMs >= rateFromMs);
-  const rateSpanMs = ratePoints.length > 0 ? end.timestampMs - ratePoints[0].timestampMs : 0;
-  const changePoints = ratePoints.filter(
-    (point, index) => index === 0 || point.balance !== ratePoints[index - 1].balance
-  ).length;
+  // 速率：rateFrom = max(起点时刻, 现在 − 24h)；分子 = rateFrom 之前（含）最后一个点的余额 −
+  // 当前余额 + 期间真实充值量，分母 = 现在 − rateFrom 的墙钟时长（夜间空闲会拉低速率）。
+  const rateFrom = Math.max(start.timestampMs, nowMs - RATE_WINDOW_MS);
+  let anchorIndex = startIndex;
+  for (let index = startIndex; index <= lastIndex; index += 1) {
+    if (series[index].timestampMs <= rateFrom) anchorIndex = index;
+    else break;
+  }
+  const rateSpanMs = nowMs - rateFrom;
+  const changePoints = series
+    .slice(anchorIndex)
+    .filter((point, index, list) => index === 0 || point.balance !== list[index - 1].balance).length;
   if (rateSpanMs < MIN_RATE_SPAN_MS || changePoints < MIN_RATE_CHANGE_POINTS) return base;
 
-  const ratePerHour = sumConsumption(ratePoints) / (rateSpanMs / HOUR_MS);
+  const rateConsumed = Math.max(
+    0,
+    series[anchorIndex].balance - currentBalance + sumRecharges(series, anchorIndex, lastIndex)
+  );
+  const ratePerHour = rateConsumed / (rateSpanMs / HOUR_MS);
   base.ratePerHour = ratePerHour;
 
   const resetAtMs = history.quotaResetAtMs;

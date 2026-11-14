@@ -76,6 +76,7 @@ type EventPageItem = usageevent.EventPageItem
 type EventsPage = usageevent.EventsPage
 type HeaderSnapshot = usageevent.HeaderSnapshot
 type CreditsBalanceRow = usageevent.CreditsBalanceRow
+type CreditsQuotaWindow = usageevent.CreditsQuotaWindow
 type UsageRollupCheckpoint = usagerollup.Checkpoint
 type UsageRollupCatchUpResult = usagerollup.CatchUpResult
 type AccountHistoryRollupRow = usagerollup.AccountHistoryRow
@@ -485,7 +486,7 @@ func (s *Store) LatestHeaderSnapshots(ctx context.Context, sinceMS int64, limit 
 	return s.UsageEvents.LatestHeaderSnapshots(ctx, sinceMS, limit)
 }
 
-func (s *Store) CreditsBalanceRows(ctx context.Context, sinceMS int64, untilMS int64, limit int) ([]CreditsBalanceRow, error) {
+func (s *Store) CreditsBalanceRows(ctx context.Context, sinceMS int64, untilMS int64, limit int) ([]CreditsBalanceRow, bool, error) {
 	return s.UsageEvents.CreditsBalanceRows(ctx, sinceMS, untilMS, limit)
 }
 

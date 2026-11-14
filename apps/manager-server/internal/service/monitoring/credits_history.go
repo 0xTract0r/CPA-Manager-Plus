@@ -2,10 +2,8 @@ package monitoring
 
 import (
 	"context"
-	"encoding/json"
 	"math"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -18,7 +16,7 @@ const (
 	defaultCreditsHistoryMaxPoints = 200
 	maxCreditsHistoryMaxPoints     = 500
 	// 扫描行数硬上限：按时间倒序截断，保留最新数据，防止超大库一次读太多行。
-	maxCreditsHistoryRows = 200_000
+	maxCreditsHistoryRows = 50_000
 	dayMS                 = int64(24 * 60 * 60 * 1000)
 )
 
@@ -60,23 +58,6 @@ type CreditsBalancePoint struct {
 	TimestampMS    int64   `json:"timestamp_ms"`
 	Balance        float64 `json:"balance"`
 	QuotaExhausted bool    `json:"quota_exhausted"`
-}
-
-// creditsHeaderMetadata 只声明需要的字段，避免把整份 ResponseHeaderMetadata 反序列化。
-type creditsHeaderMetadata struct {
-	Quota *struct {
-		CreditsBalance    string               `json:"credits_balance"`
-		CreditsHasCredits *bool                `json:"credits_has_credits"`
-		CreditsUnlimited  *bool                `json:"credits_unlimited"`
-		Primary           *creditsHeaderWindow `json:"primary"`
-		Secondary         *creditsHeaderWindow `json:"secondary"`
-	} `json:"quota"`
-}
-
-type creditsHeaderWindow struct {
-	UsedPercent   *float64 `json:"used_percent"`
-	ResetAtMS     int64    `json:"reset_at_ms"`
-	WindowMinutes *float64 `json:"window_minutes"`
 }
 
 type creditsObservation struct {
@@ -121,7 +102,7 @@ func (s *Service) CreditsHistory(ctx context.Context, req CreditsHistoryRequest)
 	}
 	fromMS := nowMS - int64(days)*dayMS
 
-	rows, err := s.store.CreditsBalanceRows(ctx, fromMS, nowMS, maxCreditsHistoryRows)
+	rows, truncated, err := s.store.CreditsBalanceRows(ctx, fromMS, nowMS, maxCreditsHistoryRows)
 	if err != nil {
 		return CreditsHistoryResponse{}, err
 	}
@@ -185,7 +166,7 @@ func (s *Service) CreditsHistory(ctx context.Context, req CreditsHistoryRequest)
 		GeneratedAtMS: nowMS,
 		FromMS:        fromMS,
 		ToMS:          nowMS,
-		Truncated:     len(rows) >= maxCreditsHistoryRows,
+		Truncated:     truncated,
 		Items:         items,
 	}, nil
 }
@@ -209,27 +190,17 @@ func creditsAccountKey(row store.CreditsBalanceRow) string {
 	}
 }
 
+// parseCreditsObservation 把 repo 已解析的小结构体转成观测点：任一主窗口用满即标记，
+// 当前窗口开始时间取时长最长的主窗口（周 / 月）：reset_at − window_minutes。
 func parseCreditsObservation(row store.CreditsBalanceRow) (creditsObservation, bool) {
-	var metadata creditsHeaderMetadata
-	if err := json.Unmarshal([]byte(row.ResponseMetadataJSON), &metadata); err != nil || metadata.Quota == nil {
-		return creditsObservation{}, false
-	}
-	quota := metadata.Quota
-	if quota.CreditsHasCredits != nil && !*quota.CreditsHasCredits {
-		return creditsObservation{}, false
-	}
-	balance, err := strconv.ParseFloat(strings.TrimSpace(quota.CreditsBalance), 64)
-	if err != nil || math.IsNaN(balance) || math.IsInf(balance, 0) || balance < 0 {
-		return creditsObservation{}, false
-	}
 	observation := creditsObservation{
 		timestampMS: row.TimestampMS,
 		id:          row.ID,
-		balance:     balance,
-		unlimited:   quota.CreditsUnlimited != nil && *quota.CreditsUnlimited,
+		balance:     row.Balance,
+		unlimited:   row.Unlimited,
 	}
 	var longestWindowMinutes float64
-	for _, window := range []*creditsHeaderWindow{quota.Primary, quota.Secondary} {
+	for _, window := range []*store.CreditsQuotaWindow{row.Primary, row.Secondary} {
 		if window == nil {
 			continue
 		}
@@ -239,7 +210,6 @@ func parseCreditsObservation(row store.CreditsBalanceRow) (creditsObservation, b
 				observation.quotaResetAtMS = window.ResetAtMS
 			}
 		}
-		// 当前窗口开始时间取时长最长的主窗口（周 / 月）：reset_at − window_minutes。
 		if window.WindowMinutes != nil && *window.WindowMinutes > longestWindowMinutes && window.ResetAtMS > 0 {
 			longestWindowMinutes = *window.WindowMinutes
 			observation.windowStartMS = window.ResetAtMS - int64(longestWindowMinutes*60*1000)
