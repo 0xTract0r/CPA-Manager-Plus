@@ -10,6 +10,7 @@ import {
   getDemoCodexInspectionRuns,
   getDemoDashboardSummary,
   getDemoHeaderSnapshots,
+  getDemoCreditsHistory,
   getDemoManagerConfig,
   getDemoModelPriceUsageSummary,
   getDemoModelPrices,
@@ -1163,6 +1164,34 @@ export interface UsageHeaderSnapshot {
   header_trace_id?: string;
 }
 
+export interface CodexCreditsHistoryPointPayload {
+  timestamp_ms: number;
+  balance: number;
+  quota_exhausted?: boolean;
+}
+
+export interface CodexCreditsHistoryItemPayload {
+  account_key: string;
+  auth_file_snapshot?: string;
+  auth_index?: string;
+  account_snapshot?: string;
+  source_hash?: string;
+  provider?: string;
+  window_start_ms?: number;
+  quota_reset_at_ms?: number;
+  unlimited?: boolean;
+  last_seen_ms?: number;
+  points: CodexCreditsHistoryPointPayload[];
+}
+
+export interface CodexCreditsHistoryResponse {
+  generated_at_ms: number;
+  from_ms: number;
+  to_ms: number;
+  truncated?: boolean;
+  items: CodexCreditsHistoryItemPayload[];
+}
+
 export interface UsageHeaderSnapshotsResponse {
   generated_at_ms: number;
   from_ms: number;
@@ -2182,6 +2211,28 @@ export const monitoringAnalyticsApi = {
     return withUsageServiceError(async () => {
       const response = await axios.get<UsageHeaderSnapshotsResponse>(
         buildUrl(base, '/v0/management/monitoring/header-snapshots'),
+        {
+          timeout: USAGE_SERVICE_TIMEOUT_MS,
+          headers: authHeaders(managementKey),
+          params,
+        }
+      );
+      return response.data;
+    });
+  },
+  /** 只读：各账号积分余额时间序列（GET，不写库），用于 Codex 卡片积分消耗预测。 */
+  getCreditsHistory: async (
+    base: string,
+    managementKey: string | undefined,
+    params: { days?: number; max_points?: number } = {}
+  ): Promise<CodexCreditsHistoryResponse> => {
+    if (__DEMO_SITE__ && isDemoMode()) {
+      return getDemoCreditsHistory() as CodexCreditsHistoryResponse;
+    }
+
+    return withUsageServiceError(async () => {
+      const response = await axios.get<CodexCreditsHistoryResponse>(
+        buildUrl(base, '/v0/management/monitoring/credits-history'),
         {
           timeout: USAGE_SERVICE_TIMEOUT_MS,
           headers: authHeaders(managementKey),

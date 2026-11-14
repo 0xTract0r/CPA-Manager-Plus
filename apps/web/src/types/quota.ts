@@ -1,3 +1,4 @@
+import type { CodexCreditsHistory } from '@/utils/quota/codexCreditsBurn';
 /**
  * Quota management types.
  */
@@ -406,6 +407,8 @@ export interface CodexQuotaState {
   creditsHasCredits?: boolean | null;
   creditsUnlimited?: boolean | null;
   creditsBalance?: string | null;
+  /** 只读积分余额时间序列（manager-server credits-history），用于积分消耗预测。 */
+  creditsHistory?: CodexCreditsHistory | null;
   rateLimitReachedType?: string | null;
   primaryOverSecondaryLimitPercent?: number | null;
   subscriptionActiveUntil?: string | null;

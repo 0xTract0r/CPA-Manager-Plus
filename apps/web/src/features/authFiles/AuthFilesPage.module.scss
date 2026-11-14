@@ -3085,3 +3085,33 @@
     font-family: inherit;
   }
 }
+
+// 积分消耗预测块：位于「积分余额」行下方，复用 quotaFootnote / quotaRow / quotaBar 视觉；
+// 头部在窄卡上整体换行，不横向溢出。
+.codexCreditsBurn {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.codexCreditsBurnHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  min-width: 0;
+}
+
+.codexCreditsBurnForecast {
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+// 偏紧：复用进度条中档（quotaBarFillMedium）的警告色。
+.codexCreditsBurnTight {
+  color: var(--quota-medium-color, #e6a23c);
+}

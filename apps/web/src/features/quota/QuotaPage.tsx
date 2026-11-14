@@ -21,6 +21,11 @@ import {
   type UsageHeaderSnapshot,
 } from '@/services/api/usageService';
 import { buildUsageHeaderSnapshotLookup } from '@/utils/usageHeaderSnapshots';
+import {
+  buildCodexCreditsHistoryLookup,
+  type CodexCreditsHistoryLookup,
+} from '@/utils/quota/codexCreditsBurn';
+import type { CodexCreditsHistoryItemPayload } from '@/services/api/usageService';
 import { buildCoreQuotaSnapshotLookup } from '@/utils/quota/coreQuotaSnapshots';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -174,6 +179,9 @@ export function QuotaPage() {
   }));
   const [codexReauthTarget, setCodexReauthTarget] = useState<CodexReauthTarget | null>(null);
   const [headerSnapshots, setHeaderSnapshots] = useState<UsageHeaderSnapshot[]>([]);
+  const [creditsHistoryItems, setCreditsHistoryItems] = useState<CodexCreditsHistoryItemPayload[]>(
+    []
+  );
   const [accountDisplayModes, setAccountDisplayModes] = useState(() => ({
     ...initialUiState.current.accountDisplayModes,
   }));
@@ -321,6 +329,25 @@ export function QuotaPage() {
     }
   }, [managementKey, managerServiceBase]);
 
+  // 积分余额时间序列：只读 GET（manager-server 读 usage_events，不写库），用于 Codex 卡片
+  // 「够不够用」预测；失败时保持上次结果，不影响其他额度展示。
+  const loadCreditsHistory = useCallback(async () => {
+    if (!managerServiceBase) {
+      setCreditsHistoryItems([]);
+      return;
+    }
+    try {
+      const response = await monitoringAnalyticsApi.getCreditsHistory(
+        managerServiceBase,
+        managementKey,
+        { days: 7, max_points: 200 }
+      );
+      setCreditsHistoryItems(response.items ?? []);
+    } catch {
+      setCreditsHistoryItems((current) => current);
+    }
+  }, [managementKey, managerServiceBase]);
+
   const loadQuotaSnapshotStatus = useCallback(async () => {
     try {
       const data = await quotaSnapshotsApi.getSnapshots();
@@ -332,8 +359,10 @@ export function QuotaPage() {
   }, [t]);
 
   const handleHeaderRefresh = useCallback(async () => {
+    // 积分序列只用于预测提示，单独触发、不 await，不拖慢刷新按钮。
+    void loadCreditsHistory();
     await Promise.all([loadConfig(), loadFiles(), loadHeaderSnapshots(), loadQuotaSnapshotStatus()]);
-  }, [loadConfig, loadFiles, loadHeaderSnapshots, loadQuotaSnapshotStatus]);
+  }, [loadConfig, loadFiles, loadHeaderSnapshots, loadCreditsHistory, loadQuotaSnapshotStatus]);
 
   useHeaderRefresh(handleHeaderRefresh);
 
@@ -363,12 +392,18 @@ export function QuotaPage() {
     loadFiles();
     loadConfig();
     loadHeaderSnapshots();
+    loadCreditsHistory();
     loadQuotaSnapshotStatus();
-  }, [loadFiles, loadConfig, loadHeaderSnapshots, loadQuotaSnapshotStatus]);
+  }, [loadFiles, loadConfig, loadHeaderSnapshots, loadCreditsHistory, loadQuotaSnapshotStatus]);
 
   const headerSnapshotLookup = useMemo(
     () => buildUsageHeaderSnapshotLookup(headerSnapshots),
     [headerSnapshots]
+  );
+
+  const creditsHistoryLookup = useMemo<CodexCreditsHistoryLookup>(
+    () => buildCodexCreditsHistoryLookup(creditsHistoryItems),
+    [creditsHistoryItems]
   );
 
   // core `GET /quota/snapshots` 只读持久快照的多键 lookup（auth_id/auth_index/name）。
@@ -510,6 +545,7 @@ export function QuotaPage() {
         onAccountDisplayModeChange={(mode) => setAccountDisplayMode(CODEX_CONFIG.type, mode)}
         headerSnapshotLookup={headerSnapshotLookup}
         coreQuotaSnapshotLookup={coreQuotaSnapshotLookup}
+        creditsHistoryLookup={creditsHistoryLookup}
       />
       <QuotaSection
         config={CLAUDE_CONFIG}

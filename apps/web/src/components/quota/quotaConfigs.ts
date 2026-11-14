@@ -87,6 +87,13 @@ import {
 import { normalizeAuthIndex } from '@/utils/authIndex';
 import { formatDateTimeUtc8, formatInUtc8 } from '@/utils/datetime';
 import { formatNumber } from '@/utils/format';
+import { parseCodexCreditsBalance } from '@/utils/quota';
+import {
+  computeCodexCreditsBurnForecast,
+  formatCodexCreditsCompact,
+  formatCodexCreditsRate,
+  type CodexCreditsBurnLevel,
+} from '@/utils/quota/codexCreditsBurn';
 import type { QuotaRenderHelpers } from './QuotaCard';
 import styles from '@/features/quota/QuotaPage.module.scss';
 
@@ -1002,6 +1009,178 @@ const renderCodexCreditsBalance = (
   );
 };
 
+const resolveUiLocale = (t: TFunction): string | undefined => {
+  const language = (t as unknown as { i18n?: { language?: string } }).i18n?.language;
+  if (typeof language === 'string' && language.trim()) return language.trim();
+  if (typeof document !== 'undefined' && document.documentElement?.lang) {
+    return document.documentElement.lang;
+  }
+  return undefined;
+};
+
+const CODEX_CREDITS_BURN_LEVEL_KEYS = {
+  ok: 'codex_quota.credits_burn_level_ok',
+  tight: 'codex_quota.credits_burn_level_tight',
+  short: 'codex_quota.credits_burn_level_short',
+} as const;
+
+/**
+ * 积分消耗预测块（「积分余额」行下方）：仅在主额度窗口已用满、积分可用且非 unlimited、
+ * 并且有余额序列时渲染。已用 / 速率 / 到重置预计再用 / 进度条（预测 ÷ 余额）+ 状态文字；
+ * 速率与预测在数据不足时隐藏，只显示已用。进度条颜色复用 QuotaProgressBar 的阈值色：
+ * 够用 → high（success），偏紧 → medium（warning），可能不够 → low（danger）。
+ */
+const renderCodexCreditsBurn = (
+  quota: CodexQuotaState,
+  windows: CodexQuotaWindow[],
+  t: TFunction,
+  helpers: QuotaRenderHelpers,
+  nowMs: number
+): ReactNode => {
+  const display = getCodexCreditsDisplay(quota);
+  if (!display || display.kind === 'unlimited') return null;
+  if (!hasExhaustedCodexMainQuotaWindow(windows)) return null;
+  const history = quota.creditsHistory;
+  if (!history || history.unlimited || history.points.length === 0) return null;
+
+  const forecast = computeCodexCreditsBurnForecast(history, {
+    nowMs,
+    currentBalance: parseCodexCreditsBalance(quota.creditsBalance),
+  });
+  if (!forecast) return null;
+
+  const { styles: styleMap } = helpers;
+  const { createElement: h } = React;
+  const locale = resolveUiLocale(t);
+  const usedLabel = formatCodexCreditsCompact(forecast.used, locale);
+  const usedText = forecast.startIsExhaustion
+    ? t('codex_quota.credits_burn_used_since_exhausted', { used: usedLabel })
+    : t('codex_quota.credits_burn_used_recent', { used: usedLabel, hours: forecast.sinceHours });
+  const rateText =
+    forecast.ratePerHour !== null
+      ? t('codex_quota.credits_burn_rate', {
+          rate: formatCodexCreditsRate(forecast.ratePerHour, locale),
+        })
+      : null;
+
+  const hasForecast =
+    forecast.projected !== null && forecast.percent !== null && forecast.level !== null;
+  const level: CodexCreditsBurnLevel = forecast.level ?? 'ok';
+  const fillClass =
+    level === 'short'
+      ? styleMap.quotaBarFillLow
+      : level === 'tight'
+        ? styleMap.quotaBarFillMedium
+        : styleMap.quotaBarFillHigh;
+  const percentRounded = hasForecast ? Math.round(forecast.percent as number) : null;
+  const levelClass =
+    level === 'short'
+      ? styleMap.quotaPercentDepleted
+      : level === 'tight'
+        ? styleMap.codexCreditsBurnTight
+        : '';
+
+  return h(
+    'div',
+    {
+      key: 'credits-burn',
+      className: styleMap.codexCreditsBurn,
+      'data-testid': 'codex-credits-burn',
+      'data-level': hasForecast ? level : 'none',
+    },
+    h(
+      'div',
+      { className: styleMap.quotaFootnote },
+      h(
+        'span',
+        { className: styleMap.quotaFootnoteValue, 'data-testid': 'codex-credits-burn-used' },
+        usedText
+      ),
+      rateText
+        ? h(
+            'span',
+            { className: styleMap.quotaFootnoteValue, 'data-testid': 'codex-credits-burn-rate' },
+            `· ${rateText}`
+          )
+        : null
+    ),
+    hasForecast
+      ? h(
+          'div',
+          { className: styleMap.quotaRow },
+          h(
+            'div',
+            { className: styleMap.codexCreditsBurnHeader },
+            h(
+              'span',
+              {
+                className: styleMap.codexCreditsBurnForecast,
+                'data-testid': 'codex-credits-burn-forecast',
+              },
+              t('codex_quota.credits_burn_forecast', {
+                projected: formatCodexCreditsCompact(forecast.projected as number, locale),
+                balance: formatCodexCreditsCompact(forecast.currentBalance, locale),
+              })
+            ),
+            h(
+              'span',
+              { className: styleMap.quotaMeta },
+              h(
+                'span',
+                { className: styleMap.quotaPercent, 'data-testid': 'codex-credits-burn-percent' },
+                `${percentRounded}%`
+              ),
+              h(
+                'span',
+                {
+                  className: [styleMap.quotaPercent, levelClass].filter(Boolean).join(' '),
+                  'data-testid': 'codex-credits-burn-level',
+                },
+                t(CODEX_CREDITS_BURN_LEVEL_KEYS[level])
+              )
+            )
+          ),
+          // 复用额度进度条的轨道与阈值色 class：宽度 = 预测 ÷ 余额（封顶 100%），
+          // 够用 → quotaBarFillHigh（success）、偏紧 → Medium（warning）、可能不够 → Low（danger）。
+          h(
+            'div',
+            {
+              className: styleMap.quotaBar,
+              'data-testid': 'codex-credits-burn-bar',
+              'data-percent': String(percentRounded),
+            },
+            h('div', {
+              className: `${styleMap.quotaBarFill} ${fillClass}`,
+              style: { width: `${percentRounded}%` },
+            })
+          ),
+          forecast.runOutAtMs !== null
+            ? h(
+                'div',
+                { className: styleMap.quotaFootnote },
+                h(
+                  'span',
+                  {
+                    className: `${styleMap.quotaFootnoteValue} ${styleMap.quotaPercentDepleted}`,
+                    'data-testid': 'codex-credits-burn-runout',
+                  },
+                  t('codex_quota.credits_burn_run_out', {
+                    time: formatInUtc8(forecast.runOutAtMs, {
+                      month: '2-digit',
+                      day: '2-digit',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      hour12: false,
+                    }),
+                  })
+                )
+              )
+            : null
+        )
+      : null
+  );
+};
+
 const renderCodexItems = (
   quota: CodexQuotaState,
   t: TFunction,
@@ -1063,6 +1242,9 @@ const renderCodexItems = (
   }
 
   const creditsNode = renderCodexCreditsBalance(quota, windows, t, styleMap);
+  const creditsBurnNode = creditsNode
+    ? renderCodexCreditsBurn(quota, windows, t, helpers, Date.now())
+    : null;
 
   if (windows.length === 0) {
     nodes.push(
@@ -1111,6 +1293,7 @@ const renderCodexItems = (
   );
 
   if (creditsNode) nodes.push(creditsNode);
+  if (creditsBurnNode) nodes.push(creditsBurnNode);
 
   return h(Fragment, null, ...nodes);
 };
