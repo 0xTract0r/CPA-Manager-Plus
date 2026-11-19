@@ -31,6 +31,7 @@ import {
   CODEX_CONFIG,
   buildObservedCodexQuotaState,
   getQuotaStoreKey,
+  preferFresherCodexCredits,
   resolveQuotaDisplayState,
 } from '@/components/quota';
 import { copyToClipboard } from '@/utils/clipboard';
@@ -52,7 +53,9 @@ import {
   type QuotaProviderType,
   type ResolvedTheme,
 } from '@/features/authFiles/constants';
+import { getPacingPreviewMeta, DemoPacingControls } from '@/features/demo/demoFixtures';
 import { WarmupPacingModal } from '@/features/authFiles/components/WarmupPacing';
+import { AccountLimitsModal } from '@/features/authFiles/components/AccountLimitsModal';
 import { AuthFileCard } from '@/features/authFiles/components/AuthFileCard';
 import { AuthJsonPasteModal } from '@/features/authFiles/components/AuthJsonPasteModal';
 import { AuthFileModelsModal } from '@/features/authFiles/components/AuthFileModelsModal';
@@ -91,6 +94,10 @@ import { useAuthFilesReauth } from '@/features/authFiles/hooks/useAuthFilesReaut
 import { useAuthFilesAccountSettings } from '@/features/authFiles/hooks/useAuthFilesAccountSettings';
 import { useAuthFilesTestMessage } from '@/features/authFiles/hooks/useAuthFilesTestMessage';
 import { useAuthFilesStatusBarCache } from '@/features/authFiles/hooks/useAuthFilesStatusBarCache';
+import {
+  useCodexCreditsHistoryLookup,
+  withCodexCreditsHistory,
+} from '@/features/authFiles/hooks/useCodexCreditsHistoryLookup';
 import { useAntigravitySubscriptions } from '@/features/authFiles/hooks/useAntigravitySubscriptions';
 import { useFarmEnrolledDisableGuard } from '@/features/farm/hooks/useFarmEnrolledDisableGuard';
 import { useFarmDeploymentEnv } from '@/features/farm/hooks/useFarmDeploymentEnv';
@@ -215,7 +222,7 @@ const getQuotaCooldownContextKey = (managerServiceBase: string, managementKey: s
   `${managerServiceBase}\u0000${managementKey}`;
 
 export function AuthFilesPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   // 订阅全局时区：切换时区时整页（含 AuthFileCard 的时间戳）随之重渲染，无需刷新。
   useTimezone();
   const showNotification = useNotificationStore((state) => state.showNotification);
@@ -257,6 +264,10 @@ export function AuthFilesPage() {
   const [uiStateHydrated, setUiStateHydrated] = useState(false);
   const [authJsonPasteOpen, setAuthJsonPasteOpen] = useState(false);
   const [pacingFileKey, setPacingFileKey] = useState<string | null>(null);
+  const [accountLimits, setAccountLimits] = useState<{
+    file: AuthFileItem;
+    source: 'settings' | 'pacing';
+  } | null>(null);
   const [batchPriorityOpen, setBatchPriorityOpen] = useState(false);
   const [batchPriorityValue, setBatchPriorityValue] = useState('');
   const [codexReauthTarget, setCodexReauthTarget] = useState<CodexReauthTarget | null>(null);
@@ -638,6 +649,9 @@ export function AuthFilesPage() {
   useEffect(() => {
     setPageSizeInput(String(pageSize));
   }, [pageSize]);
+
+  // Codex 积分消耗预测序列：挂载拉一次，之后独立 5 分钟节流，不跟随 60s 轮询。
+  const creditsHistoryLookup = useCodexCreditsHistoryLookup(managerServiceBase, managementKey);
 
   const loadCodexInspectionSnapshots = useCallback(async () => {
     const lastRun = connectionFingerprint
@@ -1258,18 +1272,28 @@ export function AuthFilesPage() {
         t,
         headerSnapshotGeneratedAtMs || Date.now()
       );
-      const observedQuota =
-        headerObservedQuota ??
-        buildObservedCodexQuotaStateFromCoreSnapshot(
-          file,
-          getHighConfidenceCoreQuotaSnapshotForAuthFile(coreQuotaSnapshotLookup, file),
-          t
-        );
-      return resolveQuotaDisplayState(activeQuota, observedQuota);
+      const coreObservedQuota = buildObservedCodexQuotaStateFromCoreSnapshot(
+        file,
+        getHighConfidenceCoreQuotaSnapshotForAuthFile(coreQuotaSnapshotLookup, file),
+        t
+      );
+      // 其余字段仍是请求头优先；仅积分三字段按两边时间戳择新，避免闲置账号显示陈旧余额。
+      const observedQuota = preferFresherCodexCredits(
+        headerObservedQuota ?? coreObservedQuota,
+        headerObservedQuota,
+        coreObservedQuota
+      );
+      // 与配额管理页 QuotaSection 同口径：只给 Codex 卡片挂积分序列，渲染由共用 renderCodexItems 完成。
+      return withCodexCreditsHistory(
+        resolveQuotaDisplayState(activeQuota, observedQuota),
+        creditsHistoryLookup,
+        file
+      );
     },
     [
       codexStatusSourcesByAuthFileKey,
       coreQuotaSnapshotLookup,
+      creditsHistoryLookup,
       getActiveCodexQuota,
       headerSnapshotGeneratedAtMs,
       t,
@@ -1843,6 +1867,24 @@ export function AuthFilesPage() {
 
   return (
     <div className={styles.container}>
+      {getPacingPreviewMeta() && (
+        <div role="status" data-testid="pacing-preview-notice">
+          {t('auth_files.pacing.local_preview_sources', {
+            defaultValue:
+              '本地隔离预览：APUS-01、APUS-03、AC-13、AC-16的账号与历史来自脱敏采样；AC-13/AC-16的可编辑上限及后续状态仅为本地模拟。其余速度演示、养号演示、QA-*和“本地模拟”账号及历史均为合成场景。所有更改只影响页面内存，卡片成功/失败总计未加载。采样时间',
+          })}{' '}
+          ·{' '}
+          {new Intl.DateTimeFormat(i18n?.language || undefined, {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false,
+          }).format(new Date(getPacingPreviewMeta()!.captured_at))}
+          <DemoPacingControls onRefresh={loadFiles} active={isCurrentLayer} />
+        </div>
+      )}
       <section className={styles.authFilesShell}>
         {error && <div className={styles.errorBox}>{error}</div>}
 
@@ -2181,7 +2223,32 @@ export function AuthFilesPage() {
         file={pacingFileKey === null ? null : (fileBySelectionKey.get(pacingFileKey) ?? null)}
         open={pacingFileKey !== null}
         onClose={() => setPacingFileKey(null)}
+        onOpenLimits={(file) => {
+          setPacingFileKey(null);
+          setAccountLimits({ file, source: 'pacing' });
+        }}
       />
+      {accountLimits && (
+        <AccountLimitsModal
+          key={getAuthFileSelectionKey(accountLimits.file)}
+          file={accountLimits.file}
+          disabled={disableControls}
+          backLabel={t(
+            `auth_files.pacing.${accountLimits.source === 'settings' ? 'back_settings' : 'back_detail'}`
+          )}
+          onClose={() => setAccountLimits(null)}
+          onBack={() => {
+            const file =
+              fileBySelectionKey.get(getAuthFileSelectionKey(accountLimits.file)) ??
+              accountLimits.file;
+            const source = accountLimits.source;
+            setAccountLimits(null);
+            if (source === 'pacing') setPacingFileKey(getAuthFileSelectionKey(file));
+            else void openAccountSettingsEditor(file);
+          }}
+          onApplied={updateFileAccountScheduling}
+        />
+      )}
       <AuthFileModelsModal
         open={modelsModalOpen}
         fileName={modelsFileName}
@@ -2205,7 +2272,12 @@ export function AuthFilesPage() {
         onSave={() => void handleAccountSettingsSaveWithAuditReload()}
         onChange={handleAccountSettingsChange}
         onProxyBlur={() => void handleAccountSettingsProxyBlur()}
-        onSchedulingApplied={updateFileAccountScheduling}
+        onOpenLimits={() => {
+          if (!accountSettingsEditor?.file || accountSettingsDirty || accountSettingsEditor.saving)
+            return;
+          setAccountLimits({ file: accountSettingsEditor.file, source: 'settings' });
+          closeAccountSettingsEditor();
+        }}
       />
 
       <TestMessageModal

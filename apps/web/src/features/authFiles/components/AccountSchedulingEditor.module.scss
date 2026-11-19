@@ -1,0 +1,342 @@
+.editor {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.current {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  border-block: 1px solid var(--border-subtle);
+  padding: 8px 0;
+  margin: 8px 0 14px;
+  strong {
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+}
+.section {
+  border: 0;
+  margin: 0 0 18px;
+  padding: 0;
+  min-width: 0;
+  legend {
+    color: var(--text-primary);
+    font-weight: 600;
+    font-size: 13px;
+    margin-bottom: 8px;
+  }
+}
+.choices,
+.source {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 11px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    background: var(--surface-subtle);
+    cursor: pointer;
+    color: var(--text-primary);
+  }
+  input {
+    margin: 0;
+    accent-color: var(--color-primary);
+  }
+  label[data-selected='true'] {
+    border-color: var(--color-primary);
+    background: color-mix(in srgb, var(--color-primary) 7%, var(--surface-subtle));
+  }
+  label:has(input:focus-visible) {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+}
+.source {
+  margin-bottom: 12px;
+}
+.days {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  input {
+    width: 80px;
+  }
+}
+.periodChoices {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+}
+.hint {
+  font-size: 11px;
+  margin: 9px 0 0;
+  color: var(--text-secondary);
+}
+.speedCards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  > label {
+    min-width: 0;
+    padding: 12px 14px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    background: var(--surface-subtle);
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  > label[data-selected='true'] {
+    border-color: var(--color-primary);
+    background: color-mix(in srgb, var(--color-primary) 7%, var(--surface-subtle));
+  }
+  > label:has(input:focus-visible) {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+}
+.cardTitle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-primary);
+  input {
+    margin: 0;
+    accent-color: var(--color-primary);
+  }
+  small {
+    font-size: 10px;
+    color: var(--text-secondary);
+    margin-left: auto;
+  }
+}
+.cardMetric {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  small {
+    font-size: 11px;
+    font-weight: 400;
+  }
+  > span {
+    display: block;
+    font-size: 12px;
+    font-weight: 400;
+  }
+}
+.mature {
+  border-left: 3px solid var(--color-primary);
+  background: var(--surface-subtle);
+  border-radius: 6px;
+  padding: 12px;
+  strong {
+    color: var(--text-primary);
+  }
+  p {
+    margin: 6px 0 0;
+    font-size: 11px;
+  }
+}
+.custom {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.customField {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  > span {
+    color: var(--text-primary);
+    small {
+      display: block;
+      color: var(--text-secondary);
+      font-size: 10px;
+    }
+  }
+  > div {
+    display: flex;
+    gap: 6px;
+  }
+  select {
+    min-width: 0;
+    flex: 1;
+  }
+  input {
+    width: 70px;
+    min-width: 0;
+  }
+}
+.editor input:not([type='radio']),
+.editor select {
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--surface-subtle);
+  color: var(--text-primary);
+  font: inherit;
+  padding: 7px 8px;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.editor input:disabled,
+.editor select:disabled {
+  opacity: 0.55;
+}
+.duration {
+  grid-column: 1/-1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.maintenance {
+  border-top: 1px solid var(--border-subtle);
+  padding: 13px 0;
+  > summary {
+    cursor: pointer;
+    font-size: 12px;
+  }
+  > label {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-top: 14px;
+    color: var(--text-primary);
+  }
+}
+.anchorActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+  button,
+  .textButton {
+    font: inherit;
+  }
+  button {
+    border: 1px solid var(--border-subtle);
+    background: var(--surface-subtle);
+    color: var(--text-secondary);
+    border-radius: 5px;
+    padding: 4px 8px;
+    cursor: pointer;
+  }
+}
+.textButton {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-size: 11px;
+  color: var(--color-primary);
+  cursor: pointer;
+}
+.footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  background: var(--app-surface-strong, var(--bg-primary));
+  border-top: 1px solid var(--border-subtle);
+  padding: 12px 0 2px;
+  box-shadow: 0 -8px 12px -12px var(--text-secondary);
+}
+.preview {
+  margin-bottom: 10px;
+  > strong {
+    color: var(--text-primary);
+  }
+  dl {
+    max-height: 148px;
+    overflow: auto;
+    margin: 7px 0;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 5px 18px;
+  }
+  dl > div {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    align-items: baseline;
+    justify-content: space-between;
+  }
+  dd {
+    margin: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-variant-numeric: tabular-nums;
+    strong {
+      color: var(--text-primary);
+    }
+    small {
+      font-size: 10px;
+    }
+  }
+  p {
+    margin: 4px 0;
+    font-size: 11px;
+  }
+}
+.footerActions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  > span {
+    flex: 1;
+    font-size: 11px;
+  }
+}
+.error {
+  color: var(--color-error);
+}
+@media (max-width: 600px) {
+  .speedCards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 480px) {
+  .speedCards {
+    gap: 6px;
+    > label {
+      padding: 10px;
+    }
+  }
+  .choices {
+    gap: 6px;
+    label {
+      padding: 7px 9px;
+    }
+  }
+  .custom {
+    grid-template-columns: 1fr;
+  }
+  .preview dl {
+    grid-template-columns: 1fr;
+  }
+  .footerActions > span {
+    flex-basis: 100%;
+  }
+  .footerActions > button {
+    flex: 1;
+  }
+  .maintenance > label {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

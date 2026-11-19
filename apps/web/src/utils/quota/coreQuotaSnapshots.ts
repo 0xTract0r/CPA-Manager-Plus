@@ -33,6 +33,7 @@ import {
   normalizeStringValue,
   parseClaudeUsagePayload,
   parseCodexUsagePayload,
+  resolveCodexCreditsFields,
   resolveCodexPlanType,
 } from '@/utils/quota';
 import { parseCoreQuotaTimestamp } from '@/services/api/quotaSnapshots';
@@ -258,11 +259,15 @@ export const buildObservedCodexQuotaStateFromCoreSnapshot = (
   const planType = resolveCodexPlanType(file) ?? planTypeFromSnapshot ?? null;
   const windows = buildCodexQuotaWindows(usage, t, planType);
   const observedAtMs = parseCoreQuotaTimestamp(entry.last_refreshed_at)?.getTime();
+  // core 快照的 usage 就是 wham/usage 原样载荷，`credits` 映射到与请求头观测一致的字段，
+  // 让卡片无需等待实时请求头也能显示积分余额；没有 credits 时不写这些字段。
+  const credits = resolveCodexCreditsFields(usage);
 
   return {
     status: 'success',
     windows,
     planType,
+    ...(credits ?? {}),
     observedFromUsageHeaders: true,
     observedResetCreditsUnknown: true,
     observedAtMs,

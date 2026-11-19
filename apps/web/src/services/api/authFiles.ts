@@ -5,7 +5,9 @@
 import { apiClient, createScopedApiRequestConfig, type ApiClientRequestScope } from './client';
 import type {
   AuthFileAccountSchedulingPatchRequest,
+  WarmupPacingResponse,
   AuthFileAccountSchedulingResponse,
+  AuthFileAccountSchedulingPreviewResponse,
   AuthFileAccountSettings,
   AuthFileAccountSettingsPatchRequest,
   AuthFileAccountSettingsResponse,
@@ -1226,6 +1228,12 @@ export const authFilesApi = {
     return dedupeAuthFilesResponse(response);
   },
 
+  getWarmupPacing: (name: string, authIndex: string, signal?: AbortSignal) =>
+    apiClient.get<WarmupPacingResponse>('/auth-files/warmup-pacing', {
+      params: { name, auth_index: authIndex },
+      signal,
+    }),
+
   // --- 迁移自 cpa fork：账号设置 / 状态刷新 / 测试消息 / 历史查询 ---
 
   async getAccountSettings(
@@ -1270,6 +1278,16 @@ export const authFilesApi = {
     request: AuthFileAccountSchedulingPatchRequest
   ): Promise<AuthFileAccountSchedulingResponse> =>
     apiClient.patch<AuthFileAccountSchedulingResponse>('/auth-files/account-scheduling', request),
+
+  previewAccountScheduling: (
+    request: AuthFileAccountSchedulingPatchRequest,
+    signal?: AbortSignal
+  ) =>
+    apiClient.post<AuthFileAccountSchedulingPreviewResponse>(
+      '/auth-files/account-scheduling/preview',
+      request,
+      { signal }
+    ),
 
   refreshStatus: async (
     name: string,

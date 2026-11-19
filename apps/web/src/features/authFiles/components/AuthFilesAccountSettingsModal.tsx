@@ -15,7 +15,7 @@
  *     「例行版本刷新」分类展示）
  */
 import { useTranslation } from 'react-i18next';
-import { useMemo, useState } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import CodeMirror from '@uiw/react-codemirror';
 import { json } from '@codemirror/lang-json';
 import { search, searchKeymap, highlightSelectionMatches } from '@codemirror/search';
@@ -33,7 +33,6 @@ import type {
   AccountSettingsEditorState,
 } from '@/features/authFiles/hooks/useAuthFilesAccountSettings';
 import type {
-  AuthFileAccountScheduling,
   AuthFileClientVersionObservation,
   AuthFileHeaderMap,
   AuthFileManagedHeaderHistoryEntry,
@@ -49,7 +48,7 @@ import {
 import { useFarmRotateProxy } from '@/features/farm/hooks/useFarmRotateProxy';
 import type { FarmEnv } from '@/types/farm';
 import { AccountFastImpactPanel } from './AccountFastImpactPanel';
-import { AccountSchedulingPanel } from './AccountSchedulingPanel';
+import { AccountWarmupSummary } from './AccountWarmupSummary';
 import { AuthFilesReauthHistoryPanel } from './AuthFilesReauthHistoryPanel';
 import { AuthFilesStatusHistoryPanel } from './AuthFilesStatusHistoryPanel';
 import styles from './AuthFilesAccountSettingsModal.module.scss';
@@ -122,14 +121,8 @@ export type AuthFilesAccountSettingsModalProps = {
   onChange: (field: AccountSettingsEditorField, value: AccountSettingsEditorFieldValue) => void;
   /** 代理输入框失焦（blur）时触发的内联实时校验（格式→查重→连通性探针 + 就地展示）。 */
   onProxyBlur?: () => void;
-  /**
-   * 调度旋钮（AccountSchedulingPanel）保存成功后回调，携带 core 回显的最新
-   * `account_scheduling` 投影。父页面据此就地更新账号列表缓存（而非依赖
-   * `editor.file` 那份打开弹窗时的快照），修复「关掉再打开显示旧值」——见
-   * useAccountSchedulingControls.ts / useAuthFilesData.ts updateFileAccountScheduling
-   * 顶部注释。未接线时静默跳过（不阻塞保存流程本身）。
-   */
-  onSchedulingApplied?: (name: string, scheduling: AuthFileAccountScheduling) => void;
+  /** 进入独立账号策略窗口；基础设置有未保存修改时禁止跳转。 */
+  onOpenLimits?: () => void;
 };
 
 type ManagedHeaderHistoryDiffRow = {
@@ -1275,8 +1268,14 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
     onSave,
     onChange,
     onProxyBlur,
-    onSchedulingApplied,
+    onOpenLimits,
   } = props;
+  // 列表轮询会换父回调；稳定Modal回调，避免重新渲染取消350ms关闭动画。
+  const closeRef = useRef(onClose);
+  useLayoutEffect(() => {
+    closeRef.current = onClose;
+  }, [onClose]);
+  const handleModalClose = useCallback(() => closeRef.current(), []);
 
   // 原始 auth JSON 含明文 access_token，属敏感暴露面。native <details> 折叠时仍会把
   // 子节点保留在 DOM（只是 UA display:none 视觉隐藏），access_token 仍可被 devtools /
@@ -1601,7 +1600,7 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
   return (
     <Modal
       open={Boolean(editor)}
-      onClose={onClose}
+      onClose={handleModalClose}
       closeDisabled={editor?.saving === true}
       // 加宽桌面态弹窗（P1）：身份模型 / TLS / 审计三区信息密集，840px 过窄会把
       // 关键区挤到折叠线以下并触发超长内部滚动。用 min(1080px, 96vw) 让桌面更宽、
@@ -1828,18 +1827,25 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
                     </div>
                   )}
 
-                  {/* P7：账号级调度旋钮（tier_override / rate_scale）。tier_override 目前只对
-                      claude 生效（core `claude: max_20x|max_5x|pro`），与 codex fast 卡按
-                      isCodexProvider 门控对称——这里按 isClaudeProvider 挂载。面板独占
-                      toggleGrid 整行（.panel grid-column: 1 / -1），基线投影取自账号列表
-                      entry 的 account_scheduling（GET account-settings 不含该只读投影）。 */}
+                  {/* 基础设置只保留摘要，策略编辑统一到独立窗口。 */}
                   {isClaudeProvider && (
-                    <AccountSchedulingPanel
-                      fileName={editor.fileName}
-                      authIndex={editor.authIndex}
-                      initialScheduling={editor.file?.account_scheduling}
-                      disabled={disableControls || editor.saving}
-                      onApplied={(view) => onSchedulingApplied?.(editor.fileName, view)}
+                    <AccountWarmupSummary
+                      view={editor.file?.account_scheduling}
+                      compact
+                      action={
+                        <span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            data-testid="account-settings-open-limits"
+                            disabled={disableControls || editor.saving || dirty || !onOpenLimits}
+                            onClick={onOpenLimits}
+                          >
+                            {t('auth_files.pacing.limits_title')}
+                          </Button>
+                          {dirty && <small>{t('auth_files.pacing.save_before_navigation')}</small>}
+                        </span>
+                      }
                     />
                   )}
                 </div>

@@ -100,7 +100,10 @@ export function MonitoringActionBar({
     : '';
 
   return (
-    <section className={styles.actionBar} aria-label={t('common.action')}>
+    <section
+      className={`${styles.actionBar} ${styles.monitorActionBar}`}
+      aria-label={t('common.action')}
+    >
       <div className={styles.actionGroup}>
         <button
           type="button"

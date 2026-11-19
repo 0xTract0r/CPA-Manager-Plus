@@ -4,6 +4,7 @@
 // 语言（边框/圆角/半透明底），独占 toggleGrid 整行——两个控件 + 状态角标 + Apply
 // 按钮信息密度比单个开关高，横向挤压容易折行错位。
 .panel {
+  container-type: inline-size;
   grid-column: 1 / -1;
   display: flex;
   flex-direction: column;
@@ -48,6 +49,21 @@
     color: var(--text-primary);
     font-size: 12px;
     font-weight: 600;
+  }
+  :global(.hint) {
+    font-size: 12px;
+    line-height: 1.65;
+    overflow-wrap: anywhere;
+  }
+  :global(.form-group) {
+    margin-bottom: 0;
+    min-width: 0;
+  }
+  :global(.input-wrapper),
+  :global(.input) {
+    min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
   }
 }
 
@@ -114,4 +130,159 @@
   gap: 6px;
   color: var(--text-secondary);
   font-size: 12px;
+}
+
+.legacyAdvanced {
+  margin-top: 14px;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 13px;
+  font-size: 12px;
+  line-height: 1.6;
+  summary {
+    cursor: pointer;
+    color: var(--text-secondary);
+    font-size: 12px;
+  }
+  &[open] summary {
+    margin-bottom: 10px;
+  }
+}
+.advancedHint {
+  color: var(--text-secondary);
+  font-size: 11px;
+  margin: 8px 0 12px;
+}
+@container (max-width: 560px) {
+  .controlsGrid {
+    grid-template-columns: 1fr;
+  }
+}
+.warmupSummary {
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 12px;
+  margin: 12px 0;
+  background: var(--surface-subtle);
+  font-size: 12px;
+  line-height: 1.6;
+  min-width: 0;
+}
+.compactSummary {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding: 8px 0;
+  border-block: 1px solid var(--border-subtle);
+  font-size: 12px;
+  line-height: 1.6;
+  min-width: 0;
+  strong {
+    font-weight: 500;
+  }
+}
+.warmupSummary > summary {
+  cursor: pointer;
+  font-size: 12px;
+  strong {
+    font-size: 12px;
+    font-weight: 500;
+  }
+}
+.summaryHeading {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  strong {
+    color: var(--text-primary);
+    font-size: 13px;
+  }
+  span {
+    font-variant-numeric: tabular-nums;
+  }
+}
+.warmupTrack {
+  height: 5px;
+  border-radius: 6px;
+  background: var(--border-subtle);
+  margin: 10px 0;
+  overflow: hidden;
+  span {
+    display: block;
+    height: 100%;
+    background: var(--color-primary);
+    border-radius: inherit;
+  }
+}
+.summaryHint {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin: 6px 0 !important;
+}
+.budgetGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 12px 0;
+  dt {
+    color: var(--text-secondary);
+    font-size: 11px;
+  }
+  dd {
+    margin: 5px 0 0;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 600;
+  }
+  small {
+    display: block;
+    font-size: 10px;
+    font-weight: 400;
+    color: var(--text-secondary);
+  }
+}
+.policyExplanation {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
+  summary {
+    cursor: pointer;
+    font-size: 12px;
+  }
+  p {
+    font-size: 11px;
+    margin: 8px 0;
+  }
+}
+.stageList {
+  margin: 12px 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+  li {
+    display: grid;
+    grid-template-columns: minmax(48px, 0.8fr) 1fr 1.3fr;
+    gap: 6px;
+    padding: 5px 7px;
+    border-radius: 4px;
+    font-size: 11px;
+  }
+  li[data-current='true'] {
+    color: var(--text-primary);
+    background: var(--surface-subtle-strong);
+  }
+}
+.quotaWindowRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  color: var(--text-primary);
+}
+.percentGap {
+  border-left: 2px solid var(--border-subtle);
+  padding-left: 8px;
 }

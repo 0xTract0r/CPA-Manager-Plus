@@ -1,3 +1,4 @@
+import type { CodexCreditsHistory } from '@/utils/quota/codexCreditsBurn';
 /**
  * Quota management types.
  */
@@ -494,6 +495,8 @@ export interface CodexQuotaState extends CredentialScopedQuotaState {
   creditsApproxCloudMessages?: number | null;
   spendControlReached?: boolean | null;
   spendControlIndividualLimit?: CodexSpendControlLimit | null;
+  /** 只读积分余额时间序列（manager-server credits-history），用于积分消耗预测。 */
+  creditsHistory?: CodexCreditsHistory | null;
   rateLimitReachedType?: string | null;
   primaryOverSecondaryLimitPercent?: number | null;
   subscriptionActiveUntil?: string | number | null;

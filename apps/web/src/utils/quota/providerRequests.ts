@@ -80,7 +80,7 @@ import {
   parseXaiBillingPayload,
 } from './parsers';
 import { resolveCodexChatgptAccountId, resolveCodexPlanType } from './resolvers';
-import { buildCodexQuotaWindowInfos, type CodexQuotaScopeResolution } from './codexQuota';
+import { buildCodexQuotaWindowInfos, resolveCodexCreditsFields, type CodexQuotaScopeResolution } from './codexQuota';
 import {
   buildCodexResetCreditsRequestHeaders,
   buildCodexUsageRequestHeaders,
@@ -438,9 +438,7 @@ const normalizeBooleanValue = (value: unknown): boolean | null => {
 const resolveCodexCreditsInfo = (payload: CodexUsagePayload) => {
   const credits = payload.credits;
   return {
-    creditsHasCredits: normalizeBooleanValue(credits?.has_credits ?? credits?.hasCredits),
-    creditsUnlimited: normalizeBooleanValue(credits?.unlimited),
-    creditsBalance: normalizeStringValue(credits?.balance),
+    ...resolveCodexCreditsFields(payload),
     creditsOverageLimitReached: normalizeBooleanValue(
       credits?.overage_limit_reached ?? credits?.overageLimitReached
     ),

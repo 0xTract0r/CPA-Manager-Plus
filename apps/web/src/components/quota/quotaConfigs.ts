@@ -115,6 +115,8 @@ import {
   resolveGeminiCliProjectId,
   formatQuotaResetTime,
   formatKimiResetHint,
+  getCodexCreditsDisplay,
+  parseCodexCreditsBalance,
   buildGeminiCliQuotaBuckets,
   createStatusError,
   normalizeGeminiCliModelId,
@@ -133,7 +135,13 @@ import {
 import { normalizeAuthIndex } from '@/utils/authIndex';
 
 import { formatDateTimeUtc8, formatInUtc8 } from '@/utils/datetime';
-
+import { formatNumber } from '@/utils/format';
+import {
+  computeCodexCreditsBurnForecast,
+  formatCodexCreditsCompact,
+  formatCodexCreditsRate,
+  type CodexCreditsBurnLevel,
+} from '@/utils/quota/codexCreditsBurn';
 import type { QuotaRenderHelpers } from './QuotaCard';
 
 import styles from '@/features/quota/QuotaPage.module.scss';
@@ -412,6 +420,44 @@ const getCodexSearchText = (
   ];
 };
 
+const CODEX_CREDITS_KEYS = ['creditsBalance', 'creditsHasCredits', 'creditsUnlimited'] as const;
+
+const hasCodexCreditsSignal = (quota: Partial<CodexQuotaState> | undefined): boolean =>
+  Boolean(quota) && CODEX_CREDITS_KEYS.some((key) => hasObservedValue(quota?.[key]));
+
+/**
+ * 只针对积分三字段（creditsBalance / creditsHasCredits / creditsUnlimited）在请求头观测与
+ * core 快照之间择新：两边都带积分且 core 快照的 observedAtMs（来自 entry.last_refreshed_at）
+ * 比请求头的 observedAtMs（来自 snapshot.timestamp_ms）更新时，改用 core 的积分值，避免账号
+ * 闲置后一直显示几天前的请求头余额。其余字段与原有的 observed 选择 / 合并逻辑保持不变；
+ * 任一边缺时间戳、或某一边没有积分信号时，原样返回 baseObserved。
+ */
+export const preferFresherCodexCredits = <TState extends DisplayQuotaState>(
+  baseObserved: TState | undefined,
+  headerObserved: TState | undefined,
+  coreObserved: TState | undefined
+): TState | undefined => {
+  if (!baseObserved || !headerObserved || !coreObserved) return baseObserved;
+  const header = headerObserved as Partial<CodexQuotaState>;
+  const core = coreObserved as Partial<CodexQuotaState>;
+  if (!hasCodexCreditsSignal(header) || !hasCodexCreditsSignal(core)) return baseObserved;
+
+  const headerAtMs = readFiniteTimestamp(header.observedAtMs);
+  const coreAtMs = readFiniteTimestamp(core.observedAtMs);
+  if (headerAtMs === null || coreAtMs === null) return baseObserved;
+
+  const fresher = coreAtMs > headerAtMs ? core : header;
+  const base = baseObserved as Partial<CodexQuotaState>;
+  if (CODEX_CREDITS_KEYS.every((key) => (base[key] ?? null) === (fresher[key] ?? null))) {
+    return baseObserved;
+  }
+  const next = { ...base } as Record<string, unknown>;
+  CODEX_CREDITS_KEYS.forEach((key) => {
+    next[key] = fresher[key] ?? null;
+  });
+  return next as TState;
+};
+
 type CodexQuotaTooltipRow = {
   key: string;
   label: string;
@@ -554,6 +600,276 @@ const renderCodexWindowInfo = (
   );
 };
 
+/**
+ * 「剩余 N%」百分比节点（Codex / Claude 窗口共用，数值口径为 remaining = 100 − used）。
+ * 显式写出「剩余」，避免「0%」被误读为「已用 0%」；剩余（未取整）≤ 0 时复用进度条低阈值的
+ * danger 色（`quotaPercentDepleted`），与「额度已用完」提示同一口径（used ≥ 100）。
+ * 剩余未知时仍显示 `--`。
+ */
+const renderRemainingPercent = (
+  remaining: number | null,
+  t: TFunction,
+  styleMap: QuotaRenderHelpers['styles']
+): ReactNode => {
+  const { createElement: h } = React;
+  if (remaining === null) return h('span', { className: styleMap.quotaPercent }, '--');
+  const rounded = Math.round(remaining);
+  const className =
+    remaining <= 0
+      ? `${styleMap.quotaPercent} ${styleMap.quotaPercentDepleted}`
+      : styleMap.quotaPercent;
+  return h(
+    'span',
+    { className, 'data-testid': 'quota-remaining-percent' },
+    t('codex_quota.remaining_percent_label', { percent: rounded })
+  );
+};
+
+/** 积分余额展示值：向下取整后按当前界面语言加千分位，例如 `59897.48` → `59,897`。 */
+export const formatCodexCreditsBalance = (balance: number, locale?: string): string =>
+  formatNumber(Math.floor(balance), locale);
+
+/** 与 core 侧一致：积分只豁免主额度桶，所以只有主窗口用满才提示「可用积分继续」。 */
+const hasExhaustedCodexMainQuotaWindow = (windows: CodexQuotaWindow[]): boolean =>
+  windows.some(
+    (window) =>
+      isCodexMainQuotaWindow(window) &&
+      typeof window.usedPercent === 'number' &&
+      Number.isFinite(window.usedPercent) &&
+      window.usedPercent >= 100
+  );
+
+/**
+ * 「积分余额」行：与 core 判定一致，仅 has_credits=true 且（unlimited 或余额 > 0）时渲染；
+ * 无积分数据 / has_credits=false 时返回 null，旧卡片外观保持不变。主额度窗口（5 小时 /
+ * 周）任一用尽时追加「额度已用完 · 可用积分继续」提示——卡片拿不到 core 的冷却状态，
+ * 文案只陈述「有积分可用」而不断言「正在扣积分」；代码审查、附加限额窗口用满不触发。
+ */
+const renderCodexCreditsBalance = (
+  quota: CodexQuotaState,
+  windows: CodexQuotaWindow[],
+  t: TFunction,
+  styleMap: QuotaRenderHelpers['styles']
+): ReactNode => {
+  const display = getCodexCreditsDisplay(quota);
+  if (!display) return null;
+
+  const { createElement: h } = React;
+  const valueLabel =
+    display.kind === 'unlimited'
+      ? t('codex_quota.credits_balance_unlimited')
+      : display.kind === 'below-one'
+        ? '<1'
+        : formatCodexCreditsBalance(display.balance);
+  const showInUseHint = hasExhaustedCodexMainQuotaWindow(windows);
+
+  return h(
+    'div',
+    {
+      key: 'credits-balance',
+      className: styleMap.codexPlanSummary,
+      'data-testid': 'codex-credits-summary',
+    },
+    h(
+      'div',
+      { className: styleMap.codexPlan },
+      h(
+        'span',
+        { className: styleMap.codexPlanItem },
+        h('span', { className: styleMap.codexPlanLabel }, t('codex_quota.credits_balance_label')),
+        h(
+          'span',
+          { className: styleMap.codexPlanValue, 'data-testid': 'codex-credits-balance' },
+          valueLabel
+        )
+      )
+    ),
+    showInUseHint
+      ? h(
+          'div',
+          { className: styleMap.quotaFootnote, 'data-testid': 'codex-credits-in-use-hint' },
+          h(
+            'span',
+            { className: styleMap.quotaFootnoteValue },
+            t('codex_quota.credits_in_use_hint')
+          )
+        )
+      : null
+  );
+};
+
+const resolveUiLocale = (t: TFunction): string | undefined => {
+  const language = (t as unknown as { i18n?: { language?: string } }).i18n?.language;
+  if (typeof language === 'string' && language.trim()) return language.trim();
+  if (typeof document !== 'undefined' && document.documentElement?.lang) {
+    return document.documentElement.lang;
+  }
+  return undefined;
+};
+
+const CODEX_CREDITS_BURN_LEVEL_KEYS = {
+  ok: 'codex_quota.credits_burn_level_ok',
+  tight: 'codex_quota.credits_burn_level_tight',
+  short: 'codex_quota.credits_burn_level_short',
+} as const;
+
+/**
+ * 积分消耗预测块（「积分余额」行下方）：仅在主额度窗口已用满、积分可用且非 unlimited、
+ * 并且有余额序列时渲染。已用 / 速率 / 到重置预计再用 / 进度条（预测 ÷ 余额）+ 状态文字；
+ * 速率与预测在数据不足时隐藏，只显示已用。进度条颜色复用 QuotaProgressBar 的阈值色：
+ * 够用 → high（success），偏紧 → medium（warning），可能不够 → low（danger）。
+ */
+const renderCodexCreditsBurn = (
+  quota: CodexQuotaState,
+  windows: CodexQuotaWindow[],
+  t: TFunction,
+  helpers: QuotaRenderHelpers,
+  nowMs: number
+): ReactNode => {
+  const display = getCodexCreditsDisplay(quota);
+  if (!display || display.kind === 'unlimited') return null;
+  if (!hasExhaustedCodexMainQuotaWindow(windows)) return null;
+  const history = quota.creditsHistory;
+  if (!history || history.unlimited || history.points.length === 0) return null;
+
+  const forecast = computeCodexCreditsBurnForecast(history, {
+    nowMs,
+    currentBalance: parseCodexCreditsBalance(quota.creditsBalance),
+  });
+  if (!forecast) return null;
+
+  const { styles: styleMap } = helpers;
+  const { createElement: h } = React;
+  const locale = resolveUiLocale(t);
+  const usedLabel = formatCodexCreditsCompact(forecast.used, locale);
+  const usedText = forecast.startIsExhaustion
+    ? t('codex_quota.credits_burn_used_since_exhausted', { used: usedLabel })
+    : t('codex_quota.credits_burn_used_recent', { used: usedLabel, hours: forecast.sinceHours });
+  const rateText =
+    forecast.ratePerHour !== null
+      ? t('codex_quota.credits_burn_rate', {
+          rate: formatCodexCreditsRate(forecast.ratePerHour, locale),
+        })
+      : null;
+
+  const hasForecast =
+    forecast.projected !== null && forecast.percent !== null && forecast.level !== null;
+  const level: CodexCreditsBurnLevel = forecast.level ?? 'ok';
+  const fillClass =
+    level === 'short'
+      ? styleMap.quotaBarFillLow
+      : level === 'tight'
+        ? styleMap.quotaBarFillMedium
+        : styleMap.quotaBarFillHigh;
+  const percentRounded = hasForecast ? Math.round(forecast.percent as number) : null;
+  const levelClass =
+    level === 'short'
+      ? styleMap.quotaPercentDepleted
+      : level === 'tight'
+        ? styleMap.codexCreditsBurnTight
+        : '';
+
+  return h(
+    'div',
+    {
+      key: 'credits-burn',
+      className: styleMap.codexCreditsBurn,
+      'data-testid': 'codex-credits-burn',
+      'data-level': hasForecast ? level : 'none',
+    },
+    h(
+      'div',
+      { className: styleMap.quotaFootnote },
+      h(
+        'span',
+        { className: styleMap.quotaFootnoteValue, 'data-testid': 'codex-credits-burn-used' },
+        usedText
+      ),
+      rateText
+        ? h(
+            'span',
+            { className: styleMap.quotaFootnoteValue, 'data-testid': 'codex-credits-burn-rate' },
+            `· ${rateText}`
+          )
+        : null
+    ),
+    hasForecast
+      ? h(
+          'div',
+          { className: styleMap.quotaRow },
+          h(
+            'div',
+            { className: styleMap.codexCreditsBurnHeader },
+            h(
+              'span',
+              {
+                className: styleMap.codexCreditsBurnForecast,
+                'data-testid': 'codex-credits-burn-forecast',
+              },
+              t('codex_quota.credits_burn_forecast', {
+                projected: formatCodexCreditsCompact(forecast.projected as number, locale),
+                balance: formatCodexCreditsCompact(forecast.currentBalance, locale),
+              })
+            ),
+            h(
+              'span',
+              { className: styleMap.quotaMeta },
+              h(
+                'span',
+                { className: styleMap.quotaPercent, 'data-testid': 'codex-credits-burn-percent' },
+                `${percentRounded}%`
+              ),
+              h(
+                'span',
+                {
+                  className: [styleMap.quotaPercent, levelClass].filter(Boolean).join(' '),
+                  'data-testid': 'codex-credits-burn-level',
+                },
+                t(CODEX_CREDITS_BURN_LEVEL_KEYS[level])
+              )
+            )
+          ),
+          // 复用额度进度条的轨道与阈值色 class：宽度 = 预测 ÷ 余额（封顶 100%），
+          // 够用 → quotaBarFillHigh（success）、偏紧 → Medium（warning）、可能不够 → Low（danger）。
+          h(
+            'div',
+            {
+              className: styleMap.quotaBar,
+              'data-testid': 'codex-credits-burn-bar',
+              'data-percent': String(percentRounded),
+            },
+            h('div', {
+              className: `${styleMap.quotaBarFill} ${fillClass}`,
+              style: { width: `${percentRounded}%` },
+            })
+          ),
+          forecast.runOutAtMs !== null
+            ? h(
+                'div',
+                { className: styleMap.quotaFootnote },
+                h(
+                  'span',
+                  {
+                    className: `${styleMap.quotaFootnoteValue} ${styleMap.quotaPercentDepleted}`,
+                    'data-testid': 'codex-credits-burn-runout',
+                  },
+                  t('codex_quota.credits_burn_run_out', {
+                    time: formatInUtc8(forecast.runOutAtMs, {
+                      month: '2-digit',
+                      day: '2-digit',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      hour12: false,
+                    }),
+                  })
+                )
+              )
+            : null
+        )
+      : null
+  );
+};
+
 const renderCodexItems = (
   quota: CodexQuotaState,
   t: TFunction,
@@ -614,10 +930,16 @@ const renderCodexItems = (
     );
   }
 
+  const creditsNode = renderCodexCreditsBalance(quota, windows, t, styleMap);
+  const creditsBurnNode = creditsNode
+    ? renderCodexCreditsBurn(quota, windows, t, helpers, Date.now())
+    : null;
+
   if (windows.length === 0) {
     nodes.push(
       h('div', { key: 'empty', className: styleMap.quotaMessage }, t('codex_quota.empty_windows'))
     );
+    if (creditsNode) nodes.push(creditsNode);
     return h(Fragment, null, ...nodes);
   }
 
@@ -626,7 +948,6 @@ const renderCodexItems = (
       const used = window.usedPercent;
       const clampedUsed = used === null ? null : Math.max(0, Math.min(100, used));
       const remaining = clampedUsed === null ? null : Math.max(0, Math.min(100, 100 - clampedUsed));
-      const percentLabel = remaining === null ? '--' : `${Math.round(remaining)}%`;
       const windowLabel = window.labelKey
         ? t(window.labelKey, window.labelParams as Record<string, string | number>)
         : window.label;
@@ -647,7 +968,7 @@ const renderCodexItems = (
           h(
             'div',
             { className: styleMap.quotaMeta },
-            h('span', { className: styleMap.quotaPercent }, percentLabel),
+            renderRemainingPercent(remaining, t, styleMap),
             h('span', { className: styleMap.quotaReset }, window.resetLabel)
           )
         ),
@@ -659,6 +980,9 @@ const renderCodexItems = (
       );
     })
   );
+
+  if (creditsNode) nodes.push(creditsNode);
+  if (creditsBurnNode) nodes.push(creditsBurnNode);
 
   return h(Fragment, null, ...nodes);
 };
@@ -744,7 +1068,6 @@ const renderClaudeItems = (
       const used = window.usedPercent;
       const clampedUsed = used === null ? null : Math.max(0, Math.min(100, used));
       const remaining = clampedUsed === null ? null : Math.max(0, Math.min(100, 100 - clampedUsed));
-      const percentLabel = remaining === null ? '--' : `${Math.round(remaining)}%`;
       const windowLabel = window.labelKey ? t(window.labelKey) : window.label;
 
       return h(
@@ -757,7 +1080,7 @@ const renderClaudeItems = (
           h(
             'div',
             { className: styleMap.quotaMeta },
-            h('span', { className: styleMap.quotaPercent }, percentLabel),
+            renderRemainingPercent(remaining, t, styleMap),
             h('span', { className: styleMap.quotaReset }, window.resetLabel)
           )
         ),
@@ -2037,9 +2360,9 @@ export const CODEX_CONFIG: LegacyQuotaConfig<CodexQuotaState, CodexQuotaData> = 
       quotaInventoryObserved: data.quotaInventoryObserved,
       planType: data.planType,
       subscriptionActiveUntil: data.subscriptionActiveUntil,
-      creditsHasCredits: data.creditsHasCredits,
-      creditsUnlimited: data.creditsUnlimited,
-      creditsBalance: data.creditsBalance,
+      ...(data.creditsHasCredits !== undefined ? { creditsHasCredits: data.creditsHasCredits } : {}),
+      ...(data.creditsUnlimited !== undefined ? { creditsUnlimited: data.creditsUnlimited } : {}),
+      ...(data.creditsBalance !== undefined ? { creditsBalance: data.creditsBalance } : {}),
       creditsOverageLimitReached: data.creditsOverageLimitReached,
       creditsApproxLocalMessages: data.creditsApproxLocalMessages,
       creditsApproxCloudMessages: data.creditsApproxCloudMessages,
@@ -2111,9 +2434,9 @@ export const CODEX_SUMMARY_CONFIG: QuotaConfig<CodexQuotaState, CodexQuotaData> 
       quotaInventoryObserved: data.quotaInventoryObserved,
       planType: data.planType,
       subscriptionActiveUntil: data.subscriptionActiveUntil,
-      creditsHasCredits: data.creditsHasCredits,
-      creditsUnlimited: data.creditsUnlimited,
-      creditsBalance: data.creditsBalance,
+      ...(data.creditsHasCredits !== undefined ? { creditsHasCredits: data.creditsHasCredits } : {}),
+      ...(data.creditsUnlimited !== undefined ? { creditsUnlimited: data.creditsUnlimited } : {}),
+      ...(data.creditsBalance !== undefined ? { creditsBalance: data.creditsBalance } : {}),
       creditsOverageLimitReached: data.creditsOverageLimitReached,
       creditsApproxLocalMessages: data.creditsApproxLocalMessages,
       creditsApproxCloudMessages: data.creditsApproxCloudMessages,

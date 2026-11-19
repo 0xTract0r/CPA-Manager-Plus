@@ -251,6 +251,71 @@ describe('buildObservedCodexQuotaStateFromCoreSnapshot', () => {
   });
 });
 
+describe('buildObservedCodexQuotaStateFromCoreSnapshot credits', () => {
+  it('maps quota_snapshot.usage.credits into the observed credits fields', () => {
+    const entry: CoreQuotaSnapshotEntry = {
+      auth_id: 'auth-credits',
+      name: 'codex-pro.json',
+      provider: 'codex',
+      status: 'ok',
+      plan_type: 'pro',
+      last_refreshed_at: '2026-11-13T00:00:00Z',
+      snapshot: {
+        usage: {
+          plan_type: 'pro',
+          rate_limit: {
+            secondary_window: { used_percent: 100, limit_window_seconds: 604_800 },
+          },
+          credits: {
+            balance: '59897.4803850000',
+            has_credits: true,
+            unlimited: false,
+            overage_limit_reached: false,
+            approx_cloud_messages: [1, 2],
+            approx_local_messages: [3, 4],
+          },
+        },
+      },
+    };
+
+    const state = buildObservedCodexQuotaStateFromCoreSnapshot(
+      authFile({ name: 'codex-pro.json', auth_id: 'auth-credits' }),
+      entry,
+      t
+    );
+
+    expect(state).toMatchObject({
+      status: 'success',
+      creditsBalance: '59897.4803850000',
+      creditsHasCredits: true,
+      creditsUnlimited: false,
+    });
+    expect(state?.windows?.[0]).toMatchObject({ id: 'weekly', usedPercent: 100 });
+  });
+
+  it('leaves credits fields absent when the snapshot has no credits', () => {
+    const entry: CoreQuotaSnapshotEntry = {
+      name: 'codex.json',
+      provider: 'codex',
+      status: 'ok',
+      snapshot: {
+        usage: { rate_limit: { primary_window: { used_percent: 10 } } },
+      },
+    };
+
+    const state = buildObservedCodexQuotaStateFromCoreSnapshot(
+      authFile({ name: 'codex.json' }),
+      entry,
+      t
+    );
+
+    expect(state?.status).toBe('success');
+    expect(state).not.toHaveProperty('creditsBalance');
+    expect(state).not.toHaveProperty('creditsHasCredits');
+    expect(state).not.toHaveProperty('creditsUnlimited');
+  });
+});
+
 describe('buildObservedClaudeQuotaStateFromCoreSnapshot', () => {
   it('maps a core claude snapshot entry into an observed ClaudeQuotaState', () => {
     const entry: CoreQuotaSnapshotEntry = {

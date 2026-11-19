@@ -3,6 +3,7 @@ import { parse as parseYaml, parseDocument } from 'yaml';
 import {
   advanceDemoCredentialRefresh,
   getDemoApiCallResult,
+  handlePacingFeedbackRequest,
   getDemoAuthFiles,
   getDemoConfigYaml,
   getDemoErrorLogsResponse,
@@ -507,6 +508,8 @@ export async function handleDemoApiRequest<T = unknown>(
 ): Promise<T> {
   const { pathname, params } = normalizeDemoUrl(url, config);
   const rawConfig = getCurrentDemoRawConfig();
+  const pacingResult = handlePacingFeedbackRequest(method, pathname, params, data);
+  if (pacingResult !== undefined) return pacingResult as T;
 
   if (pathname === '/auth-files/account-settings') {
     const name = params.get('name') || '';

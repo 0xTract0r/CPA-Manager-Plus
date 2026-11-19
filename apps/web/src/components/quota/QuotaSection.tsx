@@ -18,6 +18,10 @@ import {
   getHighConfidenceCoreQuotaSnapshotForAuthFile,
   type CoreQuotaSnapshotLookup,
 } from '@/utils/quota/coreQuotaSnapshots';
+import {
+  getCodexCreditsHistoryForAuthFile,
+  type CodexCreditsHistoryLookup,
+} from '@/utils/quota/codexCreditsBurn';
 import { QuotaCard } from './QuotaCard';
 import type { QuotaStatusState } from './QuotaCard';
 import { useQuotaLoader } from './useQuotaLoader';
@@ -27,6 +31,7 @@ import { buildQuotaCredentialIdentity, getQuotaCredentialStoreKey } from '@/util
 import {
   getQuotaStoreKey,
   getScopedQuotaState,
+  preferFresherCodexCredits,
   resolveQuotaDisplayState,
   type LegacyQuotaConfig as QuotaConfig,
   type QuotaSortMode,
@@ -144,6 +149,8 @@ interface QuotaSectionProps<TState extends QuotaStatusState, TData> {
   onAccountDisplayModeChange?: (mode: QuotaAccountDisplayMode) => void;
   headerSnapshotLookup?: UsageHeaderSnapshotLookup;
   coreQuotaSnapshotLookup?: CoreQuotaSnapshotLookup;
+  /** 仅 Codex：只读积分余额时间序列 lookup，挂到展示态上供积分消耗预测使用。 */
+  creditsHistoryLookup?: CodexCreditsHistoryLookup;
 }
 
 export function QuotaSection<TState extends QuotaStatusState, TData>({
@@ -159,6 +166,7 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
   accountDisplayMode,
   headerSnapshotLookup,
   coreQuotaSnapshotLookup,
+  creditsHistoryLookup,
 }: QuotaSectionProps<TState, TData>) {
   const { t } = useTranslation();
   const resolvedTheme: ResolvedTheme = useThemeStore((state) => state.resolvedTheme);
@@ -225,13 +233,21 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
       // 优先采用；但当 core 快照给出 reauth_required / error（账号需重新认证或刷新失败）
       // 时，这类「需处理」状态优先展示，避免被过期的成功头快照掩盖。整条路径只读 core
       // 持久快照与历史头快照，mount 阶段不触发任何真实上游请求。
-      const observedQuota =
+      const baseObservedQuota =
         coreObservedQuota?.status === 'error'
           ? coreObservedQuota
           : (headerObservedQuota ?? coreObservedQuota);
-      return resolveQuotaDisplayState(activeQuota, observedQuota);
+      // 仅积分三字段按时间戳择新（Codex 专属字段；其他 provider 无积分信号时原样返回）。
+      const observedQuota =
+        baseObservedQuota?.status === 'error'
+          ? baseObservedQuota
+          : preferFresherCodexCredits(baseObservedQuota, headerObservedQuota, coreObservedQuota);
+      const displayQuota = resolveQuotaDisplayState(activeQuota, observedQuota);
+      if (config.type !== 'codex' || !creditsHistoryLookup || !displayQuota) return displayQuota;
+      const creditsHistory = getCodexCreditsHistoryForAuthFile(creditsHistoryLookup, file);
+      return creditsHistory ? ({ ...displayQuota, creditsHistory } as TState) : displayQuota;
     },
-    [config, getScopedQuota, headerSnapshotLookup, coreQuotaSnapshotLookup, t]
+    [config, getScopedQuota, headerSnapshotLookup, coreQuotaSnapshotLookup, creditsHistoryLookup, t]
   );
 
   const displayFiles = useMemo(() => {

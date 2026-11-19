@@ -1,10 +1,14 @@
 import { act, type ReactNode } from 'react';
 import { create, type ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import { AuthFilesAccountSettingsModal } from './AuthFilesAccountSettingsModal';
+import {
+  AuthFilesAccountSettingsModal,
+  type AuthFilesAccountSettingsModalProps,
+} from './AuthFilesAccountSettingsModal';
+import { Modal } from '@/components/ui/Modal';
 import type { AccountSettingsEditorState } from '@/features/authFiles/hooks/useAuthFilesAccountSettings';
 
-// 调度旋钮（tier_override / rate_scale）面板是 Claude 专属能力（同 farm_enrolled
+// 调度入口是 Claude 专属能力（同 farm_enrolled
 // 的 provider gate 模式，见 AuthFilesAccountSettingsModal.farmEnrolled.test.tsx）。
 // 本测试只锁定「只对 provider=claude 渲染」这条 gate，控件本身的交互/请求参数/
 // 返回投影刷新在 AccountSchedulingPanel.test.tsx 和
@@ -57,27 +61,10 @@ vi.mock('./AuthFilesStatusHistoryPanel', () => ({
   AuthFilesStatusHistoryPanel: () => null,
 }));
 
-// AccountSchedulingPanel 自身的接线/请求参数已在 AccountSchedulingPanel.test.tsx
-// 独立覆盖；这里只需要一个可探测的占位，用来断言 provider gate + onApplied 透传
-// 接线（差一格 bug 的回归覆盖：保存成功后，弹窗必须把 core 回显投影转发给
-// onSchedulingApplied，而不是吞掉）。
-vi.mock('./AccountSchedulingPanel', () => ({
-  AccountSchedulingPanel: (props: {
-    fileName: string;
-    onApplied?: (view: { subscription_tier: string; tier_source: string; rate_scale: number }) => void;
-  }) => (
-    <div data-testid="account-settings-scheduling-panel-stub">
-      {props.fileName}
-      <button
-        type="button"
-        data-testid="account-settings-scheduling-panel-stub-apply"
-        onClick={() =>
-          props.onApplied?.({ subscription_tier: 'max_20x', tier_source: 'override', rate_scale: 2 })
-        }
-      >
-        stub-apply
-      </button>
-    </div>
+// 基础设置只保留摘要和跳转；实际编辑器在独立窗口中。
+vi.mock('./AccountWarmupSummary', () => ({
+  AccountWarmupSummary: ({ action }: { action?: ReactNode }) => (
+    <div data-testid="account-scheduling-summary">{action}</div>
   ),
 }));
 
@@ -135,7 +122,8 @@ const makeEditor = (provider: string): AccountSettingsEditorState => ({
 
 const mountModal = (
   editor: AccountSettingsEditorState,
-  onSchedulingApplied?: (name: string, scheduling: unknown) => void
+  onOpenLimits?: () => void,
+  dirty = false
 ): ReactTestRenderer => {
   let renderer!: ReactTestRenderer;
   act(() => {
@@ -144,12 +132,12 @@ const mountModal = (
         disableControls={false}
         editor={editor}
         updatedText="{}"
-        dirty={false}
+        dirty={dirty}
         onClose={() => {}}
         onCopyText={() => {}}
         onSave={() => {}}
         onChange={() => {}}
-        onSchedulingApplied={onSchedulingApplied}
+        onOpenLimits={onOpenLimits}
       />
     );
   });
@@ -159,54 +147,57 @@ const mountModal = (
 const countByTestId = (renderer: ReactTestRenderer, testId: string): number =>
   renderer.root.findAllByProps({ 'data-testid': testId }).length;
 
-describe('AuthFilesAccountSettingsModal scheduling-panel provider gate', () => {
-  it('renders the scheduling panel for claude accounts', () => {
+describe('基础设置的紧凑调度入口', () => {
+  it('轮询换父回调时保持Modal关闭回调稳定，调用最新父回调', () => {
     const renderer = mountModal(makeEditor('claude'));
-    expect(countByTestId(renderer, 'account-settings-scheduling-panel-stub')).toBe(1);
-    renderer.unmount();
+    const close = renderer.root.findByType(Modal).props.onClose;
+    const latestClose = vi.fn();
+    const props = renderer.root.findByType(AuthFilesAccountSettingsModal)
+      .props as AuthFilesAccountSettingsModalProps;
+    act(() => renderer.update(<AuthFilesAccountSettingsModal {...props} onClose={latestClose} />));
+    expect(renderer.root.findByType(Modal).props.onClose).toBe(close);
+    act(() => close());
+    expect(latestClose).toHaveBeenCalledOnce();
+    act(() => renderer.unmount());
+  });
+  it('Claude仅有摘要，没有完整策略或进度面板', () => {
+    const renderer = mountModal(makeEditor('claude'), vi.fn());
+    expect(countByTestId(renderer, 'account-scheduling-summary')).toBe(1);
+    expect(countByTestId(renderer, 'account-limit-policy')).toBe(0);
+    expect(countByTestId(renderer, 'warmup-policy-summary')).toBe(0);
+    act(() => renderer.unmount());
   });
 
-  it('does not render the scheduling panel for codex (non-claude) accounts', () => {
+  it('非Claude没有调度入口，Codex fast保留', () => {
     const renderer = mountModal(makeEditor('codex'));
-    expect(countByTestId(renderer, 'account-settings-scheduling-panel-stub')).toBe(0);
-    // codex 仍应看到自己的 fast 卡片（gate 是 provider 专属而非把整个 toggleGrid 隐藏）。
+    expect(countByTestId(renderer, 'account-scheduling-summary')).toBe(0);
     expect(countByTestId(renderer, 'account-settings-fast-card')).toBe(1);
-    renderer.unmount();
+    act(() => renderer.unmount());
   });
 
-  // 差一格 bug 的接线层回归覆盖：AccountSchedulingPanel 保存成功后回显的投影，
-  // 必须经由弹窗转发给 onSchedulingApplied（携带 editor.fileName），供父页面
-  // 就地更新账号列表缓存——而不是被弹窗吞掉、只留在已关闭的局部 state 里。
-  it('forwards the scheduling panel’s onApplied projection to onSchedulingApplied with the account file name', () => {
-    const onSchedulingApplied = vi.fn();
-    const editor = makeEditor('claude');
-    const renderer = mountModal(editor, onSchedulingApplied);
-
-    const applyButton = renderer.root.findByProps({
-      'data-testid': 'account-settings-scheduling-panel-stub-apply',
-    });
-    act(() => {
-      (applyButton.props.onClick as () => void)();
-    });
-
-    expect(onSchedulingApplied).toHaveBeenCalledWith(editor.fileName, {
-      subscription_tier: 'max_20x',
-      tier_source: 'override',
-      rate_scale: 2,
-    });
-    renderer.unmount();
+  it('干净的基础设置可进入独立调度窗口', () => {
+    const onOpenLimits = vi.fn();
+    const renderer = mountModal(makeEditor('claude'), onOpenLimits);
+    const button = renderer.root
+      .findAllByType('button')
+      .find((node) => node.props['data-testid'] === 'account-settings-open-limits')!;
+    expect(button.props.disabled).toBe(false);
+    act(() => button.props.onClick());
+    expect(onOpenLimits).toHaveBeenCalledOnce();
+    act(() => renderer.unmount());
   });
 
-  it('does not throw when onSchedulingApplied is not wired', () => {
-    const renderer = mountModal(makeEditor('claude'));
-    const applyButton = renderer.root.findByProps({
-      'data-testid': 'account-settings-scheduling-panel-stub-apply',
-    });
-    expect(() => {
-      act(() => {
-        (applyButton.props.onClick as () => void)();
-      });
-    }).not.toThrow();
-    renderer.unmount();
+  it('未保存或缺少接线时禁用跳转，避免悄悄丢修改', () => {
+    for (const [handler, dirty] of [
+      [vi.fn(), true],
+      [undefined, false],
+    ] as const) {
+      const renderer = mountModal(makeEditor('claude'), handler, dirty);
+      const button = renderer.root
+        .findAllByType('button')
+        .find((node) => node.props['data-testid'] === 'account-settings-open-limits')!;
+      expect(button.props.disabled).toBe(true);
+      act(() => renderer.unmount());
+    }
   });
 });

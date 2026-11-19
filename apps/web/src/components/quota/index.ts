@@ -12,6 +12,7 @@ export {
   buildObservedCodexQuotaState,
   buildQuotaFailureState,
   getQuotaStoreKey,
+  preferFresherCodexCredits,
   resolveQuotaDisplayState,
 } from './quotaConfigs';
 export type { QuotaConfig, LegacyQuotaConfig } from './quotaConfigs';

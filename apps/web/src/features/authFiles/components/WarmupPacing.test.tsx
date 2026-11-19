@@ -7,6 +7,7 @@ import zh from '@/i18n/locales/zh-CN.json';
 import tw from '@/i18n/locales/zh-TW.json';
 import ru from '@/i18n/locales/ru.json';
 import { WarmupPacingButton, WarmupPacingModal } from './WarmupPacing';
+import { Modal } from '@/components/ui/Modal';
 import { AuthFileCard, type AuthFileCardProps } from './AuthFileCard';
 import { getAuthFileSelectionKey } from '../model/authFilesPageModel';
 import { pacingBalanceLevel } from '../model/warmupPacing';
@@ -71,6 +72,19 @@ function render(element: React.ReactElement) {
 const text = (view: ReactTestRenderer) => JSON.stringify(view.toJSON());
 
 describe('warmup pacing', () => {
+  it('keeps the close animation callback stable across live renders and uses the latest parent', () => {
+    const first = vi.fn();
+    const latest = vi.fn();
+    const target = file();
+    const view = render(<WarmupPacingModal file={target} open onClose={first} />);
+    const close = view.root.findByType(Modal).props.onClose;
+    act(() => view.update(<WarmupPacingModal file={{ ...target }} open onClose={latest} />));
+    expect(view.root.findByType(Modal).props.onClose).toBe(close);
+    act(() => close());
+    expect(latest).toHaveBeenCalledTimes(1);
+    expect(first).not.toHaveBeenCalled();
+    act(() => view.unmount());
+  });
   it.each([
     [0, 4, 'empty'],
     [0.999, 4, 'empty'],
@@ -166,7 +180,7 @@ describe('warmup pacing', () => {
     const view = render(<WarmupPacingModal file={target} open onClose={() => {}} />);
     expect(text(view)).toContain('Active group limit reached');
     expect(text(view)).toContain('not yet sent');
-    expect(text(view)).toContain('other limits still affect sending');
+    expect(text(view)).toContain('upstream quota still affect sending');
     expect(view.root.findByProps({ role: 'progressbar' }).props['aria-valuemax']).toBe(12);
     const changed = file('threshold');
     changed.account_scheduling!.warmup_traffic_pacing!.reason = 'private/internal/path';

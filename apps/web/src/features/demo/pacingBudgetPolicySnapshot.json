@@ -1,0 +1,98 @@
+{
+  "read_at": "2026-09-23T14:01:57.248579+00:00",
+  "source": "production readonly management GET /config + /auth-files",
+  "warmup_curve": [
+    {
+      "name": "w1",
+      "min-age-days": 0,
+      "max-age-days": 7,
+      "daily-budget": 200,
+      "rpm-limit": 3,
+      "concurrency-limit": 1
+    },
+    {
+      "name": "w2",
+      "min-age-days": 7,
+      "max-age-days": 14,
+      "daily-budget": 500,
+      "rpm-limit": 5,
+      "concurrency-limit": 1
+    },
+    {
+      "name": "w3-4",
+      "min-age-days": 14,
+      "max-age-days": 30,
+      "daily-budget": 2000,
+      "rpm-limit": 12,
+      "concurrency-limit": 2
+    },
+    {
+      "name": "w5-6",
+      "min-age-days": 30,
+      "max-age-days": 45,
+      "daily-budget": 4500,
+      "rpm-limit": 20,
+      "concurrency-limit": 2
+    },
+    {
+      "name": "w7-8",
+      "min-age-days": 45,
+      "max-age-days": 60,
+      "daily-budget": 6500,
+      "rpm-limit": 30,
+      "concurrency-limit": 3
+    }
+  ],
+  "mature_limits": {
+    "rpm-limit": 45,
+    "concurrency-limit": 4
+  },
+  "rate_scale": 1,
+  "pacing_enabled": true,
+  "accounts": [
+    {
+      "alias": "APUS-01",
+      "disabled": false,
+      "stage": "mature",
+      "mature": true,
+      "age_days": 157,
+      "first_production_at": "2026-04-19T12:31:00Z",
+      "daily_budget": 0,
+      "token_daily_budget": 0,
+      "pacing_daily_requests": null
+    },
+    {
+      "alias": "APUS-03",
+      "disabled": true,
+      "stage": "cold",
+      "mature": false,
+      "age_days": null,
+      "first_production_at": null,
+      "daily_budget": 200,
+      "token_daily_budget": 0,
+      "pacing_daily_requests": 200
+    },
+    {
+      "alias": "AC-13",
+      "disabled": false,
+      "stage": "w2",
+      "mature": false,
+      "age_days": 8,
+      "first_production_at": "2026-09-15T06:32:42Z",
+      "daily_budget": 500,
+      "token_daily_budget": 0,
+      "pacing_daily_requests": 500
+    },
+    {
+      "alias": "AC-16",
+      "disabled": false,
+      "stage": "w2",
+      "mature": false,
+      "age_days": 11,
+      "first_production_at": "2026-09-11T15:44:47Z",
+      "daily_budget": 500,
+      "token_daily_budget": 0,
+      "pacing_daily_requests": 500
+    }
+  ]
+}
