@@ -2050,3 +2050,25 @@ func monitoringEvent(
 		CreatedAtMS:     timestampMS,
 	}
 }
+
+func TestAccountStatsSeparateProvidersAndMergeRotatedCredentials(t *testing.T) {
+	stats := buildAccountStats([]store.AccountModelStat{
+		{AccountSnapshot: "shared@example.com", AuthLabelSnapshot: "AC-13", AuthProviderSnapshot: "claude", AuthIndex: "claude-1", Model: "claude", Calls: 2, SuccessCalls: 2, TotalTokens: 100},
+		{AccountSnapshot: "shared@example.com", AuthLabelSnapshot: "GPT-PH-01", AuthProviderSnapshot: "codex", AuthIndex: "codex-old", Model: "gpt", Calls: 3, SuccessCalls: 3, TotalTokens: 200},
+		{AccountSnapshot: "shared@example.com", AuthLabelSnapshot: "GPT-PH-01", AuthProviderSnapshot: "codex", AuthIndex: "codex-new", Model: "gpt", Calls: 4, SuccessCalls: 4, TotalTokens: 300},
+	}, nil)
+	if len(stats) != 2 {
+		t.Fatalf("wanted two providers, got %#v", stats)
+	}
+	byID := map[string]AccountStatRow{}
+	for _, row := range stats {
+		byID[row.ID] = row
+	}
+	claude, codex := byID["claude:shared@example.com"], byID["codex:shared@example.com"]
+	if claude.Calls != 2 || claude.TotalTokens != 100 || claude.AuthLabelSnapshot != "AC-13" || len(claude.AuthIndices) != 1 {
+		t.Fatalf("Claude stats mixed: %#v", claude)
+	}
+	if codex.Calls != 7 || codex.TotalTokens != 500 || codex.AuthLabelSnapshot != "GPT-PH-01" || len(codex.AuthIndices) != 2 {
+		t.Fatalf("Codex rotation split or mixed: %#v", codex)
+	}
+}

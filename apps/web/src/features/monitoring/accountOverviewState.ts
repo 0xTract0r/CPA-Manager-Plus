@@ -1,4 +1,5 @@
 import type { AuthFileItem } from '@/types';
+import { buildMonitoringAccountKey } from './model/base';
 import type { SourceProviderEnabledState } from '@/types/sourceInfo';
 import { isDisabledAuthFile } from '@/utils/quota';
 import { normalizeRecentRequestAuthIndex, type StatusBarData } from '@/utils/recentRequests';
@@ -537,7 +538,13 @@ export const buildMonitoringAccountStatusDataMap = (
       return;
     }
 
-    const accountKey = row.account || row.authLabel || row.source;
+    const accountKey = buildMonitoringAccountKey(
+      row.provider,
+      row.account,
+      row.authLabel,
+      row.source,
+      row.authIndex
+    );
     const existing = grouped.get(accountKey) ?? [];
     existing.push(row);
     grouped.set(accountKey, existing);

@@ -1768,7 +1768,7 @@ type credentialStatAccumulator struct {
 func buildAccountStats(stats []store.AccountModelStat, prices map[string]store.ModelPrice) []AccountStatRow {
 	grouped := map[string]*accountStatAccumulator{}
 	for _, stat := range stats {
-		id := accountGroupKey(stat.AccountSnapshot, stat.AuthLabelSnapshot, stat.Source, stat.AuthIndex)
+		id := accountGroupKey(stat.AuthProviderSnapshot, stat.AccountSnapshot, stat.AuthLabelSnapshot, stat.Source, stat.AuthIndex)
 		entry := grouped[id]
 		if entry == nil {
 			entry = &accountStatAccumulator{
@@ -2084,20 +2084,18 @@ func fillChannelShareSnapshots(row *ChannelShareRow, stat store.ChannelModelStat
 	}
 }
 
-func accountGroupKey(accountSnapshot, authLabelSnapshot, source, authIndex string) string {
-	if strings.TrimSpace(accountSnapshot) != "" {
-		return accountSnapshot
+func accountGroupKey(provider, accountSnapshot, authLabelSnapshot, source, authIndex string) string {
+	// 同邮箱可同时拥有 Claude/Codex；同 provider 的凭据轮转仍属于同一账号。
+	scope := strings.ToLower(strings.TrimSpace(provider))
+	if scope == "" {
+		scope = "unknown"
 	}
-	if strings.TrimSpace(authLabelSnapshot) != "" {
-		return authLabelSnapshot
+	for _, identity := range []string{accountSnapshot, authLabelSnapshot, source, authIndex} {
+		if value := strings.TrimSpace(identity); value != "" {
+			return scope + ":" + value
+		}
 	}
-	if strings.TrimSpace(source) != "" {
-		return source
-	}
-	if strings.TrimSpace(authIndex) != "" {
-		return authIndex
-	}
-	return "-"
+	return scope + ":-"
 }
 
 // unknownAPIKeyGroupKey 是 api_key_hash 为空时的统一归属桶。历史实现会把

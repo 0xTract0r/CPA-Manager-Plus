@@ -531,8 +531,8 @@ describe('buildFilterOptionsFromAnalytics', () => {
     );
 
     expect(options.accountRows.map((row) => row.filterValue)).toEqual([
-      'auth:openai-auth',
-      'source:source-b',
+      'provider:openai|auth:openai-auth',
+      'provider:openai|source:source-b',
     ]);
     expect(options.accountRows[0].sourceKeys).toContain('openai:0:0');
   });

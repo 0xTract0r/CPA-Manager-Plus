@@ -560,8 +560,8 @@ describe('accountOverviewState', () => {
     ];
 
     const result = buildMonitoringAccountStatusDataMap(rows, { startMs, endMs });
-    const accountStatus = result.get('account@example.com');
-    const otherStatus = result.get('other@example.com');
+    const accountStatus = result.get('codex:account@example.com');
+    const otherStatus = result.get('codex:other@example.com');
 
     expect(accountStatus).toBeDefined();
     expect(accountStatus?.totalSuccess).toBe(1);
@@ -617,7 +617,7 @@ describe('accountOverviewState', () => {
       startMs: Number.NEGATIVE_INFINITY,
       endMs,
     });
-    const accountStatus = result.get('account@example.com');
+    const accountStatus = result.get('codex:account@example.com');
 
     expect(accountStatus).toBeDefined();
     expect(accountStatus?.totalSuccess).toBe(1);
@@ -626,4 +626,21 @@ describe('accountOverviewState', () => {
     expect(accountStatus?.blockDetails[0]).toMatchObject({ success: 1, failure: 0 });
     expect(accountStatus?.blockDetails[19]).toMatchObject({ success: 0, failure: 1 });
   });
+});
+
+it('keeps same-email provider health histories independent', () => {
+  const stamp = Date.UTC(2026, 4, 10);
+  const data = buildMonitoringAccountStatusDataMap(
+    [
+      createEventRow({ provider: 'claude', failed: true, timestampMs: stamp }),
+      createEventRow({ provider: 'codex', failed: false, timestampMs: stamp }),
+    ],
+    { startMs: stamp, endMs: stamp + 60000 }
+  );
+  expect(data.size).toBe(2);
+  expect(data.get('claude:account@example.com')).toMatchObject({
+    totalSuccess: 0,
+    totalFailure: 1,
+  });
+  expect(data.get('codex:account@example.com')).toMatchObject({ totalSuccess: 1, totalFailure: 0 });
 });

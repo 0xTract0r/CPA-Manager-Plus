@@ -22,6 +22,7 @@ import {
 } from '@/utils/sourceResolver';
 import { normalizeAuthIndex, type UsageDetailWithEndpoint } from '@/utils/usage';
 import {
+  buildMonitoringAccountKey,
   formatApiKeyHashLabel,
   joinUnique,
   maskAuthIndex,
@@ -107,6 +108,7 @@ const ACCOUNT_FILTER_PREFIXES = {
 const NO_MATCH_FILTER_VALUE = '__no_matching_filter_value__';
 
 export type MonitoringAccountFilterCriteria = {
+  provider?: string;
   accounts: string[];
   authIndices: string[];
   sourceHashes: string[];
@@ -151,32 +153,42 @@ const buildAccountFilterToken = (prefix: string, values: string[]) =>
 
 export const buildMonitoringAccountFilterValue = ({
   account,
+  provider,
   authIndices,
   sourceHashes,
   apiKeyHashes,
 }: {
   account?: string | null;
+  provider?: string;
   authIndices?: Array<string | null | undefined>;
   sourceHashes?: Array<string | null | undefined>;
   apiKeyHashes?: Array<string | null | undefined>;
 }) => {
+  const scopeToken = (token: string) =>
+    provider?.trim() && token
+      ? `provider:${encodeURIComponent(provider.trim().toLowerCase())}|${token}`
+      : token;
   const normalizedAuthIndices = normalizeAuthFilterValues(authIndices);
   if (normalizedAuthIndices.length > 0) {
-    return buildAccountFilterToken(ACCOUNT_FILTER_PREFIXES.auth, normalizedAuthIndices);
+    return scopeToken(buildAccountFilterToken(ACCOUNT_FILTER_PREFIXES.auth, normalizedAuthIndices));
   }
 
   const normalizedSourceHashes = normalizeAccountFilterValues(sourceHashes);
   if (normalizedSourceHashes.length > 0) {
-    return buildAccountFilterToken(ACCOUNT_FILTER_PREFIXES.source, normalizedSourceHashes);
+    return scopeToken(
+      buildAccountFilterToken(ACCOUNT_FILTER_PREFIXES.source, normalizedSourceHashes)
+    );
   }
 
   const normalizedApiKeyHashes = normalizeApiKeyHashValues(apiKeyHashes);
   if (normalizedApiKeyHashes.length > 0) {
-    return buildAccountFilterToken(ACCOUNT_FILTER_PREFIXES.apiKey, normalizedApiKeyHashes);
+    return scopeToken(
+      buildAccountFilterToken(ACCOUNT_FILTER_PREFIXES.apiKey, normalizedApiKeyHashes)
+    );
   }
 
   const normalizedAccounts = normalizeAccountFilterValues([account]);
-  return buildAccountFilterToken(ACCOUNT_FILTER_PREFIXES.account, normalizedAccounts);
+  return scopeToken(buildAccountFilterToken(ACCOUNT_FILTER_PREFIXES.account, normalizedAccounts));
 };
 
 export const parseMonitoringAccountFilterValue = (
@@ -190,6 +202,13 @@ export const parseMonitoringAccountFilterValue = (
     apiKeyHashes: [],
   };
   if (!text || text === 'all') return emptyCriteria;
+  if (text.startsWith('provider:') && text.includes('|')) {
+    const split = text.indexOf('|');
+    return {
+      ...parseMonitoringAccountFilterValue(text.slice(split + 1)),
+      provider: decodeAccountFilterValue(text.slice('provider:'.length, split)),
+    };
+  }
 
   if (text.startsWith(ACCOUNT_FILTER_PREFIXES.auth)) {
     return {
@@ -339,6 +358,7 @@ export const buildAnalyticsFilters = (
   if (isActiveFilterValue(scopeFilters.account)) {
     const account = scopeFilters.account!.trim();
     const accountCriteria = parseMonitoringAccountFilterValue(account);
+    if (accountCriteria.provider) filters.providers = [accountCriteria.provider];
 
     authIndices = addAuthIndexConstraint(authIndices, accountCriteria.authIndices);
     filters.source_hashes = addFilterValueConstraint(
@@ -375,7 +395,7 @@ export const buildAnalyticsFilters = (
       .map(([authIndex]) => authIndex);
     authIndices = addAuthIndexConstraint(authIndices, providerAuthIndices);
     if (providerAuthIndices.length === 0) {
-      filters.providers = [provider];
+      filters.providers = addFilterValueConstraint(filters.providers, [provider]);
     }
   }
   if (isActiveFilterValue(scopeFilters.channel)) {
@@ -634,7 +654,13 @@ export const buildAccountRowsFromAnalytics = (
       );
 
       return {
-        id: account || row.id,
+        id: buildMonitoringAccountKey(
+          row.auth_provider_snapshot || authMetas[0]?.provider || '',
+          account,
+          row.auth_label_snapshot || '',
+          row.sources?.[0] || '',
+          authIndex || ''
+        ),
         account,
         displayAccount,
         accountMasked: display.accountMasked || maskEmailLike(account),
@@ -659,6 +685,7 @@ export const buildAccountRowsFromAnalytics = (
         filterValue:
           buildMonitoringAccountFilterValue({
             account,
+            provider: row.auth_provider_snapshot || authMetas[0]?.provider || undefined,
             authIndices: row.auth_indices,
             sourceHashes: row.source_hashes,
           }) || account,

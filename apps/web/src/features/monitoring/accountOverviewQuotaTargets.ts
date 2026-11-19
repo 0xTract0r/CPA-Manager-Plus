@@ -118,7 +118,7 @@ export const buildMonitoringAccountQuotaTargetsByAccount = (
       });
 
       return [
-        row.account,
+        row.id,
         Array.from(bucket.values()).sort(
           (left, right) =>
             left.authLabel.localeCompare(right.authLabel) ||

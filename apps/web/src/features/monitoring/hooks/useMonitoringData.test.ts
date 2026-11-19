@@ -893,3 +893,90 @@ describe('monitoring realtime table stability across 30s auto-refresh', () => {
     expect(resolution.snapshot.filteredRows[0]?.id).toBe('new-fetched-rows');
   });
 });
+
+it('isolates providers with the same email and retains credential rotation in both data paths', () => {
+  const events = [
+    createMonitoringEventRow({
+      id: 'claude',
+      account: 'shared@example.com',
+      provider: 'claude',
+      authIndex: 'claude-1',
+      authLabel: 'AC-13',
+    }),
+    createMonitoringEventRow({
+      id: 'codex-old',
+      account: 'shared@example.com',
+      provider: 'codex',
+      authIndex: 'codex-old',
+      authLabel: 'GPT-PH-01',
+    }),
+    createMonitoringEventRow({
+      id: 'codex-new',
+      account: 'shared@example.com',
+      provider: 'codex',
+      authIndex: 'codex-new',
+      authLabel: 'GPT-PH-01',
+    }),
+  ];
+  const fallback = buildAccountRows(events);
+  expect(fallback).toHaveLength(2);
+  expect(fallback.find((row) => row.id === 'codex:shared@example.com')?.authIndices).toEqual([
+    'codex-new',
+    'codex-old',
+  ]);
+  const backend = fallback.map((row) => ({
+    id: row.id,
+    account_snapshot: row.account,
+    auth_label_snapshot: row.authLabels[0],
+    auth_provider_snapshot: row.id.split(':')[0],
+    auth_indices: row.authIndices,
+    sources: [],
+    source_hashes: [],
+    calls: row.totalCalls,
+    success_calls: row.successCalls,
+    failure_calls: row.failureCalls,
+    success_rate: row.successRate,
+    input_tokens: row.inputTokens,
+    output_tokens: row.outputTokens,
+    cached_tokens: row.cachedTokens,
+    cache_read_tokens: row.cacheReadTokens,
+    cache_creation_tokens: row.cacheCreationTokens,
+    total_tokens: row.totalTokens,
+    cost: row.totalCost,
+    average_latency_ms: null,
+    last_seen_ms: row.lastSeenAt,
+    models: [],
+  }));
+  const adapted = buildAccountRowsFromAnalytics(
+    backend,
+    new Map(),
+    new Map(),
+    buildSourceInfoMap({}),
+    new Map()
+  );
+  expect(new Set(adapted.map((row) => row.id)).size).toBe(2);
+  expect(adapted.find((row) => row.id.startsWith('claude:'))?.authIndices).toEqual(['claude-1']);
+  const codex = adapted.find((row) => row.id.startsWith('codex:'))!;
+  expect(
+    buildScopeFilteredRows(events, { account: codex.filterValue }).map((row) => row.id)
+  ).toEqual(['codex-old', 'codex-new']);
+});
+
+it('keeps provider scope when historical same-email events have no auth index', () => {
+  const events = ['claude', 'codex'].map((provider) =>
+    createMonitoringEventRow({
+      id: provider,
+      provider,
+      account: 'shared@example.com',
+      authIndex: '',
+      source: 'shared@example.com',
+      authLabel: 'shared@example.com',
+    })
+  );
+  const rows = buildAccountRows(events);
+  expect(rows).toHaveLength(2);
+  expect(rows[0].filterValue).not.toBe(rows[1].filterValue);
+  for (const row of rows) {
+    expect(buildScopeFilteredRows(events, { account: row.filterValue })).toHaveLength(1);
+  }
+});

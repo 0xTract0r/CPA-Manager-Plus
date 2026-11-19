@@ -1215,9 +1215,9 @@ export function MonitoringCenterPage() {
   );
 
   const toggleAccountExpanded = useCallback(
-    (accountId: string, account: string) => {
+    (accountId: string) => {
       if (!expandedAccounts[accountId]) {
-        void loadAccountQuota(account);
+        void loadAccountQuota(accountId);
       }
       setExpandedAccounts((previous) => ({
         ...previous,
@@ -1229,7 +1229,7 @@ export function MonitoringCenterPage() {
 
   const focusAccount = useCallback(
     (row: MonitoringAccountRow) => {
-      const account = row.account;
+      const account = row.id;
       const accountFilterValue = row.filterValue || row.account;
       if (focusedAccount === account) {
         restoreFocusSnapshot();
