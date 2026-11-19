@@ -1,4 +1,4 @@
-import { formatApiKeyHashLabel } from './base';
+import { buildMonitoringAccountKey, formatApiKeyHashLabel } from './base';
 import { sanitizeApiKeyDisplayText, shouldPreferApiKeyAlias } from './apiKeys';
 import {
   buildMonitoringAccountFilterValue,
@@ -116,6 +116,11 @@ export const buildScopeFilteredRows = (
 
   return rows.filter((row) => {
     if (isActiveScopeFilterValue(scopeFilters.account)) {
+      if (
+        accountCriteria.provider &&
+        normalizeScopeValue(row.provider) !== accountCriteria.provider
+      )
+        return false;
       if (accountAuthIndices.size > 0) {
         if (!accountAuthIndices.has(normalizeScopeValue(row.authIndex))) return false;
       } else if (accountApiKeyHashes.size > 0) {
@@ -289,6 +294,7 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
     {
       id: string;
       account: string;
+      provider: string;
       accountMasked: string;
       accountNotes: Set<string>;
       authLabels: Set<string>;
@@ -331,10 +337,17 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
   >();
 
   rows.forEach((row) => {
-    const accountKey = row.account || row.authLabel || row.source;
+    const accountKey = buildMonitoringAccountKey(
+      row.provider,
+      row.account,
+      row.authLabel,
+      row.source,
+      row.authIndex
+    );
     const existing = grouped.get(accountKey) ?? {
       id: accountKey,
       account: row.account,
+      provider: row.provider,
       accountMasked: row.accountMasked,
       accountNotes: new Set<string>(),
       authLabels: new Set<string>(),
@@ -432,6 +445,7 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
         filterValue:
           buildMonitoringAccountFilterValue({
             account: item.account,
+            provider: item.provider,
             authIndices,
             apiKeyHashes,
           }) || item.account,

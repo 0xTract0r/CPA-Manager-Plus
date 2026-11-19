@@ -214,3 +214,38 @@ describe('accountOverviewQuotaTargets', () => {
     ]);
   });
 });
+
+it('keeps same-email provider quota targets under separate row identities', () => {
+  const rows = [
+    createAccountRow({
+      id: 'claude:shared@example.com',
+      account: 'shared@example.com',
+      authIndices: ['claude-1'],
+    }),
+    createAccountRow({
+      id: 'codex:shared@example.com',
+      account: 'shared@example.com',
+      authIndices: ['codex-1'],
+    }),
+  ];
+  const state = new Map(
+    rows.map((row) => [
+      row.id,
+      createAuthState({
+        enabledState: 'enabled',
+        files: [
+          {
+            name: row.id.startsWith('claude:') ? 'claude.json' : 'codex.json',
+            type: row.id.split(':')[0],
+            authIndex: row.authIndices[0],
+            account: row.account,
+          },
+        ],
+      }),
+    ])
+  );
+  const targets = buildMonitoringAccountQuotaTargetsByAccount(rows, state);
+  expect(targets.size).toBe(2);
+  expect(targets.get(rows[0].id)?.map((target) => target.provider)).toEqual(['claude']);
+  expect(targets.get(rows[1].id)?.map((target) => target.provider)).toEqual(['codex']);
+});

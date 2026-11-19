@@ -2,6 +2,10 @@ import { maskAccountEmail, readEmailLike } from '@/utils/accountIdentity';
 
 export type RecordLike = Record<string, unknown>;
 
+// provider 隔离账号身份；同 provider 的凭据轮转不按 authIndex 拆行。
+export const buildMonitoringAccountKey = (provider: string, ...identities: string[]) =>
+  `${provider.trim().toLowerCase() || 'unknown'}:${identities.map((value) => value.trim()).find(Boolean) || '-'}`;
+
 export const isRecord = (value: unknown): value is RecordLike =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 
