@@ -7589,7 +7589,7 @@ export const getDemoHeaderSnapshots = (): UsageHeaderSnapshotsResponse => ({
 });
 
 // 积分余额序列演示（只读 credits-history）：
-// - codex-team-01：生产真实形态，周额度用满后约 17 小时用掉 3,220，预测「够用」；
+// - codex-scaled-16：生产真实形态，周额度用满后约 17 小时用掉 3,220，预测「够用」；
 // - codex-scaled-06：消耗快、余额少，预测「可能不够」并给出用完时间；
 // - codex-scaled-11：判断不出用满时刻（全为未用满点）→「近 N 小时」，预测「偏紧」。
 const demoCreditsSeries = (spanHours: number, balances: number[], exhaustedFromIndex: number) =>
@@ -7607,9 +7607,9 @@ export const getDemoCreditsHistory = () => ({
   truncated: false,
   items: [
     {
-      account_key: 'codex-team-01.json::codex-team-01',
-      auth_file_snapshot: 'codex-team-01.json',
-      auth_index: 'codex-team-01',
+      account_key: 'codex-scaled-16.json::codex-scaled-16',
+      auth_file_snapshot: 'codex-scaled-16.json',
+      auth_index: 'codex-scaled-16',
       provider: 'codex',
       window_start_ms: now() - 7 * day + 387_720 * 1000,
       quota_reset_at_ms: now() + 387_720 * 1000,
@@ -7943,8 +7943,8 @@ const isDemoForbiddenApiCall = (requestUrl: string): boolean => {
   }
 };
 
-// 积分余额演示：codex-team-01 周额度已用尽、靠积分继续服务（原始 balance 为上游的
-// 高精度字符串）；codex-fallback-02 没有积分，卡片不应出现积分行。
+// 积分余额演示：codex-scaled-16 周额度已用尽、靠积分继续服务（原始 balance 为上游的
+// 高精度字符串）；codex-scaled-21 没有积分，卡片不应出现积分行。
 const demoCodexCreditsByAuthIndex: Record<
   string,
   {
@@ -7964,7 +7964,7 @@ const demoCodexCreditsByAuthIndex: Record<
     weeklyResetAfterSeconds: 30 * 60 * 60,
     credits: { has_credits: true, unlimited: false, balance: '12000' },
   },
-  'codex-team-01': {
+  'codex-scaled-16': {
     weeklyUsedPercent: 100,
     // 与生产形态一致：用满后余额降到 56,677，距周重置约 107.7 小时（11-14 17:35 → 11-19 05:18）。
     weeklyResetAfterSeconds: 387_720,
@@ -7975,7 +7975,7 @@ const demoCodexCreditsByAuthIndex: Record<
       balance: '56677.3105000000',
     },
   },
-  'codex-fallback-02': {
+  'codex-scaled-21': {
     weeklyUsedPercent: 0.42,
     credits: { has_credits: false, unlimited: false, balance: '0' },
   },

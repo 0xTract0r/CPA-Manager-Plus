@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -174,6 +174,17 @@ describe('GitHub Actions workflow integrity', () => {
     expect(requiredJob).toContain('- demo-docs');
     expect(requiredJob).toContain("DEMO_DOCS_RESULT: ${{ needs['demo-docs'].result }}");
     expect(requiredJob).toContain('"Demo and Docs:${DEMO_DOCS_RESULT}"');
+  });
+
+  it('publishes the fork demo and its local manuals together', () => {
+    const workflow = readWorkflow('demo-pages.yml');
+    const build = jobBlock(workflow, 'build');
+    expect(build).toContain('npm run build:demo');
+    expect(build).toContain('npm run docs:build');
+    expect(build).toContain('cp -R apps/web/dist-demo/. dist/pages/');
+    expect(build).toContain('cp -R apps/docs/.vitepress/dist/. dist/pages/docs/');
+    expect(build).not.toContain('cp -R bin/pages-redirect');
+    expect(parse(workflow).on.push.branches).toEqual(['main']);
   });
 
   it('always calls the security workflow and waits for it in Required checks', () => {

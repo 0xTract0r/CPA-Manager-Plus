@@ -354,15 +354,3 @@ func TestHandleCreditsHistoryRequiresAuthAndGet(t *testing.T) {
 		t.Fatalf("body = %s", getRecorder.Body.String())
 	}
 }
-
-func newHandlerTestStore(t testing.TB) *store.Store {
-	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "usage.sqlite"))
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = st.Close()
-	})
-	return st
-}

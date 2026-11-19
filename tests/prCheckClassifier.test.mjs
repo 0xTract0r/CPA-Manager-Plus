@@ -46,20 +46,30 @@ describe('PR check classifier', () => {
     });
   });
 
-  it('runs frontend checks for docs-site and README changes', () => {
-    expect(classifyChangedFiles(['apps/docs/index.md', 'README.md'])).toEqual({
+  it('retains the fork documentation checks', () => {
+    expect(classifyChangedFiles(['apps/docs/index.md'])).toMatchObject({ frontend: true, demo_docs: true });
+  });
+
+  it('runs frontend checks for README changes', () => {
+    expect(classifyChangedFiles(['README.md'])).toEqual({
       ...noChecks,
       frontend: true,
-      demo_docs: true,
     });
   });
 
-  it('runs Demo and Docs checks for web and docs-site changes', () => {
-    expect(classifyChangedFiles(['apps/docs/index.md', 'apps/web/src/App.tsx'])).toEqual({
+  it('runs frontend, Docker, and demo builds for web changes', () => {
+    expect(classifyChangedFiles(['apps/web/src/App.tsx'])).toEqual({
       ...noChecks,
       frontend: true,
       docker: true,
       demo_docs: true,
+    });
+  });
+
+  it('runs frontend checks for the legacy Pages redirect site', () => {
+    expect(classifyChangedFiles(['bin/pages-redirect/redirect.mjs'])).toEqual({
+      ...noChecks,
+      frontend: true,
     });
   });
 
@@ -154,6 +164,7 @@ describe('PR check classifier', () => {
       '.github/workflows/release.yml',
       'bin/ci/classify-pr-checks.mjs',
       'tests/prCheckClassifier.test.mjs',
+      'tests/pagesRedirect.test.mjs',
     ]) {
       expect(classifyChangedFiles([filePath])).toEqual({
         frontend: true,
