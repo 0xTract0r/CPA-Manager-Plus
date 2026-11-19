@@ -1766,8 +1766,44 @@ type credentialStatAccumulator struct {
 }
 
 func buildAccountStats(stats []store.AccountModelStat, prices map[string]store.ModelPrice) []AccountStatRow {
+	// 重启期间的事件可能只有凭据索引和脱敏账号；只借用同索引唯一的完整快照。
+	type identity struct{ provider, account, label string }
+	identities := map[string]identity{}
+	ambiguous := map[string]bool{}
+	for _, stat := range stats {
+		index := strings.TrimSpace(stat.AuthIndex)
+		provider := strings.ToLower(strings.TrimSpace(stat.AuthProviderSnapshot))
+		account := strings.TrimSpace(stat.AccountSnapshot)
+		if index == "" || index == "-" || provider == "" || provider == "unknown" || account == "" || account == "-" || strings.Contains(account, "*") || ambiguous[index] {
+			continue
+		}
+		candidate := identity{provider, account, stat.AuthLabelSnapshot}
+		if previous, ok := identities[index]; ok {
+			if previous.provider != provider || previous.account != account {
+				delete(identities, index)
+				ambiguous[index] = true
+				continue
+			}
+			if previous.label != "" {
+				candidate.label = previous.label
+			}
+		}
+		identities[index] = candidate
+	}
 	grouped := map[string]*accountStatAccumulator{}
 	for _, stat := range stats {
+		if canonical, ok := identities[strings.TrimSpace(stat.AuthIndex)]; ok {
+			provider := strings.ToLower(strings.TrimSpace(stat.AuthProviderSnapshot))
+			account := strings.TrimSpace(stat.AccountSnapshot)
+			if (provider == "" || provider == "unknown" || provider == canonical.provider) &&
+				(account == "" || account == "-" || strings.Contains(account, "*") || account == canonical.account) {
+				stat.AuthProviderSnapshot = canonical.provider
+				stat.AccountSnapshot = canonical.account
+				if stat.AuthLabelSnapshot == "" {
+					stat.AuthLabelSnapshot = canonical.label
+				}
+			}
+		}
 		id := accountGroupKey(stat.AuthProviderSnapshot, stat.AccountSnapshot, stat.AuthLabelSnapshot, stat.Source, stat.AuthIndex)
 		entry := grouped[id]
 		if entry == nil {

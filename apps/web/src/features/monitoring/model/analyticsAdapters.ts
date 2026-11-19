@@ -358,7 +358,10 @@ export const buildAnalyticsFilters = (
   if (isActiveFilterValue(scopeFilters.account)) {
     const account = scopeFilters.account!.trim();
     const accountCriteria = parseMonitoringAccountFilterValue(account);
-    if (accountCriteria.provider) filters.providers = [accountCriteria.provider];
+    // 明确的凭据索引也覆盖缺少provider快照的历史事件。
+    if (accountCriteria.provider && accountCriteria.authIndices.length === 0) {
+      filters.providers = [accountCriteria.provider];
+    }
 
     authIndices = addAuthIndexConstraint(authIndices, accountCriteria.authIndices);
     filters.source_hashes = addFilterValueConstraint(
