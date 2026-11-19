@@ -33,6 +33,48 @@ describe('auth file credential refresh demo API', () => {
     vi.useRealTimers();
   });
 
+  describe('demo auth file status', () => {
+    const list = async () =>
+      (await handleDemoApiRequest<AuthFilesResponse>('get', '/auth-files')).files;
+    const find = (files: AuthFilesResponse['files'], index: string) =>
+      files.find((f) => (f.authIndex ?? f['auth_index']) === index);
+
+    it('persists per-item status in list and lookup, without touching others', async () => {
+      const before = await list();
+      await handleDemoApiRequest('patch', '/auth-files/status', {
+        name: 'codex-upgrade-demo.json', auth_index: 'codex-upgrade-demo-01', disabled: true,
+      });
+      const after = await list();
+      expect(find(after, 'codex-upgrade-demo-01')?.disabled).toBe(true);
+      const others = (fs: typeof before) =>
+        fs.filter((f) => f.authIndex !== 'codex-upgrade-demo-01').map((f) => [f.name, f.authIndex, f.disabled]);
+      expect(others(after)).toEqual(others(before));
+      const lookup = await handleDemoApiRequest<AuthFilesResponse>('get', '/auth-files', undefined, {
+        params: { name: 'codex-upgrade-demo.json', auth_index: 'codex-upgrade-demo-01' },
+      });
+      expect(find(lookup.files, 'codex-upgrade-demo-01')?.disabled).toBe(true);
+
+      await handleDemoApiRequest('patch', '/auth-files/status', {
+        name: 'codex-upgrade-demo.json', auth_index: 'codex-upgrade-demo-01', disabled: false,
+      });
+      expect(await list()).toEqual(before);
+    });
+
+    it('rejects bad items without mutating, and reset clears state', async () => {
+      await expect(
+        handleDemoApiRequest('patch', '/auth-files/status', { name: 'missing.json', disabled: true })
+      ).rejects.toMatchObject({ status: 404 });
+      await expect(
+        handleDemoApiRequest('patch', '/auth-files/status', { name: 'codex-upgrade-demo.json' })
+      ).rejects.toMatchObject({ status: 400 });
+      await handleDemoApiRequest('patch', '/auth-files/status', {
+        name: 'codex-upgrade-demo.json', auth_index: 'codex-upgrade-demo-01', disabled: true,
+      });
+      resetDemoAuthFileConfiguration();
+      expect(find(await list(), 'codex-upgrade-demo-01')?.disabled).toBe(false);
+    });
+  });
+
   it('simulates a delayed Free to Plus refresh for the runtime auth ID', async () => {
     resetDemoCredentialRefresh();
     const initial = await getUpgradeDemoAuth();

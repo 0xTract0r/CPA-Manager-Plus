@@ -6661,8 +6661,12 @@
     grid-column: 1;
   }
 
+  // Keep the entry to multi-select available on phones without the desktop toolbar.
   .batchBarIdle {
-    display: none;
+    .batchSummary,
+    .batchActions > :not(.selectionModeButton) {
+      display: none;
+    }
   }
 
   .batchBar {

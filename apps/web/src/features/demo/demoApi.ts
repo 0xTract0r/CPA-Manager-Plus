@@ -14,7 +14,7 @@ import {
   getDemoRawConfig,
   requestDemoCredentialRefresh,
 } from '@/features/demo/demoFixtures';
-import type { AuthFileItem } from '@/types';
+import type { AuthFileItem, AuthFilesResponse } from '@/types';
 import {
   DEMO_API_BASE,
   DEMO_SERVER_COMMIT,
@@ -234,6 +234,98 @@ const readDemoConfigurationRecordAuthIndex = (
     record['auth-index'],
     arrayIndex === undefined ? '' : arrayIndex
   );
+
+// demo 专用：启停状态按「运行时 ID 或文件名 + auth_index」覆盖原始 fixture。
+// 只保存和 fixture 原值不同的项；改回原值就删除覆盖，重新启用后恢复原始记录。
+const demoAuthFileStatusOverrides = new Map<string, boolean>();
+
+const DEMO_STATUS_DISABLED_MESSAGE = 'disabled via management API';
+
+const createDemoApiError = (status: number, message: string) => {
+  // 与 client.ts 的 ApiError 形状一致：调用方通过 err.status 判断状态码。
+  const error = new Error(message) as Error & { status?: number };
+  error.name = 'ApiError';
+  error.status = status;
+  return error;
+};
+
+const readDemoRuntimeId = (file: AuthFileItem): string => readDemoString(file.id);
+
+// Runtime IDs take precedence. For name-only requests require a unique member.
+const resolveDemoStatusTarget = (
+  files: AuthFileItem[],
+  name: string,
+  authIndex: string
+): AuthFileItem | null => {
+  const scoped = authIndex ? files.filter((file) => readDemoAuthIndex(file) === authIndex) : files;
+  const runtime = scoped.find((file) => readDemoRuntimeId(file) === name);
+  if (runtime) return runtime;
+  const matches = scoped.filter((file) => file.name === name);
+  return matches.length === 1 ? matches[0] : null;
+};
+
+const setDemoAuthFileStatus = (file: AuthFileItem, disabled: boolean) => {
+  const key = getDemoAuthFileConfigurationKey(file);
+  if (Boolean(file.disabled) === disabled) demoAuthFileStatusOverrides.delete(key);
+  else demoAuthFileStatusOverrides.set(key, disabled);
+};
+
+const applyDemoAuthFileStatusPatch = (data: unknown) => {
+  if (!isDemoConfigurationRecord(data)) throw createDemoApiError(400, 'invalid request body');
+  const name = typeof data.name === 'string' ? data.name.trim() : '';
+  if (!name) throw createDemoApiError(400, 'name is required');
+  if (typeof data.disabled !== 'boolean') throw createDemoApiError(400, 'disabled is required');
+  const disabled = data.disabled;
+  const authIndex = readDemoString(data.auth_index);
+  // 必须读 fixture 原值：判断是否等于原值不能基于已叠加的视图。
+  const files = getDemoAuthFiles().files;
+
+  if (data.cpamp_source_file === true) {
+    // 同名多凭证（虚拟同名）的整文件启停：快照必须与当前同名成员完全一致，否则拒绝，防止误改。
+    const members = files.filter((file) => file.name.trim() === name);
+    if (members.length === 0) throw createDemoApiError(404, 'auth file not found');
+    const identities = Array.isArray(data.cpamp_source_identities)
+      ? data.cpamp_source_identities.filter(isDemoConfigurationRecord)
+      : [];
+    const identityKey = (runtimeId: string, index: string) => `${runtimeId}\u0000${index}`;
+    const expected = new Set(
+      members.map((file) => identityKey(readDemoRuntimeId(file), readDemoAuthIndex(file)))
+    );
+    const provided = new Set(
+      identities.map((identity) =>
+        identityKey(readDemoString(identity.runtime_id), readDemoString(identity.auth_index))
+      )
+    );
+    const sameSnapshot =
+      identities.length === members.length &&
+      provided.size === expected.size &&
+      [...expected].every((key) => provided.has(key)) &&
+      identities.every((identity) => readDemoString(identity.name) === name);
+    if (!sameSnapshot) throw createDemoApiError(409, 'auth file source identity snapshot changed');
+    members.forEach((file) => setDemoAuthFileStatus(file, disabled));
+    return { status: 'ok', disabled };
+  }
+
+  const target = resolveDemoStatusTarget(files, name, authIndex);
+  if (!target) throw createDemoApiError(404, 'auth file not found');
+  setDemoAuthFileStatus(target, disabled);
+  return { status: 'ok', disabled };
+};
+
+const withDemoAuthFileStatus = (response: AuthFilesResponse): AuthFilesResponse => {
+  if (demoAuthFileStatusOverrides.size === 0) return response;
+  return {
+    ...response,
+    files: response.files.map((file) => {
+      const disabled = demoAuthFileStatusOverrides.get(getDemoAuthFileConfigurationKey(file));
+      if (disabled === undefined) return file;
+      // 对齐 core：禁用写 disabled + 固定说明；启用写 active 并清空说明。
+      return disabled
+        ? { ...file, disabled: true, status: 'disabled', status_message: DEMO_STATUS_DISABLED_MESSAGE, statusMessage: DEMO_STATUS_DISABLED_MESSAGE }
+        : { ...file, disabled: false, status: 'active', status_message: '', statusMessage: '' };
+    }),
+  };
+};
 
 const findDemoAuthFile = (selector: string): AuthFileItem | null => {
   const normalized = selector.trim();
@@ -494,6 +586,7 @@ const persistDemoAuthFileConfigurationUpload = async (
 
 export const resetDemoAuthFileConfiguration = () => {
   demoAuthFileConfigurationOverrides.clear();
+  demoAuthFileStatusOverrides.clear();
 };
 
 export const resetDemoConfigState = () => {
@@ -581,10 +674,11 @@ export async function handleDemoApiRequest<T = unknown>(
   if (pathname === '/auth-files') {
     if (method === 'get') {
       advanceDemoCredentialRefresh();
-      return getDemoAuthFiles() as T;
+      // 列表读取和单条读取（带 name/auth_index 参数，客户端再本地过滤）都走这里。
+      return withDemoAuthFileStatus(getDemoAuthFiles()) as T;
     }
     if (method === 'delete') return { deleted: params.get('all') === 'true' ? 8 : 1 } as T;
-    return { ...ok, files: getDemoAuthFiles().files } as T;
+    return { ...ok, files: withDemoAuthFileStatus(getDemoAuthFiles()).files } as T;
   }
   if (pathname === '/auth-files/fields') {
     if (method === 'patch' && isCredentialRefreshPatch(data)) {
@@ -604,7 +698,10 @@ export async function handleDemoApiRequest<T = unknown>(
     }
     return ok as T;
   }
-  if (pathname === '/auth-files/status') return ok as T;
+  if (pathname === '/auth-files/status') {
+    if (method === 'patch') return applyDemoAuthFileStatusPatch(data) as T;
+    return ok as T;
+  }
   if (pathname === '/auth-files/models') {
     const file = findDemoAuthFile(params.get('name') ?? '');
     return {
