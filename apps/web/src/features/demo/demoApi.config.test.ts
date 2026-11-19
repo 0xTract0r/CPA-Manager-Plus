@@ -71,12 +71,32 @@ describe('demo configuration API', () => {
     expect(parseYaml(result)).toEqual({ ...parseYaml(yaml), 'request-log': false });
   });
 
-  it('rejects malformed YAML before replacing the current configuration', async () => {
-    const before = await handleDemoApiRequest<string>('get', '/config.yaml');
-    await expect(handleDemoApiRequest('put', '/config.yaml', 'request-log: [\n')).rejects.toMatchObject({
+  it.each(['request-log: [\n', '- demo\n', 'standalone\n'])(
+    'rejects invalid configuration %j and keeps its previous value editable',
+    async (invalidConfig) => {
+      const before = await handleDemoApiRequest<string>('get', '/config.yaml');
+      await expect(handleDemoApiRequest('put', '/config.yaml', invalidConfig)).rejects.toMatchObject({
+        status: 400,
+      });
+      expect(await handleDemoApiRequest('get', '/config.yaml')).toBe(before);
+      await handleDemoApiRequest('put', '/request-log', { value: false });
+      expect(await handleDemoApiRequest('get', '/request-log')).toEqual({ 'request-log': false });
+    }
+  );
+
+  it.each(['', '# comment\n', 'null\n'])('allows editing an empty configuration %j', async (yaml) => {
+    await handleDemoApiRequest('put', '/config.yaml', yaml);
+    await handleDemoApiRequest('put', '/request-log', { value: false });
+    expect(await handleDemoApiRequest('get', '/request-log')).toEqual({ 'request-log': false });
+  });
+
+  it('reports an incompatible nested path without changing the document', async () => {
+    const yaml = 'routing: old-value\nrequest-log: false\n';
+    await handleDemoApiRequest('put', '/config.yaml', yaml);
+    await expect(handleDemoApiRequest('put', '/routing/strategy', { value: 'fill-first' })).rejects.toMatchObject({
       status: 400,
     });
-    expect(await handleDemoApiRequest('get', '/config.yaml')).toBe(before);
+    expect(await handleDemoApiRequest('get', '/config.yaml')).toBe(yaml);
   });
 
   it('lists historical error logs only while request logging is disabled', async () => {

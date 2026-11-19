@@ -1,5 +1,5 @@
 import type { AxiosRequestConfig, AxiosResponse } from 'axios';
-import { parse as parseYaml, parseDocument } from 'yaml';
+import { isMap, isScalar, parse as parseYaml, parseDocument } from 'yaml';
 import {
   advanceDemoCredentialRefresh,
   getDemoApiCallResult,
@@ -217,10 +217,24 @@ const getCurrentDemoRoutingStrategy = (): string => {
   return typeof routing.strategy === 'string' ? routing.strategy : 'round-robin';
 };
 
+const parseDemoConfigDocument = (text: string) => {
+  const document = parseDocument(text);
+  const root = document.contents;
+  const empty = root === null || (isScalar(root) && root.value === null);
+  if (document.errors.length > 0 || (!empty && !isMap(root))) {
+    throw createDemoApiError(400, 'configuration must be a valid YAML mapping');
+  }
+  return document;
+};
+
 const updateDemoConfigValue = (path: string[], value: string | boolean) => {
-  const document = parseDocument(getCurrentDemoConfigYaml());
-  if (document.errors.length > 0) throw createDemoApiError(400, 'invalid YAML');
-  document.setIn(path, value);
+  const document = parseDemoConfigDocument(getCurrentDemoConfigYaml());
+  if (isScalar(document.contents)) document.contents = null;
+  try {
+    document.setIn(path, value);
+  } catch {
+    throw createDemoApiError(400, 'incompatible configuration field');
+  }
   demoConfigYamlOverride = document.toString();
 };
 
@@ -621,8 +635,9 @@ export async function handleDemoApiRequest<T = unknown>(
   if (pathname === '/config') return rawConfig as T;
   if (pathname === '/latest-version') return getDemoLatestVersion() as T;
   if (pathname === '/config.yaml') {
-    if (method === 'put' && typeof data === 'string') {
-      if (parseDocument(data).errors.length > 0) throw createDemoApiError(400, 'invalid YAML');
+    if (method === 'put') {
+      if (typeof data !== 'string') throw createDemoApiError(400, 'expected YAML text');
+      parseDemoConfigDocument(data);
       demoConfigYamlOverride = data;
       return ok as T;
     }
