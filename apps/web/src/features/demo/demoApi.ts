@@ -217,10 +217,10 @@ const getCurrentDemoRoutingStrategy = (): string => {
   return typeof routing.strategy === 'string' ? routing.strategy : 'round-robin';
 };
 
-const updateDemoRoutingStrategy = (strategy: string) => {
+const updateDemoConfigValue = (path: string[], value: string | boolean) => {
   const document = parseDocument(getCurrentDemoConfigYaml());
   if (document.errors.length > 0) return;
-  document.setIn(['routing', 'strategy'], strategy);
+  document.setIn(path, value);
   demoConfigYamlOverride = document.toString().trimEnd();
 };
 
@@ -641,7 +641,6 @@ export async function handleDemoApiRequest<T = unknown>(
       '/request-retry',
       '/quota-exceeded/switch-project',
       '/quota-exceeded/switch-preview-model',
-      '/request-log',
       '/logging-to-file',
       '/logs-max-total-size-mb',
       '/ws-auth',
@@ -655,10 +654,21 @@ export async function handleDemoApiRequest<T = unknown>(
     return ok as T;
   }
 
+  if (pathname === '/request-log') {
+    if (method === 'get') return { 'request-log': rawConfig['request-log'] } as T;
+    if (method === 'put') {
+      if (!isDemoConfigurationRecord(data) || typeof data.value !== 'boolean') {
+        throw createDemoApiError(400, 'invalid request body');
+      }
+      updateDemoConfigValue(['request-log'], data.value);
+    }
+    return ok as T;
+  }
+
   if (pathname === '/routing/strategy') {
     if (method === 'get') return { strategy: getCurrentDemoRoutingStrategy() } as T;
     if (method === 'put' && isDemoConfigurationRecord(data) && typeof data.value === 'string') {
-      updateDemoRoutingStrategy(data.value);
+      updateDemoConfigValue(['routing', 'strategy'], data.value);
     }
     return ok as T;
   }
@@ -740,7 +750,9 @@ export async function handleDemoApiRequest<T = unknown>(
   if (pathname === '/logs') {
     return (method === 'delete' ? ok : getDemoLogsResponse()) as T;
   }
-  if (pathname === '/request-error-logs') return getDemoErrorLogsResponse() as T;
+  if (pathname === '/request-error-logs') {
+    return (rawConfig['request-log'] === true ? { files: [] } : getDemoErrorLogsResponse()) as T;
+  }
 
   if (pathname === '/plugins') return getDemoPlugins() as T;
   if (/^\/plugins\/[^/]+\/enabled$/.test(pathname)) return ok as T;

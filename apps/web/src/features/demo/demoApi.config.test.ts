@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parse as parseYaml } from 'yaml';
 import {
   handleDemoApiRequest,
@@ -22,6 +22,7 @@ describe('demo configuration API', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     resetDemoConfigState();
   });
 
@@ -60,6 +61,27 @@ describe('demo configuration API', () => {
     expect(parsed.routing?.strategy).toBe('fill-first');
     expect(rawConfig).toMatchObject({ routing: { strategy: 'fill-first' } });
     expect(routing).toEqual({ strategy: 'fill-first' });
+  });
+
+  it('lists historical error logs only while request logging is disabled', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-06-29T12:00:00Z') });
+    const list = () =>
+      handleDemoApiRequest<{ files: { name: string }[] }>('get', '/request-error-logs');
+    expect(await list()).toEqual({ files: [] });
+
+    await handleDemoApiRequest('put', '/request-log', { value: false });
+    expect(await handleDemoApiRequest('get', '/request-log')).toEqual({ 'request-log': false });
+    const configYaml = await handleDemoApiRequest<string>('get', '/config.yaml');
+    expect(parseYaml(configYaml)['request-log']).toBe(false);
+    const history = await list();
+    expect(history.files).toHaveLength(2);
+
+    await handleDemoApiRequest('put', '/request-log', { value: true });
+    expect(await handleDemoApiRequest('get', '/config')).toMatchObject({ 'request-log': true });
+    expect(await list()).toEqual({ files: [] });
+
+    await handleDemoApiRequest('put', '/config.yaml', configYaml);
+    expect(await list()).toEqual(history);
   });
 
   it('resets session configuration back to the fixture baseline', async () => {
