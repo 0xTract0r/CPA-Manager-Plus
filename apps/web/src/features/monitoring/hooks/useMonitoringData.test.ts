@@ -980,3 +980,14 @@ it('keeps provider scope when historical same-email events have no auth index', 
     expect(buildScopeFilteredRows(events, { account: row.filterValue })).toHaveLength(1);
   }
 });
+
+it('keeps incomplete snapshots when focusing an exact credential', () => {
+  const events = [
+    createMonitoringEventRow({ id: 'complete', provider: 'codex', authIndex: 'codex-1' }),
+    createMonitoringEventRow({ id: 'missing', provider: '', authIndex: 'codex-1' }),
+    createMonitoringEventRow({ id: 'claude', provider: 'claude', authIndex: 'claude-1' }),
+  ];
+  expect(
+    buildScopeFilteredRows(events, { account: 'provider:codex|auth:codex-1' }).map((row) => row.id)
+  ).toEqual(['complete', 'missing']);
+});

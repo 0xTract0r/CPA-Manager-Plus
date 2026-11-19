@@ -2072,3 +2072,41 @@ func TestAccountStatsSeparateProvidersAndMergeRotatedCredentials(t *testing.T) {
 		t.Fatalf("Codex rotation split or mixed: %#v", codex)
 	}
 }
+
+func TestAccountStatsRecoverIncompleteSnapshotsByAuthIndex(t *testing.T) {
+	rows := buildAccountStats([]store.AccountModelStat{
+		{AuthIndex: "gpt", AccountSnapshot: "sha***@example.com", Calls: 6, TotalTokens: 60},
+		{AuthIndex: "gpt", AccountSnapshot: "sha***@example.com", AuthProviderSnapshot: "unknown", Calls: 2, TotalTokens: 20},
+		{AuthIndex: "gpt", AccountSnapshot: "shared@example.com", AuthProviderSnapshot: "codex", AuthLabelSnapshot: "GPT-PH-01", Calls: 10, TotalTokens: 100},
+		{AuthIndex: "claude", AccountSnapshot: "shared@example.com", AuthProviderSnapshot: "claude", Calls: 3, TotalTokens: 30},
+	}, nil)
+	if len(rows) != 2 {
+		t.Fatalf("incomplete snapshots split the same credential: %#v", rows)
+	}
+	for _, row := range rows {
+		if row.ID == "codex:shared@example.com" && row.Calls == 18 && row.TotalTokens == 180 && row.AuthLabelSnapshot == "GPT-PH-01" {
+			return
+		}
+	}
+	t.Fatalf("missing calls or wrong canonical identity: %#v", rows)
+}
+
+func TestAccountStatsDoNotGuessConflictingOrAbsentIdentity(t *testing.T) {
+	for _, conflicting := range []store.AccountModelStat{
+		{AuthIndex: "same-index", AccountSnapshot: "shared@example.com", AuthProviderSnapshot: "claude", Calls: 2},
+		{AuthIndex: "same-index", AccountSnapshot: "different@example.com", AuthProviderSnapshot: "codex", Calls: 2},
+	} {
+		rows := buildAccountStats([]store.AccountModelStat{
+			{AuthIndex: "same-index", AccountSnapshot: "shared@example.com", AuthProviderSnapshot: "codex", Calls: 1},
+			conflicting,
+			{AuthIndex: "same-index", AccountSnapshot: "sha***@example.com", Calls: 6},
+		}, nil)
+		if len(rows) != 3 {
+			t.Fatalf("conflicting identities must remain separate: %#v", rows)
+		}
+	}
+	rows := buildAccountStats([]store.AccountModelStat{{AuthIndex: "missing", AccountSnapshot: "sha***@example.com", Calls: 6}}, nil)
+	if len(rows) != 1 || rows[0].AuthProviderSnapshot != "" || rows[0].Calls != 6 {
+		t.Fatalf("must retain unresolved identity without guessing: %#v", rows)
+	}
+}

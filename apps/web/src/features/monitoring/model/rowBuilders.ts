@@ -118,6 +118,7 @@ export const buildScopeFilteredRows = (
     if (isActiveScopeFilterValue(scopeFilters.account)) {
       if (
         accountCriteria.provider &&
+        accountAuthIndices.size === 0 &&
         normalizeScopeValue(row.provider) !== accountCriteria.provider
       )
         return false;

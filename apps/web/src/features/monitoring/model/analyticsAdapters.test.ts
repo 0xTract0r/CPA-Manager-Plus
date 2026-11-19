@@ -142,6 +142,26 @@ describe('buildUsageDetailsFromAnalyticsEvents', () => {
 });
 
 describe('buildAnalyticsFilters', () => {
+  it('keeps missing-provider snapshots when an account token has exact auth indices', () => {
+    const filters = buildAnalyticsFilters(
+      { account: 'provider:codex|auth:codex-1' },
+      new Map(),
+      []
+    );
+    expect(filters.auth_indices).toEqual(['codex-1']);
+    expect(filters.providers).toBeUndefined();
+  });
+
+  it('retains provider isolation for legacy account tokens without auth indices', () => {
+    const filters = buildAnalyticsFilters(
+      { account: 'provider:codex|account:shared%40example.com' },
+      new Map(),
+      []
+    );
+    expect(filters.providers).toEqual(['codex']);
+    expect(filters.accounts).toEqual(['shared@example.com']);
+  });
+
   it('maps failed-only status and known accounts into backend filters', () => {
     const filters = buildAnalyticsFilters(
       {
