@@ -240,6 +240,31 @@ describe('shared credential index focus (acceptance fixture)', () => {
     expect([claude.listed, claude.count]).toEqual([3, 3]);
   });
 
+  it('recovers only from a unique complete credential snapshot, independent of the masked spelling', () => {
+    const rows = events.filter((event) => event.authIndex === 'idx-active').map((event) =>
+      event.account.includes('*')
+        ? { ...event, account: 'z***@elsewhere.invalid', accountIdentity: 'z***@elsewhere.invalid' }
+        : event
+    );
+    const accounts = buildAccountRows(rows);
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]).toMatchObject({ account: 'qa-shared@example.invalid', totalCalls: 18 });
+    const contradictory = { ...rows[0], account: 'qa-other@example.invalid', accountIdentity: 'qa-other@example.invalid' };
+    const separate = buildAccountRows([...rows, contradictory]);
+    expect(separate.find((row) => row.account === 'qa-shared@example.invalid')?.totalCalls).toBe(10);
+    expect(separate.find((row) => row.account === 'qa-other@example.invalid')?.totalCalls).toBe(1);
+  });
+
+  it('does not treat the request transport as evidence of a credential owner', () => {
+    const complete = events.find((event) => event.authIndex === 'idx-active')!;
+    const missing = events.find((event) => event.authIndex === 'idx-active' && event.account.includes('*'))!;
+    const rows = buildAccountRows([
+      { ...complete, authProviderSnapshot: '', providerIdentity: 'codex' },
+      { ...missing, authProviderSnapshot: 'codex' },
+    ]);
+    expect(rows.map((row) => row.totalCalls).sort()).toEqual([1, 1]);
+  });
+
   it('local rows: list counts and detail scope agree for shared and unique indices', () => {
     const rows = buildAccountRows(events);
     const byAccount = (account: string, provider: string) =>
@@ -262,9 +287,9 @@ describe('shared credential index focus (acceptance fixture)', () => {
     });
     expect(detail('a***@example.invalid', 'unknown')).toEqual({ listed: 2, detail: 2, failed: 1 });
 
-    // 无歧义凭据：Codex 列表 13（有快照），按凭据聚焦恢复缺快照共 21
+    // 无歧义凭据：Codex 列表与详情都按唯一完整快照恢复缺失信息，共 21 条
     expect(detail('qa-shared@example.invalid', 'codex')).toEqual({
-      listed: 13,
+      listed: 21,
       detail: 21,
       failed: 4,
     });

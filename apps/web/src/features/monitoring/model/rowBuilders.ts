@@ -11,8 +11,7 @@ import {
 } from './apiKeys';
 import {
   buildMonitoringAccountFilterValue,
-  countAccountRowsByAuthIndex,
-  hasSharedAuthIndex,
+  buildAuthIndexAccountConstraintResolver,
   parseMonitoringAccountFilterValue,
 } from './analyticsAdapters';
 import { buildMonitoringAccountRowId, normalizeMonitoringProvider } from './accountIdentity';
@@ -150,6 +149,14 @@ export const buildScopeFilteredRows = (
         if (
           exactAccountForAuth &&
           ![row.accountIdentity, row.account].map(normalizeScopeValue).includes(exactAccountForAuth)
+        ) {
+          return false;
+        }
+        // 同索引同名多已知 provider：与网络 filters.providers 同口径
+        if (
+          exactAccountForAuth &&
+          accountProvider &&
+          normalizeScopeValue(row.providerIdentity ?? row.provider) !== accountProvider
         ) {
           return false;
         }
@@ -341,7 +348,38 @@ export const buildMonitoringSummary = (rows: MonitoringEventRow[]): MonitoringSu
   };
 };
 
+// 与 Manager 的 credentialSnapshotIndex 一致：索引需要至少一条完整快照，且所有已知字段相容。
+// 掩码只代表未记录原值，不按邮箱前缀、域名或其他显示文字匹配账号。
+function accountSnapshotsByCredential(rows: MonitoringEventRow[]) {
+  type Evidence = { provider: string; account: string; complete?: MonitoringEventRow };
+  const evidence = new Map<string, Evidence | null>();
+  for (const row of rows) {
+    const index = (row.authIndexIdentity ?? row.authIndex).trim();
+    if (!index || index === '-') continue;
+    const previous = evidence.get(index);
+    if (previous === null) continue;
+    const sourceProvider = normalizeMonitoringProvider(row.authProviderSnapshot ?? row.providerIdentity);
+    const provider = sourceProvider === 'unknown' || sourceProvider === '-' ? '' : sourceProvider;
+    const sourceAccount = (row.accountIdentity ?? '').trim();
+    const account = sourceAccount === '-' || sourceAccount.includes('*') ? '' : sourceAccount;
+    if (
+      (provider && previous?.provider && previous.provider !== provider) ||
+      (account && previous?.account && previous.account !== account)
+    ) {
+      evidence.set(index, null);
+      continue;
+    }
+    evidence.set(index, {
+      provider: provider || previous?.provider || '',
+      account: account || previous?.account || '',
+      complete: previous?.complete ?? (provider && account ? row : undefined),
+    });
+  }
+  return evidence;
+}
+
 export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountRow[] => {
+  const snapshots = accountSnapshotsByCredential(rows);
   const grouped = new Map<
     string,
     {
@@ -393,14 +431,16 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
   >();
 
   rows.forEach((row) => {
-    const provider = normalizeMonitoringProvider(row.providerIdentity ?? row.provider);
+    const index = (row.authIndexIdentity ?? row.authIndex).trim();
+    const owner = snapshots.get(index)?.complete ?? row;
+    const provider = normalizeMonitoringProvider(owner.providerIdentity ?? owner.provider);
     const filterAccount =
-      [row.accountIdentity, row.authLabelIdentity, row.sourceIdentity, row.account].find((value) =>
+      [owner.accountIdentity, row.authLabelIdentity, row.sourceIdentity, owner.account].find((value) =>
         Boolean(value && isEffectiveLabel(value))
       ) || '';
     const accountKey = buildMonitoringAccountRowId({
       provider,
-      account: row.accountIdentity ?? row.account,
+      account: owner.accountIdentity ?? owner.account,
       authLabel: row.authLabelIdentity ?? row.authLabel,
       source: row.sourceIdentity ?? row.source,
       authIndex: row.authIndexIdentity ?? row.authIndex,
@@ -408,10 +448,10 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
     });
     const existing = grouped.get(accountKey) ?? {
       id: accountKey,
-      account: row.account,
+      account: owner.account,
       filterAccount,
       provider,
-      accountMasked: row.accountMasked,
+      accountMasked: owner.accountMasked,
       accountNotes: new Set<string>(),
       authLabels: new Set<string>(),
       authIndices: new Set<string>(),
@@ -498,9 +538,10 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
     grouped.set(accountKey, existing);
   });
 
-  const authIndexRowCounts = countAccountRowsByAuthIndex(
+  const resolveAuthIndexConstraint = buildAuthIndexAccountConstraintResolver(
     Array.from(grouped.values()).map((item) => ({
       provider: item.provider,
+      account: item.account,
       authIndices: item.authIndices,
     }))
   );
@@ -526,9 +567,11 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
             authIndices,
             sourceHashes,
             apiKeyHashes,
-            exactAccount: hasSharedAuthIndex(authIndices, authIndexRowCounts)
-              ? item.filterAccount || item.account
-              : undefined,
+            ...resolveAuthIndexConstraint({
+              provider: item.provider,
+              account: item.account,
+              authIndices,
+            }),
           }) || item.account,
         displayAccount: accountLabel,
         accountMasked: item.accountMasked,

@@ -267,6 +267,7 @@ export const buildEventRows = (
         apiKeyMasked,
         provider: authMeta?.provider || snapshotProvider || eventProvider || sourceMeta.type || '-',
         providerIdentity: effectiveProvider,
+        authProviderSnapshot: snapshotProvider,
         planType: authMeta?.planType || '-',
         channel: channelLabel,
         channelHost: channelMeta?.host || '-',

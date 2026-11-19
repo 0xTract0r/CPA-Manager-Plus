@@ -157,29 +157,63 @@ const decodeAccountFilterValues = (value: string) =>
 const buildAccountFilterToken = (prefix: string, values: string[]) =>
   values.length > 0 ? `${prefix}${encodeAccountFilterValues(values)}` : '';
 
-// 统计每个凭据索引被多少个「已知 provider」账号行声明；>1 视为共享/歧义索引。
-// provider 缺失/unknown 的缺快照历史行不计入，以保留无歧义凭据的按索引恢复。
-export const countAccountRowsByAuthIndex = (
-  entries: Array<{ provider?: string | null; authIndices?: Iterable<string> }>
-) => {
-  const counts = new Map<string, number>();
-  entries.forEach(({ provider, authIndices }) => {
-    const normalizedProvider = normalizeMonitoringProvider(provider);
-    if (!normalizedProvider || normalizedProvider === 'unknown') return;
-    normalizeAuthFilterValues(Array.from(authIndices ?? [])).forEach((authIndex) => {
-      counts.set(authIndex, (counts.get(authIndex) ?? 0) + 1);
-    });
-  });
-  return counts;
+type AccountIndexClaim = {
+  provider?: string | null;
+  account?: string | null;
+  authIndices?: Iterable<string>;
 };
 
-export const hasSharedAuthIndex = (
-  authIndices: Iterable<string> | undefined,
-  counts: Map<string, number>
-) =>
-  normalizeAuthFilterValues(Array.from(authIndices ?? [])).some(
-    (authIndex) => (counts.get(authIndex) ?? 0) > 1
-  );
+export type AuthIndexAccountConstraint = { exactAccount?: string; exactProvider?: string };
+
+const isKnownMonitoringProvider = (provider: string) => Boolean(provider) && provider !== 'unknown';
+
+/**
+ * 按真实账号行判定凭据索引是否需要追加精确约束（网络 filters 与本地 Scope 共用）：
+ * - 同一索引被不同原始账号占有 => 加精确 accounts（unknown 行也计入，不剔除）；
+ * - 同一索引 + 同一原始账号被多个已知 provider 占有 => 再加精确 providers；
+ * - 同名仅一个已知 provider（其余为 unknown）=> 不加 provider，避免丢 unknown 事件；
+ * - 单一账号独占索引 => 不加约束，保留缺快照历史按凭据恢复。
+ */
+export const buildAuthIndexAccountConstraintResolver = (claims: AccountIndexClaim[]) => {
+  const accountsByIndex = new Map<string, Set<string>>();
+  const providersByIndexAccount = new Map<string, Set<string>>();
+  claims.forEach(({ provider, account, authIndices }) => {
+    const normalizedAccount = normalizeFilterText(account);
+    const normalizedProvider = normalizeMonitoringProvider(provider);
+    normalizeAuthFilterValues(Array.from(authIndices ?? [])).forEach((authIndex) => {
+      const accounts = accountsByIndex.get(authIndex) ?? new Set<string>();
+      accounts.add(normalizedAccount);
+      accountsByIndex.set(authIndex, accounts);
+      if (!isKnownMonitoringProvider(normalizedProvider)) return;
+      const key = `${authIndex}\u0000${normalizedAccount}`;
+      const providers = providersByIndexAccount.get(key) ?? new Set<string>();
+      providers.add(normalizedProvider);
+      providersByIndexAccount.set(key, providers);
+    });
+  });
+
+  return (claim: AccountIndexClaim): AuthIndexAccountConstraint => {
+    const account = readString(claim.account).trim();
+    const normalizedAccount = normalizeFilterText(account);
+    const normalizedProvider = normalizeMonitoringProvider(claim.provider);
+    const authIndices = normalizeAuthFilterValues(Array.from(claim.authIndices ?? []));
+    const needsAccount =
+      Boolean(account) &&
+      authIndices.some((authIndex) => (accountsByIndex.get(authIndex)?.size ?? 0) > 1);
+    const needsProvider =
+      Boolean(account) &&
+      isKnownMonitoringProvider(normalizedProvider) &&
+      authIndices.some(
+        (authIndex) =>
+          (providersByIndexAccount.get(`${authIndex}\u0000${normalizedAccount}`)?.size ?? 0) > 1
+      );
+    if (!needsAccount && !needsProvider) return {};
+    return {
+      exactAccount: account,
+      exactProvider: needsProvider ? normalizedProvider : undefined,
+    };
+  };
+};
 
 export const buildMonitoringAccountFilterValue = ({
   account,
@@ -188,11 +222,14 @@ export const buildMonitoringAccountFilterValue = ({
   sourceHashes,
   apiKeyHashes,
   exactAccount,
+  exactProvider,
 }: {
   account?: string | null;
   provider?: string | null;
-  /** 凭据索引被多个账号共享时传入，保留服务端精确账号约束。 */
+  /** 凭据索引需精确约束时传入的原始账号（不可传 opaque 行 ID）。 */
   exactAccount?: string | null;
+  /** 同索引同名被多个已知 provider 占有时传入。 */
+  exactProvider?: string | null;
   authIndices?: Array<string | null | undefined>;
   sourceHashes?: Array<string | null | undefined>;
   apiKeyHashes?: Array<string | null | undefined>;
@@ -201,7 +238,11 @@ export const buildMonitoringAccountFilterValue = ({
   if (normalizedAuthIndices.length > 0) {
     const [normalizedExactAccount] = normalizeAccountFilterValues([exactAccount]);
     if (normalizedExactAccount) {
-      return `${ACCOUNT_FILTER_PREFIXES.authAccount}${encodeAccountFilterValues(normalizedAuthIndices)}|${encodeURIComponent(normalizedExactAccount)}`;
+      const token = `${ACCOUNT_FILTER_PREFIXES.authAccount}${encodeAccountFilterValues(normalizedAuthIndices)}|${encodeURIComponent(normalizedExactAccount)}`;
+      const normalizedExactProvider = normalizeMonitoringProvider(exactProvider);
+      return normalizedExactProvider
+        ? `provider:${encodeURIComponent(normalizedExactProvider)}|${token}`
+        : token;
     }
     return buildAccountFilterToken(ACCOUNT_FILTER_PREFIXES.auth, normalizedAuthIndices);
   }
@@ -437,8 +478,9 @@ export const buildAnalyticsFilters = (
 
     authIndices = addAuthIndexConstraint(authIndices, accountCriteria.authIndices);
     if (accountCriteria.authIndices.length > 0 && accountCriteria.accounts.length > 0) {
-      // 共享凭据索引：同时携带精确账号，避免把其它账号的同索引事件算进详情。
+      // 共享凭据索引：同时携带精确原始账号（及必要时的 provider），与本地 Scope 同口径。
       filters.accounts = accountCriteria.accounts;
+      if (accountCriteria.provider) filters.providers = [accountCriteria.provider];
     }
     filters.source_hashes = addFilterValueConstraint(
       filters.source_hashes,
@@ -704,8 +746,12 @@ export const buildAccountRowsFromAnalytics = (
   sourceInfoMap: ReturnType<typeof buildSourceInfoMap>,
   channelByAuthIndex: Map<string, MonitoringChannelMeta>
 ): MonitoringAccountRow[] => {
-  const authIndexRowCounts = countAccountRowsByAuthIndex(
-    rows.map((row) => ({ provider: row.auth_provider_snapshot, authIndices: row.auth_indices }))
+  const resolveAuthIndexConstraint = buildAuthIndexAccountConstraintResolver(
+    rows.map((row) => ({
+      provider: row.auth_provider_snapshot,
+      account: row.account_snapshot,
+      authIndices: row.auth_indices,
+    }))
   );
   return rows
     .map((row) => {
@@ -796,9 +842,11 @@ export const buildAccountRowsFromAnalytics = (
             provider,
             authIndices: row.auth_indices,
             sourceHashes: row.source_hashes,
-            exactAccount: hasSharedAuthIndex(row.auth_indices, authIndexRowCounts)
-              ? row.account_snapshot || filterAccount
-              : undefined,
+            ...resolveAuthIndexConstraint({
+              provider: row.auth_provider_snapshot,
+              account: row.account_snapshot,
+              authIndices: row.auth_indices,
+            }),
           }) || account,
         models: buildModelSpendRowsFromAnalytics(row.models),
       };
