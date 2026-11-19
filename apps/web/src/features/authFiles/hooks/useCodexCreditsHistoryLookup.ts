@@ -63,9 +63,16 @@ export function useCodexCreditsHistoryLookup(
 export function withCodexCreditsHistory(
   quota: CodexQuotaState | undefined,
   lookup: CodexCreditsHistoryLookup | undefined,
-  file: AuthFileItem
+  file: AuthFileItem,
+  afterMs = 0
 ): CodexQuotaState | undefined {
   if (!quota || !lookup || resolveAuthProvider(file) !== 'codex') return quota;
   const creditsHistory = getCodexCreditsHistoryForAuthFile(lookup, file);
-  return creditsHistory ? { ...quota, creditsHistory } : quota;
+  if (afterMs <= 0) return creditsHistory ? { ...quota, creditsHistory } : quota;
+  // 文件名和索引可在重新认证后复用，只保留确认身份边界后的观测。
+  const points = creditsHistory?.points.filter((point) => point.timestampMs > afterMs);
+  return {
+    ...quota,
+    creditsHistory: creditsHistory && points?.length ? { ...creditsHistory, points } : undefined,
+  };
 }

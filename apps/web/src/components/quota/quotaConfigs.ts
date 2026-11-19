@@ -629,6 +629,17 @@ const renderRemainingPercent = (
 export const formatCodexCreditsBalance = (balance: number, locale?: string): string =>
   formatNumber(Math.floor(balance), locale);
 
+export const getCodexCreditsBalanceLabel = (
+  quota: CodexQuotaState | undefined,
+  t: TFunction
+): string | null => {
+  const display = getCodexCreditsDisplay(quota);
+  if (!display) return null;
+  if (display.kind === 'unlimited') return t('codex_quota.credits_balance_unlimited');
+  if (display.kind === 'below-one') return '<1';
+  return formatCodexCreditsBalance(display.balance, resolveUiLocale(t));
+};
+
 /** 与 core 侧一致：积分只豁免主额度桶，所以只有主窗口用满才提示「可用积分继续」。 */
 const hasExhaustedCodexMainQuotaWindow = (windows: CodexQuotaWindow[]): boolean =>
   windows.some(
@@ -645,22 +656,16 @@ const hasExhaustedCodexMainQuotaWindow = (windows: CodexQuotaWindow[]): boolean 
  * 周）任一用尽时追加「额度已用完 · 可用积分继续」提示——卡片拿不到 core 的冷却状态，
  * 文案只陈述「有积分可用」而不断言「正在扣积分」；代码审查、附加限额窗口用满不触发。
  */
-const renderCodexCreditsBalance = (
+export const renderCodexCreditsBalance = (
   quota: CodexQuotaState,
   windows: CodexQuotaWindow[],
   t: TFunction,
   styleMap: QuotaRenderHelpers['styles']
 ): ReactNode => {
-  const display = getCodexCreditsDisplay(quota);
-  if (!display) return null;
+  const valueLabel = getCodexCreditsBalanceLabel(quota, t);
+  if (valueLabel === null) return null;
 
   const { createElement: h } = React;
-  const valueLabel =
-    display.kind === 'unlimited'
-      ? t('codex_quota.credits_balance_unlimited')
-      : display.kind === 'below-one'
-        ? '<1'
-        : formatCodexCreditsBalance(display.balance);
   const showInUseHint = hasExhaustedCodexMainQuotaWindow(windows);
 
   return h(
@@ -719,11 +724,11 @@ const CODEX_CREDITS_BURN_LEVEL_KEYS = {
  * 速率与预测在数据不足时隐藏，只显示已用。进度条颜色复用 QuotaProgressBar 的阈值色：
  * 够用 → high（success），偏紧 → medium（warning），可能不够 → low（danger）。
  */
-const renderCodexCreditsBurn = (
+export const renderCodexCreditsBurn = (
   quota: CodexQuotaState,
   windows: CodexQuotaWindow[],
   t: TFunction,
-  helpers: QuotaRenderHelpers,
+  styleMap: QuotaRenderHelpers['styles'],
   nowMs: number
 ): ReactNode => {
   const display = getCodexCreditsDisplay(quota);
@@ -738,7 +743,6 @@ const renderCodexCreditsBurn = (
   });
   if (!forecast) return null;
 
-  const { styles: styleMap } = helpers;
   const { createElement: h } = React;
   const locale = resolveUiLocale(t);
   const usedLabel = formatCodexCreditsCompact(forecast.used, locale);
@@ -932,7 +936,7 @@ const renderCodexItems = (
 
   const creditsNode = renderCodexCreditsBalance(quota, windows, t, styleMap);
   const creditsBurnNode = creditsNode
-    ? renderCodexCreditsBurn(quota, windows, t, helpers, Date.now())
+    ? renderCodexCreditsBurn(quota, windows, t, styleMap, Date.now())
     : null;
 
   if (windows.length === 0) {

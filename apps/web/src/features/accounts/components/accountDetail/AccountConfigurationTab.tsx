@@ -18,6 +18,8 @@ import {
   type AuthFileConfigurationErrorKey,
   type XaiRoutingMode,
 } from '@/features/authFiles/model/authFileConfiguration';
+import { formatModified } from '@/features/authFiles/constants';
+import { formatFileSize } from '@/utils/format';
 import { useAuthStore } from '@/stores/useAuthStore';
 import styles from '@/features/accounts/AccountsPage.module.scss';
 
@@ -468,6 +470,14 @@ export function AccountConfigurationTab({
             <div>
               <dt>{t('auth_files.paste_file_name_label')}</dt>
               <dd>{state.fileName}</dd>
+            </div>
+            <div>
+              <dt>{t('auth_files.file_size')}</dt>
+              <dd>{typeof row.raw.size === 'number' && row.raw.size >= 0 ? formatFileSize(row.raw.size) : '—'}</dd>
+            </div>
+            <div>
+              <dt>{t('auth_files.file_modified')}</dt>
+              <dd>{formatModified(row.raw)}</dd>
             </div>
             <div>
               <dt>{t('accounts.col_provider')}</dt>

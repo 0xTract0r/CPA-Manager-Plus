@@ -947,6 +947,17 @@
   }
 }
 
+.accountCreditBalance {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.4em;
+  grid-column: 1 / -1;
+  color: var(--accounts-muted);
+  font-size: 12px;
+
+  strong { color: var(--accounts-text); }
+}
+
 .accountGridCardQuotaList {
   display: flex;
   flex-direction: column;

@@ -683,6 +683,7 @@ function MainLayoutContent({ routeBase = '', demoMode = false }: MainLayoutProps
         {path: '/accounts', label: t('nav.accounts', {defaultValue: t('accounts.title')}), shortLabel: navShortLabel('nav.accounts', t('accounts.title')), icon: sidebarIcons.authFiles},
         {
           path: '/auth-files',
+          isSub: true,
           label: t('nav.auth_files'),
           shortLabel: navShortLabel('nav.auth_files', t('nav.auth_files')),
           icon: sidebarIcons.authFiles,

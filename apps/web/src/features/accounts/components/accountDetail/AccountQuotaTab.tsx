@@ -1,6 +1,6 @@
 import { useId, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { JSX } from 'react';
+import type { JSX, ReactNode } from 'react';
 import { Button } from '@/components/ui/Button';
 import {
   IconBinary,
@@ -95,6 +95,7 @@ const MetricCell = ({ icon, tone, label, value, valueTitle }: MetricCellProps): 
 };
 
 interface AccountQuotaTabProps {
+  credits?: ReactNode;
   detailView: AccountDetailViewModel;
   windowUsageError: string;
   historyAvailable: boolean;
@@ -134,6 +135,7 @@ const renderResetCreditRemainingText = (
 
 export function AccountQuotaTab({
   detailView,
+  credits,
   windowUsageError,
   historyAvailable,
   historyRefreshing,
@@ -197,6 +199,8 @@ export function AccountQuotaTab({
           </Button>
         </div>
       </div>
+
+      {credits}
 
       <section className={styles.quotaSummaryPanel} data-account-quota-usage-summary="true">
         <div className={styles.quotaSummaryHeading}>

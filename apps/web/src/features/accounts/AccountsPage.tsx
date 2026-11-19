@@ -66,6 +66,8 @@ import {
 import {
   getScopedQuotaState,
 } from '@/components/quota/quotaConfigs';
+import { getCodexCreditsBalanceLabel } from '@/components/quota/quotaConfigs';
+import { AccountCreditDetails } from './components/accountDetail/AccountCreditDetails';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { useInterval } from '@/hooks/useInterval';
 import { usePanelFeatureAvailability } from '@/hooks/usePanelFeatureAvailability';
@@ -9058,6 +9060,7 @@ export function AccountsPage() {
       codexStatus,
       item,
       codexQuotaState,
+      creditBalanceLabel: getCodexCreditsBalanceLabel(codexQuotaState, t),
       subscriptionPresentation,
       codexResetCreditsCount,
       hasCodexResetCredits,
@@ -9179,6 +9182,14 @@ export function AccountsPage() {
       ),
     });
   };
+
+  const renderCreditBalance = (label: string | null) =>
+    label === null ? null : (
+      <span className={styles.accountCreditBalance} data-account-credit-balance>
+        <span>{t('codex_quota.credits_balance_label')}</span>
+        <strong>{label}</strong>
+      </span>
+    );
 
   const renderAccountCards = (rowsToRender = pageRows, paged = true) => (
     <section className={styles.tablePanel}>
@@ -9681,6 +9692,7 @@ export function AccountsPage() {
                         {ctx.quotaEmptyLabel}
                       </span>
                     )}
+                    {renderCreditBalance(ctx.creditBalanceLabel)}
                   </div>
 
                   <div
@@ -9923,6 +9935,7 @@ export function AccountsPage() {
                             {ctx.quotaEmptyLabel}
                           </span>
                         )}
+                        {renderCreditBalance(ctx.creditBalanceLabel)}
                       </span>
                       ),
                     });
@@ -10052,6 +10065,19 @@ export function AccountsPage() {
         return (
           <AccountQuotaTab
             detailView={detailView}
+            credits={selectedCodexQuota && getCodexCreditsBalanceLabel(selectedCodexQuota, t) !== null ? (
+              <AccountCreditDetails
+                key={credentialEvidenceScopeKey}
+                historyAfterMs={Math.max(
+                  getCredentialEvidenceBoundary(selectedRow.raw).authenticationAtMs,
+                  credentialStatusBoundaries.get(selectedRow.selectionKey)?.authenticationAtMs ?? 0
+                )}
+                file={selectedRow.raw}
+                quota={selectedCodexQuota}
+                managerServiceBase={featureAvailability.managerServiceBase}
+                managementKey={managementKey ?? ''}
+              />
+            ) : null}
             windowUsageError={accountWindowUsageError}
             historyAvailable={requestHistoryAvailable}
             historyRefreshing={historyRefreshing}

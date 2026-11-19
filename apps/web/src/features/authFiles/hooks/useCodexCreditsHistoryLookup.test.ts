@@ -119,6 +119,15 @@ describe('withCodexCreditsHistory', () => {
     expect(next?.creditsHistory?.quotaResetAtMs).toBe(Date.parse('2026-11-20T00:00:00Z'));
   });
 
+  it('同名同索引重新认证后只使用新身份的历史点', () => {
+    const start = Date.parse('2026-11-13T00:00:00Z');
+    const end = Date.parse('2026-11-14T00:00:00Z');
+    const previous = withCodexCreditsHistory(baseQuota, lookup, codexFile)!;
+    const next = withCodexCreditsHistory(previous, lookup, codexFile, start);
+    expect(next?.creditsHistory?.points.map((point) => point.timestampMs)).toEqual([end]);
+    expect(withCodexCreditsHistory(previous, lookup, codexFile, end)?.creditsHistory).toBeUndefined();
+  });
+
   it('非 Codex 卡片、身份不匹配或无 quota 时原样返回', () => {
     expect(withCodexCreditsHistory(baseQuota, lookup, claudeFile)).toBe(baseQuota);
     const otherIndex = { ...codexFile, auth_index: '8' } as unknown as AuthFileItem;
