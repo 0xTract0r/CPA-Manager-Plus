@@ -1,6 +1,4 @@
 import { AuthFilesPage } from '@/pages/AuthFilesPage';
-import { AuthFilesOAuthExcludedEditPage } from '@/pages/AuthFilesOAuthExcludedEditPage';
-import { AuthFilesOAuthModelAliasEditPage } from '@/pages/AuthFilesOAuthModelAliasEditPage';
 import { QuotaPage } from '@/pages/QuotaPage';
 import { CodexInspectionPage } from '@/pages/CodexInspectionPage';
 import { ServerCodexInspectionPage } from '@/pages/ServerCodexInspectionPage';
@@ -46,6 +44,15 @@ import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { usePanelFeatureAvailability } from '@/hooks/usePanelFeatureAvailability';
 import { ensureRouteBasePathname, isDemoMode } from '@/features/demo/demoMode';
 import { useAuthStore, useConfigStore } from '@/stores';
+
+function CredentialRuleRedirect({ editor }: { editor: 'excluded' | 'alias' }) {
+  const { search } = useLocation();
+  const provider = new URLSearchParams(search).get('provider')?.trim();
+  const params = new URLSearchParams({ view: 'oauth', editor });
+  if (provider) params.set('editorProvider', provider);
+  const target = isDemoMode() ? ensureRouteBasePathname('/accounts') : '/accounts';
+  return <Navigate replace to={`${target}?${params}`} />;
+}
 
 function CodexFastLegacyRedirect() {
   const location = useLocation();
@@ -181,8 +188,8 @@ const mainRoutes: RouteObject[] = [
   { path: '/ai-providers/*', element: <AiProvidersPage /> },
   { path: '/auth-files', element: <AuthFilesPage /> },
   { path: '/auth-files/codex-fast-analysis', element: <FeatureGate feature="requestMonitoring"><CodexFastLegacyRedirect /></FeatureGate> },
-  { path: '/auth-files/oauth-excluded', element: <AuthFilesOAuthExcludedEditPage /> },
-  { path: '/auth-files/oauth-model-alias', element: <AuthFilesOAuthModelAliasEditPage /> },
+  { path: '/auth-files/oauth-excluded', element: <CredentialRuleRedirect editor="excluded" /> },
+  { path: '/auth-files/oauth-model-alias', element: <CredentialRuleRedirect editor="alias" /> },
   { path: '/accounts', element: <AccountsPage /> },
   { path: '/quota', element: <QuotaPage /> },
   { path: '/oauth', element: <OAuthPage /> },

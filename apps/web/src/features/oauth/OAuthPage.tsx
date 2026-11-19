@@ -1913,19 +1913,15 @@ export function OAuthPage() {
                   )}
                 </div>
                 <div className={styles.successActions}>
-                  <Button variant="secondary" size="sm" onClick={() => navigate('/accounts')}>
-                    {t('auth_login.view_credentials')}
-                  </Button>
                   <Button
                     variant="secondary"
                     size="sm"
-                    onClick={() =>
-                      navigate('/auth-files', {
-                        state: { highlightAuthFile: state.successResult?.authFile },
-                      })
-                    }
+                    onClick={() => {
+                      const file = state.successResult?.authFile;
+                      navigate(file ? `/accounts?${new URLSearchParams({ search: file })}` : '/accounts');
+                    }}
                   >
-                    {t('auth_login.oauth_view_auth_file', { defaultValue: '查看认证文件' })}
+                    {t('auth_login.view_credentials')}
                   </Button>
                   <Button
                     variant="secondary"

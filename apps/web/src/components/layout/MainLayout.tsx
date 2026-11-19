@@ -682,13 +682,6 @@ function MainLayoutContent({ routeBase = '', demoMode = false }: MainLayoutProps
       items: [
         {path: '/accounts', label: t('nav.accounts', {defaultValue: t('accounts.title')}), shortLabel: navShortLabel('nav.accounts', t('accounts.title')), icon: sidebarIcons.authFiles},
         {
-          path: '/auth-files',
-          isSub: true,
-          label: t('nav.auth_files'),
-          shortLabel: navShortLabel('nav.auth_files', t('nav.auth_files')),
-          icon: sidebarIcons.authFiles,
-        },
-        {
           path: '/oauth',
           label: t('nav.oauth', { defaultValue: 'OAuth' }),
           shortLabel: navShortLabel('nav.oauth', t('nav.oauth', { defaultValue: 'OAuth' })),
@@ -731,10 +724,15 @@ function MainLayoutContent({ routeBase = '', demoMode = false }: MainLayoutProps
   ].filter((section) => section.items.length > 0);
   const navItems = navSections.flatMap((section) => section.items);
   const navOrder = navItems.map((item) => item.path);
+  const primaryNavPath = (path: string) => {
+    if (path === '/dashboard') return '/';
+    if (path === '/auth-files' || path.startsWith('/auth-files/')) return '/accounts';
+    return path;
+  };
   const getRouteOrder = (pathname: string) => {
     const trimmedPath =
       pathname.length > 1 && pathname.endsWith('/') ? pathname.slice(0, -1) : pathname;
-    const normalizedPath = trimmedPath === '/dashboard' ? '/' : trimmedPath;
+    const normalizedPath = primaryNavPath(trimmedPath);
 
     const aiProvidersIndex = navOrder.indexOf('/ai-providers');
     if (aiProvidersIndex !== -1) {
@@ -808,7 +806,7 @@ function MainLayoutContent({ routeBase = '', demoMode = false }: MainLayoutProps
     routePathname.length > 1 && routePathname.endsWith('/')
       ? routePathname.slice(0, -1)
       : routePathname;
-  const currentPath = normalizedLocationPath === '/dashboard' ? '/' : normalizedLocationPath;
+  const currentPath = primaryNavPath(normalizedLocationPath);
   const matchesNavPath = (item: NavItem, pathname: string) =>
     item.path === '/' || item.exact
       ? pathname === item.path

@@ -12,10 +12,11 @@ import zhTW from '@/i18n/locales/zh-TW.json';
 const legacyPagesRoot = ['@', 'pages'].join('/');
 
 describe('accounts workspace wiring', () => {
-  it('keeps Accounts and legacy credential-management sidebar entries reachable', () => {
+  it('uses one credential workspace in the sidebar and keeps the independent quota and inspection entries', () => {
     expect(layoutSource).toContain("path: '/accounts'");
     expect(layoutSource).toContain("label: t('nav.accounts'");
-    for (const path of ['/auth-files', '/quota', '/codex-inspection'])
+    expect(layoutSource).not.toContain("path: '/auth-files'");
+    for (const path of ['/quota', '/codex-inspection'])
       expect(layoutSource).toContain(`path: '${path}'`);
   });
 
