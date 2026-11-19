@@ -250,13 +250,24 @@ type CreditsHistoryItemLike = {
   points?: unknown;
 };
 
+type HistoryIndex = Map<string, CodexCreditsHistory | null>;
+
 export type CodexCreditsHistoryLookup = {
-  byFileAuthIndex: Map<string, CodexCreditsHistory>;
-  byFileName: Map<string, CodexCreditsHistory>;
+  byFileAuthIndex: HistoryIndex;
+  byFileName: HistoryIndex;
+  byFoldedFileAuthIndex: HistoryIndex;
 };
 
-const lookupKey = (value: unknown): string =>
-  typeof value === 'string' ? value.trim().toLowerCase() : '';
+const fileIdentity = (value: unknown): string =>
+  typeof value === 'string' && value.trim() ? value : '';
+
+const indexIdentity = (value: unknown): string =>
+  typeof value === 'number' || typeof value === 'string' ? String(value).trim() : '';
+
+// 重复记录未必属于同一凭证。保留歧义标记，不按数组顺序取最后一条。
+const addUniqueHistory = (index: HistoryIndex, key: string, history: CodexCreditsHistory) => {
+  index.set(key, index.has(key) ? null : history);
+};
 
 const toCodexCreditsHistory = (item: CreditsHistoryItemLike): CodexCreditsHistory => {
   const resetAtMs = readFinite(item.quota_reset_at_ms);
@@ -276,15 +287,21 @@ const toCodexCreditsHistory = (item: CreditsHistoryItemLike): CodexCreditsHistor
 export const buildCodexCreditsHistoryLookup = (
   items: CreditsHistoryItemLike[] | null | undefined
 ): CodexCreditsHistoryLookup => {
-  const lookup: CodexCreditsHistoryLookup = { byFileAuthIndex: new Map(), byFileName: new Map() };
+  const lookup: CodexCreditsHistoryLookup = {
+    byFileAuthIndex: new Map(), byFileName: new Map(), byFoldedFileAuthIndex: new Map(),
+  };
   (items ?? []).forEach((item) => {
-    const fileName = lookupKey(item.auth_file_snapshot);
+    const fileName = fileIdentity(item.auth_file_snapshot);
     if (!fileName) return;
     const history = toCodexCreditsHistory(item);
     if (history.points.length === 0) return;
-    const authIndex = lookupKey(item.auth_index);
-    if (authIndex) lookup.byFileAuthIndex.set(`${fileName}::${authIndex}`, history);
-    else lookup.byFileName.set(fileName, history);
+    const authIndex = indexIdentity(item.auth_index);
+    if (authIndex) {
+      addUniqueHistory(lookup.byFileAuthIndex, JSON.stringify([fileName, authIndex]), history);
+      addUniqueHistory(lookup.byFoldedFileAuthIndex, JSON.stringify([fileName.toLowerCase(), authIndex]), history);
+    } else {
+      addUniqueHistory(lookup.byFileName, fileName, history);
+    }
   });
   return lookup;
 };
@@ -294,12 +311,13 @@ export const getCodexCreditsHistoryForAuthFile = (
   file: { name?: string; authIndex?: unknown; auth_index?: unknown; 'auth-index'?: unknown }
 ): CodexCreditsHistory | undefined => {
   if (!lookup) return undefined;
-  const fileName = lookupKey(file.name);
+  const fileName = fileIdentity(file.name);
   if (!fileName) return undefined;
   const rawIndex = file.auth_index ?? file.authIndex ?? file['auth-index'];
-  const authIndex = lookupKey(
-    typeof rawIndex === 'number' ? String(rawIndex) : (rawIndex as string | undefined)
-  );
-  if (authIndex) return lookup.byFileAuthIndex.get(`${fileName}::${authIndex}`);
-  return lookup.byFileName.get(fileName);
+  const authIndex = indexIdentity(rawIndex);
+  if (!authIndex) return lookup.byFileName.get(fileName) ?? undefined;
+  const exact = lookup.byFileAuthIndex.get(JSON.stringify([fileName, authIndex]));
+  if (exact !== undefined) return exact ?? undefined;
+  // 旧快照偶尔与文件清单大小写不同，仅在认证索引完全相同且唯一时兼容。
+  return lookup.byFoldedFileAuthIndex.get(JSON.stringify([fileName.toLowerCase(), authIndex])) ?? undefined;
 };

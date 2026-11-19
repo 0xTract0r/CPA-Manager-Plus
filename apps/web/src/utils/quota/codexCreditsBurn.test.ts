@@ -309,6 +309,26 @@ describe('credits number formatting', () => {
 });
 
 describe('buildCodexCreditsHistoryLookup', () => {
+  it('区分大小写不同的文件，缺索引或折叠后有歧义时不回退', async () => {
+    const { buildCodexCreditsHistoryLookup, getCodexCreditsHistoryForAuthFile } = await import('./codexCreditsBurn');
+    const items = [
+      { auth_file_snapshot: 'Team-A.json', points: [{ timestamp_ms: 1, balance: 100 }] },
+      { auth_file_snapshot: 'team-a.json', points: [{ timestamp_ms: 1, balance: 900 }] },
+    ];
+    const lookup = buildCodexCreditsHistoryLookup([
+      ...items, ...items.map((item) => ({ ...item, auth_index: 'id' })),
+    ]);
+    for (const authIndex of [undefined, 'id']) {
+      const get = (name: string) => getCodexCreditsHistoryForAuthFile(lookup, { name, authIndex });
+      expect(get('Team-A.json')?.points[0].balance).toBe(100);
+      expect(get('team-a.json')?.points[0].balance).toBe(900);
+      expect(get('TEAM-A.json')).toBeUndefined();
+    }
+    expect(getCodexCreditsHistoryForAuthFile(lookup, { name: 'Team-A.json', authIndex: 'ID' })).toBeUndefined();
+    const duplicate = buildCodexCreditsHistoryLookup([items[0], items[0]]);
+    expect(getCodexCreditsHistoryForAuthFile(duplicate, { name: 'Team-A.json' })).toBeUndefined();
+  });
+
   it('matches by auth file + auth index with high confidence only', async () => {
     const { buildCodexCreditsHistoryLookup, getCodexCreditsHistoryForAuthFile } = await import(
       './codexCreditsBurn'

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthFileItem, CodexQuotaState } from '@/types';
 import {
   buildCodexCreditsHistoryLookup,
+  getCodexCreditsHistoryForAuthFile,
   type CodexCreditsHistoryLookup,
 } from '@/utils/quota/codexCreditsBurn';
 import {
@@ -81,7 +82,7 @@ describe('useCodexCreditsHistoryLookup', () => {
       days: 7,
       max_points: 200,
     });
-    expect(last.byFileAuthIndex.has('codex-a.json::7')).toBe(true);
+    expect(Boolean(getCodexCreditsHistoryForAuthFile(last, codexFile))).toBe(true);
 
     await advance(60_000);
     expect(getCreditsHistory).toHaveBeenCalledTimes(1);
@@ -93,13 +94,13 @@ describe('useCodexCreditsHistoryLookup', () => {
   it('拉取失败保留上一次结果', async () => {
     getCreditsHistory.mockResolvedValueOnce({ items: [historyItem(500)] });
     await mount('http://mgr');
-    const first = last.byFileAuthIndex.get('codex-a.json::7');
+    const first = getCodexCreditsHistoryForAuthFile(last, codexFile);
     expect(first).toBeDefined();
 
     getCreditsHistory.mockRejectedValueOnce(new Error('boom'));
     await advance(CODEX_CREDITS_HISTORY_REFRESH_INTERVAL_MS);
     expect(getCreditsHistory).toHaveBeenCalledTimes(2);
-    expect(last.byFileAuthIndex.get('codex-a.json::7')).toEqual(first);
+    expect(getCodexCreditsHistoryForAuthFile(last, codexFile)).toEqual(first);
   });
 
   it('managerServiceBase 为空（CPA panel 模式）时不发请求', async () => {
