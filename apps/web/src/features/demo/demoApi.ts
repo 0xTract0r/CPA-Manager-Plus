@@ -219,9 +219,9 @@ const getCurrentDemoRoutingStrategy = (): string => {
 
 const updateDemoConfigValue = (path: string[], value: string | boolean) => {
   const document = parseDocument(getCurrentDemoConfigYaml());
-  if (document.errors.length > 0) return;
+  if (document.errors.length > 0) throw createDemoApiError(400, 'invalid YAML');
   document.setIn(path, value);
-  demoConfigYamlOverride = document.toString().trimEnd();
+  demoConfigYamlOverride = document.toString();
 };
 
 const readDemoConfigurationRecordAuthIndex = (
@@ -622,6 +622,7 @@ export async function handleDemoApiRequest<T = unknown>(
   if (pathname === '/latest-version') return getDemoLatestVersion() as T;
   if (pathname === '/config.yaml') {
     if (method === 'put' && typeof data === 'string') {
+      if (parseDocument(data).errors.length > 0) throw createDemoApiError(400, 'invalid YAML');
       demoConfigYamlOverride = data;
       return ok as T;
     }

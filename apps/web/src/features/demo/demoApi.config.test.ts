@@ -63,6 +63,22 @@ describe('demo configuration API', () => {
     expect(routing).toEqual({ strategy: 'fill-first' });
   });
 
+  it('preserves trailing blank lines in unrelated YAML values when toggling logging', async () => {
+    const yaml = 'request-log: true\nplugins:\n  template: |+\n    example\n\n';
+    await handleDemoApiRequest('put', '/config.yaml', yaml);
+    await handleDemoApiRequest('put', '/request-log', { value: false });
+    const result = await handleDemoApiRequest<string>('get', '/config.yaml');
+    expect(parseYaml(result)).toEqual({ ...parseYaml(yaml), 'request-log': false });
+  });
+
+  it('rejects malformed YAML before replacing the current configuration', async () => {
+    const before = await handleDemoApiRequest<string>('get', '/config.yaml');
+    await expect(handleDemoApiRequest('put', '/config.yaml', 'request-log: [\n')).rejects.toMatchObject({
+      status: 400,
+    });
+    expect(await handleDemoApiRequest('get', '/config.yaml')).toBe(before);
+  });
+
   it('lists historical error logs only while request logging is disabled', async () => {
     vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-06-29T12:00:00Z') });
     const list = () =>
