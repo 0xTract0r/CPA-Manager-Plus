@@ -825,3 +825,22 @@ describe('accountOverviewState', () => {
     expect(accountStatus?.blockDetails[19]).toMatchObject({ success: 0, failure: 1 });
   });
 });
+
+it('keeps same-email provider health histories independent', () => {
+  const stamp = Date.UTC(2026, 4, 10);
+  const data = buildMonitoringAccountStatusDataMap(
+    [
+      createEventRow({ provider: 'claude', failed: true, timestampMs: stamp }),
+      createEventRow({ provider: 'codex', failed: false, timestampMs: stamp }),
+    ],
+    { startMs: stamp, endMs: stamp + 60000 }
+  );
+  expect(data.size).toBe(2);
+  const rowIdFor = (provider: string) =>
+    buildMonitoringAccountRowId({ provider, account: 'account@example.com' });
+  expect(data.get(rowIdFor('claude'))).toMatchObject({
+    totalSuccess: 0,
+    totalFailure: 1,
+  });
+  expect(data.get(rowIdFor('codex'))).toMatchObject({ totalSuccess: 1, totalFailure: 0 });
+});

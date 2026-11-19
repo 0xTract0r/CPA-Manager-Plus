@@ -11,6 +11,8 @@ import {
 } from './apiKeys';
 import {
   buildMonitoringAccountFilterValue,
+  countAccountRowsByAuthIndex,
+  hasSharedAuthIndex,
   parseMonitoringAccountFilterValue,
 } from './analyticsAdapters';
 import { buildMonitoringAccountRowId, normalizeMonitoringProvider } from './accountIdentity';
@@ -113,6 +115,11 @@ export const buildScopeFilteredRows = (
   const accountApiKeyHashes = new Set(accountCriteria.apiKeyHashes.map(normalizeScopeValue));
   const hasAccountSourceHashFilter = accountCriteria.sourceHashes.length > 0;
   const accountProvider = normalizeScopeValue(accountCriteria.provider);
+  // 共享凭据索引的 auth-account 选择器：索引 + 精确账号同时成立（与服务端 auth_indices+accounts 一致）
+  const exactAccountForAuth =
+    accountAuthIndices.size > 0 && accountCriteria.accounts.length > 0
+      ? normalizeScopeValue(accountCriteria.accounts[0])
+      : '';
   const provider = normalizeScopeValue(scopeFilters.provider);
   const authFile = normalizeScopeValue(scopeFilters.authFile);
   const projectId = normalizeScopeValue(scopeFilters.projectId);
@@ -130,20 +137,28 @@ export const buildScopeFilteredRows = (
 
   return rows.filter((row) => {
     if (isActiveScopeFilterValue(scopeFilters.account)) {
+      // 精确凭据索引覆盖缺少 provider 快照的历史事件；其余选择器保持 provider 隔离。
+      if (
+        accountProvider &&
+        accountAuthIndices.size === 0 &&
+        normalizeScopeValue(row.providerIdentity ?? row.provider) !== accountProvider
+      ) {
+        return false;
+      }
       if (accountAuthIndices.size > 0) {
         if (!accountAuthIndices.has(normalizeScopeValue(row.authIndex))) return false;
+        if (
+          exactAccountForAuth &&
+          ![row.accountIdentity, row.account].map(normalizeScopeValue).includes(exactAccountForAuth)
+        ) {
+          return false;
+        }
       } else if (accountApiKeyHashes.size > 0) {
         if (!accountApiKeyHashes.has(normalizeScopeValue(row.apiKeyHash))) return false;
       } else if (hasAccountSourceHashFilter) {
         // source_hash is only available in analytics payloads, so avoid dropping rows after
         // the backend has already applied the exact source_hash filter.
       } else {
-        if (
-          accountProvider &&
-          normalizeScopeValue(row.providerIdentity ?? row.provider) !== accountProvider
-        ) {
-          return false;
-        }
         const rowAccountValues = [
           row.accountIdentity,
           row.authLabelIdentity,
@@ -483,6 +498,12 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
     grouped.set(accountKey, existing);
   });
 
+  const authIndexRowCounts = countAccountRowsByAuthIndex(
+    Array.from(grouped.values()).map((item) => ({
+      provider: item.provider,
+      authIndices: item.authIndices,
+    }))
+  );
   return Array.from(grouped.values())
     .map((item) => {
       const channels = Array.from(item.channels).sort();
@@ -505,6 +526,9 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
             authIndices,
             sourceHashes,
             apiKeyHashes,
+            exactAccount: hasSharedAuthIndex(authIndices, authIndexRowCounts)
+              ? item.filterAccount || item.account
+              : undefined,
           }) || item.account,
         displayAccount: accountLabel,
         accountMasked: item.accountMasked,

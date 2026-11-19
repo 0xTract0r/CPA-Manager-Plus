@@ -25,6 +25,8 @@ If the page says request monitoring is disabled, enable it in [Configuration](./
 - Summary cards: total requests, failures, success rate, latency, and tokens.
 - Filters: narrow by time, provider, model, project, account, API key, status, failure type, latency, and cache state.
 
+Accounts are grouped by provider and account identity. Claude and Codex credentials sharing an email have separate statistics, focus filters, recent status and quota. Credential rotation within the same provider and account remains grouped.
+
 Failure summaries are sanitized. Raw failure bodies stay in local SQLite and are not exposed through normal APIs or JSONL exports.
 
 ## Common Investigation Flow

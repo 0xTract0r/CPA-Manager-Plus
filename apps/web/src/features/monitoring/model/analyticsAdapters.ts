@@ -108,6 +108,7 @@ const ACCOUNT_FILTER_PREFIXES = {
   apiKey: 'api-key:',
   account: 'account:',
   accountProvider: 'account-provider:',
+  authAccount: 'auth-account:',
 } as const;
 
 const NO_MATCH_FILTER_VALUE = '__no_matching_filter_value__';
@@ -156,21 +157,52 @@ const decodeAccountFilterValues = (value: string) =>
 const buildAccountFilterToken = (prefix: string, values: string[]) =>
   values.length > 0 ? `${prefix}${encodeAccountFilterValues(values)}` : '';
 
+// 统计每个凭据索引被多少个「已知 provider」账号行声明；>1 视为共享/歧义索引。
+// provider 缺失/unknown 的缺快照历史行不计入，以保留无歧义凭据的按索引恢复。
+export const countAccountRowsByAuthIndex = (
+  entries: Array<{ provider?: string | null; authIndices?: Iterable<string> }>
+) => {
+  const counts = new Map<string, number>();
+  entries.forEach(({ provider, authIndices }) => {
+    const normalizedProvider = normalizeMonitoringProvider(provider);
+    if (!normalizedProvider || normalizedProvider === 'unknown') return;
+    normalizeAuthFilterValues(Array.from(authIndices ?? [])).forEach((authIndex) => {
+      counts.set(authIndex, (counts.get(authIndex) ?? 0) + 1);
+    });
+  });
+  return counts;
+};
+
+export const hasSharedAuthIndex = (
+  authIndices: Iterable<string> | undefined,
+  counts: Map<string, number>
+) =>
+  normalizeAuthFilterValues(Array.from(authIndices ?? [])).some(
+    (authIndex) => (counts.get(authIndex) ?? 0) > 1
+  );
+
 export const buildMonitoringAccountFilterValue = ({
   account,
   provider,
   authIndices,
   sourceHashes,
   apiKeyHashes,
+  exactAccount,
 }: {
   account?: string | null;
   provider?: string | null;
+  /** 凭据索引被多个账号共享时传入，保留服务端精确账号约束。 */
+  exactAccount?: string | null;
   authIndices?: Array<string | null | undefined>;
   sourceHashes?: Array<string | null | undefined>;
   apiKeyHashes?: Array<string | null | undefined>;
 }) => {
   const normalizedAuthIndices = normalizeAuthFilterValues(authIndices);
   if (normalizedAuthIndices.length > 0) {
+    const [normalizedExactAccount] = normalizeAccountFilterValues([exactAccount]);
+    if (normalizedExactAccount) {
+      return `${ACCOUNT_FILTER_PREFIXES.authAccount}${encodeAccountFilterValues(normalizedAuthIndices)}|${encodeURIComponent(normalizedExactAccount)}`;
+    }
     return buildAccountFilterToken(ACCOUNT_FILTER_PREFIXES.auth, normalizedAuthIndices);
   }
 
@@ -179,12 +211,19 @@ export const buildMonitoringAccountFilterValue = ({
     return buildAccountFilterToken(ACCOUNT_FILTER_PREFIXES.source, normalizedSourceHashes);
   }
 
+  const normalizedProvider = normalizeMonitoringProvider(provider);
   const normalizedApiKeyHashes = normalizeApiKeyHashValues(apiKeyHashes);
   if (normalizedApiKeyHashes.length > 0) {
-    return buildAccountFilterToken(ACCOUNT_FILTER_PREFIXES.apiKey, normalizedApiKeyHashes);
+    const apiKeyToken = buildAccountFilterToken(
+      ACCOUNT_FILTER_PREFIXES.apiKey,
+      normalizedApiKeyHashes
+    );
+    // 客户端 API Key 可跨提供方共享；同邮箱多提供方时需带 provider 前缀避免混用。
+    return normalizedProvider
+      ? `provider:${encodeURIComponent(normalizedProvider)}|${apiKeyToken}`
+      : apiKeyToken;
   }
 
-  const normalizedProvider = normalizeMonitoringProvider(provider);
   const normalizedAccounts = normalizeAccountFilterValues([account]);
   if (normalizedProvider && normalizedAccounts.length > 0) {
     return `${ACCOUNT_FILTER_PREFIXES.accountProvider}${encodeURIComponent(normalizedProvider)}|${encodeAccountFilterValues(normalizedAccounts)}`;
@@ -203,6 +242,29 @@ export const parseMonitoringAccountFilterValue = (
     apiKeyHashes: [],
   };
   if (!text || text === 'all') return emptyCriteria;
+  // 兼容生产热修 #80/#81 生成的 provider:<p>|<token> 旧选择器。
+  if (text.startsWith('provider:') && text.includes('|')) {
+    const split = text.indexOf('|');
+    return {
+      ...parseMonitoringAccountFilterValue(text.slice(split + 1)),
+      provider: decodeAccountFilterValue(text.slice('provider:'.length, split)),
+    };
+  }
+
+  if (text.startsWith(ACCOUNT_FILTER_PREFIXES.authAccount)) {
+    const body = text.slice(ACCOUNT_FILTER_PREFIXES.authAccount.length);
+    const delimiter = body.indexOf('|');
+    return {
+      ...emptyCriteria,
+      authIndices: normalizeAuthFilterValues(
+        decodeAccountFilterValues(delimiter >= 0 ? body.slice(0, delimiter) : body)
+      ),
+      accounts:
+        delimiter >= 0
+          ? normalizeAccountFilterValues([decodeAccountFilterValue(body.slice(delimiter + 1))])
+          : [],
+    };
+  }
 
   if (text.startsWith(ACCOUNT_FILTER_PREFIXES.auth)) {
     return {
@@ -368,8 +430,16 @@ export const buildAnalyticsFilters = (
   if (isActiveFilterValue(scopeFilters.account)) {
     const account = scopeFilters.account!.trim();
     const accountCriteria = parseMonitoringAccountFilterValue(account);
+    // 明确的凭据索引也覆盖缺少provider快照的历史事件。
+    if (accountCriteria.provider && accountCriteria.authIndices.length === 0) {
+      filters.providers = [accountCriteria.provider];
+    }
 
     authIndices = addAuthIndexConstraint(authIndices, accountCriteria.authIndices);
+    if (accountCriteria.authIndices.length > 0 && accountCriteria.accounts.length > 0) {
+      // 共享凭据索引：同时携带精确账号，避免把其它账号的同索引事件算进详情。
+      filters.accounts = accountCriteria.accounts;
+    }
     filters.source_hashes = addFilterValueConstraint(
       filters.source_hashes,
       accountCriteria.sourceHashes
@@ -414,7 +484,7 @@ export const buildAnalyticsFilters = (
       .map(([authIndex]) => authIndex);
     authIndices = addAuthIndexConstraint(authIndices, providerAuthIndices);
     if (providerAuthIndices.length === 0) {
-      filters.providers = [provider];
+      filters.providers = addFilterValueConstraint(filters.providers, [provider]);
     }
   }
   if (isActiveFilterValue(scopeFilters.channel)) {
@@ -633,8 +703,11 @@ export const buildAccountRowsFromAnalytics = (
   authFileMap: Map<string, CredentialInfo>,
   sourceInfoMap: ReturnType<typeof buildSourceInfoMap>,
   channelByAuthIndex: Map<string, MonitoringChannelMeta>
-): MonitoringAccountRow[] =>
-  rows
+): MonitoringAccountRow[] => {
+  const authIndexRowCounts = countAccountRowsByAuthIndex(
+    rows.map((row) => ({ provider: row.auth_provider_snapshot, authIndices: row.auth_indices }))
+  );
+  return rows
     .map((row) => {
       const authIndex = resolveFirstAuthIndex(row.auth_indices);
       const authMetas = resolveAuthMetas(row.auth_indices, authMetaMap);
@@ -690,7 +763,8 @@ export const buildAccountRowsFromAnalytics = (
             account: row.account_snapshot,
             authLabel: row.auth_label_snapshot,
             source: row.sources?.[0],
-            authIndex,
+            // '-' 是展示占位，不能抢占 source-hash 回退身份
+            authIndex: authIndex === '-' ? '' : authIndex,
             sourceHash: row.source_hashes?.[0],
           }),
         account,
@@ -722,6 +796,9 @@ export const buildAccountRowsFromAnalytics = (
             provider,
             authIndices: row.auth_indices,
             sourceHashes: row.source_hashes,
+            exactAccount: hasSharedAuthIndex(row.auth_indices, authIndexRowCounts)
+              ? row.account_snapshot || filterAccount
+              : undefined,
           }) || account,
         models: buildModelSpendRowsFromAnalytics(row.models),
       };
@@ -732,6 +809,7 @@ export const buildAccountRowsFromAnalytics = (
         right.totalCalls - left.totalCalls ||
         right.totalCost - left.totalCost
     );
+};
 
 export const buildApiKeyRowsFromAnalytics = (
   rows: MonitoringAnalyticsApiKeyStatRow[],

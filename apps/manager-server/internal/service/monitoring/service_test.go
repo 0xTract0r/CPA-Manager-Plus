@@ -5106,3 +5106,137 @@ func testCanonicalHash(hash string) string {
 	sum := sha256.Sum256([]byte(hash))
 	return hex.EncodeToString(sum[:])
 }
+
+func TestAccountStatsSeparateProvidersAndMergeRotatedCredentials(t *testing.T) {
+	stats := buildAccountStats([]store.AccountModelStat{
+		{AccountSnapshot: "shared@example.com", AuthLabelSnapshot: "AC-13", AuthProviderSnapshot: "claude", AuthIndex: "claude-1", Model: "claude", Calls: 2, SuccessCalls: 2, TotalTokens: 100},
+		{AccountSnapshot: "shared@example.com", AuthLabelSnapshot: "GPT-PH-01", AuthProviderSnapshot: "codex", AuthIndex: "codex-old", Model: "gpt", Calls: 3, SuccessCalls: 3, TotalTokens: 200},
+		{AccountSnapshot: "shared@example.com", AuthLabelSnapshot: "GPT-PH-01", AuthProviderSnapshot: "codex", AuthIndex: "codex-new", Model: "gpt", Calls: 4, SuccessCalls: 4, TotalTokens: 300},
+	}, nil)
+	if len(stats) != 2 {
+		t.Fatalf("wanted two providers, got %#v", stats)
+	}
+	byID := map[string]AccountStatRow{}
+	for _, row := range stats {
+		byID[row.ID] = row
+	}
+	claude, codex := byID["monitoring-account:1:account:636C61756465:736861726564406578616D706C652E636F6D"], byID["monitoring-account:1:account:636F646578:736861726564406578616D706C652E636F6D"]
+	if claude.Calls != 2 || claude.TotalTokens != 100 || claude.AuthLabelSnapshot != "AC-13" || len(claude.AuthIndices) != 1 {
+		t.Fatalf("Claude stats mixed: %#v", claude)
+	}
+	if codex.Calls != 7 || codex.TotalTokens != 500 || codex.AuthLabelSnapshot != "GPT-PH-01" || len(codex.AuthIndices) != 2 {
+		t.Fatalf("Codex rotation split or mixed: %#v", codex)
+	}
+}
+
+func TestAccountStatsRecoverIncompleteSnapshotsByAuthIndex(t *testing.T) {
+	rows := buildAccountStats([]store.AccountModelStat{
+		{AuthIndex: "gpt", AccountSnapshot: "sha***@example.com", Calls: 6, TotalTokens: 60},
+		{AuthIndex: "gpt", AccountSnapshot: "sha***@example.com", AuthProviderSnapshot: "unknown", Calls: 2, TotalTokens: 20},
+		{AuthIndex: "gpt", AccountSnapshot: "shared@example.com", AuthProviderSnapshot: "codex", AuthLabelSnapshot: "GPT-PH-01", Calls: 10, TotalTokens: 100},
+		{AuthIndex: "claude", AccountSnapshot: "shared@example.com", AuthProviderSnapshot: "claude", Calls: 3, TotalTokens: 30},
+	}, nil)
+	if len(rows) != 2 {
+		t.Fatalf("incomplete snapshots split the same credential: %#v", rows)
+	}
+	for _, row := range rows {
+		if row.ID == "monitoring-account:1:account:636F646578:736861726564406578616D706C652E636F6D" && row.Calls == 18 && row.TotalTokens == 180 && row.AuthLabelSnapshot == "GPT-PH-01" {
+			return
+		}
+	}
+	t.Fatalf("missing calls or wrong canonical identity: %#v", rows)
+}
+
+func TestAccountStatsDoNotGuessConflictingOrAbsentIdentity(t *testing.T) {
+	for _, conflicting := range []store.AccountModelStat{
+		{AuthIndex: "same-index", AccountSnapshot: "shared@example.com", AuthProviderSnapshot: "claude", Calls: 2},
+		{AuthIndex: "same-index", AccountSnapshot: "different@example.com", AuthProviderSnapshot: "codex", Calls: 2},
+	} {
+		rows := buildAccountStats([]store.AccountModelStat{
+			{AuthIndex: "same-index", AccountSnapshot: "shared@example.com", AuthProviderSnapshot: "codex", Calls: 1},
+			conflicting,
+			{AuthIndex: "same-index", AccountSnapshot: "sha***@example.com", Calls: 6},
+		}, nil)
+		if len(rows) != 3 {
+			t.Fatalf("conflicting identities must remain separate: %#v", rows)
+		}
+	}
+	rows := buildAccountStats([]store.AccountModelStat{{AuthIndex: "missing", AccountSnapshot: "sha***@example.com", Calls: 6}}, nil)
+	if len(rows) != 1 || rows[0].AuthProviderSnapshot != "" || rows[0].Calls != 6 {
+		t.Fatalf("must retain unresolved identity without guessing: %#v", rows)
+	}
+}
+
+func TestAnalyticsIncompleteAccountSnapshotsStayWithinCredentialEvidence(t *testing.T) {
+	db := newMonitoringTestStore(t)
+	const from int64 = 1778000000000
+	events := []usage.Event{}
+	for i, s := range []struct{ index, provider, account string }{
+		{"alpha", "codex", "shared@example.com"},
+		{"alpha", "unknown", "sha***@example.com"},
+		{"beta", "claude", "shared@example.com"},
+		{"reused", "codex", "one@example.com"},
+		{"reused", "claude", "masked***"},
+		{"reused", "unknown", "masked***"},
+	} {
+		e := monitoringEvent(fmt.Sprintf("recover-%d", i), from+int64(i+1), "m", s.index, fmt.Sprintf("origin-%d", i), false, 10, 2, 0, 0, 12, nil)
+		e.AccountSnapshot = s.account
+		e.AuthProviderSnapshot = s.provider
+		e.Provider = ""
+		events = append(events, e)
+	}
+	if _, err := db.InsertEvents(context.Background(), events); err != nil {
+		t.Fatal(err)
+	}
+	for _, rollup := range []bool{false, true} {
+		if rollup {
+			catchUpMonitoringArchiveDeleteReadiness(t, context.Background(), db)
+		}
+		svc := New(db, rollup)
+		req := Request{FromMS: from, ToMS: from + 1000, Include: Include{AccountStats: true, FilterSelectors: true}}
+		resp, err := svc.Analytics(context.Background(), req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.FilterOptions == nil || len(resp.AccountStats) != 5 || len(resp.FilterOptions.AccountStats) != 5 {
+			t.Fatalf("rollup=%t groups=%d selectors=%#v", rollup, len(resp.AccountStats), resp.FilterOptions)
+		}
+		byID := map[string]AccountStatRow{}
+		for _, v := range resp.AccountStats {
+			byID[v.ID] = v
+		}
+		for _, selector := range resp.FilterOptions.AccountStats {
+			if _, ok := byID[selector.ID]; !ok {
+				t.Fatalf("rollup=%t orphan selector %q", rollup, selector.ID)
+			}
+		}
+		var canonical, other int64
+		for _, row := range resp.AccountStats {
+			if row.AccountSnapshot == "shared@example.com" {
+				switch row.AuthProviderSnapshot {
+				case "codex":
+					canonical = row.Calls
+					if len(row.SourceHashes) != 2 {
+						t.Fatalf("source history lost: %#v", row.SourceHashes)
+					}
+				case "claude":
+					other = row.Calls
+				}
+			}
+			if row.AccountSnapshot == "one@example.com" && row.Calls != 1 {
+				t.Fatalf("ambiguous credential incorrectly attributed: %#v", row)
+			}
+		}
+		if canonical != 2 || other != 1 {
+			t.Fatalf("rollup=%t provider-specific calls codex=%d claude=%d", rollup, canonical, other)
+		}
+		req.Filters = Filters{AuthIndices: []string{"beta"}}
+		scoped, err := svc.Analytics(context.Background(), req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(scoped.AccountStats) != 1 || scoped.AccountStats[0].AuthProviderSnapshot != "claude" || scoped.AccountStats[0].Calls != 1 {
+			t.Fatalf("rollup=%t filtered main rows=%#v", rollup, scoped.AccountStats)
+		}
+	}
+}

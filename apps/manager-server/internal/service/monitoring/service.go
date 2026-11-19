@@ -2579,16 +2579,20 @@ func countAPIKeySelectors(values store.FilterSelectorValues) int {
 }
 
 func buildAccountSelectorStats(values store.FilterSelectorValues) []AccountStatRow {
+	byIndex := make(credentialSnapshotIndex)
+	for _, r := range values.AccountSelectors {
+		byIndex.observe(r.AuthIndex, r.AuthProviderSnapshot, r.AccountSnapshot, r.AuthLabelSnapshot)
+	}
 	grouped := map[string]*accountStatAccumulator{}
 	for _, selector := range values.AccountSelectors {
-		identity := monitoringAccountIdentity{
+		identity := byIndex.recover(monitoringAccountIdentity{
 			Provider:          selector.AuthProviderSnapshot,
 			AccountSnapshot:   selector.AccountSnapshot,
 			AuthLabelSnapshot: selector.AuthLabelSnapshot,
 			Source:            selector.Source,
 			AuthIndex:         selector.AuthIndex,
 			SourceHash:        selector.SourceHash,
-		}
+		})
 		id := identity.key()
 		if id == "-" && strings.TrimSpace(selector.SourceHash) == "" {
 			continue
@@ -2598,8 +2602,8 @@ func buildAccountSelectorStats(values store.FilterSelectorValues) []AccountStatR
 			entry = &accountStatAccumulator{
 				row: AccountStatRow{
 					ID:                   id,
-					AccountSnapshot:      selector.AccountSnapshot,
-					AuthLabelSnapshot:    selector.AuthLabelSnapshot,
+					AccountSnapshot:      identity.AccountSnapshot,
+					AuthLabelSnapshot:    identity.AuthLabelSnapshot,
 					AuthProviderSnapshot: identity.provider(),
 					SuccessRate:          1,
 				},
@@ -2611,9 +2615,9 @@ func buildAccountSelectorStats(values store.FilterSelectorValues) []AccountStatR
 		}
 		fillAccountStatSnapshots(
 			&entry.row,
-			selector.AccountSnapshot,
-			selector.AuthLabelSnapshot,
-			selector.AuthProviderSnapshot,
+			identity.AccountSnapshot,
+			identity.AuthLabelSnapshot,
+			identity.Provider,
 		)
 		addSetValue(entry.authIndices, selector.AuthIndex)
 		addSetValue(entry.sources, selector.Source)
@@ -3212,24 +3216,28 @@ type credentialStatAccumulator struct {
 }
 
 func buildAccountStats(stats []store.AccountModelStat, prices map[string]store.ModelPrice) []AccountStatRow {
+	byIndex := make(credentialSnapshotIndex)
+	for _, r := range stats {
+		byIndex.observe(r.AuthIndex, r.AuthProviderSnapshot, r.AccountSnapshot, r.AuthLabelSnapshot)
+	}
 	grouped := map[string]*accountStatAccumulator{}
 	for _, stat := range stats {
-		identity := monitoringAccountIdentity{
+		identity := byIndex.recover(monitoringAccountIdentity{
 			Provider:          stat.AuthProviderSnapshot,
 			AccountSnapshot:   stat.AccountSnapshot,
 			AuthLabelSnapshot: stat.AuthLabelSnapshot,
 			Source:            stat.Source,
 			AuthIndex:         stat.AuthIndex,
 			SourceHash:        stat.SourceHash,
-		}
+		})
 		id := identity.key()
 		entry := grouped[id]
 		if entry == nil {
 			entry = &accountStatAccumulator{
 				row: AccountStatRow{
 					ID:                   id,
-					AccountSnapshot:      stat.AccountSnapshot,
-					AuthLabelSnapshot:    stat.AuthLabelSnapshot,
+					AccountSnapshot:      identity.AccountSnapshot,
+					AuthLabelSnapshot:    identity.AuthLabelSnapshot,
 					AuthProviderSnapshot: identity.provider(),
 				},
 				authIndices:  map[string]struct{}{},
@@ -3239,7 +3247,7 @@ func buildAccountStats(stats []store.AccountModelStat, prices map[string]store.M
 			}
 			grouped[id] = entry
 		}
-		fillAccountStatSnapshots(&entry.row, stat.AccountSnapshot, stat.AuthLabelSnapshot, stat.AuthProviderSnapshot)
+		fillAccountStatSnapshots(&entry.row, identity.AccountSnapshot, identity.AuthLabelSnapshot, identity.Provider)
 		addSetValue(entry.authIndices, stat.AuthIndex)
 		addSetValue(entry.sources, stat.Source)
 		addSetValue(entry.sourceHashes, stat.SourceHash)
@@ -3613,6 +3621,61 @@ type monitoringAccountIdentity struct {
 	Source            string
 	AuthIndex         string
 	SourceHash        string
+}
+
+// 凭据索引可能复用。仅当一条记录提供完整的提供商和账号，且同索引的已知字段一致时，才补齐历史快照。
+type credentialSnapshotEvidence struct {
+	provider, account, label string
+	complete, ambiguous      bool
+}
+
+type credentialSnapshotIndex map[string]credentialSnapshotEvidence
+
+func (byIndex credentialSnapshotIndex) observe(index, provider, account, label string) {
+	index = strings.TrimSpace(index)
+	if index == "" || index == "-" {
+		return
+	}
+	e := byIndex[index]
+	if e.ambiguous {
+		return
+	}
+	provider = normalizeMonitoringProvider(provider)
+	if provider == "unknown" || provider == "-" {
+		provider = ""
+	}
+	account = strings.TrimSpace(account)
+	if account == "-" || strings.Contains(account, "*") {
+		account = ""
+	}
+	if (provider != "" && e.provider != "" && provider != e.provider) ||
+		(account != "" && e.account != "" && account != e.account) {
+		byIndex[index] = credentialSnapshotEvidence{ambiguous: true}
+		return
+	}
+	if provider != "" {
+		e.provider = provider
+	}
+	if account != "" {
+		e.account = account
+	}
+	if provider != "" && account != "" {
+		e.complete = true
+		if e.label == "" {
+			e.label = label
+		}
+	}
+	byIndex[index] = e
+}
+
+func (byIndex credentialSnapshotIndex) recover(id monitoringAccountIdentity) monitoringAccountIdentity {
+	if e := byIndex[strings.TrimSpace(id.AuthIndex)]; e.complete {
+		id.Provider, id.AccountSnapshot = e.provider, e.account
+		if id.AuthLabelSnapshot == "" {
+			id.AuthLabelSnapshot = e.label
+		}
+	}
+	return id
 }
 
 // normalizeMonitoringProvider applies the minimal normalization used by the
