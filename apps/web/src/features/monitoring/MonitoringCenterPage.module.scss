@@ -284,29 +284,45 @@
   }
 }
 
-// 操作和状态都按完整内容宽度参与换行；挤不下时整组使用下一行，
-// 避免状态被固定双列压到半幅、单侧叠三行而另一侧留下大片空白。
+// 两组按完整内容宽度决定同排或换行。操作组吃掉同行余量，
+// 状态组不增长：宽屏位于右侧，换到下一行时自然从左开始，避免阶梯留白。
 .monitorActionBar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  gap: 8px;
 
-  > .actionGroup,
-  > .actionBarMeta {
+  > .actionGroup {
     flex: 1 1 max-content;
+    width: auto;
     min-width: 0;
     max-width: 100%;
+    justify-content: flex-start;
   }
 
-  // 只在监控工具栏中合并布局层级，让状态 chip 与日志入口一起换行。
-  // 保留原 DOM、颜色、字号与其他页面共用状态条的布局。
+  .monitorLogsLink {
+    flex: 0 0 auto;
+  }
+
+  > .actionBarMeta {
+    flex: 0 1 max-content;
+    width: auto;
+    min-width: 0;
+    max-width: 100%;
+    justify-content: flex-start;
+    gap: 8px;
+  }
+
+  // 只展平本工具栏的无语义包装；其它页面共用状态条保持原样。
   .actionBarMeta .statusBar,
   .actionBarMeta .statusMeta {
     display: contents;
   }
 
   .statusMeta > span {
+    width: auto;
     max-width: 100%;
+    justify-content: flex-start;
     white-space: normal;
     overflow-wrap: anywhere;
   }

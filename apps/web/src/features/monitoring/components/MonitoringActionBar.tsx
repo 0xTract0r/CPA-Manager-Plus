@@ -109,7 +109,7 @@ export function MonitoringActionBar({
       className={`${styles.actionBar} ${styles.monitorActionBar}`}
       aria-label={t('common.action')}
     >
-      <div className={styles.actionGroup}>
+      <div className={styles.actionGroup} data-testid="monitoring-toolbar-actions">
         <button
           type="button"
           className={`${styles.actionButton} ${styles.actionButtonPrimary}`}
@@ -219,10 +219,14 @@ export function MonitoringActionBar({
         />
       </div>
 
-      <div className={styles.actionBarMeta}>
+      <div className={styles.actionBarMeta} data-testid="monitoring-toolbar-status">
         {statusSummary}
         {loggingToFile ? (
-          <Link to="/logs" className={`${styles.actionButton} ${styles.quickNavLink}`}>
+          <Link
+            to="/logs"
+            className={`${styles.actionButton} ${styles.quickNavLink} ${styles.monitorLogsLink}`}
+            data-testid="monitoring-toolbar-logs"
+          >
             <IconFileText size={16} />
             <span>{t('monitoring.open_logs')}</span>
             <IconExternalLink size={14} />
