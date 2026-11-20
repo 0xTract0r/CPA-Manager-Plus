@@ -31,7 +31,10 @@ import type {
   AccountSettingsEditorField,
   AccountSettingsEditorFieldValue,
   AccountSettingsEditorState,
+  AccountSettingsSaveOptions,
 } from '@/features/authFiles/hooks/useAuthFilesAccountSettings';
+import type { ProxyDuplicateUsage } from '@/utils/proxyPreflight';
+import { formatProxyDuplicateWarning } from '@/utils/proxyInlineValidation';
 import type {
   AuthFileClientVersionObservation,
   AuthFileHeaderMap,
@@ -117,8 +120,13 @@ export type AuthFilesAccountSettingsModalProps = {
   auditReloadKey?: number;
   onClose: () => void;
   onCopyText: (text: string) => void | Promise<void>;
-  onSave: () => void;
+  onSave: (options?: AccountSettingsSaveOptions) => void;
   onChange: (field: AccountSettingsEditorField, value: AccountSettingsEditorFieldValue) => void;
+  /**
+   * 当前编辑中的 proxy_url 被同类型其它账号占用的情况（软提醒，来自 hook）。
+   * 农场换代理确认框据此一并展示占用提醒，确认后保存不再重复弹占用确认。
+   */
+  proxyDuplicate?: ProxyDuplicateUsage;
   /** 代理输入框失焦（blur）时触发的内联实时校验（格式→查重→连通性探针 + 就地展示）。 */
   onProxyBlur?: () => void;
   /** 进入独立账号策略窗口；基础设置有未保存修改时禁止跳转。 */
@@ -1269,6 +1277,7 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
     onChange,
     onProxyBlur,
     onOpenLimits,
+    proxyDuplicate,
   } = props;
   // 列表轮询会换父回调；稳定Modal回调，避免重新渲染取消350ms关闭动画。
   const closeRef = useRef(onClose);
@@ -1554,6 +1563,10 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
    * 轮换失败则不保存，避免 CPA 侧 proxy_url 与农场容器实际出口不一致。
    * 非 Claude / 非农场 / codex 账号，或本次没有实际改动 proxy_url，一律不弹
    * 此确认，直接走原有 onSave()，不触发任何容器动作。
+   *
+   * 代理已被其它账号占用（软提醒）时：普通保存由 hook 在探针通过后弹占用确认框；
+   * 走换代理确认的农场账号则把占用提醒并入这一个确认框，确认后以
+   * proxyDuplicateConfirmed 调 onSave，避免「确认了还要再确认一次」。
    */
   const handleSaveClick = () => {
     // 内联校验未结算前不放行（保存按钮通常已因此 disabled，这里对竞态再兜底一层）：
@@ -1567,10 +1580,20 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
     }
     const accountId = editor.fileName;
     const nextProxyUrl = editor.proxyUrl.trim();
+    const hasProxyDuplicate = (proxyDuplicate?.count ?? 0) > 0;
     showConfirmation({
       title: t('farm.rotate.title'),
       message: (
         <div data-testid="account-settings-rotate-proxy-confirm">
+          {hasProxyDuplicate && proxyDuplicate && (
+            <p
+              className="warning-box"
+              style={{ margin: '0 0 12px' }}
+              data-testid="account-settings-rotate-proxy-duplicate-warning"
+            >
+              {formatProxyDuplicateWarning(t, proxyDuplicate)}
+            </p>
+          )}
           <p>{t('farm.rotate.body')}</p>
           <ul style={{ margin: '8px 0 0', paddingLeft: '20px' }}>
             <li>{t('farm.rotate.consequenceNewContainer')}</li>
@@ -1591,7 +1614,8 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
           proxy_url: nextProxyUrl,
         });
         if (result) {
-          onSave();
+          // 占用提醒已在本确认框里展示并被确认，保存时不再重复弹占用确认框。
+          onSave(hasProxyDuplicate ? { proxyDuplicateConfirmed: true } : undefined);
         }
       },
     });
@@ -1638,8 +1662,8 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
               editor?.saving === true ||
               !dirty ||
               Boolean(editor?.proxyUrlError) ||
-              Boolean(editor?.proxyUrlDuplicateError) ||
-              // 内联校验中 / 校验失败 → 拦住保存（坏/重复代理在换代理 rotate 之前就被拦下）。
+              // 内联校验中 / 校验失败 → 拦住保存（坏代理在换代理 rotate 之前就被拦下）。
+              // 代理被其它账号占用只是软提醒，不禁用保存（保存时弹框确认）。
               editor?.proxyInline?.phase === 'checking' ||
               editor?.proxyInline?.phase === 'invalid' ||
               Boolean(editor?.extraHeadersError) ||
@@ -1861,22 +1885,30 @@ export function AuthFilesAccountSettingsModal(props: AuthFilesAccountSettingsMod
                       'Required. Each account must route outbound traffic through its own residential proxy (http/https/socks5). Leaving it empty would expose your real IP, so core rejects empty/invalid proxy_url.',
                   })}
                   error={
-                    editor.proxyUrlDuplicateError
-                      ? editor.proxyUrlDuplicateError
-                      : editor.proxyUrlError
-                        ? editor.proxyUrlError === 'empty'
-                          ? t('auth_files.proxy_url_required_error', {
-                              defaultValue: 'Proxy URL is required. Enter a residential proxy URL.',
-                            })
-                          : t('auth_files.proxy_url_invalid_error', {
-                              defaultValue:
-                                'Invalid proxy URL. Use a full URL such as socks5://user:pass@host:port.',
-                            })
-                        : // 连通性探针失败（无法连通 / 超时）承载在内联校验状态里，就地标红。
-                          editor.proxyInline?.phase === 'invalid'
-                          ? editor.proxyInline.message
-                          : undefined
+                    editor.proxyUrlError
+                      ? editor.proxyUrlError === 'empty'
+                        ? t('auth_files.proxy_url_required_error', {
+                            defaultValue: 'Proxy URL is required. Enter a residential proxy URL.',
+                          })
+                        : t('auth_files.proxy_url_invalid_error', {
+                            defaultValue:
+                              'Invalid proxy URL. Use a full URL such as socks5://user:pass@host:port.',
+                          })
+                      : // 连通性探针失败（无法连通 / 超时）承载在内联校验状态里，就地标红。
+                        editor.proxyInline?.phase === 'invalid'
+                        ? editor.proxyInline.message
+                        : undefined
                   }
+                  // 代理被其它账号占用只是软提醒：黄色警告（含占用账号数 + 账号名），不标红、不禁用保存。
+                  // 失焦校验结果优先；未经失焦直接保存时由保存流程写入 proxyUrlDuplicateWarning。
+                  warning={
+                    (editor.proxyInline?.checkedValue === editor.proxyUrl.trim()
+                      ? editor.proxyInline?.warning
+                      : undefined) ||
+                    editor.proxyUrlDuplicateWarning ||
+                    undefined
+                  }
+                  warningTestId="account-settings-proxy-duplicate-warning"
                   disabled={
                     disableControls || editor.saving || editor.proxyInline?.phase === 'checking'
                   }

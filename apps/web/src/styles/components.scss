@@ -846,6 +846,17 @@ textarea {
   color: $error-color;
 }
 
+// 非阻断警告（如代理已被其它账号占用）：与 .error-box 同尺寸，配色与 .status-badge.warning 一致，
+// 用 --color-warning-* 调色板（各主题下都是琥珀色）；不用 --warning-*，因为羊毛纸主题把它映射成了
+// 危险红，会与错误红框混淆。
+.warning-box {
+  background: var(--color-warning-light-9);
+  border: 1px solid var(--color-warning-light-5);
+  border-radius: $radius-md;
+  padding: $spacing-sm $spacing-md;
+  color: var(--color-warning-dark-2);
+}
+
 .stack {
   display: flex;
   flex-direction: column;

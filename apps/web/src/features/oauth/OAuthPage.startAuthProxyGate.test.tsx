@@ -20,6 +20,7 @@ const { mocks } = vi.hoisted(() => {
       authFilesList: vi.fn(),
       runProxyPreflight: vi.fn(),
       showNotification: vi.fn(),
+      showConfirmation: vi.fn(),
       navigate: vi.fn(),
     },
   };
@@ -35,7 +36,10 @@ vi.mock('react-router-dom', () => ({
 }));
 
 vi.mock('@/stores', () => ({
-  useNotificationStore: () => ({ showNotification: mocks.showNotification }),
+  useNotificationStore: () => ({
+    showNotification: mocks.showNotification,
+    showConfirmation: mocks.showConfirmation,
+  }),
   useAuthStore: (selector: (state: Record<string, unknown>) => unknown) =>
     selector({ connectionStatus: 'disconnected', apiBase: 'http://manager.local', supportsPlugin: false }),
   useThemeStore: (selector: (state: { resolvedTheme: 'light' }) => unknown) =>
@@ -163,6 +167,8 @@ describe('OAuthPage 新增账号起 OAuth 前的连通性门禁 (scenario b)', (
       'codex',
       expect.objectContaining({ proxyUrl: PROXY })
     );
+    // 无占用 → 不弹查重确认框。
+    expect(mocks.showConfirmation).not.toHaveBeenCalled();
 
     await act(async () => {
       renderer.unmount();

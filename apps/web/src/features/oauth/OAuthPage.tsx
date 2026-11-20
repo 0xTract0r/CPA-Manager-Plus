@@ -19,15 +19,18 @@ import type { AuthFileItem } from '@/types/authFile';
 import { vertexApi, type VertexImportResponse } from '@/services/api/vertex';
 import { copyToClipboard } from '@/utils/clipboard';
 import { resolveAccountIdentity } from '@/utils/accountIdentity';
-import { findAccountsUsingProxy } from '@/utils/proxyPreflight';
+import { findProxyDuplicateUsage } from '@/utils/proxyPreflight';
 import {
   precheckProxyInlineFormat,
   runProxyInlineChecks,
   isProxyInlineValidatedOk,
   isProxyInlineChecking,
   isProxyInlineInvalid,
+  formatProxyDuplicateWarning,
+  requestProxyDuplicateConfirmation,
   type ProxyInlineValidationState,
   type ProxyInlineStage,
+  type ProxyInlineStageContext,
 } from '@/utils/proxyInlineValidation';
 import { toProxyOwnerAccount } from '@/features/authFiles/constants';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
@@ -418,7 +421,7 @@ const findSavedAuthFile = (
 export function OAuthPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const { showNotification } = useNotificationStore();
+  const { showNotification, showConfirmation } = useNotificationStore();
   const resolvedTheme = useThemeStore((state) => state.resolvedTheme);
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const apiBase = useAuthStore((state) => state.apiBase);
@@ -564,10 +567,12 @@ export function OAuthPage() {
   };
 
   // 「校验中」阶段推进（查重 → 探针）：同样只在仍处于校验中且值未变时更新细分文案。
+  // 进入探针阶段时一并写入查重结果，探针跑的同时就地先展示占用警告。
   const setProxyInlineStage = (
     provider: OAuthProvider,
     expectedValue: string,
-    stage: ProxyInlineStage
+    stage: ProxyInlineStage,
+    context?: ProxyInlineStageContext
   ) => {
     setStates((prev) => {
       const prevState = prev[provider] ?? {};
@@ -578,14 +583,33 @@ export function OAuthPage() {
         ...prev,
         [provider]: {
           ...prevState,
-          proxyInline: { ...inline, stage, checkedValue: expectedValue },
+          proxyInline: { ...inline, ...context, stage, checkedValue: expectedValue },
         },
       };
     });
   };
 
-  // 代理输入框失焦（blur）时的内联实时校验：格式（同步、不触网）→ 查重（L2）→ 连通性探针（L1）。
+  // 内联校验（查重软提醒 + 连通性探针）：blur 与开始认证的补跑共用同一实现。
+  // 查重账号来源是实时拉取的 auth-files 列表（新增账号页没有现成列表）。
+  const runOAuthProxyChecks = (provider: OAuthProvider, proxyUrl: string) =>
+    runProxyInlineChecks({
+      proxyUrl,
+      translate: (reason) => t(`proxy_preflight.reason_${reason}`),
+      checkDuplicate: async (value) => {
+        const filesResponse = await authFilesApi.list();
+        return findProxyDuplicateUsage(
+          value,
+          (filesResponse.files || []).map(toProxyOwnerAccount),
+          { provider }
+        );
+      },
+      duplicateWarning: (usage) => formatProxyDuplicateWarning(t, usage),
+      onStage: (stage, context) => setProxyInlineStage(provider, proxyUrl, stage, context),
+    });
+
+  // 代理输入框失焦（blur）时的内联实时校验：格式（同步、不触网）→ 查重（L2，软提醒）→ 连通性探针（L1）。
   // 空值不就地报错（必填在提交时拦）；同值已校验 / 校验中时不重复触发（缓存上次结果、防网络刷屏）。
+  // 查重命中只就地展示警告（含占用账号数 + 账号名），不判不合格；开始认证时再弹框确认。
   const handleProxyBlur = async (provider: OAuthProvider) => {
     const current = statesRef.current[provider] ?? {};
     const rawValue = current.proxyUrl || '';
@@ -617,17 +641,7 @@ export function OAuthPage() {
     updateProviderState(provider, {
       proxyInline: { phase: 'checking', stage: 'dedup', checkedValue: trimmed },
     });
-    const result = await runProxyInlineChecks({
-      proxyUrl: trimmed,
-      translate: (reason) => t(`proxy_preflight.reason_${reason}`),
-      checkDuplicate: async (value) => {
-        const filesResponse = await authFilesApi.list();
-        return findAccountsUsingProxy(value, (filesResponse.files || []).map(toProxyOwnerAccount), { provider });
-      },
-      duplicateMessage: (accounts) =>
-        t('proxy_preflight.duplicate_account', { accounts: accounts.join('、') }),
-      onStage: (stage) => setProxyInlineStage(provider, trimmed, stage),
-    });
+    const result = await runOAuthProxyChecks(provider, trimmed);
     applyProxyInlineResult(provider, trimmed, result);
   };
 
@@ -783,26 +797,13 @@ export function OAuthPage() {
       return;
     }
     // 已校验通过（同值）→ 直接放行；否则（未校验 / 值已变更后未重验）→ 就地补跑一次完整
-    // 校验作为最后确认门（fail-closed）：查重（L2）先于连通性探针（L1），不过则不进 OAuth。
+    // 校验作为最后确认门（fail-closed）：连通性探针不过则不进 OAuth；查重只是软提醒。
+    let validated: ProxyInlineValidationState | undefined = current.proxyInline;
     if (!isProxyInlineValidatedOk(current.proxyInline, proxyUrl)) {
       updateProviderState(provider, {
         proxyInline: { phase: 'checking', stage: 'dedup', checkedValue: proxyUrl },
       });
-      const result = await runProxyInlineChecks({
-        proxyUrl,
-        translate: (reason) => t(`proxy_preflight.reason_${reason}`),
-        checkDuplicate: async (value) => {
-          const filesResponse = await authFilesApi.list();
-          return findAccountsUsingProxy(
-            value,
-            (filesResponse.files || []).map(toProxyOwnerAccount),
-            { provider }
-          );
-        },
-        duplicateMessage: (accounts) =>
-          t('proxy_preflight.duplicate_account', { accounts: accounts.join('、') }),
-        onStage: (stage) => setProxyInlineStage(provider, proxyUrl, stage),
-      });
+      const result = await runOAuthProxyChecks(provider, proxyUrl);
       applyProxyInlineResult(provider, proxyUrl, result);
       if (result.phase !== 'ok') {
         showNotification(result.message || t('auth_login.account_proxy_invalid'), 'error');
@@ -814,7 +815,16 @@ export function OAuthPage() {
           'success'
         );
       }
+      validated = result;
     }
+    // 代理已被同类型其它账号占用 → 弹框确认（只弹这一次）：确认后照原流程进 OAuth，
+    // 取消则停在原地、不发 auth-url 请求。无占用时直接放行。
+    const confirmed = await requestProxyDuplicateConfirmation(
+      showConfirmation,
+      t,
+      validated?.duplicate
+    );
+    if (!confirmed) return;
     clearPollingTimer(provider);
     updateProviderState(provider, {
       url: undefined,
@@ -1110,6 +1120,9 @@ export function OAuthPage() {
                           ? state.proxyInline.message
                           : undefined
                       }
+                      // 查重命中只做软提醒：黄色警告（含占用账号数 + 账号名），不标红、不禁用按钮。
+                      warning={state.proxyInline?.warning}
+                      warningTestId={`oauth-proxy-duplicate-warning-${provider.id}`}
                       disabled={Boolean(state.polling) || state.proxyInline?.phase === 'checking'}
                       onChange={(e) =>
                         updateProviderState(provider.id, {
@@ -1124,7 +1137,7 @@ export function OAuthPage() {
                     />
                   </div>
                   {/* 代理内联校验状态区：紧邻输入框就地展示「验证中 / 已连通(出口 IP)」；
-                      失败文案走 Input 自身的 error 红框（不重复展示）。 */}
+                      失败文案走 Input 自身的 error 红框、占用警告走 Input 的 warning 黄框（不重复展示）。 */}
                   {state.proxyInline?.phase === 'checking' && (
                     <div
                       className={`status-badge muted ${styles.proxyInlineStatus}`}

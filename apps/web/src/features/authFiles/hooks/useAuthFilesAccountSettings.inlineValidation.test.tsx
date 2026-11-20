@@ -3,7 +3,8 @@ import { create, type ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // 账号设置弹窗「代理输入框内联实时校验」覆盖（hook 层）：
-//  - blur 触发主校验路径（格式→查重→连通性探针）+ 就地展示（proxyInline 状态）；
+//  - blur 触发主校验路径（格式→查重(软提醒)→连通性探针）+ 就地展示（proxyInline 状态）；
+//  - 查重命中只挂占用警告（含次数 + 账号名），不判 invalid；已通过后保存弹一次占用确认框；
 //  - 未变更（与打开基线相同）→ 跳过探针直接标为已连通；
 //  - 保存改为读取内联校验状态门控：已通过直接放行不重跑探针、校验中拦住、失败拦住不重跑；
 //  - 未经 blur 直接保存仍走「最后确认门」完整校验（既有回归由 proxyProbe/proxyDedup 用例覆盖）。
@@ -37,7 +38,9 @@ vi.mock('react-i18next', () => ({
   initReactI18next: { type: '3rdParty', init: () => {} },
   useTranslation: () => ({
     t: (key: string, options?: Record<string, unknown>) => {
-      if (options && typeof options.accounts === 'string') return `${key}|${options.accounts}`;
+      if (key === 'proxy_preflight.duplicate_account_separator') return '、';
+      if (options && typeof options.accounts === 'string')
+        return `${key}|${String(options.count)}|${options.accounts}`;
       if (options && (typeof options.ip === 'string' || typeof options.ip === 'number'))
         return `${key}|${options.ip}`;
       if (options && typeof options.defaultValue === 'string')
@@ -146,7 +149,7 @@ describe('useAuthFilesAccountSettings 代理输入框内联实时校验（失焦
     harness.unmount();
   });
 
-  it('blur 填重复代理 → 内联标红指名冲突账号、不发探针', async () => {
+  it('blur 填重复代理 → 不判不合格：照常探针，内联带占用警告（次数 + 账号名）', async () => {
     const accounts: AuthFileItem[] = [
       {
         name: 'other.json',
@@ -157,12 +160,65 @@ describe('useAuthFilesAccountSettings 代理输入框内联实时校验（失焦
     const harness = mountHook(accounts);
     await openEditor(harness);
     editProxy(harness, NEW_PROXY);
+    runProxyPreflightMock.mockResolvedValue({
+      ok: true,
+      exitIp: '203.0.113.9',
+      reason: 'ok',
+      message: 'proxy_preflight.reason_ok',
+    });
     await blur(harness);
 
-    expect(runProxyPreflightMock).not.toHaveBeenCalled();
-    const inline = harness.getCurrent().accountSettingsEditor?.proxyInline;
-    expect(inline?.phase).toBe('invalid');
-    expect(inline?.message).toContain('AC-15');
+    expect(runProxyPreflightMock).toHaveBeenCalledTimes(1);
+    const editor = harness.getCurrent().accountSettingsEditor;
+    expect(editor?.proxyInline?.phase).toBe('ok');
+    expect(editor?.proxyInline?.duplicate).toEqual({ count: 1, labels: ['AC-15'] });
+    expect(editor?.proxyInline?.warning).toBe('proxy_preflight.duplicate_account|1|AC-15');
+    // 不是错误：proxyUrlError 不因重复置位。
+    expect(editor?.proxyUrlError).toBeNull();
+    // blur 阶段只提醒，不弹确认框。
+    expect(notificationState.showConfirmation).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it('blur 已通过但有占用 → 保存弹一次确认框，确认后落库且不重跑探针', async () => {
+    const accounts: AuthFileItem[] = [
+      {
+        name: 'other.json',
+        type: 'claude',
+        account_settings: { proxy_url: NEW_PROXY, note: 'AC-15' },
+      } as AuthFileItem,
+    ];
+    const harness = mountHook(accounts);
+    await openEditor(harness);
+    editProxy(harness, NEW_PROXY);
+    runProxyPreflightMock.mockResolvedValue({
+      ok: true,
+      exitIp: '203.0.113.9',
+      reason: 'ok',
+      message: 'proxy_preflight.reason_ok',
+    });
+    await blur(harness);
+    authFilesMock.updateAccountSettings.mockResolvedValue(undefined);
+
+    let saveDone!: Promise<void>;
+    await act(async () => {
+      saveDone = harness.getCurrent().handleAccountSettingsSave();
+    });
+    expect(notificationState.showConfirmation).toHaveBeenCalledTimes(1);
+    const options = notificationState.showConfirmation.mock.calls[0][0] as {
+      message: string;
+      onConfirm: () => void;
+    };
+    expect(options.message).toBe('proxy_preflight.duplicate_confirm_message|1|AC-15');
+    expect(authFilesMock.updateAccountSettings).not.toHaveBeenCalled();
+
+    await act(async () => {
+      options.onConfirm();
+      await saveDone;
+    });
+    expect(authFilesMock.updateAccountSettings).toHaveBeenCalledTimes(1);
+    expect(runProxyPreflightMock).toHaveBeenCalledTimes(1);
+    expect(notificationState.showConfirmation).toHaveBeenCalledTimes(1);
     harness.unmount();
   });
 

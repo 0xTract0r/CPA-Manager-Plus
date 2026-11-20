@@ -12,7 +12,13 @@
     "validating_wait": "代理验证中，请稍候",
     "connected_with_ip": "连通正常 · 出口 IP：{{ip}}",
     "exit_ip_label": "出口 IP",
-    "duplicate_account": "该代理已被账号 {{accounts}} 使用，请为每个账号使用独立代理（避免出口 IP 聚类被关联）。"
+    "duplicate_account_one": "该代理已被 {{count}} 个账号使用：{{accounts}}。建议每个账号使用独立代理，避免出口 IP 聚类被关联。",
+    "duplicate_account_other": "该代理已被 {{count}} 个账号使用：{{accounts}}。建议每个账号使用独立代理，避免出口 IP 聚类被关联。",
+    "duplicate_account_separator": "、",
+    "duplicate_confirm_title": "代理已被其他账号使用",
+    "duplicate_confirm_message_one": "该代理已被 {{count}} 个账号使用：{{accounts}}。多个账号共用同一出口 IP 可能被关联，确定仍要使用这个代理继续吗？",
+    "duplicate_confirm_message_other": "该代理已被 {{count}} 个账号使用：{{accounts}}。多个账号共用同一出口 IP 可能被关联，确定仍要使用这个代理继续吗？",
+    "duplicate_confirm_ok": "仍然使用"
   },
   "common": {
     "login": "登录",

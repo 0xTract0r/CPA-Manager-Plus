@@ -3,6 +3,7 @@ import {
   ensureProxiesReachableForSave,
   ensureProxyReachableForSave,
   findAccountsUsingProxy,
+  findProxyDuplicateUsage,
   normalizeProxyForCompare,
   runProxyPreflight,
   validateProxyUrlFormat,
@@ -130,6 +131,56 @@ describe('findAccountsUsingProxy', () => {
     expect(findAccountsUsingProxy('http://p:1', noLabel, { provider: 'claude' })).toEqual([
       'acct-claude.json',
     ]);
+  });
+});
+
+describe('findProxyDuplicateUsage', () => {
+  it('统计实际占用账号数 + 展示名（同类型、归一化比较）', () => {
+    const accounts: ProxyOwnerAccount[] = [
+      { provider: 'codex', name: 'a.json', label: 'GPT-PH-01', proxyUrl: 'http://p:1' },
+      { provider: 'codex', name: 'b.json', label: 'GPT-PH-02', proxyUrl: ' HTTP://P:1 ' },
+      { provider: 'codex', name: 'c.json', label: 'GPT-PH-03', proxyUrl: 'http://other:2' },
+      { provider: 'claude', name: 'd.json', label: 'AC-14', proxyUrl: 'http://p:1' },
+    ];
+    expect(findProxyDuplicateUsage('http://p:1', accounts, { provider: 'codex' })).toEqual({
+      count: 2,
+      labels: ['GPT-PH-01', 'GPT-PH-02'],
+    });
+  });
+
+  it('同展示名的多个账号分别计数，展示名追加「×N」与 count 对齐', () => {
+    const accounts: ProxyOwnerAccount[] = [
+      { provider: 'claude', name: 'a.json', label: 'AC-14', proxyUrl: 'http://p:1' },
+      { provider: 'claude', name: 'b.json', label: 'AC-15', proxyUrl: 'http://p:1' },
+      { provider: 'claude', name: 'c.json', label: 'AC-14', proxyUrl: 'http://p:1' },
+    ];
+    expect(findProxyDuplicateUsage('http://p:1', accounts, { provider: 'claude' })).toEqual({
+      count: 3,
+      labels: ['AC-14 ×2', 'AC-15'],
+    });
+  });
+
+  it('同一账号（同 name）在列表里重复出现只计一次', () => {
+    const accounts: ProxyOwnerAccount[] = [
+      { provider: 'claude', name: 'a.json', label: 'AC-14', proxyUrl: 'http://p:1' },
+      { provider: 'claude', name: 'a.json', label: 'AC-14', proxyUrl: 'http://p:1' },
+    ];
+    expect(findProxyDuplicateUsage('http://p:1', accounts, { provider: 'claude' })).toEqual({
+      count: 1,
+      labels: ['AC-14'],
+    });
+  });
+
+  it('excludeName 排除自身；空代理 / 未知类型 → 无占用', () => {
+    const accounts: ProxyOwnerAccount[] = [
+      { provider: 'claude', name: 'a.json', label: 'AC-14', proxyUrl: 'http://p:1' },
+    ];
+    const none = { count: 0, labels: [] };
+    expect(
+      findProxyDuplicateUsage('http://p:1', accounts, { provider: 'claude', excludeName: 'a.json' })
+    ).toEqual(none);
+    expect(findProxyDuplicateUsage('   ', accounts, { provider: 'claude' })).toEqual(none);
+    expect(findProxyDuplicateUsage('http://p:1', accounts, { provider: 'unknown' })).toEqual(none);
   });
 });
 

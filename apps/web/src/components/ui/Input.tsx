@@ -4,15 +4,31 @@ interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   label?: string;
   hint?: string;
   error?: string;
+  /** 非阻断的警告提示（黄色样式，不标记 aria-invalid）；可与 error 同时存在。 */
+  warning?: string;
+  /** 警告提示容器的 data-testid（便于 UI 测试定位）。 */
+  warningTestId?: string;
   rightElement?: ReactNode;
 }
 
-export function Input({ label, hint, error, rightElement, className = '', id, ...rest }: InputProps) {
+export function Input({
+  label,
+  hint,
+  error,
+  warning,
+  warningTestId,
+  rightElement,
+  className = '',
+  id,
+  ...rest
+}: InputProps) {
   const generatedId = useId();
   const inputId = id ?? generatedId;
   const hintId = hint ? `${inputId}-hint` : undefined;
   const errorId = error ? `${inputId}-error` : undefined;
-  const describedBy = [rest['aria-describedby'], errorId, hintId].filter(Boolean).join(' ') || undefined;
+  const warningId = warning ? `${inputId}-warning` : undefined;
+  const describedBy =
+    [rest['aria-describedby'], errorId, warningId, hintId].filter(Boolean).join(' ') || undefined;
   const inputClassName = [
     'input',
     rightElement ? 'input-with-right-element' : '',
@@ -42,6 +58,11 @@ export function Input({ label, hint, error, rightElement, className = '', id, ..
       {error && (
         <div id={errorId} className="error-box">
           {error}
+        </div>
+      )}
+      {warning && (
+        <div id={warningId} className="warning-box" role="status" data-testid={warningTestId}>
+          {warning}
         </div>
       )}
     </div>

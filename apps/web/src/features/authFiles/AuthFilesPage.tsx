@@ -89,7 +89,10 @@ import { useAuthFilesData } from '@/features/authFiles/hooks/useAuthFilesData';
 import { useAuthFilesModels } from '@/features/authFiles/hooks/useAuthFilesModels';
 import { useAuthFilesOauth } from '@/features/authFiles/hooks/useAuthFilesOauth';
 import { useAuthFilesReauth } from '@/features/authFiles/hooks/useAuthFilesReauth';
-import { useAuthFilesAccountSettings } from '@/features/authFiles/hooks/useAuthFilesAccountSettings';
+import {
+  useAuthFilesAccountSettings,
+  type AccountSettingsSaveOptions,
+} from '@/features/authFiles/hooks/useAuthFilesAccountSettings';
 import { useAuthFilesTestMessage } from '@/features/authFiles/hooks/useAuthFilesTestMessage';
 import { useAuthFilesStatusBarCache } from '@/features/authFiles/hooks/useAuthFilesStatusBarCache';
 import {
@@ -457,6 +460,7 @@ export function AuthFilesPage() {
     accountSettingsEditor,
     accountSettingsUpdatedText,
     accountSettingsDirty,
+    accountSettingsProxyDuplicate,
     openAccountSettingsEditor,
     closeAccountSettingsEditor,
     handleAccountSettingsChange,
@@ -1615,13 +1619,16 @@ export function AuthFilesPage() {
   // 账号设置保存成功后（hook 内部会把 editor 置空）也会改变身份/审计相关历史，
   // 这里包一层：调用 hook 自带的保存逻辑，再据「保存前 fileName、保存后 editor 已关闭」
   // 判断成功，据此 bump 该文件的审计面板重载键。
-  const handleAccountSettingsSaveWithAuditReload = useCallback(async () => {
-    const fileName = accountSettingsEditor?.fileName;
-    await handleAccountSettingsSave();
-    if (fileName) {
-      bumpAuditReloadKey(fileName);
-    }
-  }, [accountSettingsEditor, bumpAuditReloadKey, handleAccountSettingsSave]);
+  const handleAccountSettingsSaveWithAuditReload = useCallback(
+    async (options?: AccountSettingsSaveOptions) => {
+      const fileName = accountSettingsEditor?.fileName;
+      await handleAccountSettingsSave(options);
+      if (fileName) {
+        bumpAuditReloadKey(fileName);
+      }
+    },
+    [accountSettingsEditor, bumpAuditReloadKey, handleAccountSettingsSave]
+  );
 
   const openExcludedEditor = useCallback(
     (provider?: string) => {
@@ -2212,9 +2219,10 @@ export function AuthFilesPage() {
         auditReloadKey={auditReloadKeys[accountSettingsEditor?.fileName ?? ''] ?? 0}
         onClose={closeAccountSettingsEditor}
         onCopyText={copyTextWithNotification}
-        onSave={() => void handleAccountSettingsSaveWithAuditReload()}
+        onSave={(options) => void handleAccountSettingsSaveWithAuditReload(options)}
         onChange={handleAccountSettingsChange}
         onProxyBlur={() => void handleAccountSettingsProxyBlur()}
+        proxyDuplicate={accountSettingsProxyDuplicate}
         onOpenLimits={() => {
           if (!accountSettingsEditor?.file || accountSettingsDirty || accountSettingsEditor.saving)
             return;
