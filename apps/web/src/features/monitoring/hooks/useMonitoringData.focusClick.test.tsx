@@ -107,6 +107,8 @@ const NEW_SELECTOR_ROWS = [
 type ServerMode = 'old' | 'new';
 let mode: ServerMode = 'old';
 let rejectToken = '';
+// 为 true 时，不带 focus token 的新列表/选择器请求保持在途（模拟旧行仍在界面上可点）。
+let holdListRequests = false;
 const requests: MonitoringAnalyticsRequest[] = [];
 
 const respond = (request: MonitoringAnalyticsRequest): MonitoringAnalyticsResponse => {
@@ -127,6 +129,13 @@ const respond = (request: MonitoringAnalyticsRequest): MonitoringAnalyticsRespon
 net.getAnalytics.mockImplementation(
   async (_base: string, _key: string, request: MonitoringAnalyticsRequest) => {
     requests.push(request);
+    if (
+      holdListRequests &&
+      !request.filters?.account_focus_id &&
+      (request.include?.account_stats || request.include?.filter_selectors)
+    ) {
+      return new Promise<MonitoringAnalyticsResponse>(() => {});
+    }
     if (rejectToken && request.filters?.account_focus_id === rejectToken) {
       throw new Error('account_focus_id expired');
     }
@@ -137,6 +146,7 @@ net.getAnalytics.mockImplementation(
 let latest: UseMonitoringDataReturn | null = null;
 let clickRow: ((row: MonitoringAccountRow) => void) | null = null;
 let pickSelector: ((value: string) => void) | null = null;
+let latestRefreshMeta: UseMonitoringDataReturn['refreshMeta'] | null = null;
 
 function Page({ initial }: { initial: MonitoringScopeFilters }) {
   const [scope, setScope] = useState<MonitoringScopeFilters>(initial);
@@ -151,6 +161,7 @@ function Page({ initial }: { initial: MonitoringScopeFilters }) {
   });
   useEffect(() => {
     latest = result;
+    latestRefreshMeta = result.refreshMeta;
     // 与 MonitoringCenterPage.focusAccount 同一动作：resolveMonitoringAccountFocusAction -> setSelectedAccount
     clickRow = (row) => {
       const action = resolveMonitoringAccountFocusAction(null, row);
@@ -227,6 +238,7 @@ describe('real hook + row click: exact account focus', () => {
     vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
     requests.length = 0;
     rejectToken = '';
+    holdListRequests = false;
     latest = null;
   });
   afterEach(() => {
@@ -328,6 +340,59 @@ describe('real hook + row click: exact account focus', () => {
       // 不越出签发窗口，也不早于当前窗口起点
       expect(r.from_ms).toBeGreaterThanOrEqual(issuedFrom);
       expect(r.to_ms).toBeLessThanOrEqual(issuedTo);
+    });
+    expect(latest!.accountFocusState).toBe('active');
+  });
+
+  it('new Manager, relative 24h: real background refresh moves the window, held list row click uses issued ∩ new window', async () => {
+    mode = 'new';
+    await mount({ model: 'gpt-x', status: 'failed', apiKeyHash: 'k7' });
+    const issued = requests.filter((r) => r.include?.account_stats).slice(-1)[0];
+    expect(issued.include?.account_focus).toBe(true);
+    expect(issued.to_ms - issued.from_ms).toBe(24 * HOUR);
+    const row = latest!.accountRows.find((item) => item.id === 'new-a')!;
+    expect(row.filterValue).toBe(`focus:${encodeURIComponent(TOKEN)}`);
+
+    // 真实后台刷新：hook 的 refreshMeta(showLoading=false, forceOverview=false)，
+    // 推进超过概览降频门限 OVERVIEW_MIN_REFRESH_INTERVAL_MS(30s)，让时间锚真实前移。
+    holdListRequests = true;
+    nowMs += 31_000;
+    const beforeRefresh = requests.length;
+    await act(async () => {
+      await latestRefreshMeta!(false, { forceOverview: false });
+    });
+    await flush();
+    const moved = requests
+      .slice(beforeRefresh)
+      .filter((r) => r.include?.account_stats || r.include?.filter_selectors);
+    expect(moved.length).toBeGreaterThan(0);
+    // 先断言：至少一个真实请求窗口已严格晚于签发窗口
+    const newWindow = moved.find((r) => r.from_ms > issued.from_ms && r.to_ms > issued.to_ms)!;
+    expect(newWindow).toBeTruthy();
+    expect(newWindow.from_ms).toBeGreaterThan(issued.from_ms);
+    expect(newWindow.to_ms).toBeGreaterThan(issued.to_ms);
+    // 新列表仍在途：界面上仍是签发时的旧行
+    expect(latest!.accountRows.find((item) => item.id === 'new-a')?.filterValue).toBe(
+      row.filterValue
+    );
+
+    const beforeClick = requests.length;
+    await act(async () => clickRow!(row));
+    await flush();
+    const detail = requests.slice(beforeClick).filter((r) => r.filters?.account_focus_id);
+    expect(detail.length).toBeGreaterThan(0);
+    const expectedFrom = Math.max(issued.from_ms, newWindow.from_ms);
+    const expectedTo = Math.min(issued.to_ms, newWindow.to_ms);
+    expect(expectedFrom).toBe(newWindow.from_ms);
+    expect(expectedTo).toBe(issued.to_ms);
+    detail.forEach((r) => {
+      expect(r.filters?.account_focus_id).toBe(TOKEN);
+      expect(r.filters?.models).toEqual(['gpt-x']);
+      expect(r.filters?.failed_only).toBe(true);
+      expect(r.filters?.api_key_hashes).toEqual(['k7']);
+      expect(r.filters?.accounts).toBeUndefined();
+      expect(r.filters?.auth_indices).toBeUndefined();
+      expect([r.from_ms, r.to_ms]).toEqual([expectedFrom, expectedTo]);
     });
     expect(latest!.accountFocusState).toBe('active');
   });
