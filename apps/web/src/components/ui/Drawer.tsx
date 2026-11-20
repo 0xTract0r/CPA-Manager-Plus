@@ -26,6 +26,8 @@ interface DrawerProps {
   className?: string;
   /** 可选的正文滚动容器引用，供需要在内容切换时归零滚动位置的调用方使用。 */
   bodyRef?: Ref<HTMLDivElement>;
+  /** 长列表详情关闭或卸载时，将焦点与视口还给打开它的控件。 */
+  restoreTriggerPosition?: boolean;
 }
 
 const CLOSE_ANIMATION_DURATION = 280;
@@ -62,6 +64,7 @@ export function Drawer({
   width = 420,
   className,
   bodyRef,
+  restoreTriggerPosition = false,
   children,
 }: PropsWithChildren<DrawerProps>) {
   const { t } = useTranslation();
@@ -180,10 +183,28 @@ export function Drawer({
   const shouldLockScroll = open || isVisible;
 
   useEffect(() => {
-    if (!shouldLockScroll) return;
+    if (!shouldLockScroll || typeof document === 'undefined' || typeof window === 'undefined') return;
+    const trigger = restoreTriggerPosition && document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    const returnPosition = trigger && trigger !== document.body
+      ? { x: window.scrollX, y: window.scrollY, route: window.location.hash.split('?')[0] }
+      : null;
     lockScroll();
-    return () => unlockScroll();
-  }, [shouldLockScroll]);
+    return () => {
+      unlockScroll();
+      if (
+        trigger?.isConnected &&
+        returnPosition &&
+        window.location.hash.split('?')[0] === returnPosition.route
+      ) {
+        trigger.focus({ preventScroll: true });
+        if (window.scrollX !== returnPosition.x || window.scrollY !== returnPosition.y) {
+          window.scrollTo({ left: returnPosition.x, top: returnPosition.y, behavior: 'instant' });
+        }
+      }
+    };
+  }, [shouldLockScroll, restoreTriggerPosition]);
 
   useEffect(() => {
     if (!open || typeof document === 'undefined' || typeof window === 'undefined') return;
@@ -192,17 +213,17 @@ export function Drawer({
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
 
     const focusTimer = globalThis.setTimeout(() => {
-      panelRef.current?.focus();
+      panelRef.current?.focus(restoreTriggerPosition ? { preventScroll: true } : undefined);
     }, 0);
 
     return () => globalThis.clearTimeout(focusTimer);
-  }, [open]);
+  }, [open, restoreTriggerPosition]);
 
   useEffect(() => {
     if (open || isVisible || typeof document === 'undefined') return;
-    previouslyFocusedRef.current?.focus();
+    if (!restoreTriggerPosition) previouslyFocusedRef.current?.focus();
     previouslyFocusedRef.current = null;
-  }, [isVisible, open]);
+  }, [isVisible, open, restoreTriggerPosition]);
 
   useEffect(() => {
     if (!open || typeof document === 'undefined') return;
