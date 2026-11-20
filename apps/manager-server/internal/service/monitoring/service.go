@@ -960,12 +960,25 @@ func (s *Service) analytics(ctx context.Context, req Request) (Response, error) 
 		}
 	}
 	compactSummary := req.Include.Summary && req.Include.SummaryProfile == "compact"
-	rawCoverage, err := s.store.UsageArchives.RawCoverage(ctx, req.FromMS, req.ToMS)
+	// 聚焦查询的 SQL 总是与签发行的时间范围取交；覆盖检查也只核同一段。
+	// 保留 req 的原始时间范围，继续用于展示、分桶和推导比较窗口。
+	coverageForRange := func(from, to int64) (store.UsageArchiveRawCoverage, error) {
+		if focus := filter.Focus; focus != nil {
+			from = max(from, focus.Origin.FromMS)
+			to = min(to, focus.Origin.ToMS)
+			if from >= to {
+				return store.UsageArchiveRawCoverage{}, nil
+			}
+		}
+		coverage, err := s.store.UsageArchives.RawCoverage(ctx, from, to)
+		if err == nil && filter.Focus != nil && coverage.RawDeletedEventCount > 0 {
+			return coverage, ErrAccountFocusUnavailable
+		}
+		return coverage, err
+	}
+	rawCoverage, err := coverageForRange(req.FromMS, req.ToMS)
 	if err != nil {
 		return Response{}, err
-	}
-	if filter.Focus != nil && rawCoverage.RawDeletedEventCount > 0 {
-		return Response{}, ErrAccountFocusUnavailable
 	}
 	mainFocus := s.newAccountFocus(filter, req.Include.AccountFocus && req.Include.AccountStats, rawCoverage.RawDeletedEventCount > 0)
 	optionFocus := s.newAccountFocus(filterOptionsBaseFilter(filter), req.Include.AccountFocus && (req.Include.FilterSelectors || req.Include.FilterOptions), rawCoverage.RawDeletedEventCount > 0)
@@ -975,7 +988,7 @@ func (s *Service) analytics(ctx context.Context, req Request) (Response, error) 
 	comparisonFromMS, comparisonToMS, comparisonRequested := summaryComparisonRange(req)
 	var comparisonRawCoverage *store.UsageArchiveRawCoverage
 	if comparisonRequested {
-		coverage, coverageErr := s.store.UsageArchives.RawCoverage(ctx, comparisonFromMS, comparisonToMS)
+		coverage, coverageErr := coverageForRange(comparisonFromMS, comparisonToMS)
 		if coverageErr != nil {
 			return Response{}, coverageErr
 		}
@@ -986,7 +999,7 @@ func (s *Service) analytics(ctx context.Context, req Request) (Response, error) 
 	if req.Include.Summary && !compactSummary {
 		rollingFromMS := nowMS - recentWindowMS
 		if rollingFromMS > 0 {
-			coverage, coverageErr := s.store.UsageArchives.RawCoverage(ctx, rollingFromMS, nowMS)
+			coverage, coverageErr := coverageForRange(rollingFromMS, nowMS)
 			if coverageErr != nil {
 				return Response{}, coverageErr
 			}
@@ -997,7 +1010,7 @@ func (s *Service) analytics(ctx context.Context, req Request) (Response, error) 
 		}
 	}
 	if preview := req.Include.DrilldownPreview; preview != nil && preview.FromMS > 0 && preview.ToMS > preview.FromMS {
-		coverage, coverageErr := s.store.UsageArchives.RawCoverage(ctx, preview.FromMS, preview.ToMS)
+		coverage, coverageErr := coverageForRange(preview.FromMS, preview.ToMS)
 		if coverageErr != nil {
 			return Response{}, coverageErr
 		}

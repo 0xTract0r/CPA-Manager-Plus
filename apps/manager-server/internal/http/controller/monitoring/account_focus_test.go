@@ -3,10 +3,12 @@ package monitoring
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -17,6 +19,7 @@ import (
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/security"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/service/adminauth"
 	svc "github.com/seakee/cpa-manager-plus/apps/manager-server/internal/service/monitoring"
+	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/store"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/usage"
 )
 
@@ -25,7 +28,11 @@ const focusKey = "test_account_focus"
 
 func accountFocusHandler(t *testing.T, events []usage.Event) *Handler {
 	t.Helper()
-	db := newHandlerTestStore(t)
+	return accountFocusHandlerWithStore(t, newHandlerTestStore(t), events)
+}
+
+func accountFocusHandlerWithStore(t *testing.T, db *store.Store, events []usage.Event) *Handler {
+	t.Helper()
 	ctx := context.Background()
 	cred, err := security.NewAdminCredential(focusKey, "test")
 	if err != nil {
@@ -207,4 +214,80 @@ func TestAccountFocusHTTPMatchesIssuedRow(t *testing.T) {
 			break
 		}
 	}
+}
+
+func TestAccountFocusChecksArchivedCoverageOnlyInsideIssuedRange(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "usage.sqlite")
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	const day = int64(24 * time.Hour / time.Millisecond)
+	base := focusStart / day * day
+	const id = "retained"
+	stamp := base + day + 1
+	h := accountFocusHandlerWithStore(t, db, []usage.Event{{EventHash: fmt.Sprintf("%064x", 1), RequestID: id, Model: "sample", AuthIndex: "index", AccountSnapshot: "test@example.invalid", AuthProviderSnapshot: "codex", TimestampMS: stamp, Timestamp: time.UnixMilli(stamp).UTC().Format(time.RFC3339Nano)}})
+	origin := svc.Request{FromMS: base + day, ToMS: base + 2*day, NowMS: base + 3*day, Include: svc.Include{AccountStats: true, AccountFocus: true}}
+	list := postAccountFocus(t, h, origin, focusKey, 200)
+	if len(list.AccountStats) != 1 || list.AccountStats[0].AccountFocusID == "" {
+		t.Fatal("missing issued account")
+	}
+	conn, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	// Use the actual archive coverage table for whole UTC days. No production DB or archive is involved.
+	markDay := func(d int64) {
+		t.Helper()
+		_, err := conn.Exec("insert into usage_archive_deleted_coverage_daily(utc_day,deleted_event_count,min_timestamp_ms,max_timestamp_ms) values(?,1,?,?)", d/day, d+50, d+50)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	markDay(base)
+	q := origin
+	q.FromMS = base
+	q.Filters.AccountFocusID = list.AccountStats[0].AccountFocusID
+	q.Include = svc.Include{Summary: true, SummaryComparison: true, EventsPage: &svc.EventsPage{Limit: 10}}
+	t.Run("expanded", func(t *testing.T) {
+		resp := postAccountFocus(t, h, q, focusKey, 200)
+		if resp.Summary == nil || resp.Summary.TotalCalls != 1 || resp.Events == nil || resp.Events.TotalCount != 1 || len(resp.Events.Items) != 1 || resp.Events.Items[0].RequestID != id || resp.Coverage != nil {
+			t.Fatalf("incorrect expanded result: %#v", resp)
+		}
+		if resp.SummaryComparison == nil || resp.SummaryComparison.FromMS != base-2*day || resp.SummaryComparison.ToMS != base {
+			t.Fatalf("comparison range no longer based on requested window: %#v", resp.SummaryComparison)
+		}
+	})
+	t.Run("disjoint", func(t *testing.T) {
+		disjoint := q
+		disjoint.ToMS = base + day
+		resp := postAccountFocus(t, h, disjoint, focusKey, 200)
+		if resp.Summary.TotalCalls != 0 || resp.Events.TotalCount != 0 || len(resp.Events.Items) != 0 || resp.Coverage != nil {
+			t.Fatalf("incorrect disjoint result: %#v", resp)
+		}
+	})
+	t.Run("unfocused", func(t *testing.T) {
+		unscoped := q
+		unscoped.Filters.AccountFocusID = ""
+		resp := postAccountFocus(t, h, unscoped, focusKey, 200)
+		if resp.Coverage == nil || resp.Coverage.RawDeletedEventCount != 1 {
+			t.Fatalf("unfocused view lost deletion coverage: %#v", resp.Coverage)
+		}
+	})
+	markDay(base + day)
+	t.Run("deleted_inside", func(t *testing.T) { postAccountFocus(t, h, q, focusKey, 422) })
+	t.Run("deleted_only_in_requested_comparison", func(t *testing.T) {
+		after := q
+		after.FromMS = base + 2*day
+		after.ToMS = base + 3*day
+		// 主窗口无交集；上一个同长度窗口正好落在签发日。
+		postAccountFocus(t, h, after, focusKey, 422)
+		after.Include.SummaryComparison = false
+		resp := postAccountFocus(t, h, after, focusKey, 200)
+		if resp.Summary.TotalCalls != 0 || resp.Events.TotalCount != 0 {
+			t.Fatal("unrequested comparison must not affect empty main range")
+		}
+	})
 }
