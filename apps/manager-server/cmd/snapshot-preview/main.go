@@ -403,7 +403,8 @@ func readOnly(next http.Handler, manifestBytes json.RawMessage) http.Handler {
 			return
 		}
 		read := r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions
-		queryPost := r.Method == http.MethodPost && (path == "/v0/management/monitoring/analytics" || path == "/v0/management/monitoring/account-history")
+		queryPost := r.Method == http.MethodPost && (path == "/v0/management/monitoring/analytics" ||
+			path == "/v0/management/monitoring/account-focus/analytics" || path == "/v0/management/monitoring/account-history")
 		if !read && !queryPost {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "本地快照只读：此操作不会执行", "code": "snapshot_read_only"})
 			return

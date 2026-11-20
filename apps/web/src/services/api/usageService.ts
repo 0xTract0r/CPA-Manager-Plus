@@ -4340,8 +4340,12 @@ export const monitoringAnalyticsApi = {
     }
 
     return withUsageServiceError(async () => {
+      // A legacy Manager ignores unknown filters on the general endpoint.
+      const path = request.filters?.account_focus_id
+        ? '/v0/management/monitoring/account-focus/analytics'
+        : '/v0/management/monitoring/analytics';
       const response = await axios.post<MonitoringAnalyticsResponse>(
-        buildUrl(base, '/v0/management/monitoring/analytics'),
+        buildUrl(base, path),
         request,
         {
           timeout: timeoutMs,

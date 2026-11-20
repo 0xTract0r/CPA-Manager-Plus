@@ -57,11 +57,20 @@ func accountFocusHandlerWithStore(t *testing.T, db *store.Store, events []usage.
 }
 func postAccountFocus(t testing.TB, h *Handler, req svc.Request, key string, want int) svc.Response {
 	t.Helper()
+	path := "/v0/management/monitoring/analytics"
+	if req.Filters.AccountFocusID != "" {
+		path = "/v0/management/monitoring/account-focus/analytics"
+	}
+	return postAccountFocusPath(t, h, path, req, key, want)
+}
+
+func postAccountFocusPath(t testing.TB, h *Handler, path string, req svc.Request, key string, want int) svc.Response {
+	t.Helper()
 	b, err := json.Marshal(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := httptest.NewRequest(http.MethodPost, "/v0/management/monitoring/analytics", bytes.NewReader(b))
+	r := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(b))
 	if key != "" {
 		r.Header.Set("Authorization", "Bearer "+key)
 	}
@@ -78,6 +87,18 @@ func postAccountFocus(t testing.TB, h *Handler, req svc.Request, key string, wan
 	}
 	return resp
 }
+func TestAccountFocusEndpointRequiresAuthorizedSelection(t *testing.T) {
+	h := accountFocusHandler(t, nil)
+	req := svc.Request{FromMS: focusStart, ToMS: focusStart + 100}
+	const path = "/v0/management/monitoring/account-focus/analytics"
+	postAccountFocusPath(t, h, path, req, "", http.StatusUnauthorized)
+	postAccountFocusPath(t, h, path, req, focusKey, http.StatusBadRequest)
+	req.Filters.AccountFocusID = " "
+	postAccountFocusPath(t, h, path, req, focusKey, http.StatusBadRequest)
+	req.Filters.AccountFocusID = "unknown"
+	postAccountFocusPath(t, h, path, req, focusKey, http.StatusConflict)
+}
+
 func TestAccountFocusHTTPMatchesIssuedRow(t *testing.T) {
 	rows := []struct{ id, index, provider, account, label, model string }{
 		{"tc", "triple", "codex", "same@fixture.invalid", "tri-C", "a"}, {"tg", "triple", "claude", "same@fixture.invalid", "tri-G", "a"}, {"tu", "triple", "unknown", "same@fixture.invalid", "tri-U", "a"},

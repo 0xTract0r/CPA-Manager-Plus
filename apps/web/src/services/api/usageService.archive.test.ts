@@ -8,6 +8,7 @@ vi.mock('@/features/demo/demoMode', async (importOriginal) => ({
 
 import {
   getUsageServiceErrorCode,
+  monitoringAnalyticsApi,
   usageServiceApi,
   type UsageMaintenanceStatus,
 } from './usageService';
@@ -27,6 +28,26 @@ beforeEach(() => {
   head.mockReset();
   get.mockReset();
   post.mockReset();
+});
+
+describe('monitoring account selection', () => {
+  it('routes account details to a dedicated endpoint and never retries an unsupported route as a broad query', async () => {
+    const base = 'http://manager.local';
+    const request = { from_ms: 100, to_ms: 200, filters: { failed_only: true } };
+    post.mockResolvedValueOnce(responseWithStatus(200));
+    await monitoringAnalyticsApi.getAnalytics(base, 'test-key', request);
+    expect(post.mock.calls[0][0]).toBe(base + '/v0/management/monitoring/analytics');
+
+    const focused = { ...request, filters: { ...request.filters, account_focus_id: 'test-row' } };
+    post.mockRejectedValueOnce(new Error('Method Not Allowed'));
+    await expect(monitoringAnalyticsApi.getAnalytics(base, 'test-key', focused)).rejects.toThrow();
+    expect(post).toHaveBeenCalledTimes(2);
+    expect(post).toHaveBeenLastCalledWith(
+      base + '/v0/management/monitoring/account-focus/analytics',
+      focused,
+      expect.objectContaining({ headers: { Authorization: 'Bearer test-key' } })
+    );
+  });
 });
 
 describe('usage maintenance capability probe', () => {

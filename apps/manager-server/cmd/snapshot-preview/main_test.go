@@ -149,6 +149,14 @@ func TestPreviewUsesOfficialAPIAndPreservesTelemetry(t *testing.T) {
 	if !strings.Contains(recorder.Body.String(), `"priority_attempts":1`) {
 		t.Fatalf("real fast_context lost: %s", recorder.Body.String())
 	}
+	// An unknown selection on the dedicated read route must reach the Manager and fail closed.
+	focused := httptest.NewRequest(http.MethodPost, "/v0/management/monitoring/account-focus/analytics", strings.NewReader(`{"from_ms":1790899999000,"to_ms":1790900011000,"filters":{"account_focus_id":"unknown"},"include":{"summary":true}}`))
+	focused.Header.Set("Authorization", "Bearer "+localAdminKey)
+	focusResponse := httptest.NewRecorder()
+	p.handler.ServeHTTP(focusResponse, focused)
+	if focusResponse.Code != http.StatusConflict {
+		t.Fatalf("focused analytics status %d, want 409", focusResponse.Code)
+	}
 	result, err := monitoring.New(p.db).Analytics(context.Background(), monitoring.Request{FromMS: 1790899999000, ToMS: 1790900011000, Include: monitoring.Include{Summary: true}})
 	if err != nil {
 		t.Fatal(err)

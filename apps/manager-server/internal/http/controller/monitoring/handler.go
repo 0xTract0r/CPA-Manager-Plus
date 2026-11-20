@@ -39,7 +39,8 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 		h.handleAccountWindowUsage(w, r)
 		return
 	}
-	if path != "/v0/management/monitoring/analytics" {
+	focused := path == "/v0/management/monitoring/account-focus/analytics"
+	if !focused && path != "/v0/management/monitoring/analytics" {
 		response.MethodNotAllowed(w)
 		return
 	}
@@ -51,6 +52,10 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 	var req monitoringsvc.Request
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		response.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	if focused && strings.TrimSpace(req.Filters.AccountFocusID) == "" {
+		response.Error(w, http.StatusBadRequest, errors.New("account_focus_id is required"))
 		return
 	}
 	if err := validateRequest(req); err != nil {
