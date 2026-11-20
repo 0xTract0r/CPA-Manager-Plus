@@ -40,6 +40,7 @@ const (
 )
 
 type Service struct {
+	focus            accountFocusCache
 	store            *store.Store
 	hourlyReader     *usagehourly.Reader
 	monitoringReader *monitoringrollup.Reader
@@ -127,6 +128,7 @@ type Request struct {
 }
 
 type Filters struct {
+	AccountFocusID   string   `json:"account_focus_id,omitempty"`
 	UnresolvedModels []string `json:"unresolved_models"`
 	ResolvedModels   []string `json:"resolved_models"`
 	RequestIDs       []string `json:"request_ids"`
@@ -157,6 +159,7 @@ type Filters struct {
 }
 
 type Include struct {
+	AccountFocus       bool              `json:"account_focus,omitempty"`
 	FastImpact         bool              `json:"fast_impact"`
 	Performance        bool              `json:"performance"`
 	Summary            bool              `json:"summary"`
@@ -604,6 +607,7 @@ type FailureSourceRow struct {
 }
 
 type AccountStatRow struct {
+	AccountFocusID       string                `json:"account_focus_id,omitempty"`
 	ID                   string                `json:"id"`
 	AccountSnapshot      string                `json:"account_snapshot,omitempty"`
 	AuthLabelSnapshot    string                `json:"auth_label_snapshot,omitempty"`
@@ -949,11 +953,22 @@ func (s *Service) analytics(ctx context.Context, req Request) (Response, error) 
 		return Response{}, err
 	}
 	filter := buildFilter(req)
+	if req.Filters.AccountFocusID != "" {
+		filter.Focus, err = s.focus.resolve(req.Filters.AccountFocusID)
+		if err != nil {
+			return Response{}, err
+		}
+	}
 	compactSummary := req.Include.Summary && req.Include.SummaryProfile == "compact"
 	rawCoverage, err := s.store.UsageArchives.RawCoverage(ctx, req.FromMS, req.ToMS)
 	if err != nil {
 		return Response{}, err
 	}
+	if filter.Focus != nil && rawCoverage.RawDeletedEventCount > 0 {
+		return Response{}, ErrAccountFocusUnavailable
+	}
+	mainFocus := s.newAccountFocus(filter, req.Include.AccountFocus && req.Include.AccountStats, rawCoverage.RawDeletedEventCount > 0)
+	optionFocus := s.newAccountFocus(filterOptionsBaseFilter(filter), req.Include.AccountFocus && (req.Include.FilterSelectors || req.Include.FilterOptions), rawCoverage.RawDeletedEventCount > 0)
 	if (req.Include.FastImpact || req.Include.Performance) && rawCoverage.RawDeletedEventCount > 0 {
 		return Response{}, errors.New("fast impact and performance require complete raw usage history")
 	}
@@ -1219,7 +1234,7 @@ func (s *Service) analytics(ctx context.Context, req Request) (Response, error) 
 	if req.Include.FilterSelectors {
 		queries.Go(func(queryCtx context.Context) error {
 			var queryErr error
-			selectorOptions, selectorOptionsDerived, queryErr = s.filterSelectorsWithSource(queryCtx, filter)
+			selectorOptions, selectorOptionsDerived, queryErr = s.filterSelectorsWithSource(queryCtx, filter, optionFocus)
 			return queryErr
 		})
 	} else if req.Include.FilterOptions {
@@ -1233,7 +1248,7 @@ func (s *Service) analytics(ctx context.Context, req Request) (Response, error) 
 		} else {
 			queries.Go(func(queryCtx context.Context) error {
 				var queryErr error
-				prebuiltFilterOptions, prebuiltFilterOptionsDerived, queryErr = s.filterOptionsWithSource(queryCtx, filter, prices, filterOptionStats{})
+				prebuiltFilterOptions, prebuiltFilterOptionsDerived, queryErr = s.filterOptionsWithSource(queryCtx, filter, prices, filterOptionStats{}, optionFocus)
 				return queryErr
 			})
 		}
@@ -1467,7 +1482,7 @@ func (s *Service) analytics(ctx context.Context, req Request) (Response, error) 
 		response.FailureSources = buildFailureSources(failureSourceStats)
 	}
 	if req.Include.AccountStats {
-		response.AccountStats = buildAccountStats(accountStats, prices)
+		response.AccountStats = buildAccountStatsWithFocus(accountStats, prices, mainFocus)
 	}
 	if req.Include.CredentialStats {
 		response.CredentialStats = buildCredentialStats(credentialStats, prices)
@@ -1507,7 +1522,7 @@ func (s *Service) analytics(ctx context.Context, req Request) (Response, error) 
 				optionValuesAvailable: filterOptionValuesAvailable,
 				optionValuesDerived:   filterOptionValuesDerived,
 			}
-			options, derived, err := s.filterOptionsWithSource(ctx, filter, prices, reuse)
+			options, derived, err := s.filterOptionsWithSource(ctx, filter, prices, reuse, optionFocus)
 			if err != nil {
 				return Response{}, err
 			}
@@ -2251,7 +2266,7 @@ func (s *Service) filterOptionsWithSource(
 	ctx context.Context,
 	filter store.AnalyticsFilter,
 	prices map[string]store.ModelPrice,
-	reuse filterOptionStats,
+	reuse filterOptionStats, focus *accountFocusBuilder,
 ) (*FilterOptions, bool, error) {
 	optionFilter := filterOptionsBaseFilter(filter)
 
@@ -2299,7 +2314,7 @@ func (s *Service) filterOptionsWithSource(
 	}
 
 	options := &FilterOptions{
-		AccountStats:     buildAccountStats(accountStats, prices),
+		AccountStats:     buildAccountStatsWithFocus(accountStats, prices, focus),
 		APIKeyStats:      buildAPIKeyStats(apiKeyStats, prices),
 		ChannelShare:     buildChannelShare(channelStats, prices),
 		ModelStats:       buildModelStats(modelStats, prices),
@@ -2338,7 +2353,7 @@ func filterOptionsMatchMainScope(filter store.AnalyticsFilter) bool {
 		strings.TrimSpace(filter.CacheStatus) == ""
 }
 
-func (s *Service) filterSelectorsWithSource(ctx context.Context, filter store.AnalyticsFilter) (*FilterOptions, bool, error) {
+func (s *Service) filterSelectorsWithSource(ctx context.Context, filter store.AnalyticsFilter, focus *accountFocusBuilder) (*FilterOptions, bool, error) {
 	optionFilter := filterOptionsBaseFilter(filter)
 	values, derived := s.monitoringReader.FilterSelectors(ctx, optionFilter)
 	if !derived {
@@ -2348,7 +2363,7 @@ func (s *Service) filterSelectorsWithSource(ctx context.Context, filter store.An
 			return nil, false, err
 		}
 	}
-	accountStats := buildAccountSelectorStats(values)
+	accountStats := buildAccountSelectorStatsWithFocus(values, focus)
 	return &FilterOptions{
 		Models:       values.Models,
 		APIKeyHashes: values.APIKeyHashes,
@@ -2579,6 +2594,10 @@ func countAPIKeySelectors(values store.FilterSelectorValues) int {
 }
 
 func buildAccountSelectorStats(values store.FilterSelectorValues) []AccountStatRow {
+	return buildAccountSelectorStatsWithFocus(values, nil)
+}
+
+func buildAccountSelectorStatsWithFocus(values store.FilterSelectorValues, focus *accountFocusBuilder) []AccountStatRow {
 	byIndex := make(credentialSnapshotIndex)
 	for _, r := range values.AccountSelectors {
 		byIndex.observe(r.AuthIndex, r.AuthProviderSnapshot, r.AccountSnapshot, r.AuthLabelSnapshot)
@@ -2594,6 +2613,7 @@ func buildAccountSelectorStats(values store.FilterSelectorValues) []AccountStatR
 			SourceHash:        selector.SourceHash,
 		})
 		id := identity.key()
+		focus.collect(id, focusMember{selector.AuthProviderSnapshot, selector.AccountSnapshot, selector.AuthLabelSnapshot, selector.AuthIndex, selector.SourceHash})
 		if id == "-" && strings.TrimSpace(selector.SourceHash) == "" {
 			continue
 		}
@@ -2634,6 +2654,7 @@ func buildAccountSelectorStats(values store.FilterSelectorValues) []AccountStatR
 	sort.Slice(result, func(i, j int) bool {
 		return result[i].ID < result[j].ID
 	})
+	focus.attach(result)
 	return result
 }
 
@@ -3216,6 +3237,10 @@ type credentialStatAccumulator struct {
 }
 
 func buildAccountStats(stats []store.AccountModelStat, prices map[string]store.ModelPrice) []AccountStatRow {
+	return buildAccountStatsWithFocus(stats, prices, nil)
+}
+
+func buildAccountStatsWithFocus(stats []store.AccountModelStat, prices map[string]store.ModelPrice, focus *accountFocusBuilder) []AccountStatRow {
 	byIndex := make(credentialSnapshotIndex)
 	for _, r := range stats {
 		byIndex.observe(r.AuthIndex, r.AuthProviderSnapshot, r.AccountSnapshot, r.AuthLabelSnapshot)
@@ -3231,6 +3256,7 @@ func buildAccountStats(stats []store.AccountModelStat, prices map[string]store.M
 			SourceHash:        stat.SourceHash,
 		})
 		id := identity.key()
+		focus.collect(id, focusMember{stat.AuthProviderSnapshot, stat.AccountSnapshot, stat.AuthLabelSnapshot, stat.AuthIndex, stat.SourceHash})
 		entry := grouped[id]
 		if entry == nil {
 			entry = &accountStatAccumulator{
@@ -3302,6 +3328,7 @@ func buildAccountStats(stats []store.AccountModelStat, prices map[string]store.M
 			(result[i].LastSeenMS == result[j].LastSeenMS && result[i].Calls > result[j].Calls) ||
 			(result[i].LastSeenMS == result[j].LastSeenMS && result[i].Calls == result[j].Calls && result[i].Cost > result[j].Cost)
 	})
+	focus.attach(result)
 	return result
 }
 

@@ -34,7 +34,13 @@ var (
 	credentialIDExpr        = "coalesce(nullif(auth_file_snapshot, ''), nullif(auth_index, ''), nullif(source_hash, ''), nullif(source, ''), '-')"
 )
 
+// Focus is populated only from the server's issued account selection, never from wire JSON.
+type AccountFocusPredicate struct {
+	Origin  AnalyticsFilter
+	Members string
+}
 type AnalyticsFilter struct {
+	Focus            *AccountFocusPredicate `json:"-"`
 	UnresolvedModels []string
 	ResolvedModels   []string
 	RequestIDs       []string
@@ -3084,6 +3090,15 @@ func analyticsWhere(filter AnalyticsFilter) (string, []any) {
 		args = append(args, *filter.MaxCacheHitRate)
 	}
 
+	if focus := filter.Focus; focus != nil {
+		// All five columns are exactly the raw identity grouping dimensions used by
+		// account stats and selectors; bind the set once (including an empty set).
+		originWhere, originArgs := analyticsWhere(focus.Origin)
+		conditions = append(conditions, "("+strings.TrimPrefix(originWhere, "where ")+")")
+		args = append(args, originArgs...)
+		conditions = append(conditions, `(coalesce(nullif(auth_provider_snapshot,''),provider,''), coalesce(account_snapshot,''), coalesce(auth_label_snapshot,''), coalesce(auth_index,''), coalesce(source_hash,'')) IN (SELECT json_extract(value,'$[0]'),json_extract(value,'$[1]'),json_extract(value,'$[2]'),json_extract(value,'$[3]'),json_extract(value,'$[4]') FROM json_each(?))`)
+		args = append(args, focus.Members)
+	}
 	return "where " + strings.Join(conditions, " and "), args
 }
 

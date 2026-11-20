@@ -110,7 +110,7 @@ func (r *Reader) LoadAnalytics(
 // SupportsAnalyticsFilter reports whether the permanent hourly aggregate
 // persists every dimension required by the supplied analytics filter.
 func SupportsAnalyticsFilter(filter store.AnalyticsFilter) bool {
-	if len(filter.RequestIDs) > 0 || len(filter.ResolvedModels) > 0 || len(filter.UnresolvedModels) > 0 || len(filter.SearchAuthIndices) > 0 || filter.MaxCacheHitRate != nil {
+	if filter.Focus != nil || len(filter.RequestIDs) > 0 || len(filter.ResolvedModels) > 0 || len(filter.UnresolvedModels) > 0 || len(filter.SearchAuthIndices) > 0 || filter.MaxCacheHitRate != nil {
 		return false
 	}
 	return strings.TrimSpace(filter.SearchQuery) == "" &&

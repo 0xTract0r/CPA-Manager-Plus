@@ -74,6 +74,12 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 // not a server crash. Reporting that as 500 hides the real cause from
 // operators and callers, so it is mapped to 499/504 instead.
 func analyticsErrorStatus(err error) int {
+	if errors.Is(err, monitoringsvc.ErrAccountFocusExpired) {
+		return http.StatusConflict
+	}
+	if errors.Is(err, monitoringsvc.ErrAccountFocusUnavailable) {
+		return http.StatusUnprocessableEntity
+	}
 	if status := response.ContextErrorStatus(err); status != 0 {
 		return status
 	}

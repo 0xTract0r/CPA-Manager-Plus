@@ -9,7 +9,7 @@ import (
 )
 
 func SupportsStatsFilter(filter AnalyticsFilter) bool {
-	if len(filter.RequestIDs) > 0 || len(filter.ResolvedModels) > 0 || len(filter.UnresolvedModels) > 0 || len(filter.SearchAuthIndices) > 0 || filter.MaxCacheHitRate != nil {
+	if filter.Focus != nil || len(filter.RequestIDs) > 0 || len(filter.ResolvedModels) > 0 || len(filter.UnresolvedModels) > 0 || len(filter.SearchAuthIndices) > 0 || filter.MaxCacheHitRate != nil {
 		return false
 	}
 	return strings.TrimSpace(filter.SearchQuery) == "" &&
@@ -27,7 +27,7 @@ func SupportsStatsFilter(filter AnalyticsFilter) bool {
 // the projection's field separator, so those uncommon searches must retain the
 // raw usage_events path instead of returning a false cross-field match.
 func SupportsEventProjectionFilter(filter AnalyticsFilter) bool {
-	if len(filter.RequestIDs) > 0 || len(filter.ResolvedModels) > 0 || len(filter.UnresolvedModels) > 0 || len(filter.SearchAuthIndices) > 0 || filter.MaxCacheHitRate != nil {
+	if filter.Focus != nil || len(filter.RequestIDs) > 0 || len(filter.ResolvedModels) > 0 || len(filter.UnresolvedModels) > 0 || len(filter.SearchAuthIndices) > 0 || filter.MaxCacheHitRate != nil {
 		return false
 	}
 	query := strings.TrimSpace(filter.SearchQuery)
@@ -39,7 +39,7 @@ func SupportsEventProjectionFilter(filter AnalyticsFilter) bool {
 // usage_events timestamp index and avoids the projection's two-step detail
 // lookup; scoped requests benefit from scanning the narrow projection first.
 func PrefersEventProjection(filter AnalyticsFilter) bool {
-	return strings.TrimSpace(filter.SearchQuery) != "" ||
+	return filter.Focus != nil || strings.TrimSpace(filter.SearchQuery) != "" ||
 		strings.TrimSpace(filter.SearchAPIKeyHash) != "" ||
 		len(filter.Models) > 0 ||
 		len(filter.Providers) > 0 ||
@@ -62,7 +62,7 @@ func PrefersEventProjection(filter AnalyticsFilter) bool {
 }
 
 func SupportsSelectorFilter(filter AnalyticsFilter) bool {
-	if len(filter.RequestIDs) > 0 || len(filter.ResolvedModels) > 0 || len(filter.UnresolvedModels) > 0 || len(filter.SearchAuthIndices) > 0 || filter.MaxCacheHitRate != nil {
+	if filter.Focus != nil || len(filter.RequestIDs) > 0 || len(filter.ResolvedModels) > 0 || len(filter.UnresolvedModels) > 0 || len(filter.SearchAuthIndices) > 0 || filter.MaxCacheHitRate != nil {
 		return false
 	}
 	return strings.TrimSpace(filter.SearchQuery) == "" &&
