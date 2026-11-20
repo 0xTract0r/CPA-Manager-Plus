@@ -15,13 +15,20 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { authFilesApi, type AuthFileFieldsPatch } from '@/services/api';
 import { normalizeAuthIndex } from '@/utils/usage';
-import { findAccountsUsingProxy, runProxyPreflight } from '@/utils/proxyPreflight';
+import {
+  EMPTY_PROXY_DUPLICATE_USAGE,
+  findProxyDuplicateUsage,
+  runProxyPreflight,
+  type ProxyDuplicateUsage,
+} from '@/utils/proxyPreflight';
 import {
   precheckProxyInlineFormat,
   runProxyInlineChecks,
   isProxyInlineValidatedOk,
   isProxyInlineChecking,
   isProxyInlineInvalid,
+  formatProxyDuplicateWarning,
+  requestProxyDuplicateConfirmation,
   type ProxyInlineValidationState,
 } from '@/utils/proxyInlineValidation';
 import {
@@ -144,15 +151,16 @@ export type AccountSettingsEditorState = {
   /** proxy_url 必填/格式校验错误（'empty' 未填，'invalid' 非法）；为 null 表示通过。 */
   proxyUrlError: ProxyUrlValidationReason | null;
   /**
-   * 代理查重（L2）冲突提示：保存时发现该代理已被其它现有账号占用时，写入含冲突账号名的
-   * 本地化文案（供弹窗就地标红展示）；为 null 表示无冲突。改动 proxy_url 时清空。
+   * 代理查重（L2）占用警告（软提醒，非错误）：该代理已被其它同类型账号占用时，写入含占用账号数
+   * 与账号名的本地化文案，供弹窗在输入框旁以警告样式展示；为 null 表示无占用。不参与保存禁用，
+   * 保存时改为弹框确认。改动 proxy_url 时清空。
    */
-  proxyUrlDuplicateError?: string | null;
+  proxyUrlDuplicateWarning?: string | null;
   /**
    * 代理输入框的内联实时校验状态（失焦即验 + 就地展示过程/结果）。
    * 主校验路径走这里：失焦跑「查重(L2) + 连通性探针(L1)」；保存只读该状态做提交门控，
    * 不再把探针藏在保存里作为唯一触发点。连通失败文案承载在此（invalid.message），
-   * 查重命中仍写入 proxyUrlDuplicateError、格式非法仍写入 proxyUrlError（复用既有就地标红）。
+   * 查重占用情况挂在 proxyInline.duplicate / warning（软提醒）、格式非法写入 proxyUrlError。
    */
   proxyInline?: ProxyInlineValidationState;
   note: string;
@@ -204,10 +212,24 @@ export type UseAuthFilesAccountSettingsOptions = {
   accounts?: AuthFileItem[];
 };
 
+/** 保存账号设置的调用选项。 */
+export type AccountSettingsSaveOptions = {
+  /**
+   * 调用方已就「代理已被其它账号占用」向用户确认过（如农场换代理确认框里已一并展示占用提醒、
+   * 且确认后已完成容器轮换），保存时不再重复弹占用确认框。
+   */
+  proxyDuplicateConfirmed?: boolean;
+};
+
 export type UseAuthFilesAccountSettingsResult = {
   accountSettingsEditor: AccountSettingsEditorState | null;
   accountSettingsUpdatedText: string;
   accountSettingsDirty: boolean;
+  /**
+   * 当前编辑中的 proxy_url 被同类型其它账号占用的情况（软提醒）。仅当代理相对打开基线发生变更
+   * （或新填）时才查；未变更 / 无占用时 count=0。供弹窗在换代理确认框里展示占用提醒。
+   */
+  accountSettingsProxyDuplicate: ProxyDuplicateUsage;
   openAccountSettingsEditor: (file: AuthFileItem) => Promise<void>;
   closeAccountSettingsEditor: () => void;
   handleAccountSettingsChange: (
@@ -216,7 +238,7 @@ export type UseAuthFilesAccountSettingsResult = {
   ) => void;
   /** 代理输入框失焦（blur）时触发的内联实时校验（格式→查重→连通性探针 + 就地展示）。 */
   handleAccountSettingsProxyBlur: () => Promise<void>;
-  handleAccountSettingsSave: () => Promise<void>;
+  handleAccountSettingsSave: (options?: AccountSettingsSaveOptions) => Promise<void>;
 };
 
 const isRecordObject = (value: unknown): value is Record<string, unknown> =>
@@ -495,6 +517,19 @@ export function useAuthFilesAccountSettings(
     (accountSettingsEditor !== null &&
       (hasRawFieldsPatch(accountSettingsEditor) || isRawJsonDirty(accountSettingsEditor)));
 
+  // 代理占用情况（软提醒）：仅当代理相对打开基线发生变更（或新填）时才查——未变更=账号自身既有值，
+  // 不算与别人重复。excludeName 排除自身作纵深防御；只比较同认证类型账号。
+  const accountSettingsProxyDuplicate: ProxyDuplicateUsage = (() => {
+    if (!accountSettingsEditor) return EMPTY_PROXY_DUPLICATE_USAGE;
+    const trimmedProxy = accountSettingsEditor.proxyUrl.trim();
+    const baselineProxy = (accountSettingsEditor.proxyUrlBaseline || '').trim();
+    if (!trimmedProxy || trimmedProxy === baselineProxy) return EMPTY_PROXY_DUPLICATE_USAGE;
+    return findProxyDuplicateUsage(trimmedProxy, accounts.map(toProxyOwnerAccount), {
+      excludeName: accountSettingsEditor.fileName,
+      provider: accountSettingsEditor.providerKey || accountSettingsEditor.provider,
+    });
+  })();
+
   const closeAccountSettingsEditor = () => {
     setAccountSettingsEditor(null);
   };
@@ -536,7 +571,7 @@ export function useAuthFilesAccountSettings(
       proxyUrl: settings?.proxy_url || '',
       proxyUrlBaseline: settings?.proxy_url || '',
       proxyUrlError: computeProxyUrlError(settings?.proxy_url || ''),
-      proxyUrlDuplicateError: null,
+      proxyUrlDuplicateWarning: null,
       note: settings?.note || '',
       disabled: settings?.disabled === true,
       refreshEnabled: settings?.refresh_enabled !== false,
@@ -600,7 +635,7 @@ export function useAuthFilesAccountSettings(
       proxyUrl: inlineSettings?.proxy_url || '',
       proxyUrlBaseline: inlineSettings?.proxy_url || '',
       proxyUrlError: computeProxyUrlError(inlineSettings?.proxy_url || ''),
-      proxyUrlDuplicateError: null,
+      proxyUrlDuplicateWarning: null,
       note: inlineSettings?.note || '',
       disabled: inlineSettings?.disabled === true,
       refreshEnabled: inlineSettings?.refresh_enabled !== false,
@@ -676,8 +711,8 @@ export function useAuthFilesAccountSettings(
           ...prev,
           proxyUrl,
           proxyUrlError: computeProxyUrlError(proxyUrl),
-          // 改动代理即清除上一次的查重冲突提示，重新编辑后需再次查重才知是否仍冲突。
-          proxyUrlDuplicateError: null,
+          // 改动代理即清除上一次的占用警告，重新编辑后需再次查重才知是否仍被占用。
+          proxyUrlDuplicateWarning: null,
           // 编辑即清空上次内联校验结果（回 idle），失焦后重新校验（防止旧「已连通/连通失败」残留）。
           proxyInline: { phase: 'idle' },
         };
@@ -746,11 +781,12 @@ export function useAuthFilesAccountSettings(
     });
   };
 
-  // 代理输入框失焦（blur）时的内联实时校验：格式（同步、不触网）→ 查重（L2）→ 连通性探针（L1）。
+  // 代理输入框失焦（blur）时的内联实时校验：格式（同步、不触网）→ 查重（L2，软提醒）→ 连通性探针（L1）。
   // 空 → 必填错误由 computeProxyUrlError 在 change 时置位，这里只清内联态；格式非法 → 立即就地
   // 标红（proxyUrlError='invalid'）不触网；未变更（与打开基线逐字符相同）→ 视为已校验通过、跳过
-  // 查重与探针（该值此前已落库）；否则跑查重 + 探针并就地展示过程/结果。并发防抖：结果只在输入
-  // 值仍一致时写回，避免旧探针覆盖用户已改动的新输入。
+  // 查重与探针（该值此前已落库）；否则跑查重 + 探针并就地展示过程/结果。查重命中只挂占用警告
+  // （proxyInline.duplicate / warning），不判不合格。并发防抖：结果只在输入值仍一致时写回，
+  // 避免旧探针覆盖用户已改动的新输入。
   const handleAccountSettingsProxyBlur = async () => {
     const editor = accountSettingsEditor;
     if (!editor) return;
@@ -780,7 +816,7 @@ export function useAuthFilesAccountSettings(
           ? {
               ...prev,
               proxyUrlError: null,
-              proxyUrlDuplicateError: null,
+              proxyUrlDuplicateWarning: null,
               proxyInline: { phase: 'ok', exitIp: '', checkedValue: trimmed },
             }
           : prev
@@ -802,7 +838,7 @@ export function useAuthFilesAccountSettings(
         ? {
             ...prev,
             proxyUrlError: null,
-            proxyUrlDuplicateError: null,
+            proxyUrlDuplicateWarning: null,
             proxyInline: { phase: 'checking', stage: 'dedup', checkedValue: trimmed },
           }
         : prev
@@ -812,17 +848,20 @@ export function useAuthFilesAccountSettings(
       translate: (reason) => t(`proxy_preflight.reason_${reason}`),
       // 查重排除自身（编辑自身账号代理不算与自己重复）。
       checkDuplicate: (value) =>
-        findAccountsUsingProxy(value, accounts.map(toProxyOwnerAccount), {
+        findProxyDuplicateUsage(value, accounts.map(toProxyOwnerAccount), {
           excludeName: fileName,
           provider: editor.providerKey || editor.provider,
         }),
-      duplicateMessage: (list) =>
-        t('proxy_preflight.duplicate_account', { accounts: list.join('、') }),
-      onStage: (stage) =>
+      duplicateWarning: (usage) => formatProxyDuplicateWarning(t, usage),
+      // 进入探针阶段时一并写入查重结果，探针跑的同时就地先展示占用警告。
+      onStage: (stage, context) =>
         setAccountSettingsEditor((prev) => {
           if (!prev || prev.fileName !== fileName || prev.proxyUrl.trim() !== trimmed) return prev;
           if (prev.proxyInline?.phase !== 'checking') return prev;
-          return { ...prev, proxyInline: { ...prev.proxyInline, stage, checkedValue: trimmed } };
+          return {
+            ...prev,
+            proxyInline: { ...prev.proxyInline, ...context, stage, checkedValue: trimmed },
+          };
         }),
     });
     setAccountSettingsEditor((prev) => {
@@ -851,7 +890,7 @@ export function useAuthFilesAccountSettings(
     }
   };
 
-  const handleAccountSettingsSave = async () => {
+  const handleAccountSettingsSave = async (saveOptions?: AccountSettingsSaveOptions) => {
     if (!accountSettingsEditor || !accountSettingsDirty) return;
     const editor = accountSettingsEditor;
 
@@ -921,34 +960,21 @@ export function useAuthFilesAccountSettings(
       );
       return;
     }
-    // 已校验通过（同值）→ 直接放行，不再隐藏地重跑查重 / 探针。否则（未校验 / 值变更后未重验，
-    // 例如未经 blur 直接调用保存）→ 就地补跑完整校验作为最后确认门（fail-closed）。
-    if (!isProxyInlineValidatedOk(editor.proxyInline, trimmedProxyValue)) {
-      // L2 查重（本地秒级，先于慢的连通性探针 fail-fast）：仅当代理相对基线发生变更（或新填）时
-      // 才查重——未变更=账号自身既有值，不算重复，直接放行。命中其它现有账号占用即阻断，不进探针、
-      // 不落库（两个账号共用同一出口会 IP 聚类被关联）。excludeName 排除自身作纵深防御。
-      const trimmedProxy = editor.proxyUrl.trim();
-      const baselineProxy = (editor.proxyUrlBaseline || '').trim();
-      if (trimmedProxy && trimmedProxy !== baselineProxy) {
-        const conflicts = findAccountsUsingProxy(
-          editor.proxyUrl,
-          accounts.map(toProxyOwnerAccount),
-          { excludeName: editor.fileName, provider: editor.providerKey || editor.provider }
-        );
-        if (conflicts.length > 0) {
-          const message = t('proxy_preflight.duplicate_account', {
-            accounts: conflicts.join('、'),
-          });
-          setAccountSettingsEditor((prev) =>
-            prev && prev.fileName === editor.fileName
-              ? { ...prev, proxyUrlDuplicateError: message }
-              : prev
-          );
-          showNotification(message, 'error');
-          return;
-        }
-      }
+    // L2 查重（软提醒）：仅当代理相对基线发生变更（或新填）时才查——未变更=账号自身既有值，
+    // 不算重复。命中只就地展示占用警告，并在连通性探针通过后弹框确认，不再强制阻断。
+    const proxyDuplicate = accountSettingsProxyDuplicate;
+    if (proxyDuplicate.count > 0) {
+      const warning = formatProxyDuplicateWarning(t, proxyDuplicate);
+      setAccountSettingsEditor((prev) =>
+        prev && prev.fileName === editor.fileName
+          ? { ...prev, proxyUrlDuplicateWarning: warning }
+          : prev
+      );
+    }
 
+    // 已校验通过（同值）→ 直接放行，不再隐藏地重跑探针。否则（未校验 / 值变更后未重验，
+    // 例如未经 blur 直接调用保存）→ 就地补跑连通性探针作为最后确认门（fail-closed）。
+    if (!isProxyInlineValidatedOk(editor.proxyInline, trimmedProxyValue)) {
       // 格式过后再做后端连通性探针：不通就不落库（fail-closed），把 proxy_url 标红并提示；
       // 通了展示出口 IP 再继续保存。探测期间置 saving，禁用保存/关闭按钮防重复提交。
       // 仅当 proxy_url 相对打开时的原值发生变更（或新填）时才探针：未变更（逐字符相同）直接放行，
@@ -977,6 +1003,21 @@ export function useAuthFilesAccountSettings(
           'success'
         );
       }
+    }
+
+    // 代理已被同类型其它账号占用 → 弹框确认（只弹这一次）：确认后照原流程保存，取消则不落库。
+    // 调用方已确认过（农场换代理确认框里已展示占用提醒、且容器已轮换）时不再重复确认。
+    if (proxyDuplicate.count > 0 && !saveOptions?.proxyDuplicateConfirmed) {
+      // 确认期间先复位 saving（探针阶段可能已置 true），避免保存按钮在确认框背后一直转圈。
+      setAccountSettingsEditor((prev) =>
+        prev && prev.fileName === editor.fileName ? { ...prev, saving: false } : prev
+      );
+      const confirmed = await requestProxyDuplicateConfirmation(
+        showConfirmation,
+        t,
+        proxyDuplicate
+      );
+      if (!confirmed) return;
     }
 
     const { request, error } = buildPatchRequest(editor);
@@ -1045,6 +1086,7 @@ export function useAuthFilesAccountSettings(
     accountSettingsEditor,
     accountSettingsUpdatedText,
     accountSettingsDirty,
+    accountSettingsProxyDuplicate,
     openAccountSettingsEditor,
     closeAccountSettingsEditor,
     handleAccountSettingsChange,

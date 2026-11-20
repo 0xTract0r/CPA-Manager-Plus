@@ -169,9 +169,10 @@ export async function ensureProxyReachableForSave(params: {
  */
 // ===== 代理查重（二级校验 / L2）=====
 //
-// 反关联要求：同认证类型的两个账号共用同一出口代理 → 出口 IP 聚类 → 可被上游关联。故凡是填代理的入口
-// （新增账号 OAuth / 编辑已有账号代理），在慢的连通性探针（L1）之前先做本地秒级查重（L2）：
-// 命中现有账号占用即阻断，不必再触网探针。查重是纯前端比较，不新增后端。
+// 反关联提醒：同认证类型的两个账号共用同一出口代理 → 出口 IP 聚类 → 可被上游关联。故凡是填代理的入口
+// （新增账号 OAuth / 编辑已有账号代理）都会做本地秒级查重（L2）。查重命中只做「软提醒」：
+// 就地展示警告（含占用账号数 + 账号名），提交时弹确认框，用户确认后照常继续；不再强制阻断。
+// 查重是纯前端比较，不新增后端。
 
 /** 参与查重的账号最小视图（各入口从自己的账号列表映射得到）。 */
 export interface ProxyOwnerAccount {
@@ -223,36 +224,101 @@ export const normalizeProxyForCompare = (proxyUrl: string): string => {
   }
 };
 
+/** 查重比较选项：只比较同认证类型；编辑自身账号时用 excludeName 排除自己。 */
+export interface ProxyDuplicateOptions {
+  provider: string;
+  excludeName?: string;
+}
+
+/** 代理占用情况：实际占用该代理的同类型账号数 + 用于展示的账号名列表。 */
+export interface ProxyDuplicateUsage {
+  /** 实际占用该代理的账号数（按账号唯一 name 计数；同展示名的多个账号分别计数）。 */
+  count: number;
+  /**
+   * 展示名列表（去重、保持首次出现顺序）。同一展示名对应多个账号时追加「×N」，
+   * 保证展示出来的名字与 count 对得上（例如 count=3 → ['AC-14 ×2', 'AC-15']）。
+   */
+  labels: string[];
+}
+
+/** 无占用（常量，避免重复分配）。 */
+export const EMPTY_PROXY_DUPLICATE_USAGE: ProxyDuplicateUsage = { count: 0, labels: [] };
+
 /**
- * 找出「已经在使用同一 proxy_url」的现有账号，返回它们的展示名（label ?? name）。
- * 空结果表示无冲突（可继续放行到连通性探针）。
+ * 找出「已经在使用同一 proxy_url」的现有账号条目（每个账号一条，按 name 去重）。
  * - proxyUrl 为空 → 返回 []（是否必填由各入口的格式校验负责，这里不越权拦空）。
  * - options.provider：只比较同认证类型的账号，未知类型不参与。
  * - options.excludeName：排除该 name 的账号（编辑自身账号代理时排除自己）。
- * - 展示名去重，保持首次出现顺序。
  */
-export function findAccountsUsingProxy(
+const collectAccountsUsingProxy = (
   proxyUrl: string,
   accounts: ProxyOwnerAccount[],
-  options: { provider: string; excludeName?: string }
-): string[] {
+  options: ProxyDuplicateOptions
+): Array<{ name: string; label: string }> => {
   const target = normalizeProxyForCompare(proxyUrl);
   if (!target) return [];
   const { excludeName } = options;
   const provider = normalizeProxyProvider(options.provider);
   if (!provider) return [];
-  const conflicts: string[] = [];
-  const seen = new Set<string>();
+  const matched: Array<{ name: string; label: string }> = [];
+  const seenNames = new Set<string>();
   for (const account of accounts) {
     if (normalizeProxyProvider(account.provider ?? '') !== provider) continue;
     if (excludeName !== undefined && account.name === excludeName) continue;
     if (normalizeProxyForCompare(account.proxyUrl) !== target) continue;
-    const label = (account.label || '').trim() || account.name;
+    // 同一账号（同 name）在列表里重复出现时只计一次，避免虚高占用数。
+    if (seenNames.has(account.name)) continue;
+    seenNames.add(account.name);
+    matched.push({ name: account.name, label: (account.label || '').trim() || account.name });
+  }
+  return matched;
+};
+
+/**
+ * 找出「已经在使用同一 proxy_url」的现有账号，返回它们的展示名（label ?? name）。
+ * 空结果表示无占用。展示名去重，保持首次出现顺序。
+ * 需要占用账号数时请用 `findProxyDuplicateUsage`（本函数按展示名去重，不反映实际账号数）。
+ */
+export function findAccountsUsingProxy(
+  proxyUrl: string,
+  accounts: ProxyOwnerAccount[],
+  options: ProxyDuplicateOptions
+): string[] {
+  const labels: string[] = [];
+  const seen = new Set<string>();
+  for (const { label } of collectAccountsUsingProxy(proxyUrl, accounts, options)) {
     if (seen.has(label)) continue;
     seen.add(label);
-    conflicts.push(label);
+    labels.push(label);
   }
-  return conflicts;
+  return labels;
+}
+
+/**
+ * 统计「已经在使用同一 proxy_url」的现有账号：返回实际占用账号数 + 展示名列表。
+ * 规则与 `findAccountsUsingProxy` 一致（同类型、排除自身、归一化比较），
+ * 区别是 count 按实际账号计数——同展示名的多个账号也分别计入，并在展示名后追加「×N」。
+ */
+export function findProxyDuplicateUsage(
+  proxyUrl: string,
+  accounts: ProxyOwnerAccount[],
+  options: ProxyDuplicateOptions
+): ProxyDuplicateUsage {
+  const matched = collectAccountsUsingProxy(proxyUrl, accounts, options);
+  if (matched.length === 0) return EMPTY_PROXY_DUPLICATE_USAGE;
+  const order: string[] = [];
+  const perLabel = new Map<string, number>();
+  for (const { label } of matched) {
+    if (!perLabel.has(label)) order.push(label);
+    perLabel.set(label, (perLabel.get(label) ?? 0) + 1);
+  }
+  return {
+    count: matched.length,
+    labels: order.map((label) => {
+      const times = perLabel.get(label) ?? 1;
+      return times > 1 ? `${label} ×${times}` : label;
+    }),
+  };
 }
 
 export async function ensureProxiesReachableForSave(params: {

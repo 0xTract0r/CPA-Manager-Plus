@@ -12,7 +12,13 @@
     "validating_wait": "Validating proxy, please wait",
     "connected_with_ip": "Connected · exit IP: {{ip}}",
     "exit_ip_label": "Exit IP",
-    "duplicate_account": "This proxy is already used by account {{accounts}}. Give each account its own residential proxy to avoid exit-IP clustering."
+    "duplicate_account_one": "This proxy is already used by {{count}} account: {{accounts}}. Giving each account its own residential proxy is recommended to avoid exit-IP clustering.",
+    "duplicate_account_other": "This proxy is already used by {{count}} accounts: {{accounts}}. Giving each account its own residential proxy is recommended to avoid exit-IP clustering.",
+    "duplicate_account_separator": ", ",
+    "duplicate_confirm_title": "Proxy already in use",
+    "duplicate_confirm_message_one": "This proxy is already used by {{count}} account: {{accounts}}. Accounts sharing one exit IP may be linked. Continue with this proxy anyway?",
+    "duplicate_confirm_message_other": "This proxy is already used by {{count}} accounts: {{accounts}}. Accounts sharing one exit IP may be linked. Continue with this proxy anyway?",
+    "duplicate_confirm_ok": "Use anyway"
   },
   "common": {
     "login": "Login",

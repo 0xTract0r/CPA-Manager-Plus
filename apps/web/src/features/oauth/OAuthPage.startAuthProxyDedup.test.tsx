@@ -3,12 +3,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 
-// scenario ① 覆盖：OAuth 新增账号在「格式过 → 二级查重(L2) → 连通性探针(L1)」流程中，
-// 查重命中就 fail-fast——不调连通性探针、不调 oauthApi.startAuth，报错含冲突账号名。
-//  - 查重命中（现有账号已用同一代理）→ return-before-probe：runProxyPreflight / startAuth 均不调。
-//  - 查重不命中 → 继续到连通性探针 → 探针 ok:true 才进 OAuth。
-// 保留真实 findAccountsUsingProxy / toProxyOwnerAccount，只 mock 慢的 runProxyPreflight，
-// 直接断言查重先于连通性（L2 在 L1 之前）。
+// scenario ① 覆盖：OAuth 新增账号的代理查重(L2) 改为「软提醒 + 弹框确认」，不再强制拦截。
+//  - 查重命中（同类型现有账号已用同一代理）→ 照常跑连通性探针；探针通过后弹一次确认框，
+//    文案带占用账号数 + 账号名；确认 → 进 OAuth（调 oauthApi.startAuth），取消 → 停在原地。
+//  - 查重不命中 / 跨类型复用 → 不弹框，探针 ok:true 直接进 OAuth。
+// 保留真实 findProxyDuplicateUsage / toProxyOwnerAccount，只 mock 慢的 runProxyPreflight。
 
 const { mocks } = vi.hoisted(() => {
   (
@@ -20,6 +19,7 @@ const { mocks } = vi.hoisted(() => {
       authFilesList: vi.fn(),
       runProxyPreflight: vi.fn(),
       showNotification: vi.fn(),
+      showConfirmation: vi.fn(),
       navigate: vi.fn(),
     },
   };
@@ -28,9 +28,12 @@ const { mocks } = vi.hoisted(() => {
 vi.mock('react-i18next', () => ({
   initReactI18next: { type: '3rdParty', init: () => {} },
   useTranslation: () => ({
-    // 让带 accounts 插值参数的 key 把冲突账号名拼进返回值，便于断言「报错含冲突账号名」。
-    t: (key: string, opts?: Record<string, unknown>) =>
-      opts && typeof opts.accounts === 'string' ? `${key}|${opts.accounts}` : key,
+    // 把 count / accounts 插值拼进返回值，便于断言文案带占用账号数与账号名。
+    t: (key: string, opts?: Record<string, unknown>) => {
+      if (key === 'proxy_preflight.duplicate_account_separator') return '、';
+      if (opts && typeof opts.accounts === 'string') return `${key}|${String(opts.count)}|${opts.accounts}`;
+      return key;
+    },
   }),
 }));
 
@@ -39,7 +42,10 @@ vi.mock('react-router-dom', () => ({
 }));
 
 vi.mock('@/stores', () => ({
-  useNotificationStore: () => ({ showNotification: mocks.showNotification }),
+  useNotificationStore: () => ({
+    showNotification: mocks.showNotification,
+    showConfirmation: mocks.showConfirmation,
+  }),
   useAuthStore: (selector: (state: Record<string, unknown>) => unknown) =>
     selector({
       connectionStatus: 'disconnected',
@@ -104,28 +110,130 @@ const findLoginButton = (renderer: ReactTestRenderer) => {
   return button;
 };
 
+type ConfirmationOptions = {
+  title?: string;
+  message: string;
+  onConfirm: () => void;
+  onCancel?: () => void;
+};
+
+const SHARED_FILES = {
+  files: [
+    { name: 'ph01.json', type: 'codex', account_settings: { proxy_url: PROXY, note: 'GPT-PH-01' } },
+    { name: 'ph02.json', type: 'codex', account_settings: { proxy_url: PROXY, note: 'GPT-PH-02' } },
+  ],
+};
+
 beforeEach(() => {
   mocks.startAuth.mockReset();
   mocks.authFilesList.mockReset();
   mocks.runProxyPreflight.mockReset();
   mocks.showNotification.mockReset();
+  mocks.showConfirmation.mockReset();
   mocks.navigate.mockReset();
 });
 
-describe('OAuthPage 新增账号起 OAuth 前的代理查重门禁 (scenario ①)', () => {
-  it('查重命中（现有账号已用同一代理）→ 不进探针、不进 OAuth，报错含冲突账号名', async () => {
-    // 现有账号 AC-14 已经在用同一代理（列表内联 account_settings.proxy_url）。
-    mocks.authFilesList.mockResolvedValue({
-      files: [
-        { name: 'ac14.json', type: 'codex', account_settings: { proxy_url: PROXY, note: 'AC-14' } },
-      ],
+// 填代理并点开始认证；点击 promise 会挂在确认框上，故不在这里 await 它。
+const startWithSharedProxy = async () => {
+  mocks.authFilesList.mockResolvedValue(SHARED_FILES);
+  mocks.runProxyPreflight.mockResolvedValue({
+    ok: true,
+    exitIp: '203.0.113.9',
+    reason: 'ok',
+    message: 'connected',
+  });
+  // 返回缺 state 的响应 → 命中 missing-state 早退分支，避免 startPolling 触碰 window。
+  mocks.startAuth.mockResolvedValue({ url: 'https://auth.example/login', state: undefined });
+
+  let renderer!: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(<OAuthPage />);
+  });
+  act(() => {
+    findProxyInput(renderer).props.onChange({ target: { value: PROXY } });
+  });
+  let clickDone!: Promise<unknown>;
+  await act(async () => {
+    clickDone = findLoginButton(renderer).props.onClick();
+  });
+  return { renderer, clickDone };
+};
+
+describe('OAuthPage 新增账号起 OAuth 前的代理查重提醒 (scenario ①)', () => {
+  it('查重命中 → 照常探针；探针通过后弹一次确认框（带占用账号数 + 账号名），确认后进 OAuth', async () => {
+    const { renderer, clickDone } = await startWithSharedProxy();
+
+    // 查重不再 fail-fast：连通性探针照常跑。
+    expect(mocks.runProxyPreflight).toHaveBeenCalledTimes(1);
+    // 不再报「重复即拦截」的错误。
+    const dupError = mocks.showNotification.mock.calls.find(
+      (call) => typeof call[0] === 'string' && call[0].includes('duplicate')
+    );
+    expect(dupError).toBeUndefined();
+    // 弹出确认框：文案带占用账号数(2) + 账号名；确认前不进 OAuth。
+    expect(mocks.showConfirmation).toHaveBeenCalledTimes(1);
+    const options = mocks.showConfirmation.mock.calls[0][0] as ConfirmationOptions;
+    expect(options.title).toBe('proxy_preflight.duplicate_confirm_title');
+    expect(options.message).toBe('proxy_preflight.duplicate_confirm_message|2|GPT-PH-01、GPT-PH-02');
+    expect(mocks.startAuth).not.toHaveBeenCalled();
+    // 就地警告带次数 + 账号名，且不是错误（无红框）。
+    const input = findProxyInput(renderer);
+    expect(input.props.warning).toBe('proxy_preflight.duplicate_account|2|GPT-PH-01、GPT-PH-02');
+    expect(input.props.error).toBeUndefined();
+
+    await act(async () => {
+      options.onConfirm();
+      await clickDone;
+    });
+
+    // 确认后照原流程进 OAuth，且不再二次确认、不重跑探针。
+    expect(mocks.startAuth).toHaveBeenCalledTimes(1);
+    expect(mocks.startAuth).toHaveBeenCalledWith(
+      'codex',
+      expect.objectContaining({ proxyUrl: PROXY })
+    );
+    expect(mocks.showConfirmation).toHaveBeenCalledTimes(1);
+    expect(mocks.runProxyPreflight).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      renderer.unmount();
+    });
+  });
+
+  it('查重命中 → 确认框点取消 → 不进 OAuth、停在原地', async () => {
+    const { renderer, clickDone } = await startWithSharedProxy();
+
+    expect(mocks.showConfirmation).toHaveBeenCalledTimes(1);
+    const options = mocks.showConfirmation.mock.calls[0][0] as ConfirmationOptions;
+    await act(async () => {
+      options.onCancel?.();
+      await clickDone;
+    });
+
+    expect(mocks.startAuth).not.toHaveBeenCalled();
+    // 停在原地：输入值保留、内联状态仍是已连通（可再次点开始认证）。
+    const input = findProxyInput(renderer);
+    expect(input.props.value).toBe(PROXY);
+    expect(findLoginButton(renderer).props.disabled).toBe(false);
+
+    await act(async () => {
+      renderer.unmount();
+    });
+  });
+
+  it('查重命中但探针失败 → 不弹确认框、不进 OAuth（连通性仍是硬门禁）', async () => {
+    mocks.authFilesList.mockResolvedValue(SHARED_FILES);
+    mocks.runProxyPreflight.mockResolvedValue({
+      ok: false,
+      exitIp: '',
+      reason: 'dial_failed',
+      message: '无法经该代理连通',
     });
 
     let renderer!: ReactTestRenderer;
     await act(async () => {
       renderer = create(<OAuthPage />);
     });
-
     act(() => {
       findProxyInput(renderer).props.onChange({ target: { value: PROXY } });
     });
@@ -133,15 +241,9 @@ describe('OAuthPage 新增账号起 OAuth 前的代理查重门禁 (scenario ①
       await findLoginButton(renderer).props.onClick();
     });
 
-    // L2 在 L1 之前 fail-fast：查重命中 → 连通性探针与 OAuth 均未触发。
-    expect(mocks.runProxyPreflight).not.toHaveBeenCalled();
+    expect(mocks.runProxyPreflight).toHaveBeenCalledTimes(1);
+    expect(mocks.showConfirmation).not.toHaveBeenCalled();
     expect(mocks.startAuth).not.toHaveBeenCalled();
-    // 报错含冲突账号名（AC-14）。
-    const errorCall = mocks.showNotification.mock.calls.find(
-      (call) => typeof call[0] === 'string' && call[0].includes('AC-14')
-    );
-    expect(errorCall).toBeTruthy();
-    expect(errorCall?.[1]).toBe('error');
 
     await act(async () => {
       renderer.unmount();
@@ -185,6 +287,9 @@ describe('OAuthPage 新增账号起 OAuth 前的代理查重门禁 (scenario ①
 
     expect(mocks.runProxyPreflight).toHaveBeenCalledTimes(1);
     expect(mocks.startAuth).toHaveBeenCalledTimes(1);
+    // 无同类型占用 → 不弹确认框、无就地警告。
+    expect(mocks.showConfirmation).not.toHaveBeenCalled();
+    expect(findProxyInput(renderer).props.warning).toBeUndefined();
 
     await act(async () => {
       renderer.unmount();

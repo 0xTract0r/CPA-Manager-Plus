@@ -4,8 +4,12 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { AuthFilesAccountSettingsModal } from './AuthFilesAccountSettingsModal';
 import { Button } from '@/components/ui/Button';
 import { farmApi } from '@/services/api/farm';
-import type { AccountSettingsEditorState } from '@/features/authFiles/hooks/useAuthFilesAccountSettings';
+import type {
+  AccountSettingsEditorState,
+  AccountSettingsSaveOptions,
+} from '@/features/authFiles/hooks/useAuthFilesAccountSettings';
 import type { FarmRotateProxyResponse } from '@/types/farm';
+import type { ProxyDuplicateUsage } from '@/utils/proxyPreflight';
 
 // §2（farm-proxy-rotation）换代理二次确认门禁回归覆盖：
 //  - 硬 gate 只认 isClaudeProvider && farmBound===true（不是 isClaudeManagedPolicy）
@@ -134,7 +138,8 @@ const makeEditor = (
 
 const mountModal = (
   editor: AccountSettingsEditorState,
-  onSave: () => void
+  onSave: (options?: AccountSettingsSaveOptions) => void,
+  proxyDuplicate?: ProxyDuplicateUsage
 ): ReactTestRenderer => {
   let renderer!: ReactTestRenderer;
   act(() => {
@@ -148,6 +153,7 @@ const mountModal = (
         onCopyText={() => {}}
         onSave={onSave}
         onChange={() => {}}
+        proxyDuplicate={proxyDuplicate}
       />
     );
   });
@@ -344,6 +350,85 @@ describe('AuthFilesAccountSettingsModal §2 换代理二次确认门禁', () => 
 
     expect(rotateProxyMock).toHaveBeenCalledTimes(1);
     expect(onSave).not.toHaveBeenCalled();
+    renderer.unmount();
+  });
+
+  it('农场 Claude 账号改成被其它账号占用的代理：占用提醒并入换代理确认框，确认后以 proxyDuplicateConfirmed 保存（不二次确认）', async () => {
+    const onSave = vi.fn();
+    const editor = makeEditor({
+      provider: 'claude',
+      farmBound: true,
+      proxyUrl: NEXT_PROXY_URL,
+      proxyInline: { phase: 'ok', exitIp: '203.0.113.9', checkedValue: NEXT_PROXY_URL },
+    });
+    rotateProxyMock.mockResolvedValueOnce({
+      account: editor.fileName,
+      env: 'test',
+      old_container_id: 'ctr-old',
+      new_container_id: 'ctr-new',
+      new_device_id_masked: 'abcd********wxyz',
+      reason: 'manual_rotation',
+      superseded: true,
+    });
+
+    const renderer = mountModal(editor, onSave, { count: 2, labels: ['AC-15', 'AC-16'] });
+    // 占用只是软提醒：保存按钮不禁用。
+    expect(findSaveButton(renderer).props.disabled).toBe(false);
+    clickSave(renderer);
+
+    expect(mockShowConfirmation).toHaveBeenCalledTimes(1);
+    const options = mockShowConfirmation.mock.calls[0][0] as {
+      message: ReactNode;
+      onConfirm: () => Promise<void>;
+    };
+    // 换代理确认框里带上占用提醒（本文件的 t 桩只回显 key，文案插值由 proxyInlineValidation 单测覆盖）。
+    let messageRenderer!: ReactTestRenderer;
+    act(() => {
+      messageRenderer = create(<>{options.message}</>);
+    });
+    const warning = messageRenderer.root.find(
+      (node) => node.props?.['data-testid'] === 'account-settings-rotate-proxy-duplicate-warning'
+    );
+    expect(warning.props.className).toBe('warning-box');
+    expect(warning.props.children).toBe('proxy_preflight.duplicate_account');
+    act(() => {
+      messageRenderer.unmount();
+    });
+
+    await act(async () => {
+      await options.onConfirm();
+    });
+    expect(rotateProxyMock).toHaveBeenCalledTimes(1);
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave).toHaveBeenCalledWith({ proxyDuplicateConfirmed: true });
+    renderer.unmount();
+  });
+
+  it('非农场账号改成被占用的代理：保存按钮不禁用、输入框旁显示警告而非错误，直接交给 onSave（由 hook 弹占用确认）', () => {
+    const onSave = vi.fn();
+    const editor = makeEditor({
+      provider: 'codex',
+      proxyUrl: NEXT_PROXY_URL,
+      proxyInline: {
+        phase: 'ok',
+        exitIp: '203.0.113.9',
+        checkedValue: NEXT_PROXY_URL,
+        duplicate: { count: 2, labels: ['GPT-PH-01', 'GPT-PH-02'] },
+        warning: 'dup-warning-2',
+      },
+    });
+    const renderer = mountModal(editor, onSave, { count: 2, labels: ['GPT-PH-01', 'GPT-PH-02'] });
+
+    const proxyInput = renderer.root.find(
+      (node) => node.props?.['data-testid'] === 'account-settings-proxy-url-input' && 'warning' in node.props
+    );
+    expect(proxyInput.props.warning).toBe('dup-warning-2');
+    expect(proxyInput.props.error).toBeUndefined();
+    expect(findSaveButton(renderer).props.disabled).toBe(false);
+
+    clickSave(renderer);
+    expect(mockShowConfirmation).not.toHaveBeenCalled();
+    expect(onSave).toHaveBeenCalledTimes(1);
     renderer.unmount();
   });
 });
