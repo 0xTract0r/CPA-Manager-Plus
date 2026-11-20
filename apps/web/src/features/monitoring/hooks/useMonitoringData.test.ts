@@ -1337,8 +1337,10 @@ it('isolates providers with the same email and retains credential rotation in bo
   expect(adapted.find((row) => row.provider === 'claude')?.authIndices).toEqual(['claude-1']);
   const codex = adapted.find((row) => row.provider === 'codex')!;
   expect(codex.id).toBe(codexRowId);
+  // 在线旧 Manager 行无 token：点击 fail-closed（不展示宽明细）；旧口径仍可识别
+  expect(buildScopeFilteredRows(events, { account: codex.filterValue })).toEqual([]);
   expect(
-    buildScopeFilteredRows(events, { account: codex.filterValue }).map((row) => row.id)
+    buildScopeFilteredRows(events, { account: codex.legacyFilterValue }).map((row) => row.id)
   ).toEqual(['codex-old', 'codex-new']);
 });
 

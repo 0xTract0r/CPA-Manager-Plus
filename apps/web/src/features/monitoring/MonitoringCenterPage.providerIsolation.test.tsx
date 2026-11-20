@@ -193,11 +193,13 @@ describe('server account row ids stay opaque', () => {
     expect(rows.map((row) => row.id).sort()).toEqual(Object.values(opaque).sort());
     expect(new Set(rows.map((row) => row.filterValue)).size).toBe(4);
     const byId = new Map(rows.map((row) => [row.id, row]));
-    expect(byId.get(opaque.claudeHash)?.filterValue).toBe('source:hash-c1');
-    expect(byId.get(opaque.codexHash)?.filterValue).toBe('source:hash-x1');
-    expect(byId.get(opaque.claudeEmail)?.filterValue).not.toBe(
-      byId.get(opaque.codexEmail)?.filterValue
+    // 无 account_focus_id 的在线行：旧口径只保留在 legacyFilterValue，点击值 fail-closed
+    expect(byId.get(opaque.claudeHash)?.legacyFilterValue).toBe('source:hash-c1');
+    expect(byId.get(opaque.codexHash)?.legacyFilterValue).toBe('source:hash-x1');
+    expect(byId.get(opaque.claudeEmail)?.legacyFilterValue).not.toBe(
+      byId.get(opaque.codexEmail)?.legacyFilterValue
     );
+    rows.forEach((row) => expect(row.filterValue).toMatch(/^focus-unsupported:/));
   });
 
   it('builds a provider-scoped source-hash id only when the server omits one', () => {

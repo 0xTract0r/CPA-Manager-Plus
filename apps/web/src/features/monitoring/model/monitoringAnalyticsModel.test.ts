@@ -84,6 +84,7 @@ describe('buildMonitoringFilterSelectorsInclude', () => {
     expect(buildMonitoringFilterSelectorsInclude()).toEqual({
       filter_options: true,
       filter_selectors: true,
+      account_focus: true,
     });
   });
 });

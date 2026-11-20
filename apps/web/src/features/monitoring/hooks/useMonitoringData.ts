@@ -32,6 +32,8 @@ import {
 } from '../model/chartBuilders';
 import {
   buildAnalyticsFilters,
+  readMonitoringAccountFocusId,
+  isMonitoringUnsupportedFocusFilterValue,
   buildAccountRowsFromAnalytics,
   buildApiKeyRowsFromAnalytics,
   buildChannelRowsFromAnalytics,
@@ -51,6 +53,11 @@ import { buildEventRows } from '../model/eventRows';
 import {
   buildMonitoringFilterSelectorsScopeKey,
   buildMonitoringFilterSelectorsInclude,
+  collectIssuedAccountFocusIds,
+  intersectMonitoringFocusWindow,
+  markOnlineAccountRowsFailClosed,
+  resolveMonitoringAccountFocusState,
+  type MonitoringFocusWindow,
   mergeMonitoringAccountOptionRows,
 } from '../model/monitoringAnalyticsModel';
 import {
@@ -548,10 +555,54 @@ export function useMonitoringData({
     () => findAuthIndicesMatchingIdentityQuery(authFiles, searchQuery),
     [authFiles, searchQuery]
   );
+  const selectedAccountFocusId = useMemo(
+    () => readMonitoringAccountFocusId(scopeFilters?.account),
+    [scopeFilters?.account]
+  );
+  // 服务端确认过的 focus token 集合：来自轻量选择器与账号列表两条入口；
+  // 账号列表请求在 focus 生效时本身被该 token 过滤，故需保留上次被确认的集合。
+  const [issuedAccountFocusIds, setIssuedAccountFocusIds] = useState<ReadonlySet<string>>(
+    () => new Set()
+  );
+  const [accountFocusSettledScope, setAccountFocusSettledScope] = useState('');
+  const [rejectedAccountFocusId, setRejectedAccountFocusId] = useState('');
+  const accountFocusUnsupported = isMonitoringUnsupportedFocusFilterValue(scopeFilters?.account);
+  // token -> 签发它的列表请求窗口（成员快照绑定该窗口）。
+  const issuedFocusWindowsRef = useRef(new Map<string, MonitoringFocusWindow>());
+  const [issuedFocusWindowsVersion, setIssuedFocusWindowsVersion] = useState(0);
+  const selectedIssuedFocusWindow = useMemo(
+    () =>
+      selectedAccountFocusId
+        ? (issuedFocusWindowsRef.current.get(selectedAccountFocusId) ?? null)
+        : null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [issuedFocusWindowsVersion, selectedAccountFocusId]
+  );
+  // 相对窗口（如最近 24h）列表与点击分别计算 now：focus 生效时请求固定为“签发窗口 ∩ 当前窗口”，
+  // 既吸收毫秒漂移，也不放宽用户当前选择的范围；交集为空视为过期。
+  const focusRequestWindow = useMemo(
+    () =>
+      selectedAccountFocusId && selectedIssuedFocusWindow
+        ? intersectMonitoringFocusWindow(selectedIssuedFocusWindow, analyticsBounds)
+        : null,
+    [analyticsBounds, selectedAccountFocusId, selectedIssuedFocusWindow]
+  );
+  const focusWindowExpired = Boolean(
+    selectedAccountFocusId && selectedIssuedFocusWindow && !focusRequestWindow
+  );
+  const accountFocusAcceptedId =
+    selectedAccountFocusId &&
+    !focusWindowExpired &&
+    rejectedAccountFocusId !== selectedAccountFocusId &&
+    issuedAccountFocusIds.has(selectedAccountFocusId)
+      ? selectedAccountFocusId
+      : '';
   const analyticsFilters = useMemo(() => {
-    const base = buildAnalyticsFilters(scopeFilters, authMetaMap, channels);
+    const base = buildAnalyticsFilters(scopeFilters, authMetaMap, channels, {
+      acceptedFocusId: accountFocusAcceptedId,
+    });
     return withIdentitySearchAuthIndices(base, identitySearchAuthIndices);
-  }, [authMetaMap, channels, identitySearchAuthIndices, scopeFilters]);
+  }, [accountFocusAcceptedId, authMetaMap, channels, identitySearchAuthIndices, scopeFilters]);
 
   const analyticsGranularity = useMemo(
     () => (shouldUseHourlyTimeline(timeRange, customTimeRange) ? 'hour' : 'day'),
@@ -606,8 +657,14 @@ export function useMonitoringData({
   // 概览聚合不会每 5s 重发；切窗(scope 重锚)/手动强制刷新时会前移，立即重拉。dataScopeKey
   // 仍用共享的 eventsScopeKey，保证 dataStale 在切窗时即时翻 true(供 KPI「更新中」判定)。
   const analytics = useMonitoringAnalytics({
-    fromMs: overviewBounds?.startMs,
-    toMs: overviewBounds?.endMs,
+    fromMs:
+      accountFocusAcceptedId && focusRequestWindow
+        ? focusRequestWindow.fromMs
+        : overviewBounds?.startMs,
+    toMs:
+      accountFocusAcceptedId && focusRequestWindow
+        ? focusRequestWindow.toMs
+        : overviewBounds?.endMs,
     nowMs: overviewClock.nowMs,
     dataScopeKey: eventsScopeKey,
     searchQuery,
@@ -625,6 +682,8 @@ export function useMonitoringData({
       api_key_stats: true,
       filter_options: true,
       task_buckets: true,
+      // 账号列表需提供“点击详情”，显式请求 account_focus_id；事件请求不设置。
+      account_focus: true,
       granularity: analyticsGranularity,
     },
     throttleMs: 1_000,
@@ -637,8 +696,14 @@ export function useMonitoringData({
   // 请求中拆开后，概览面板（KPI/图表）不必等这个大分页请求返回即可先渲染，且该请求可
   // 独立设置更长超时/更低 limit。分页游标(loadMoreEvents)固定走这个独立请求。
   const eventsAnalytics = useMonitoringAnalytics({
-    fromMs: analyticsBounds?.startMs,
-    toMs: analyticsBounds?.endMs,
+    fromMs:
+      accountFocusAcceptedId && focusRequestWindow
+        ? focusRequestWindow.fromMs
+        : analyticsBounds?.startMs,
+    toMs:
+      accountFocusAcceptedId && focusRequestWindow
+        ? focusRequestWindow.toMs
+        : analyticsBounds?.endMs,
     nowMs: analyticsNowMs,
     dataScopeKey: eventsScopeKey,
     searchQuery,
@@ -682,6 +747,96 @@ export function useMonitoringData({
   const currentFilterSelectorsData = filterSelectorsAnalytics.dataStale
     ? null
     : filterSelectorsAnalytics.data;
+
+  // 记录各请求最近一次实际使用的窗口；签发窗口取“上次与本次窗口的交集”，偏保守，
+  // 保证详情窗口不越出真实签发窗口（相对窗口下两者只差毫秒级）。
+  const selectorRequestWindowRef = useRef<MonitoringFocusWindow | null>(null);
+  const overviewRequestWindowRef = useRef<MonitoringFocusWindow | null>(null);
+  const trackWindow = (
+    ref: { current: MonitoringFocusWindow | null },
+    bounds: { startMs: number; endMs: number } | null
+  ) => {
+    if (!bounds) return;
+    const previous = ref.current;
+    ref.current = previous
+      ? (intersectMonitoringFocusWindow(previous, bounds) ?? {
+          fromMs: bounds.startMs,
+          toMs: bounds.endMs,
+        })
+      : { fromMs: bounds.startMs, toMs: bounds.endMs };
+  };
+  useEffect(() => {
+    selectorRequestWindowRef.current = null;
+    trackWindow(selectorRequestWindowRef, analyticsBounds);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentFilterSelectorsData]);
+  useEffect(() => {
+    if (!selectorRequestWindowRef.current) trackWindow(selectorRequestWindowRef, analyticsBounds);
+    if (!accountFocusAcceptedId) {
+      overviewRequestWindowRef.current = overviewBounds
+        ? { fromMs: overviewBounds.startMs, toMs: overviewBounds.endMs }
+        : null;
+    }
+  }, [accountFocusAcceptedId, analyticsBounds, overviewBounds]);
+  const recordIssuedFocusWindows = (
+    issued: ReadonlySet<string>,
+    window: MonitoringFocusWindow | null
+  ) => {
+    if (!window) return;
+    let changed = false;
+    issued.forEach((id) => {
+      if (issuedFocusWindowsRef.current.has(id)) return;
+      issuedFocusWindowsRef.current.set(id, window);
+      changed = true;
+    });
+    if (changed) setIssuedFocusWindowsVersion((value) => value + 1);
+  };
+
+  // 选择器（不带账号过滤）返回即视为“能力已结算”；旧服务不返回 token => unavailable。
+  useEffect(() => {
+    if (!currentFilterSelectorsData) return;
+    const issued = collectIssuedAccountFocusIds(
+      currentFilterSelectorsData.filter_options?.account_stats,
+      currentFilterSelectorsData.account_stats
+    );
+    // 选择器请求不带账号过滤，是本轮能力/有效 token 的权威来源：未再发出的 token 视为过期。
+    recordIssuedFocusWindows(issued, selectorRequestWindowRef.current);
+    setIssuedAccountFocusIds(issued);
+    setAccountFocusSettledScope(filterSelectorsScopeKey);
+  }, [currentFilterSelectorsData, filterSelectorsScopeKey]);
+  useEffect(() => {
+    if (!currentAnalyticsData || accountFocusAcceptedId) return;
+    const issued = collectIssuedAccountFocusIds(
+      currentAnalyticsData.account_stats,
+      currentAnalyticsData.filter_options?.account_stats
+    );
+    if (issued.size === 0) return;
+    recordIssuedFocusWindows(issued, overviewRequestWindowRef.current);
+    setIssuedAccountFocusIds((previous) => {
+      if (Array.from(issued).every((id) => previous.has(id))) return previous;
+      return new Set([...previous, ...issued]);
+    });
+  }, [accountFocusAcceptedId, currentAnalyticsData]);
+  // 已下发 focus token 但服务端报错（拒绝/过期）=> 标记失效，不回退全量。
+  useEffect(() => {
+    if (accountFocusAcceptedId && analytics.error && !analytics.loading) {
+      setRejectedAccountFocusId(accountFocusAcceptedId);
+    }
+  }, [accountFocusAcceptedId, analytics.error, analytics.loading]);
+  useEffect(() => {
+    if (!selectedAccountFocusId) setRejectedAccountFocusId('');
+  }, [selectedAccountFocusId]);
+  const accountFocusState = resolveMonitoringAccountFocusState({
+    focusId: selectedAccountFocusId,
+    issuedIds: issuedAccountFocusIds,
+    optionsSettled:
+      accountFocusSettledScope === filterSelectorsScopeKey ||
+      Boolean(filterSelectorsAnalytics.error),
+    rejected: Boolean(selectedAccountFocusId) && rejectedAccountFocusId === selectedAccountFocusId,
+    unsupported: accountFocusUnsupported,
+    windowExpired: focusWindowExpired,
+  });
+  const onlineAccountMode = analytics.enabled || filterSelectorsAnalytics.enabled;
   const displayEventItems = useMemo(
     () =>
       resolveMonitoringDisplayEventItems({
@@ -838,8 +993,11 @@ export function useMonitoringData({
     [allRows, customTimeRange, searchApiKeyHash, searchQuery, timeRange]
   );
   const filteredRows = useMemo(
-    () => buildScopeFilteredRows(rangeFilteredRows, scopeFilters),
-    [rangeFilteredRows, scopeFilters]
+    () =>
+      buildScopeFilteredRows(rangeFilteredRows, scopeFilters, {
+        acceptedFocusId: accountFocusState === 'active' ? accountFocusAcceptedId : '',
+      }),
+    [accountFocusAcceptedId, accountFocusState, rangeFilteredRows, scopeFilters]
   );
   const statsRows = useMemo(() => filteredRows.filter(shouldIncludeInStats), [filteredRows]);
 
@@ -953,8 +1111,11 @@ export function useMonitoringData({
             sourceInfoMap,
             channelByAuthIndex
           )
-        : buildAccountRows(filteredRows),
+        : onlineAccountMode
+          ? markOnlineAccountRowsFailClosed(buildAccountRows(filteredRows))
+          : buildAccountRows(filteredRows),
     [
+      onlineAccountMode,
       currentAnalyticsData,
       authFileMap,
       authMetaMap,
@@ -1015,7 +1176,9 @@ export function useMonitoringData({
     const mergedAccountRows = mergeMonitoringAccountOptionRows(
       accountRows,
       selectorOptions?.accountRows ?? [],
-      fallbackFilterOptions.accountRows
+      onlineAccountMode
+        ? markOnlineAccountRowsFailClosed(fallbackFilterOptions.accountRows)
+        : fallbackFilterOptions.accountRows
     );
     const mergedApiKeyRows = mergeMonitoringApiKeyOptionRows(
       apiKeyRows,
@@ -1049,6 +1212,7 @@ export function useMonitoringData({
       ]),
     };
   }, [
+    onlineAccountMode,
     apiKeyDisplayMap,
     authFileMap,
     authMetaMap,
@@ -1284,6 +1448,7 @@ export function useMonitoringData({
     eventsLoadedCount: presentationSnapshot.eventsLoadedCount,
     lastRefreshedAt: presentationSnapshot.lastRefreshedAt,
     isTransitioningScope: combinedAnalyticsDataStale,
+    accountFocusState,
     // 仅在「切时间窗」转场时为 true(同窗后台刷新恒 false)：供 KPI 卡片「更新中」遮罩用，
     // 使同窗每次后台刷新不再变灰闪烁，只有真正切窗时才对旧概览快照显示一次「更新中」。
     overviewDataStale,

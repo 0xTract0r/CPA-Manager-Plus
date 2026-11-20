@@ -161,7 +161,9 @@ describe('mixed shared-index focus (acceptance mixed/fixture.jsonl, 20 events)',
   );
   const backend = (id: string) => {
     const row = backendRows.find((item) => item.id === id)!;
-    const filters = buildAnalyticsFilters({ account: row.filterValue }, new Map(), []);
+    // 旧 Manager 行（无 token）点击后 fail-closed；此处校验旧口径计算本身（仅兼容旧链接）
+    expect(row.filterValue).toMatch(/^focus-unsupported:/);
+    const filters = buildAnalyticsFilters({ account: row.legacyFilterValue }, new Map(), []);
     return { row, filters, hits: runHandler(filters) };
   };
 

@@ -109,7 +109,17 @@ const ACCOUNT_FILTER_PREFIXES = {
   account: 'account:',
   accountProvider: 'account-provider:',
   authAccount: 'auth-account:',
+  /** typed 服务端精确聚焦 token：focus:<opaque>，仅原样回传，不解析内容。 */
+  focus: 'focus:',
+  /** 在线行未返回 account_focus_id：无法证明能精确返回，点击后 fail-closed。 */
+  unsupported: 'focus-unsupported:',
 } as const;
+
+export const buildMonitoringUnsupportedFocusFilterValue = (rowId: string) =>
+  `${ACCOUNT_FILTER_PREFIXES.unsupported}${encodeURIComponent(rowId)}`;
+
+export const isMonitoringUnsupportedFocusFilterValue = (value: string | null | undefined) =>
+  readString(value).startsWith(ACCOUNT_FILTER_PREFIXES.unsupported);
 
 const NO_MATCH_FILTER_VALUE = '__no_matching_filter_value__';
 
@@ -156,6 +166,23 @@ const decodeAccountFilterValues = (value: string) =>
 
 const buildAccountFilterToken = (prefix: string, values: string[]) =>
   values.length > 0 ? `${prefix}${encodeAccountFilterValues(values)}` : '';
+
+/** 能力缺失/未加载/过期时用于网络请求的“无结果”哨兵，避免回退成全量。 */
+export const ACCOUNT_FOCUS_BLOCKED_AUTH_INDEX = '__account_focus_unconfirmed__';
+
+export const buildMonitoringAccountFocusFilterValue = (focusId: string | null | undefined) => {
+  const trimmed = readString(focusId).trim();
+  return trimmed && trimmed !== '-'
+    ? `${ACCOUNT_FILTER_PREFIXES.focus}${encodeURIComponent(trimmed)}`
+    : '';
+};
+
+/** 读取 typed 选择器里的服务端聚焦 token；旧口径选择器返回空串。 */
+export const readMonitoringAccountFocusId = (value: string | null | undefined) => {
+  const text = readString(value);
+  if (!text.startsWith(ACCOUNT_FILTER_PREFIXES.focus)) return '';
+  return decodeAccountFilterValue(text.slice(ACCOUNT_FILTER_PREFIXES.focus.length)).trim();
+};
 
 type AccountIndexClaim = {
   provider?: string | null;
@@ -283,6 +310,13 @@ export const parseMonitoringAccountFilterValue = (
     apiKeyHashes: [],
   };
   if (!text || text === 'all') return emptyCriteria;
+  if (
+    text.startsWith(ACCOUNT_FILTER_PREFIXES.focus) ||
+    text.startsWith(ACCOUNT_FILTER_PREFIXES.unsupported)
+  ) {
+    // focus token 不能被解释为账号/索引；交给 buildAnalyticsFilters 的能力判定处理。
+    return emptyCriteria;
+  }
   // 兼容生产热修 #80/#81 生成的 provider:<p>|<token> 旧选择器。
   if (text.startsWith('provider:') && text.includes('|')) {
     const split = text.indexOf('|');
@@ -421,10 +455,12 @@ const addFilterValueConstraint = (
 export const buildAnalyticsFilters = (
   scopeFilters: MonitoringScopeFilters | undefined,
   authMetaMap: Map<string, MonitoringAuthMeta>,
-  channels: MonitoringChannelMeta[]
+  channels: MonitoringChannelMeta[],
+  accountFocus?: { acceptedFocusId?: string | null }
 ): MonitoringAnalyticsFilters => {
   const filters: MonitoringAnalyticsFilters = {};
   if (!scopeFilters) return filters;
+  const selectedFocusId = readMonitoringAccountFocusId(scopeFilters.account);
 
   if (isActiveFilterValue(scopeFilters.model)) {
     filters.models = [scopeFilters.model!.trim()];
@@ -468,7 +504,18 @@ export const buildAnalyticsFilters = (
   if (isActiveFilterValue(scopeFilters.authIndex)) {
     authIndices = addAuthIndexConstraint(authIndices, [scopeFilters.authIndex!.trim()]);
   }
-  if (isActiveFilterValue(scopeFilters.account)) {
+  let accountFocusBlocked = false;
+  if (isMonitoringUnsupportedFocusFilterValue(scopeFilters.account)) {
+    // 旧服务在线行无 token：不发任何账号明细条件（禁止旧 AND 宽查询），以无结果哨兵阻断。
+    accountFocusBlocked = true;
+  } else if (selectedFocusId) {
+    // 仅当本轮服务端确实发出同一 token 时原样回传；否则以无结果哨兵阻断，绝不回退全量。
+    if (readString(accountFocus?.acceptedFocusId).trim() === selectedFocusId) {
+      filters.account_focus_id = selectedFocusId;
+    } else {
+      accountFocusBlocked = true;
+    }
+  } else if (isActiveFilterValue(scopeFilters.account)) {
     const account = scopeFilters.account!.trim();
     const accountCriteria = parseMonitoringAccountFilterValue(account);
     // 明确的凭据索引也覆盖缺少provider快照的历史事件。
@@ -549,6 +596,9 @@ export const buildAnalyticsFilters = (
       !filters.auth_indices || filters.auth_indices.includes(scopeFilters.authIndex)
         ? [scopeFilters.authIndex]
         : ['__no_matching_auth_index__'];
+  }
+  if (accountFocusBlocked) {
+    filters.auth_indices = [ACCOUNT_FOCUS_BLOCKED_AUTH_INDEX];
   }
   if (scopeFilters.requestId) filters.request_ids = [scopeFilters.requestId];
   if (scopeFilters.resolvedModel) filters.resolved_models = [scopeFilters.resolvedModel];
@@ -836,18 +886,38 @@ export const buildAccountRowsFromAnalytics = (
         averageLatencyMs: row.average_latency_ms,
         lastSeenAt: row.last_seen_ms,
         recentPattern: [],
-        filterValue:
-          buildMonitoringAccountFilterValue({
-            account: filterAccount,
-            provider,
-            authIndices: row.auth_indices,
-            sourceHashes: row.source_hashes,
-            ...resolveAuthIndexConstraint({
-              provider: row.auth_provider_snapshot,
-              account: row.account_snapshot,
+        ...(() => {
+          const legacyFilterValue =
+            buildMonitoringAccountFilterValue({
+              account: filterAccount,
+              provider,
               authIndices: row.auth_indices,
-            }),
-          }) || account,
+              sourceHashes: row.source_hashes,
+              ...resolveAuthIndexConstraint({
+                provider: row.auth_provider_snapshot,
+                account: row.account_snapshot,
+                authIndices: row.auth_indices,
+              }),
+            }) || account;
+          // 只有该行确实返回非空 account_focus_id 才使用 typed focus token；不从 id 推断。
+          const focusValue = buildMonitoringAccountFocusFilterValue(row.account_focus_id);
+          // 在线行无 token（旧 Manager）：禁止回落旧口径宽查询，改为 fail-closed 标记。
+          if (!focusValue) {
+            return {
+              filterValue: buildMonitoringUnsupportedFocusFilterValue(
+                firstReadableValue(row.id) || legacyFilterValue
+              ),
+              legacyFilterValue,
+            };
+          }
+          return focusValue
+            ? {
+                filterValue: focusValue,
+                legacyFilterValue,
+                accountFocusId: row.account_focus_id!.trim(),
+              }
+            : { filterValue: legacyFilterValue };
+        })(),
         models: buildModelSpendRowsFromAnalytics(row.models),
       };
     })
@@ -978,7 +1048,11 @@ export const buildFilterOptionsFromAnalytics = (
         id: `selector:${normalizeFilterText(account)}`,
         account,
         provider: '',
-        filterValue: buildMonitoringAccountFilterValue({ account }) || account,
+        // 在线轻量选择器的纯账号行没有 token，同样 fail-closed。
+        filterValue: buildMonitoringUnsupportedFocusFilterValue(
+          `selector:${normalizeFilterText(account)}`
+        ),
+        legacyFilterValue: buildMonitoringAccountFilterValue({ account }) || account,
         displayAccount: account,
         accountMasked: maskEmailLike(account),
         authLabels: [],

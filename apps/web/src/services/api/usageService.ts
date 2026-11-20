@@ -1055,6 +1055,8 @@ export interface MonitoringAnalyticsFilters {
   providers?: string[];
   accounts?: string[];
   credential_ids?: string[];
+  /** 新版 Manager 账号统计行返回的 opaque 成员集合 token；仅在本轮服务端确实返回时原样回传。 */
+  account_focus_id?: string;
   auth_files?: string[];
   auth_indices?: string[];
   /** 与 search_query 取 OR，用于把实时备注/完整邮箱匹配扩展到历史 auth_index 事件。 */
@@ -1108,6 +1110,8 @@ export interface MonitoringAnalyticsInclude {
   api_key_stats?: boolean;
   filter_options?: boolean;
   filter_selectors?: boolean;
+  /** 请求 account_stats 行附带 account_focus_id（仅账号列表与轻量选择器请求设置）。 */
+  account_focus?: boolean;
   heatmap?: boolean;
   anomaly_points?: boolean;
   task_buckets?: boolean;
@@ -1730,6 +1734,8 @@ export interface MonitoringAnalyticsAccountModelStatRow {
 
 export interface MonitoringAnalyticsAccountStatRow {
   id: string;
+  /** 新版 Manager 可选返回；不透明、可过期，前端不解析、不与 id 互推。 */
+  account_focus_id?: string;
   account_snapshot?: string;
   auth_label_snapshot?: string;
   auth_provider_snapshot?: string;

@@ -665,10 +665,11 @@ describe('buildFilterOptionsFromAnalytics', () => {
       'alice@example.com',
       'bob@example.com',
     ]);
-    expect(options.accountRows.map((row) => row.filterValue)).toEqual([
+    expect(options.accountRows.map((row) => row.legacyFilterValue)).toEqual([
       'account:alice%40example.com',
       'account:bob%40example.com',
     ]);
+    options.accountRows.forEach((row) => expect(row.filterValue).toMatch(/^focus-unsupported:/));
     expect(options.apiKeyRows.map((row) => row.apiKeyLabel)).toEqual(['Key A']);
     expect(options.providers).toEqual(['codex']);
     expect(options.models).toEqual(['gpt-a']);
@@ -755,7 +756,7 @@ describe('buildFilterOptionsFromAnalytics', () => {
       new Map()
     );
 
-    expect(options.accountRows.map((row) => row.filterValue)).toEqual([
+    expect(options.accountRows.map((row) => row.legacyFilterValue)).toEqual([
       'auth:openai-auth',
       'source:source-b',
     ]);
@@ -799,7 +800,8 @@ describe('buildFilterOptionsFromAnalytics', () => {
     );
 
     const row = options.accountRows[0];
-    expect(row.filterValue).toBe('account-provider:codex|Shared%20Label');
+    expect(row.legacyFilterValue).toBe('account-provider:codex|Shared%20Label');
+    expect(row.filterValue).toMatch(/^focus-unsupported:/);
   });
 });
 

@@ -326,11 +326,19 @@ describe('useMonitoringData analytics requests', () => {
       api_key_stats: true,
       filter_options: true,
       task_buckets: true,
+      account_focus: true,
       granularity: 'hour',
     });
     expect(accounts?.include?.events_page).toBeUndefined();
     expect(accounts?.filters).toEqual({ models: ['gpt-active'] });
-    expect(selectors?.include).toEqual({ filter_options: true, filter_selectors: true });
+    expect(selectors?.include).toEqual({
+      filter_options: true,
+      filter_selectors: true,
+      account_focus: true,
+    });
+    // 事件分页请求不请求 account_focus
+    const events = lastParams((params) => Boolean(params.include?.events_page));
+    if (events) expect(events.include?.account_focus).toBeUndefined();
     expect(selectors?.filters).toBeUndefined();
     const selectorScope = selectors?.dataScopeKey;
 
@@ -345,7 +353,7 @@ describe('useMonitoringData analytics requests', () => {
       'alice@example.com'
     );
     expect(latestResult?.filterOptions.apiKeyRows.map((row) => row.apiKeyHash)).toContain('key-a');
-    expect(latestResult?.filterOptions.accountRows.map((row) => row.filterValue)).toContain(
+    expect(latestResult?.filterOptions.accountRows.map((row) => row.legacyFilterValue)).toContain(
       'source:source-only-hash'
     );
     expect(latestResult?.filterOptions.accountCount).toBe(2);
@@ -405,10 +413,13 @@ describe('useMonitoringData analytics requests', () => {
 
     await renderTab('apiKeys');
 
-    expect(latestResult?.filterOptions.accountRows.map((row) => row.filterValue)).toEqual([
+    expect(latestResult?.filterOptions.accountRows.map((row) => row.legacyFilterValue)).toEqual([
       'auth:auth-a',
       'auth:auth-a,auth-b',
     ]);
+    latestResult?.filterOptions.accountRows.forEach((row) =>
+      expect(row.filterValue).toMatch(/^focus-unsupported:/)
+    );
     expect(latestResult?.filterOptions.accountCount).toBe(1);
     expect(latestResult?.filterOptions.apiKeyCount).toBe(1);
   });

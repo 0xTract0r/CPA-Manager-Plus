@@ -129,7 +129,10 @@ import {
   type MonitoringQuotaStores,
   type StatusFilter,
 } from '@/features/monitoring/model/monitoringCenterPageModel';
-import { resolveMonitoringDimensionCounts } from '@/features/monitoring/model/monitoringAnalyticsModel';
+import {
+  resolveMonitoringAccountFocusNotice,
+  resolveMonitoringDimensionCounts,
+} from '@/features/monitoring/model/monitoringAnalyticsModel';
 import { useHeaderSnapshotsLoader } from '@/features/monitoring/hooks/useHeaderSnapshotsLoader';
 import {
   isUsageImportCancelledError,
@@ -581,6 +584,7 @@ export function MonitoringCenterPage() {
     eventsLoadedCount,
     lastRefreshedAt: monitoringLastRefreshedAt,
     isTransitioningScope: monitoringScopeTransitioning,
+    accountFocusState,
     overviewDataStale: monitoringOverviewDataStale,
     hasPresentationSnapshot: hasMonitoringPresentationSnapshot,
     refreshMeta,
@@ -858,10 +862,13 @@ export function MonitoringCenterPage() {
   // 的展示快照(hasPresentationSnapshot)而不是清空页面，但这必须让用户明确知道，而不是
   // 静默地把旧数据当作最新结果展示。仅在真的还在为新 scope 转场、且已有旧快照可显示时
   // 才提示，避免和首次加载失败(还没有任何快照)的 combinedError 重复。
+  // 服务端精确账号筛选：加载中明确待加载；旧服务/过期/被拒明确要求刷新账号列表重新选择
+  // （此时请求已以无结果哨兵阻断，不会回退成全量）。
   const staleDataNotice =
-    monitoringError && monitoringScopeTransitioning && hasMonitoringPresentationSnapshot
+    resolveMonitoringAccountFocusNotice(accountFocusState, t) ??
+    (monitoringError && monitoringScopeTransitioning && hasMonitoringPresentationSnapshot
       ? t('monitoring.stale_data_notice')
-      : null;
+      : null);
   const hasPrices = Object.keys(modelPrices).length > 0;
   const usageCatchUpStatusPresentation = presentUsageCatchUpStatus(
     usageCatchUpStatusQuery.found,

@@ -208,7 +208,9 @@ describe('shared credential index focus (acceptance fixture)', () => {
     expect(rows.map((row) => row.id).sort()).toEqual(BACKEND_GROUPS.map((row) => row.id).sort());
     const detailCount = (id: string) => {
       const row = rows.find((item) => item.id === id)!;
-      const filters = buildAnalyticsFilters({ account: row.filterValue }, new Map(), []);
+      // 旧 Manager 行（无 token）点击后 fail-closed；此处校验旧口径计算本身（仅兼容旧链接）
+      expect(row.filterValue).toMatch(/^focus-unsupported:/);
+      const filters = buildAnalyticsFilters({ account: row.legacyFilterValue }, new Map(), []);
       return {
         filters,
         count: applyHandlerFilters(events, filters).length,
@@ -241,23 +243,37 @@ describe('shared credential index focus (acceptance fixture)', () => {
   });
 
   it('recovers only from a unique complete credential snapshot, independent of the masked spelling', () => {
-    const rows = events.filter((event) => event.authIndex === 'idx-active').map((event) =>
-      event.account.includes('*')
-        ? { ...event, account: 'z***@elsewhere.invalid', accountIdentity: 'z***@elsewhere.invalid' }
-        : event
-    );
+    const rows = events
+      .filter((event) => event.authIndex === 'idx-active')
+      .map((event) =>
+        event.account.includes('*')
+          ? {
+              ...event,
+              account: 'z***@elsewhere.invalid',
+              accountIdentity: 'z***@elsewhere.invalid',
+            }
+          : event
+      );
     const accounts = buildAccountRows(rows);
     expect(accounts).toHaveLength(1);
     expect(accounts[0]).toMatchObject({ account: 'qa-shared@example.invalid', totalCalls: 18 });
-    const contradictory = { ...rows[0], account: 'qa-other@example.invalid', accountIdentity: 'qa-other@example.invalid' };
+    const contradictory = {
+      ...rows[0],
+      account: 'qa-other@example.invalid',
+      accountIdentity: 'qa-other@example.invalid',
+    };
     const separate = buildAccountRows([...rows, contradictory]);
-    expect(separate.find((row) => row.account === 'qa-shared@example.invalid')?.totalCalls).toBe(10);
+    expect(separate.find((row) => row.account === 'qa-shared@example.invalid')?.totalCalls).toBe(
+      10
+    );
     expect(separate.find((row) => row.account === 'qa-other@example.invalid')?.totalCalls).toBe(1);
   });
 
   it('does not treat the request transport as evidence of a credential owner', () => {
     const complete = events.find((event) => event.authIndex === 'idx-active')!;
-    const missing = events.find((event) => event.authIndex === 'idx-active' && event.account.includes('*'))!;
+    const missing = events.find(
+      (event) => event.authIndex === 'idx-active' && event.account.includes('*')
+    )!;
     const rows = buildAccountRows([
       { ...complete, authProviderSnapshot: '', providerIdentity: 'codex' },
       { ...missing, authProviderSnapshot: 'codex' },

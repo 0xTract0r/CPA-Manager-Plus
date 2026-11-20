@@ -285,6 +285,10 @@ export type MonitoringAccountRow = {
   account: string;
   provider?: string;
   filterValue?: string;
+  /** focus/group token 行对应的旧口径选择器，仅用于选项去重。 */
+  legacyFilterValue?: string;
+  /** 服务端本轮返回的 opaque 聚焦 token（原样）。 */
+  accountFocusId?: string;
   displayAccount: string;
   accountMasked: string;
   authLabels: string[];
@@ -455,6 +459,11 @@ export interface UseMonitoringDataReturn {
   eventsLoadedCount: number;
   lastRefreshedAt: Date | null;
   isTransitioningScope: boolean;
+  /**
+   * 服务端精确聚焦 token 状态：none=未选 focus token；pending=能力/选项加载中；
+   * active=本轮服务端确认并已下发；unavailable=旧服务/过期/被拒，需刷新账号列表重新选择。
+   */
+  accountFocusState?: 'none' | 'pending' | 'active' | 'unavailable' | 'unsupported';
   // 仅在「切时间窗」转场时为 true(同窗后台刷新恒 false)，供 KPI 卡片「更新中」遮罩判定。
   overviewDataStale: boolean;
   hasPresentationSnapshot: boolean;
