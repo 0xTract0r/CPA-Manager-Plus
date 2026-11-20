@@ -13,7 +13,7 @@ const creditsTestHour = int64(60 * 60 * 1000)
 
 func creditsEvent(hash string, timestampMS int64, authFile string, authIndex string, headers map[string]any) usage.Event {
 	return usage.Event{
-		EventHash:        hash,
+		EventHash:        testCanonicalHash(hash),
 		TimestampMS:      timestampMS,
 		Timestamp:        time.UnixMilli(timestampMS).UTC().Format(time.RFC3339Nano),
 		Model:            "gpt-5",

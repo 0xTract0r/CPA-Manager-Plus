@@ -70,6 +70,7 @@ describe('monitoringCenterUiState', () => {
 
   it('normalizes persisted filter fields', () => {
     expect(normalizeMonitoringTimeRange('30d')).toBe('30d');
+    expect(normalizeMonitoringTimeRange('yesterday')).toBe('yesterday');
     expect(normalizeMonitoringTimeRange('bad')).toBe(DEFAULT_MONITORING_TIME_RANGE);
     expect(normalizeMonitoringStatusFilter('failed')).toBe('failed');
     expect(normalizeMonitoringStatusFilter('bad')).toBe('all');
@@ -122,18 +123,21 @@ describe('monitoringCenterUiState', () => {
   it('persists and reads ui state via localStorage', () => {
     writeMonitoringCenterUiState({
       activeDataTab: 'apiKeys',
+      timeRange: 'yesterday',
       selectedProvider: 'claude',
       apiKeyPageSize: 20,
     });
     expect(JSON.parse(storage.getItem(MONITORING_CENTER_UI_STATE_STORAGE_KEY) ?? '{}')).toEqual({
       ...getDefaultMonitoringCenterUiState(),
       activeDataTab: 'apiKeys',
+      timeRange: 'yesterday',
       selectedProvider: 'claude',
       apiKeyPageSize: 20,
     });
     expect(readMonitoringCenterUiState()).toEqual({
       ...getDefaultMonitoringCenterUiState(),
       activeDataTab: 'apiKeys',
+      timeRange: 'yesterday',
       selectedProvider: 'claude',
       apiKeyPageSize: 20,
     });
@@ -149,8 +153,12 @@ describe('monitoringCenterUiState', () => {
     expect(normalizeLowCacheHitRateThreshold(0.1)).toBe(0.1);
     expect(normalizeLowCacheHitRateThreshold(0.42)).toBe(0.42);
     expect(normalizeLowCacheHitRateThreshold('0.2')).toBe(0.2);
-    expect(normalizeLowCacheHitRateThreshold(0)).toBe(DEFAULT_REALTIME_LOW_CACHE_HIT_RATE_THRESHOLD);
-    expect(normalizeLowCacheHitRateThreshold(1)).toBe(DEFAULT_REALTIME_LOW_CACHE_HIT_RATE_THRESHOLD);
+    expect(normalizeLowCacheHitRateThreshold(0)).toBe(
+      DEFAULT_REALTIME_LOW_CACHE_HIT_RATE_THRESHOLD
+    );
+    expect(normalizeLowCacheHitRateThreshold(1)).toBe(
+      DEFAULT_REALTIME_LOW_CACHE_HIT_RATE_THRESHOLD
+    );
     expect(normalizeLowCacheHitRateThreshold(-0.1)).toBe(
       DEFAULT_REALTIME_LOW_CACHE_HIT_RATE_THRESHOLD
     );

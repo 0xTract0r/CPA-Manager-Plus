@@ -2,15 +2,58 @@ package dashboard
 
 import (
 	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"errors"
 	"math"
 	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
 
+	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/repository/usagepricing"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/store"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/usage"
 )
+
+type unavailableDashboardPricing struct {
+	usagepricing.Repository
+}
+
+func (r unavailableDashboardPricing) LoadHourlyRowsTx(context.Context, *sql.Tx, usagepricing.HourlyFilter) ([]usagepricing.HourlyRow, usagepricing.State, bool, error) {
+	return nil, usagepricing.State{}, false, nil
+}
+
+func (r unavailableDashboardPricing) LoadHourlyRowsFromEventsTx(context.Context, *sql.Tx, usagepricing.HourlyFilter) ([]usagepricing.HourlyRow, error) {
+	return nil, store.ErrUsagePricingCoverageIncomplete
+}
+
+func TestSummaryFailsClosedWhenPricingCoverageIsIncomplete(t *testing.T) {
+	db := newDashboardTestStore(t)
+	db.UsagePricing = unavailableDashboardPricing{Repository: db.UsagePricing}
+	_, err := New(db).Summary(context.Background(), SummaryParams{
+		TodayStartMS: 1_800_000_000_000,
+		NowMS:        1_800_007_200_000,
+	})
+	if !errors.Is(err, store.ErrUsagePricingCoverageIncomplete) {
+		t.Fatalf("dashboard must not return raw-only zero totals after an incomplete snapshot: %v", err)
+	}
+}
+
+func TestSummaryReturnsContextCancellation(t *testing.T) {
+	db := newDashboardTestStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := New(db).Summary(ctx, SummaryParams{
+		TodayStartMS: 1_778_000_000_000,
+		NowMS:        1_778_000_060_000,
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("summary error = %v, want context canceled", err)
+	}
+}
 
 func TestSummaryEmptyStore(t *testing.T) {
 	db := newDashboardTestStore(t)
@@ -50,7 +93,7 @@ func TestSummaryAggregatesCostsAndWindows(t *testing.T) {
 		t.Fatalf("save prices: %v", err)
 	}
 	_, err := db.InsertEvents(ctx, []usage.Event{
-		dashboardEvent("event-a-1", todayStart+10*60*1000, "gpt-a", false, 1_000_000, 500_000, 0, 250_000, 0, 1_750_000, &latency100),
+		dashboardEvent("event-a-1", todayStart+10*60*1000, "gpt-a", false, 1_000_000, 500_000, 0, 250_000, 0, 1_500_000, &latency100),
 		dashboardEvent("event-b-1", todayStart+50*60*1000, "gpt-b", true, 0, 100, 0, 0, 0, 100, &latency200),
 		dashboardEvent("event-a-2", todayStart+55*60*1000, "gpt-a", false, 0, 0, 0, 0, 0, 0, nil),
 		dashboardEvent("event-outside", nowMS, "gpt-a", false, 10, 10, 0, 0, 0, 20, nil),
@@ -72,7 +115,7 @@ func TestSummaryAggregatesCostsAndWindows(t *testing.T) {
 	if resp.Today.TotalCalls != 3 || resp.Today.SuccessCalls != 2 || resp.Today.FailureCalls != 1 {
 		t.Fatalf("today counts = %#v", resp.Today)
 	}
-	if resp.Today.TotalTokens != 1_750_100 || resp.Today.ZeroTokenCalls != 1 {
+	if resp.Today.TotalTokens != 1_500_100 || resp.Today.ZeroTokenCalls != 1 {
 		t.Fatalf("today tokens = %#v", resp.Today)
 	}
 	if math.Abs(resp.Today.SuccessRate-(2.0/3.0)) > 0.000001 {
@@ -102,7 +145,7 @@ func TestSummaryAggregatesCostsAndWindows(t *testing.T) {
 		t.Fatalf("recent failure details = %#v", resp.RecentFailures[0])
 	}
 	if len(resp.TrafficTimeline) != 24 || resp.TrafficTimeline[0].Calls != 3 ||
-		resp.TrafficTimeline[0].Tokens != 1_750_100 ||
+		resp.TrafficTimeline[0].Tokens != 1_500_100 ||
 		math.Abs(resp.TrafficTimeline[0].FailureRate-(1.0/3.0)) > 0.000001 {
 		t.Fatalf("traffic timeline = %#v", resp.TrafficTimeline)
 	}
@@ -121,16 +164,16 @@ func TestSummaryAggregatesCostsAndWindows(t *testing.T) {
 		t.Fatalf("request health timeline points = %#v", resp.RequestHealth.Points[:8])
 	}
 	if len(resp.TokenMix) != 4 || resp.TokenMix[0].Key != "input" ||
-		resp.TokenMix[0].Tokens != 1_000_000 ||
-		math.Abs(resp.TokenMix[0].Share-(1000000.0/1750100.0)) > 0.000001 {
+		resp.TokenMix[0].Tokens != 750_000 ||
+		math.Abs(resp.TokenMix[0].Share-(750000.0/1500100.0)) > 0.000001 {
 		t.Fatalf("token mix = %#v", resp.TokenMix)
 	}
 	if resp.TokenMix[1].Key != "cached" || resp.TokenMix[1].Tokens != 250_000 ||
-		math.Abs(resp.TokenMix[1].Share-(250000.0/1750100.0)) > 0.000001 {
+		math.Abs(resp.TokenMix[1].Share-(250000.0/1500100.0)) > 0.000001 {
 		t.Fatalf("token mix cached = %#v", resp.TokenMix)
 	}
 	if resp.TokenMix[2].Key != "output" || resp.TokenMix[2].Tokens != 500_100 ||
-		math.Abs(resp.TokenMix[2].Share-(500100.0/1750100.0)) > 0.000001 {
+		math.Abs(resp.TokenMix[2].Share-(500100.0/1500100.0)) > 0.000001 {
 		t.Fatalf("token mix output = %#v", resp.TokenMix)
 	}
 	if resp.TokenMix[3].Key != "reasoning" || resp.TokenMix[3].Tokens != 0 ||
@@ -149,7 +192,7 @@ func TestSummaryAggregatesCostsAndWindows(t *testing.T) {
 		resp.ChannelHealth[0].AccountSnapshot != "user@example.com" {
 		t.Fatalf("channel health display snapshots = %#v", resp.ChannelHealth[0])
 	}
-	if len(resp.FailureSources) != 1 || resp.FailureSources[0].SourceHash != "source-hash" ||
+	if len(resp.FailureSources) != 1 || resp.FailureSources[0].SourceHash != testCanonicalHash("source-hash") ||
 		resp.FailureSources[0].Failures != 1 {
 		t.Fatalf("failure sources = %#v", resp.FailureSources)
 	}
@@ -161,7 +204,7 @@ func TestSummaryAggregatesCostsAndWindows(t *testing.T) {
 
 func TestBuildTokenMixRestoresFourVisibleBuckets(t *testing.T) {
 	mix := buildTokenMix(TodaySummary{
-		InputTokens:         1_000,
+		InputTokens:         1_800,
 		OutputTokens:        200,
 		CachedTokens:        300,
 		CacheReadTokens:     400,
@@ -203,17 +246,37 @@ func TestBuildTokenMixDeduplicatesNestedCacheAndReasoning(t *testing.T) {
 	if len(mix) != 4 {
 		t.Fatalf("token mix length = %d, want 4: %#v", len(mix), mix)
 	}
-	if mix[0].Key != "input" || mix[0].Tokens != 2_310 {
+	if mix[0].Key != "input" || mix[0].Tokens != 2_400 {
 		t.Fatalf("input mix = %#v", mix[0])
 	}
 	if mix[1].Key != "cached" || mix[1].Tokens != 18_300 {
 		t.Fatalf("cached mix = %#v", mix[1])
 	}
-	if mix[2].Key != "output" || mix[2].Tokens != 245 {
+	if mix[2].Key != "output" || mix[2].Tokens != 155 {
 		t.Fatalf("output mix = %#v", mix[2])
 	}
 	if mix[3].Key != "reasoning" || mix[3].Tokens != 90 {
 		t.Fatalf("reasoning mix = %#v", mix[3])
+	}
+}
+
+func TestBuildTokenMixDeduplicatesOnlyNestedReasoning(t *testing.T) {
+	mix := buildTokenMix(TodaySummary{
+		InputTokens:     1_500,
+		OutputTokens:    400,
+		CachedTokens:    500,
+		ReasoningTokens: 150,
+		TotalTokens:     1_950,
+	})
+
+	if mix[0].Tokens != 1_000 || mix[1].Tokens != 500 ||
+		mix[2].Tokens != 300 || mix[3].Tokens != 150 {
+		t.Fatalf("token mix = %#v", mix)
+	}
+	for _, segment := range mix {
+		if math.Abs(segment.Share-float64(segment.Tokens)/1950.0) > 0.000001 {
+			t.Fatalf("token mix share = %#v", segment)
+		}
 	}
 }
 
@@ -343,23 +406,117 @@ func TestSummaryPricesPriorityAndDefaultServiceTiersSeparately(t *testing.T) {
 		t.Fatalf("summary: %v", err)
 	}
 
-	if math.Abs(resp.Today.TotalCost-7.5) > 0.000001 {
-		t.Fatalf("today cost = %v, want 7.5", resp.Today.TotalCost)
+	if math.Abs(resp.Today.TotalCost-10) > 0.000001 {
+		t.Fatalf("today cost = %v, want 10", resp.Today.TotalCost)
 	}
 	if len(resp.TopModelsToday) != 1 || resp.TopModelsToday[0].Calls != 3 ||
-		math.Abs(resp.TopModelsToday[0].Cost-7.5) > 0.000001 {
+		math.Abs(resp.TopModelsToday[0].Cost-10) > 0.000001 {
 		t.Fatalf("top models = %#v", resp.TopModelsToday)
 	}
-	if len(resp.ModelCostRank) != 1 || math.Abs(resp.ModelCostRank[0].Cost-7.5) > 0.000001 {
+	if len(resp.ModelCostRank) != 1 || math.Abs(resp.ModelCostRank[0].Cost-10) > 0.000001 {
 		t.Fatalf("model cost rank = %#v", resp.ModelCostRank)
 	}
-	if len(resp.ChannelHealth) != 1 || math.Abs(resp.ChannelHealth[0].Cost-7.5) > 0.000001 {
+	if len(resp.ChannelHealth) != 1 || math.Abs(resp.ChannelHealth[0].Cost-10) > 0.000001 {
 		t.Fatalf("channel health = %#v", resp.ChannelHealth)
 	}
 	if resp.ChannelHealth[0].AverageLatencyMS == nil ||
 		math.Abs(*resp.ChannelHealth[0].AverageLatencyMS-(1300.0/3.0)) > 0.000001 {
 		t.Fatalf("channel health latency = %#v, want weighted 433.333333", resp.ChannelHealth[0].AverageLatencyMS)
 	}
+}
+
+func TestSummaryPricesContextTiersAcrossRawAndPricingRollup(t *testing.T) {
+	db := newDashboardTestStore(t)
+	ctx := context.Background()
+	todayStart := int64(1_800_000_000_000)
+	nowMS := todayStart + 2*hourWindowMs
+
+	if err := db.SaveModelPrices(ctx, map[string]store.ModelPrice{
+		"tiered-resolved": {
+			Prompt:     10,
+			Completion: 4,
+			ContextTiers: []store.ModelPriceContextTier{
+				{
+					ThresholdTokens:  100_000,
+					Prompt:           20,
+					PromptConfigured: true,
+				},
+				{
+					ThresholdTokens:      200_000,
+					Prompt:               0,
+					Completion:           8,
+					PromptConfigured:     true,
+					CompletionConfigured: true,
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("save prices: %v", err)
+	}
+
+	events := []usage.Event{
+		dashboardEvent("context-tier-exact", todayStart+1_000, "tiered-alias", false, 100_000, 100_000, 0, 0, 0, 200_000, nil),
+		dashboardEvent("context-tier-first", todayStart+2_000, "tiered-alias", false, 100_001, 100_000, 0, 0, 0, 200_001, nil),
+		dashboardEvent("context-tier-highest", todayStart+3_000, "tiered-alias", false, 200_001, 100_000, 0, 0, 0, 300_001, nil),
+	}
+	for index := range events {
+		events[index].ResolvedModel = "tiered-resolved"
+	}
+	if _, err := db.InsertEvents(ctx, events); err != nil {
+		t.Fatalf("insert events: %v", err)
+	}
+
+	const wantCost = 4.60002
+	assertCost := func(name string, got float64) {
+		t.Helper()
+		if math.Abs(got-wantCost) > 0.000001 {
+			t.Fatalf("%s cost = %v, want %v", name, got, wantCost)
+		}
+	}
+	assertSummary := func(name string, resp SummaryResponse) {
+		t.Helper()
+		if resp.Today.TotalCalls != 3 {
+			t.Fatalf("%s today = %#v", name, resp.Today)
+		}
+		assertCost(name+" today", resp.Today.TotalCost)
+		if len(resp.TopModelsToday) != 1 || resp.TopModelsToday[0].Calls != 3 {
+			t.Fatalf("%s top models = %#v", name, resp.TopModelsToday)
+		}
+		assertCost(name+" top model", resp.TopModelsToday[0].Cost)
+		if len(resp.ModelCostRank) != 1 {
+			t.Fatalf("%s model cost rank = %#v", name, resp.ModelCostRank)
+		}
+		assertCost(name+" model rank", resp.ModelCostRank[0].Cost)
+		if len(resp.ChannelHealth) != 1 {
+			t.Fatalf("%s channel health = %#v", name, resp.ChannelHealth)
+		}
+		assertCost(name+" channel", resp.ChannelHealth[0].Cost)
+	}
+
+	raw, err := New(db, false).Summary(ctx, SummaryParams{
+		TodayStartMS: todayStart,
+		NowMS:        nowMS,
+		TopModels:    5,
+	})
+	if err != nil {
+		t.Fatalf("raw summary: %v", err)
+	}
+	assertSummary("raw", raw)
+
+	catchUpDashboardHourlyForTest(t, ctx, db)
+	service := New(db, true)
+	if _, _, _, _, ok, err := service.loadTodayMetricsFromRollup(ctx, todayStart, nowMS); !ok || err != nil {
+		t.Fatal("pricing-aware dashboard rollup was not available")
+	}
+	rolled, err := service.Summary(ctx, SummaryParams{
+		TodayStartMS: todayStart,
+		NowMS:        nowMS,
+		TopModels:    5,
+	})
+	if err != nil {
+		t.Fatalf("rolled summary: %v", err)
+	}
+	assertSummary("rolled", rolled)
 }
 
 func TestSummaryDashboardHourlyRollupMatchesRawWithTrailingEdge(t *testing.T) {
@@ -445,7 +602,7 @@ func TestSummaryDashboardHourlyRollupKeepsOffsetTimelineCorrect(t *testing.T) {
 	}
 }
 
-func TestSummaryDashboardHourlyRollupFallsBackWhilePending(t *testing.T) {
+func TestSummaryDashboardHourlyRollupMergesPendingRawDelta(t *testing.T) {
 	db := newDashboardTestStore(t)
 	ctx := context.Background()
 	todayStart := int64(1_800_000_000_000)
@@ -461,8 +618,12 @@ func TestSummaryDashboardHourlyRollupFallsBackWhilePending(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("insert pending event: %v", err)
 	}
-	if _, _, _, ok := New(db).loadTodayMetricsFromRollup(ctx, todayStart, nowMS); ok {
-		t.Fatalf("expected pending checkpoint to force raw fallback")
+	agg, _, timeline, _, ok, err := New(db).loadTodayMetricsFromRollup(ctx, todayStart, nowMS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || agg.TotalCalls != 2 || agg.TotalTokens != 3 || len(timeline) != 2 {
+		t.Fatalf("pending aggregate did not merge raw delta: ok=%v agg=%#v timeline=%#v", ok, agg, timeline)
 	}
 	resp, err := New(db).Summary(ctx, SummaryParams{TodayStartMS: todayStart, NowMS: nowMS})
 	if err != nil {
@@ -485,7 +646,7 @@ func TestSummaryDashboardHourlyRollupCanBeDisabled(t *testing.T) {
 	}
 	catchUpDashboardHourlyForTest(t, ctx, db)
 	service := New(db, false)
-	if _, _, _, ok := service.loadTodayMetricsFromRollup(ctx, todayStart, nowMS); ok {
+	if _, _, _, _, ok, err := service.loadTodayMetricsFromRollup(ctx, todayStart, nowMS); ok || err != nil {
 		t.Fatal("disabled service used hourly rollup")
 	}
 	resp, err := service.Summary(ctx, SummaryParams{TodayStartMS: todayStart, NowMS: nowMS})
@@ -497,25 +658,21 @@ func TestSummaryDashboardHourlyRollupCanBeDisabled(t *testing.T) {
 	}
 }
 
-func TestDashboardRollupFallbackLogIsRateLimited(t *testing.T) {
-	service := New(newDashboardTestStore(t))
-	service.logRollupFallback("first")
-	first := service.lastRollupFallbackLogMS.Load()
-	if first <= 0 {
-		t.Fatalf("first log timestamp = %d", first)
-	}
-	service.logRollupFallback("second")
-	if got := service.lastRollupFallbackLogMS.Load(); got != first {
-		t.Fatalf("fallback log was not rate limited: first=%d got=%d", first, got)
-	}
-}
-
 func catchUpDashboardHourlyForTest(t *testing.T, ctx context.Context, db *store.Store) {
 	t.Helper()
 	for {
-		result, err := db.CatchUpDashboardHourlyRollups(ctx, 100, time.Now().UnixMilli())
+		result, err := db.CatchUpUsageHourlyAggregate(ctx, 100, time.Now().UnixMilli())
 		if err != nil {
 			t.Fatalf("catch up dashboard hourly: %v", err)
+		}
+		if !result.Pending {
+			break
+		}
+	}
+	for {
+		result, err := db.CatchUpUsagePricing(ctx, 100, time.Now().UnixMilli())
+		if err != nil {
+			t.Fatalf("catch up dashboard pricing: %v", err)
 		}
 		if !result.Pending {
 			return
@@ -535,6 +692,14 @@ func newDashboardTestStore(t *testing.T) *store.Store {
 	return db
 }
 
+func testCanonicalHash(value string) string {
+	if len(value) == 64 {
+		return value
+	}
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
+}
+
 func dashboardEvent(
 	hash string,
 	timestampMS int64,
@@ -549,7 +714,7 @@ func dashboardEvent(
 	latencyMS *int64,
 ) usage.Event {
 	return usage.Event{
-		EventHash:       hash,
+		EventHash:       testCanonicalHash(hash),
 		TimestampMS:     timestampMS,
 		Timestamp:       time.UnixMilli(timestampMS).UTC().Format(time.RFC3339Nano),
 		Model:           model,
@@ -558,8 +723,8 @@ func dashboardEvent(
 		Path:            "/v1/chat/completions",
 		AuthIndex:       "auth-1",
 		Source:          "user@example.com",
-		SourceHash:      "source-hash",
-		APIKeyHash:      "api-key-hash",
+		SourceHash:      testCanonicalHash("source-hash"),
+		APIKeyHash:      testCanonicalHash("api-key-hash"),
 		AccountSnapshot: "user@example.com",
 		InputTokens:     inputTokens,
 		OutputTokens:    outputTokens,

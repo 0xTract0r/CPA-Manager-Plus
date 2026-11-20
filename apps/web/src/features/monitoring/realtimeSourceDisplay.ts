@@ -1,8 +1,14 @@
 import type { TFunction } from 'i18next';
 import type { MonitoringEventRow } from '@/features/monitoring/hooks/useMonitoringData';
 import type { AccountDisplayMode } from '@/features/monitoring/accountOverviewState';
-import { isGenericMonitoringProviderLabel } from '@/features/monitoring/model/sourceDisplay';
 import { maskAccountEmail, readEmailLike } from '@/utils/accountIdentity';
+import {
+  isGenericMonitoringProviderLabel,
+  isKeyDisambiguatedLabel,
+  isProviderLikeMonitoringLabel,
+  isRedundantMonitoringLabel,
+} from '@/features/monitoring/model/sourceDisplay';
+import { isOpaqueUsageSourceId } from '@/utils/usage';
 
 const hasReadableRealtimeValue = (value: string | null | undefined) => {
   const trimmed = String(value || '').trim();
@@ -24,7 +30,19 @@ export const buildRealtimeSourceDisplay = (
     | 'provider'
     | 'source'
     | 'sourceMasked'
-  >,
+  > &
+    Partial<
+      Pick<
+        MonitoringEventRow,
+        | 'clientIp'
+        | 'userAgent'
+        | 'xForwardedFor'
+        | 'sessionId'
+        | 'parentSessionId'
+        | 'generate'
+        | 'stream'
+      >
+    >,
   t: TFunction,
   accountDisplayMode: AccountDisplayMode = 'masked'
 ) => {
@@ -50,16 +68,38 @@ export const buildRealtimeSourceDisplay = (
     row.source
   );
   const source = accountDisplayMode === 'full' ? fullSource : maskedSource;
+  const nonGenericChannel =
+    channel && !isProviderLikeMonitoringLabel(channel, provider) ? channel : '';
+  const nonGenericSource = source && !isProviderLikeMonitoringLabel(source, provider) ? source : '';
+  const readableNonGenericSource =
+    nonGenericSource && !isOpaqueUsageSourceId(nonGenericSource) ? nonGenericSource : '';
+  const readableAccount = account && !isOpaqueUsageSourceId(account) ? account : '';
+  const keyDisambiguatedSource =
+    readableNonGenericSource &&
+    (isKeyDisambiguatedLabel(readableNonGenericSource, channel) ||
+      isKeyDisambiguatedLabel(readableNonGenericSource, host) ||
+      isKeyDisambiguatedLabel(readableNonGenericSource, readableAccount))
+      ? readableNonGenericSource
+      : '';
+  const opaqueSource = isOpaqueUsageSourceId(source)
+    ? source
+    : isOpaqueUsageSourceId(row.source)
+      ? row.source
+      : isOpaqueUsageSourceId(account)
+        ? account
+        : '';
   const primary =
     firstReadable(
       note,
-      channel && !isGenericMonitoringProviderLabel(channel) ? channel : '',
+      keyDisambiguatedSource,
+      nonGenericChannel,
       host,
-      source,
+      readableNonGenericSource,
+      readableAccount,
       provider && !isGenericMonitoringProviderLabel(provider) ? provider : '',
-      account || '',
       channel,
-      provider
+      provider,
+      opaqueSource
     ) || '-';
   const sourceEmail = readEmailLike(fullSource);
   const primaryRepresentsAccountEmail = Boolean(
@@ -71,21 +111,61 @@ export const buildRealtimeSourceDisplay = (
       primary === fullAccount ||
       primary === maskedAccount)
   );
-  const metaCandidate = [
-    { value: provider, label: t('monitoring.filter_provider') },
-    { value: host, label: t('monitoring.column_host') },
-    { value: accountEmail ? '' : account, label: '' },
-    { value: source, label: t('monitoring.source') },
-  ].find((candidate) => candidate.value && candidate.value !== primary);
+  const metaCandidate = provider
+    ? { value: provider, label: t('monitoring.filter_provider') }
+    : [
+        { value: host, label: t('monitoring.column_host') },
+        { value: accountEmail ? '' : readableAccount, label: '' },
+        { value: readableNonGenericSource, label: t('monitoring.source') },
+        { value: opaqueSource, label: t('monitoring.source') },
+      ].find(
+        (candidate) => candidate.value && !isRedundantMonitoringLabel(candidate.value, primary)
+      );
   const meta =
     metaCandidate && metaCandidate.label
       ? `${metaCandidate.label}: ${metaCandidate.value}`
       : metaCandidate?.value || '';
+  const clientIp = row.clientIp?.trim() || '';
+  const xForwardedFor = row.xForwardedFor?.trim() || '';
+  const userAgent = row.userAgent?.trim() || '';
+  const sessionId = row.sessionId?.trim() || '';
+  const parentSessionId = row.parentSessionId?.trim() || '';
+  const generateText =
+    typeof row.generate === 'boolean' ? t(row.generate ? 'common.yes' : 'common.no') : '';
+  const streamText =
+    typeof row.stream === 'boolean' ? t(row.stream ? 'common.yes' : 'common.no') : '';
+  const requestMetadata =
+    accountDisplayMode === 'full'
+      ? [
+          hasReadableRealtimeValue(clientIp) ? `${t('monitoring.client_ip')}: ${clientIp}` : '',
+          hasReadableRealtimeValue(xForwardedFor)
+            ? `${t('monitoring.x_forwarded_for_unverified')}: ${xForwardedFor}`
+            : '',
+          hasReadableRealtimeValue(userAgent) ? `${t('monitoring.user_agent')}: ${userAgent}` : '',
+          hasReadableRealtimeValue(sessionId) ? `${t('monitoring.session_id')}: ${sessionId}` : '',
+          hasReadableRealtimeValue(parentSessionId)
+            ? `${t('monitoring.parent_session_id')}: ${parentSessionId}`
+            : '',
+          hasReadableRealtimeValue(generateText)
+            ? `${t('monitoring.generate')}: ${generateText}`
+            : '',
+          hasReadableRealtimeValue(streamText) ? `${t('monitoring.stream')}: ${streamText}` : '',
+        ]
+      : [];
+  const requestMetadataTitle = requestMetadata.filter(hasReadableRealtimeValue).join('\n');
   const title = Array.from(
     new Set(
-      [primary, meta, fullSource, maskedSource, fullAccount, maskedAccount, host, provider].filter(
-        hasReadableRealtimeValue
-      )
+      [
+        primary,
+        meta,
+        fullSource,
+        maskedSource,
+        fullAccount,
+        maskedAccount,
+        host,
+        provider,
+        ...requestMetadata,
+      ].filter(hasReadableRealtimeValue)
     )
   ).join(' · ');
 
@@ -95,5 +175,6 @@ export const buildRealtimeSourceDisplay = (
     title,
     accountEmail: primaryRepresentsAccountEmail ? '' : accountEmail,
     accountEmailMasked,
+    requestMetadataTitle,
   };
 };

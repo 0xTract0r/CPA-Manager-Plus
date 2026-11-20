@@ -2,7 +2,15 @@ import { FastImpactPanel } from '@/features/fast-impact/FastImpactPanel';
 import { getLocalSnapshotTime } from '@/utils/localSnapshot';
 import { PerformancePanel } from '@/features/performance/PerformancePanel';
 import { isDemoMode, prefixRouteBase } from '@/features/demo/demoMode';
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
@@ -16,6 +24,7 @@ import type {
 import type { BarSeriesOption, HeatmapSeriesOption, LineSeriesOption } from 'echarts/charts';
 import type { ComposeOption, ECElementEvent } from 'echarts/core';
 import { EChartsView } from '@/components/charts/EChartsView';
+import { UsageCoverageWarning } from '@/components/usage/UsageCoverageWarning';
 import { Button } from '@/components/ui/Button';
 import { AccountIdentity } from '@/components/ui/AccountIdentity';
 import { Select, type SelectOption } from '@/components/ui/Select';
@@ -37,8 +46,11 @@ import {
   IconTrendingUp,
   IconX,
 } from '@/components/ui/icons';
-import { useThemeStore } from '@/stores';
 import { resolveAccountIdentity } from '@/utils/accountIdentity';
+import { useNotificationStore, useThemeStore } from '@/stores';
+import { copyToClipboard } from '@/utils/clipboard';
+import { formatCompactUsd } from '@/utils/usage';
+import { getPlanPresentation } from '@/utils/plans';
 import {
   buildUsageHeatmapChartData,
   buildModelKeyDistribution,
@@ -54,6 +66,7 @@ import {
   formatLocalDateTime,
   formatMetricValue,
   getSelectableApiKeyHash,
+  getNormalizedUsageCacheTokens,
   hasUsageData,
   maskApiKeyHash,
   parseDateTimeLocalValue,
@@ -330,8 +343,13 @@ const formatDrilldownDiagnostics = (row: UsageDrilldownEvent, locale: string, t:
   if (row.headerTraceId) {
     parts.push(`${t('monitoring.header_trace')}: ${row.headerTraceId}`);
   }
+  const planLabel = getPlanPresentation({
+    provider: row.provider,
+    planType: row.headerQuotaPlanType,
+    t,
+  })?.fullLabel;
   const quotaParts = [
-    row.headerQuotaPlanType,
+    planLabel,
     typeof row.headerQuotaUsedPercent === 'number'
       ? formatPercent(row.headerQuotaUsedPercent / 100)
       : '',
@@ -493,13 +511,14 @@ const getApiKeyContributorDisplayLabel = (row: UsageHeatmapContributor) => {
   return label && label.toLowerCase() !== row.key.toLowerCase() ? label : maskApiKeyHash(row.key);
 };
 
-const metricValue = (point: UsageTimelinePoint, key: UsageMetricKey) => point[key];
+const metricValue = (point: UsageTimelinePoint, key: UsageMetricKey) =>
+  key === 'cachedTokens' ? getNormalizedUsageCacheTokens(point) : point[key];
 
 const getMetricAxisIndex = (axis: (typeof USAGE_METRICS)[number]['axis']) =>
   usageChartAxisKeys[axis];
 
 const getAxisValueFormatter = (axis: (typeof USAGE_METRICS)[number]['axis']) => {
-  if (axis === 'cost') return (value: number) => formatMetricValue('estimatedCost', value);
+  if (axis === 'cost') return (value: number) => formatCompactUsd(value);
   if (axis === 'requests') return (value: number) => compactNumber(value);
   return (value: number) => compactNumber(value);
 };
@@ -569,7 +588,6 @@ const buildUsageTrendChartOption = ({
   const costVisible = visibleAxisSet.has('cost');
   const tokensOnRight = tokensVisible && requestsVisible;
   const costOnRight = costVisible && (requestsVisible || tokensVisible);
-  const rightAxisCount = Number(tokensOnRight) + Number(costOnRight);
   const splitLineAxis = requestsVisible ? 'requests' : tokensVisible ? 'tokens' : 'cost';
   const selectedLine =
     selectedLabel && metrics.length > 0
@@ -606,9 +624,12 @@ const buildUsageTrendChartOption = ({
         : [],
     grid: {
       bottom: compact ? 34 : 44,
-      containLabel: true,
+      // Let ECharts include the offset axes once, instead of reserving their
+      // labels again inside an already padded grid on narrow screens.
+      outerBoundsMode: 'same',
+      outerBoundsContain: 'axisLabel',
       left: 10,
-      right: rightAxisCount > 1 ? 104 : rightAxisCount === 1 ? 72 : 28,
+      right: 10,
       top: compact ? 16 : 28,
     },
     legend: {
@@ -688,7 +709,7 @@ const buildUsageTrendChartOption = ({
           formatter: getAxisValueFormatter('tokens'),
           fontWeight: 700,
         },
-        offset: tokensOnRight && costOnRight ? 46 : 0,
+        offset: tokensOnRight && costOnRight ? 64 : 0,
         position: tokensOnRight ? 'right' : 'left',
         scale: true,
         show: tokensVisible,
@@ -1058,11 +1079,17 @@ const buildHealthChartOption = (
       const point = typeof first?.dataIndex === 'number' ? timeline[first.dataIndex] : undefined;
       const rows = items
         .map((item) => {
-          const entry = item as { marker?: string; seriesName?: string; data?: number };
+          const entry = item as {
+            marker?: string;
+            seriesName?: string;
+            data?: number | null;
+          };
           const value =
-            entry.seriesName === t('usage_analytics.metric_average_latency')
-              ? formatUsageDurationMs(Number(entry.data ?? 0))
-              : formatPercent(Number(entry.data ?? 0));
+            entry.data === null || entry.data === undefined
+              ? '-'
+              : entry.seriesName === t('usage_analytics.metric_average_latency')
+                ? formatUsageDurationMs(entry.data)
+                : formatPercent(entry.data);
           return tooltipRowHtml(
             chartTheme,
             `${entry.marker ?? ''}${escapeHtml(entry.seriesName)}`,
@@ -1111,7 +1138,7 @@ const buildHealthChartOption = (
   ],
   series: [
     {
-      data: timeline.map((point) => point.successRate),
+      data: timeline.map((point) => (point.requestCount > 0 ? point.successRate : null)),
       lineStyle: { width: 2.5 },
       name: t('usage_analytics.success_rate'),
       showSymbol: timeline.length <= 36,
@@ -1120,7 +1147,7 @@ const buildHealthChartOption = (
       yAxisIndex: 0,
     },
     {
-      data: timeline.map((point) => point.failureRate),
+      data: timeline.map((point) => (point.requestCount > 0 ? point.failureRate : null)),
       lineStyle: { width: 2.5 },
       name: t('usage_analytics.failure_rate'),
       showSymbol: timeline.length <= 36,
@@ -1130,7 +1157,7 @@ const buildHealthChartOption = (
     },
     {
       barMaxWidth: 16,
-      data: timeline.map((point) => point.averageLatencyMs ?? 0),
+      data: timeline.map((point) => (point.requestCount > 0 ? point.averageLatencyMs : null)),
       name: t('usage_analytics.metric_average_latency'),
       type: 'bar',
       yAxisIndex: 1,
@@ -1448,6 +1475,7 @@ function HeatmapContributorGroup({
 function HeatmapDetailPanel({
   dateError,
   dateLoading,
+  dateLoaded,
   dateOptions,
   detail,
   metric,
@@ -1459,6 +1487,7 @@ function HeatmapDetailPanel({
 }: {
   dateError: string;
   dateLoading: boolean;
+  dateLoaded: boolean;
   dateOptions: UsageHeatmapDateOption[];
   detail: UsageHeatmapCellDetail | null;
   metric: UsageHeatmapMetricKey;
@@ -1561,14 +1590,14 @@ function HeatmapDetailPanel({
   const dateCount = dateOptions.length;
   let content: ReactNode;
 
-  if (dateLoading && !detail) {
+  if (dateLoading && !dateLoaded && !detail) {
     content = (
       <div className={styles.chartEmptyInline}>
         <IconRefreshCw size={24} />
         <span>{t('common.loading')}</span>
       </div>
     );
-  } else if (dateError) {
+  } else if (dateError && !dateLoaded && !detail) {
     content = (
       <div className={styles.chartEmptyInline}>
         <IconX size={24} />
@@ -1581,6 +1610,7 @@ function HeatmapDetailPanel({
       <div className={styles.chartEmptyInline}>
         <IconInbox size={24} />
         <span>{t('usage_analytics.heatmap_date_empty')}</span>
+        {dateError ? <span role="alert">{dateError}</span> : null}
       </div>
     );
   } else {
@@ -1591,6 +1621,7 @@ function HeatmapDetailPanel({
         }`}
         aria-busy={dateLoading}
       >
+        {dateError ? <div role="alert">{dateError}</div> : null}
         {dateLoading ? (
           <div className={styles.heatmapDetailRefreshBadge} role="status">
             <IconRefreshCw size={14} />
@@ -1847,9 +1878,12 @@ function TokenStructureChart({ timeline }: { timeline: UsageTimelinePoint[] }) {
       animationDuration: 260,
       backgroundColor: 'transparent',
       color: chartTheme.tokenStructureColors,
-      grid: { bottom: 34, containLabel: true, left: 8, right: 18, top: 18 },
+      grid: { bottom: 44, containLabel: true, left: 8, right: 18, top: 18 },
       legend: {
         bottom: 0,
+        type: 'scroll',
+        left: 8,
+        right: 8,
         icon: 'circle',
         itemHeight: 8,
         itemWidth: 8,
@@ -1888,6 +1922,7 @@ function TokenStructureChart({ timeline }: { timeline: UsageTimelinePoint[] }) {
           fontSize: 11,
           fontWeight: 700,
           hideOverlap: true,
+          showMaxLabel: false,
         },
         axisLine: { lineStyle: { color: chartTheme.surface.axisLine } },
         axisTick: { show: false },
@@ -1918,7 +1953,7 @@ function TokenStructureChart({ timeline }: { timeline: UsageTimelinePoint[] }) {
         },
         {
           barMaxWidth: 22,
-          data: timeline.map((point) => point.cachedTokens),
+          data: timeline.map((point) => getNormalizedUsageCacheTokens(point)),
           itemStyle: tokenBarItemStyle,
           name: t('usage_analytics.metric_cached_tokens'),
           stack: 'tokens',
@@ -1960,10 +1995,16 @@ function EntityTrendChart({
   metric,
   series,
   highlightId,
+  loading = false,
+  loaded = false,
+  error = '',
 }: {
   metric: UsageTrendMetricKey;
   series: UsageEntityTrendSeries[];
   highlightId?: string;
+  loading?: boolean;
+  loaded?: boolean;
+  error?: string;
 }) {
   const { t } = useTranslation();
   const chartTheme = useUsageChartTheme();
@@ -1975,9 +2016,12 @@ function EntityTrendChart({
       color: series.map(
         (_, index) => chartTheme.categoryPalette[index % chartTheme.categoryPalette.length]
       ),
-      grid: { bottom: 34, containLabel: true, left: 8, right: 18, top: 18 },
+      grid: { bottom: 44, containLabel: true, left: 8, right: 18, top: 18 },
       legend: {
         bottom: 0,
+        type: 'scroll',
+        left: 8,
+        right: 8,
         icon: 'circle',
         itemHeight: 8,
         itemWidth: 8,
@@ -2013,6 +2057,7 @@ function EntityTrendChart({
           fontSize: 11,
           fontWeight: 700,
           hideOverlap: true,
+          showMaxLabel: false,
         },
         axisLine: { lineStyle: { color: chartTheme.surface.axisLine } },
         axisTick: { show: false },
@@ -2047,22 +2092,45 @@ function EntityTrendChart({
     [chartTheme, hasHighlight, highlightId, metric, series]
   );
 
+  if (loading && !loaded && series.length === 0) {
+    return (
+      <div className={styles.chartEmptyInline}>
+        <IconRefreshCw size={24} />
+        <span>{t('common.loading')}</span>
+      </div>
+    );
+  }
+
+  if (error && !loaded && series.length === 0) {
+    return (
+      <div className={styles.chartEmptyInline}>
+        <IconX size={24} />
+        <span>{t('usage_analytics.error_title')}</span>
+        <span>{error}</span>
+      </div>
+    );
+  }
+
   if (series.length === 0) {
     return (
       <div className={styles.chartEmptyInline}>
         <IconInbox size={24} />
         <span>{t('usage_analytics.empty_title')}</span>
+        {error ? <span role="alert">{error}</span> : null}
       </div>
     );
   }
 
   return (
-    <EChartsView
-      option={option}
-      className={styles.echartsCanvas}
-      style={{ height: 260 }}
-      ariaLabel={t('usage_analytics.entity_trend_title')}
-    />
+    <div aria-busy={loading}>
+      {error ? <div role="alert">{error}</div> : null}
+      <EChartsView
+        option={option}
+        className={styles.echartsCanvas}
+        style={{ height: 260 }}
+        ariaLabel={t('usage_analytics.entity_trend_title')}
+      />
+    </div>
   );
 }
 
@@ -2106,41 +2174,48 @@ function KeyAnomalyTable({
               <td colSpan={onOpen ? 7 : 6}>{t('usage_analytics.anomaly_none')}</td>
             </tr>
           ) : (
-            rows.slice(0, 8).map((row) => (
-              <tr key={row.id}>
-                <td>
-                  {type === 'credential' ? (
-                    <AccountIdentity identity={resolveUsageAccountIdentity(row.row)} compact />
-                  ) : (
-                    getApiKeyRowDisplayLabel(row.row)
-                  )}
-                </td>
-                <td>{t(row.reasonKey)}</td>
-                <td>
-                  <span className={`${styles.severityBadge} ${styles[`severity${row.severity}`]}`}>
-                    {t(`usage_analytics.severity_${row.severity}`)}
-                  </span>
-                </td>
-                <td>{row.triggeredAtMs ? formatLocalDateTime(row.triggeredAtMs, locale) : '-'}</td>
-                <td>{formatMetricValue('estimatedCost', row.row.estimatedCost)}</td>
-                <td>{formatPercent(row.row.failureCount / Math.max(row.row.requestCount, 1))}</td>
-                {onOpen ? (
+            rows.slice(0, 8).map((row) => {
+              const rowCanOpen = Boolean(onOpen && (canOpen?.(row) ?? true));
+              return (
+                <tr key={row.id}>
                   <td>
-                    {canOpen?.(row) === false ? (
-                      '-'
+                    {type === 'credential' ? (
+                      <AccountIdentity identity={resolveUsageAccountIdentity(row.row)} compact />
                     ) : (
-                      <button
-                        type="button"
-                        className={styles.linkButton}
-                        onClick={() => onOpen(row)}
-                      >
-                        {t('usage_analytics.view_request_details')}
-                      </button>
+                      getApiKeyRowDisplayLabel(row.row)
                     )}
                   </td>
-                ) : null}
-              </tr>
-            ))
+                  <td>{t(row.reasonKey)}</td>
+                  <td>
+                    <span
+                      className={`${styles.severityBadge} ${styles[`severity${row.severity}`]}`}
+                    >
+                      {t(`usage_analytics.severity_${row.severity}`)}
+                    </span>
+                  </td>
+                  <td>
+                    {row.triggeredAtMs ? formatLocalDateTime(row.triggeredAtMs, locale) : '-'}
+                  </td>
+                  <td>{formatMetricValue('estimatedCost', row.row.estimatedCost)}</td>
+                  <td>{formatPercent(row.row.failureCount / Math.max(row.row.requestCount, 1))}</td>
+                  {onOpen ? (
+                    <td>
+                      {rowCanOpen ? (
+                        <button
+                          type="button"
+                          className={styles.linkButton}
+                          onClick={() => onOpen(row)}
+                        >
+                          {t('usage_analytics.view_request_details')}
+                        </button>
+                      ) : (
+                        '-'
+                      )}
+                    </td>
+                  ) : null}
+                </tr>
+              );
+            })
           )}
         </tbody>
       </table>
@@ -2340,9 +2415,12 @@ function UsageAnalyticsPageInner() {
   const tabsRowRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (usage.activeTab === 'codexFast') {
-      tabsRowRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      tabsRowRef.current
+        ?.querySelector('[aria-selected="true"]')
+        ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     }
   }, [usage.activeTab]);
+  const showNotification = useNotificationStore((state) => state.showNotification);
   const chartTheme = useUsageChartTheme();
   const themedUsageMetrics = useMemo(() => getThemedUsageMetrics(chartTheme), [chartTheme]);
   const [selectedMetrics, setSelectedMetrics] =
@@ -2439,6 +2517,16 @@ function UsageAnalyticsPageInner() {
     rememberVisibleOptions();
     usage.setFilters(patch);
   };
+  const handleCopyApiKey = useCallback(
+    async (copyValue: string) => {
+      const copied = await copyToClipboard(copyValue);
+      showNotification(
+        t(copied ? 'notification.link_copied' : 'notification.copy_failed'),
+        copied ? 'success' : 'error'
+      );
+    },
+    [showNotification, t]
+  );
   const buildApiKeyMonitoringUrl = (
     value: string,
     status?: UsageAnalyticsStatus
@@ -2495,11 +2583,7 @@ function UsageAnalyticsPageInner() {
       buildStableSelectOptions(
         allModelOptionLabel,
         usage.filters.performanceView === 'fast'
-          ? [
-              ...new Set([
-                ...(usage.fastImpact?.models.map((m) => m.model) || []),
-              ]),
-            ]
+          ? [...new Set([...(usage.fastImpact?.models.map((m) => m.model) || [])])]
           : displayOptionCache.models,
         usage.filters.model
       ),
@@ -2511,28 +2595,28 @@ function UsageAnalyticsPageInner() {
       usage.fastImpact,
     ]
   );
-  const apiKeyOptions = useMemo<SelectOption[]>(
-    () => [
+  const apiKeyOptions = useMemo<SelectOption[]>(() => {
+    const selectedApiKeyHash = getSelectableApiKeyHash(usage.filters.apiKeyHash);
+    return [
       { value: 'all', label: allApiKeyOptionLabel },
-      ...mergeSelectOptions(
-        [
-          ...displayOptionCache.apiKeys,
-          usage.filters.apiKeyHash !== 'all'
-            ? {
-                value: usage.filters.apiKeyHash,
-                label: resolveUsageApiKeyLabel(usage.filters.apiKeyHash, usage.apiKeyDisplayMap),
-              }
-            : null,
-        ].filter((option): option is SelectOption => Boolean(option?.value))
-      ),
-    ],
-    [
-      allApiKeyOptionLabel,
-      displayOptionCache.apiKeys,
-      usage.apiKeyDisplayMap,
-      usage.filters.apiKeyHash,
-    ]
-  );
+      ...mergeSelectOptions([
+        ...displayOptionCache.apiKeys,
+        ...(selectedApiKeyHash
+          ? [
+              {
+                value: selectedApiKeyHash,
+                label: resolveUsageApiKeyLabel(selectedApiKeyHash, usage.apiKeyDisplayMap),
+              },
+            ]
+          : []),
+      ]),
+    ];
+  }, [
+    allApiKeyOptionLabel,
+    displayOptionCache.apiKeys,
+    usage.apiKeyDisplayMap,
+    usage.filters.apiKeyHash,
+  ]);
   const providerOptions = useMemo<SelectOption[]>(
     () =>
       buildStableSelectOptions(
@@ -2574,8 +2658,17 @@ function UsageAnalyticsPageInner() {
     !hasUsageData(usage.summary, usage.timeline);
   const rankRowLimit = 8;
   const credentialRankRowLimit = 10;
+  const apiKeyRankContext =
+    usage.apiKeyRows.length > rankRowLimit
+      ? t('usage_analytics.api_key_rank_context_top', {
+          limit: rankRowLimit,
+          total: usage.apiKeyRows.length,
+        })
+      : t('usage_analytics.api_key_rank_context_total', {
+          total: usage.apiKeyRows.length,
+        });
   const visibleModelRows = showAllModels ? usage.modelRows : usage.modelRows.slice(0, rankRowLimit);
-  const visibleApiKeyRows = usage.apiKeyRows.slice(0, 8);
+  const visibleApiKeyRows = usage.apiKeyRows.slice(0, rankRowLimit);
   const selectedApiKeyHash = getSelectableApiKeyHash(usage.selectedApiKey?.apiKeyHash);
   const visibleCredentialRows = usage.credentialRows.slice(0, credentialRankRowLimit);
   const selectedModelKeyDistribution = useMemo(
@@ -2770,49 +2863,51 @@ function UsageAnalyticsPageInner() {
             </div>
 
             {usage.activeTab !== 'codexFast' && (
-            <div
-              className={styles.segmentedControl}
-              aria-label={t('usage_analytics.filter_granularity')}
-            >
-              {(['auto', 'hour', 'day'] as UsageAnalyticsGranularity[]).map((granularity) => (
-                <button
-                  key={granularity}
-                  type="button"
-                  className={`${styles.segmentButton} ${
-                    usage.filters.granularity === granularity ? styles.segmentButtonActive : ''
-                  }`}
-                  onClick={() => updateFilters({ granularity })}
-                >
-                  {t(`usage_analytics.granularity_${granularity}`)}
-                </button>
-              ))}
-            </div>
+              <div
+                className={styles.segmentedControl}
+                aria-label={t('usage_analytics.filter_granularity')}
+              >
+                {(['auto', 'hour', 'day'] as UsageAnalyticsGranularity[]).map((granularity) => (
+                  <button
+                    key={granularity}
+                    type="button"
+                    className={`${styles.segmentButton} ${
+                      usage.filters.granularity === granularity ? styles.segmentButtonActive : ''
+                    }`}
+                    onClick={() => updateFilters({ granularity })}
+                  >
+                    {t(`usage_analytics.granularity_${granularity}`)}
+                  </button>
+                ))}
+              </div>
             )}
 
             <div className={styles.refreshControls}>
-              {usage.activeTab !== 'codexFast' && <>
-              <span className={styles.filterMeta}>
-                {t('usage_analytics.resolved_granularity', {
-                  granularity: usage.resolvedGranularity,
-                })}
-              </span>
-              <button
-                type="button"
-                className={styles.filterActionButton}
-                onClick={usage.resetFilters}
-              >
-                {t('usage_analytics.clear_all')}
-              </button>
-              <button
-                type="button"
-                className={styles.filterActionButton}
-                onClick={() => setAdvancedOpen((open) => !open)}
-              >
-                {advancedOpen
-                  ? t('usage_analytics.hide_advanced_filters')
-                  : t('usage_analytics.show_advanced_filters')}
-              </button>
-              </>}
+              {usage.activeTab !== 'codexFast' && (
+                <>
+                  <span className={styles.filterMeta}>
+                    {t('usage_analytics.resolved_granularity', {
+                      granularity: usage.resolvedGranularity,
+                    })}
+                  </span>
+                  <button
+                    type="button"
+                    className={styles.filterActionButton}
+                    onClick={usage.resetFilters}
+                  >
+                    {t('usage_analytics.clear_all')}
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.filterActionButton}
+                    onClick={() => setAdvancedOpen((open) => !open)}
+                  >
+                    {advancedOpen
+                      ? t('usage_analytics.hide_advanced_filters')
+                      : t('usage_analytics.show_advanced_filters')}
+                  </button>
+                </>
+              )}
               <Button
                 variant="secondary"
                 size="sm"
@@ -2826,57 +2921,57 @@ function UsageAnalyticsPageInner() {
           </div>
 
           {usage.activeTab !== 'codexFast' && (
-          <div className={styles.filterBar}>
-            <div className={styles.scopeSearchBar}>
-              <IconSearch size={16} />
-              <input
-                value={usage.filters.searchQuery}
-                onChange={(event) => updateFilters({ searchQuery: event.target.value })}
-                aria-label={t('usage_analytics.filter_search')}
-                placeholder={t('usage_analytics.filter_search_placeholder')}
-              />
-              {usage.filters.searchQuery.trim() ? (
-                <button
-                  type="button"
-                  className={styles.scopeSearchClear}
-                  onClick={() => updateFilters({ searchQuery: '' })}
-                  aria-label={t('usage_analytics.filter_search_clear')}
-                >
-                  <IconX size={14} />
-                </button>
-              ) : null}
+            <div className={styles.filterBar}>
+              <div className={styles.scopeSearchBar}>
+                <IconSearch size={16} />
+                <input
+                  value={usage.filters.searchQuery}
+                  onChange={(event) => updateFilters({ searchQuery: event.target.value })}
+                  aria-label={t('usage_analytics.filter_search')}
+                  placeholder={t('usage_analytics.filter_search_placeholder')}
+                />
+                {usage.filters.searchQuery.trim() ? (
+                  <button
+                    type="button"
+                    className={styles.scopeSearchClear}
+                    onClick={() => updateFilters({ searchQuery: '' })}
+                    aria-label={t('usage_analytics.filter_search_clear')}
+                  >
+                    <IconX size={14} />
+                  </button>
+                ) : null}
+              </div>
+              <div className={styles.filterGrid}>
+                <Select
+                  value={usage.filters.model}
+                  options={modelOptions}
+                  onChange={(model) => updateFilters({ model })}
+                  ariaLabel={t('usage_analytics.filter_model')}
+                  triggerClassName={styles.filterSelectTrigger}
+                />
+                <Select
+                  value={usage.filters.apiKeyHash}
+                  options={apiKeyOptions}
+                  onChange={(apiKeyHash) => updateFilters({ apiKeyHash })}
+                  ariaLabel={t('usage_analytics.filter_api_key')}
+                  triggerClassName={styles.filterSelectTrigger}
+                />
+                <Select
+                  value={usage.filters.provider}
+                  options={providerOptions}
+                  onChange={(provider) => updateFilters({ provider })}
+                  ariaLabel={t('usage_analytics.filter_provider')}
+                  triggerClassName={styles.filterSelectTrigger}
+                />
+                <Select
+                  value={usage.filters.status}
+                  options={statusOptions}
+                  onChange={(status) => updateFilters({ status: status as UsageAnalyticsStatus })}
+                  ariaLabel={t('usage_analytics.filter_status')}
+                  triggerClassName={styles.filterSelectTrigger}
+                />
+              </div>
             </div>
-            <div className={styles.filterGrid}>
-              <Select
-                value={usage.filters.model}
-                options={modelOptions}
-                onChange={(model) => updateFilters({ model })}
-                ariaLabel={t('usage_analytics.filter_model')}
-                triggerClassName={styles.filterSelectTrigger}
-              />
-              <Select
-                value={usage.filters.apiKeyHash}
-                options={apiKeyOptions}
-                onChange={(apiKeyHash) => updateFilters({ apiKeyHash })}
-                ariaLabel={t('usage_analytics.filter_api_key')}
-                triggerClassName={styles.filterSelectTrigger}
-              />
-              <Select
-                value={usage.filters.provider}
-                options={providerOptions}
-                onChange={(provider) => updateFilters({ provider })}
-                ariaLabel={t('usage_analytics.filter_provider')}
-                triggerClassName={styles.filterSelectTrigger}
-              />
-              <Select
-                value={usage.filters.status}
-                options={statusOptions}
-                onChange={(status) => updateFilters({ status: status as UsageAnalyticsStatus })}
-                ariaLabel={t('usage_analytics.filter_status')}
-                triggerClassName={styles.filterSelectTrigger}
-              />
-            </div>
-          </div>
           )}
 
           {usage.filters.timeRange === 'custom' ? (
@@ -2950,6 +3045,7 @@ function UsageAnalyticsPageInner() {
         </section>
       ) : null}
 
+      <UsageCoverageWarning coverage={usage.coverage} t={t} />
       {usage.isFirstLoad && usage.activeTab !== 'codexFast' ? <TabContentSkeleton /> : null}
 
       {!usage.isFirstLoad && noData ? (
@@ -2960,370 +3056,223 @@ function UsageAnalyticsPageInner() {
       ) : null}
 
       <UpdatingOverlay active={!usage.isFirstLoad && usage.isUpdating}>
-      {usage.isFirstLoad ? null : usage.activeTab === 'overview' ? (
-        <>
-          <UsageSummarySection cards={overviewSummaryCards} />
-
-          <section className={styles.chartPanel}>
-            <div className={styles.panelHeader}>
-              <div>
-                <h2>{t('usage_analytics.overview_trend_title')}</h2>
-                <p>{t('usage_analytics.overview_trend_hint')}</p>
-              </div>
-            </div>
-            <UsageLineChart
-              timeline={usage.timeline}
-              selectedMetrics={DEFAULT_SELECTED_METRICS}
-              selectedBucket={usage.selectedBucket}
-              onSelectBucket={usage.selectBucket}
-            />
-          </section>
-
-          <AnomalyPointsPanel
-            rows={overviewAnomalySummary}
-            onOpen={(row) => navigate(buildMonitoringDetailUrl(row, usage.filters))}
-            onViewAll={() => usage.setActiveTab('trends')}
-          />
-
-          <section className={styles.overviewCards}>
-            <OverviewCard
-              title={t('usage_analytics.model_overview_title')}
-              rows={usage.modelRows}
-              onViewAll={() => usage.setActiveTab('models')}
-            />
-            <OverviewCard
-              title={t('usage_analytics.api_key_overview_title')}
-              rows={usage.apiKeyRows}
-              onViewAll={() => usage.setActiveTab('apiKeys')}
-            />
-          </section>
-
-          <section className={styles.tablePanel}>
-            <div className={styles.panelHeader}>
-              <div>
-                <h2>{t('usage_analytics.provider_overview_title')}</h2>
-                <p>{t('usage_analytics.provider_overview_hint')}</p>
-              </div>
-            </div>
-            <ProviderOverviewPanel rows={usage.providerRows} onOpen={openProviderDetails} />
-          </section>
-
-          {usage.selectedBucket ? (
-            <DrilldownPreviewPanel rows={usage.drilldownPreview} locale={i18n.language} />
-          ) : null}
-        </>
-      ) : null}
-
-      {usage.activeTab === 'codexFast' && (
-        <section className={styles.tablePanel}>
-          <FastImpactPanel
-            snapshotAt={getLocalSnapshotTime()}
-            data={usage.fastImpact}
-            filters={usage.fastFilters}
-            accounts={usage.performanceAuthFiles}
-            mock={isDemoMode()}
-            busy={usage.loading || usage.isUpdating}
-            error={usage.error}
-            onFilters={updateFilters}
-            onRequests={(row, requestId) => {
-              if (!usage.bounds) return;
-              const target = new URL(buildMonitoringDetailUrl(
-                { bucketMs: usage.bounds.fromMs, bucketEndMs: usage.bounds.toMs },
-                { ...usage.fastFilters, provider: 'codex', model: 'all', status: 'all' }
-              ), 'http://local');
-              target.searchParams.delete('model');
-              target.searchParams.set(row.model_resolution === 'unresolved' ? 'unresolved_model' : 'resolved_model', row.query_model || row.model);
-              if (requestId) target.searchParams.set('request_id', requestId);
-              navigate(`${isDemoMode() ? prefixRouteBase(target.pathname) : target.pathname}${target.search}`);
-            }}
-          />
-        </section>
-      )}
-
-      {usage.activeTab === 'performance' ? (
+        {usage.isFirstLoad ? null : usage.activeTab === 'overview' ? (
           <>
-              <PerformancePanel
-                data={usage.performance}
-                mock={isDemoMode()}
-                authFiles={usage.performanceAuthFiles}
-                accountSnapshots={usage.performanceAccountSnapshots}
-                onModel={(model) => updateFilters({ model })}
-                onRequests={(model) =>
-                  navigate(
-                    usage.bounds
-                      ? buildMonitoringDetailUrl(
-                          { bucketMs: usage.bounds.fromMs, bucketEndMs: usage.bounds.toMs },
-                          { ...usage.filters, model }
-                        )
-                      : `/monitoring?model=${encodeURIComponent(model)}`
-                  )
-                }
+            <UsageSummarySection cards={overviewSummaryCards} />
+
+            <section className={styles.chartPanel}>
+              <div className={styles.panelHeader}>
+                <div>
+                  <h2>{t('usage_analytics.overview_trend_title')}</h2>
+                  <p>{t('usage_analytics.overview_trend_hint')}</p>
+                </div>
+              </div>
+              <UsageLineChart
+                timeline={usage.timeline}
+                selectedMetrics={DEFAULT_SELECTED_METRICS}
+                selectedBucket={usage.selectedBucket}
+                onSelectBucket={usage.selectBucket}
               />
+            </section>
+
+            <AnomalyPointsPanel
+              rows={overviewAnomalySummary}
+              onOpen={(row) => navigate(buildMonitoringDetailUrl(row, usage.filters))}
+              onViewAll={() => usage.setActiveTab('trends')}
+            />
+
+            <section className={styles.overviewCards}>
+              <OverviewCard
+                title={t('usage_analytics.model_overview_title')}
+                rows={usage.modelRows}
+                onViewAll={() => usage.setActiveTab('models')}
+              />
+              <OverviewCard
+                title={t('usage_analytics.api_key_overview_title')}
+                rows={usage.apiKeyRows}
+                onViewAll={() => usage.setActiveTab('apiKeys')}
+              />
+            </section>
+
+            <section className={styles.tablePanel}>
+              <div className={styles.panelHeader}>
+                <div>
+                  <h2>{t('usage_analytics.provider_overview_title')}</h2>
+                  <p>{t('usage_analytics.provider_overview_hint')}</p>
+                </div>
+              </div>
+              <ProviderOverviewPanel rows={usage.providerRows} onOpen={openProviderDetails} />
+            </section>
+
+            {usage.selectedBucket ? (
+              <DrilldownPreviewPanel rows={usage.drilldownPreview} locale={i18n.language} />
+            ) : null}
+          </>
+        ) : null}
+
+        {usage.activeTab === 'codexFast' && (
+          <section className={styles.tablePanel}>
+            <FastImpactPanel
+              snapshotAt={getLocalSnapshotTime()}
+              data={usage.fastImpact}
+              filters={usage.fastFilters}
+              accounts={usage.performanceAuthFiles}
+              mock={isDemoMode()}
+              busy={usage.loading || usage.isUpdating}
+              error={usage.error}
+              onFilters={updateFilters}
+              onRequests={(row, requestId) => {
+                if (!usage.bounds) return;
+                const target = new URL(
+                  buildMonitoringDetailUrl(
+                    { bucketMs: usage.bounds.fromMs, bucketEndMs: usage.bounds.toMs },
+                    { ...usage.fastFilters, provider: 'codex', model: 'all', status: 'all' }
+                  ),
+                  'http://local'
+                );
+                target.searchParams.delete('model');
+                target.searchParams.set(
+                  row.model_resolution === 'unresolved' ? 'unresolved_model' : 'resolved_model',
+                  row.query_model || row.model
+                );
+                if (requestId) target.searchParams.set('request_id', requestId);
+                navigate(
+                  `${isDemoMode() ? prefixRouteBase(target.pathname) : target.pathname}${target.search}`
+                );
+              }}
+            />
+          </section>
+        )}
+
+        {usage.activeTab === 'performance' ? (
+          <>
+            <PerformancePanel
+              data={usage.performance}
+              mock={isDemoMode()}
+              authFiles={usage.performanceAuthFiles}
+              accountSnapshots={usage.performanceAccountSnapshots}
+              onModel={(model) => updateFilters({ model })}
+              onRequests={(model) =>
+                navigate(
+                  usage.bounds
+                    ? buildMonitoringDetailUrl(
+                        { bucketMs: usage.bounds.fromMs, bucketEndMs: usage.bounds.toMs },
+                        { ...usage.filters, model }
+                      )
+                    : `/monitoring?model=${encodeURIComponent(model)}`
+                )
+              }
+            />
           </>
         ) : null}
 
         {usage.activeTab === 'trends' ? (
-        <>
-          <UsageSummarySection cards={trendSummaryCards} />
+          <>
+            <UsageSummarySection cards={trendSummaryCards} />
 
-          <section className={styles.chartPanel}>
-            <div className={styles.panelHeader}>
-              <div>
-                <h2>{t('usage_analytics.trend_title')}</h2>
-                <p>{t('usage_analytics.trend_hint')}</p>
-              </div>
-            </div>
-            <div className={styles.metricChips}>
-              {themedUsageMetrics.map((metric) => (
-                <button
-                  key={metric.key}
-                  type="button"
-                  className={selectedMetrics.includes(metric.key) ? styles.metricChipActive : ''}
-                  style={{ '--metric-color': metric.color } as CSSProperties}
-                  onClick={() => toggleMetric(metric.key)}
-                >
-                  <span />
-                  {t(metric.labelKey)}
-                </button>
-              ))}
-            </div>
-            <div className={styles.chartCanvas}>
-              <UsageLineChart
-                timeline={usage.timeline}
-                selectedMetrics={selectedMetrics}
-                selectedBucket={usage.selectedBucket}
-                onSelectBucket={usage.selectBucket}
-              />
-            </div>
-          </section>
-
-          {usage.anomalyAnalysis ? (
-            <section className={styles.anomalyPanel}>
-              <div className={styles.anomalyMain}>
-                <IconTrendingUp size={32} />
-                <div>
-                  <h2>{t('usage_analytics.anomaly_title')}</h2>
-                  <p>{formatLocalDateTime(usage.anomalyAnalysis.point.bucketMs, i18n.language)}</p>
-                  <div className={styles.anomalyTags}>
-                    {usage.anomalyAnalysis.anomalies.length > 0 ? (
-                      usage.anomalyAnalysis.anomalies.map((item) => (
-                        <span key={item.key}>{t(item.labelKey)}</span>
-                      ))
-                    ) : (
-                      <span>{t('usage_analytics.anomaly_none')}</span>
-                    )}
-                  </div>
-                </div>
-              </div>
-              <div className={styles.anomalyMetrics}>
-                {(['requestCount', 'totalTokens', 'estimatedCost'] as UsageMetricKey[]).map(
-                  (key) => (
-                    <div key={key}>
-                      <span>{getMetricLabel(key, t)}</span>
-                      <strong>{formatMetricValue(key, usage.anomalyAnalysis!.point[key])}</strong>
-                      <em>{formatDelta(usage.anomalyAnalysis!.changes[key])}</em>
-                    </div>
-                  )
-                )}
-              </div>
-              <div className={styles.possibleCauses}>
-                <h3>{t('usage_analytics.possible_causes')}</h3>
-                <ul>
-                  {usage.anomalyAnalysis.causeKeys.map((causeKey) => (
-                    <li key={causeKey}>{t(causeKey)}</li>
-                  ))}
-                </ul>
-              </div>
-              <Button onClick={() => navigate(anomalyUrl)}>
-                {t('usage_analytics.view_monitoring_details')}
-              </Button>
-            </section>
-          ) : null}
-
-          {usage.selectedBucket ? (
-            <DrilldownPreviewPanel rows={usage.drilldownPreview} locale={i18n.language} />
-          ) : null}
-
-          <section className={styles.dualChartGrid}>
-            <div className={styles.panel}>
+            <section className={styles.chartPanel}>
               <div className={styles.panelHeader}>
                 <div>
-                  <h2>{t('usage_analytics.health_trend_title')}</h2>
+                  <h2>{t('usage_analytics.trend_title')}</h2>
+                  <p>{t('usage_analytics.trend_hint')}</p>
                 </div>
               </div>
-              <HealthTrendChart timeline={usage.timeline} />
-            </div>
-            <div className={styles.panel}>
-              <div className={styles.panelHeader}>
-                <div>
-                  <h2>{t('usage_analytics.token_structure_title')}</h2>
-                  <p>{t('usage_analytics.token_structure_hint')}</p>
-                </div>
-              </div>
-              <TokenStructureChart timeline={usage.timeline} />
-            </div>
-          </section>
-
-          <section className={styles.panel}>
-            <div className={`${styles.panelHeader} ${styles.trendEntityHeader}`}>
-              <h2>{t('usage_analytics.trend_entity_compare_title')}</h2>
-              <div
-                className={`${styles.segmentedControl} ${styles.trendMetricTabs}`}
-                aria-label={t('usage_analytics.filter_metric')}
-              >
-                {trendMetricOptions.map((option) => (
+              <div className={styles.metricChips}>
+                {themedUsageMetrics.map((metric) => (
                   <button
-                    key={option.value}
+                    key={metric.key}
                     type="button"
-                    className={`${styles.segmentButton} ${
-                      usage.trendMetric === option.value ? styles.segmentButtonActive : ''
-                    }`}
-                    onClick={() => usage.setTrendMetric(option.value)}
-                    aria-pressed={usage.trendMetric === option.value}
+                    className={selectedMetrics.includes(metric.key) ? styles.metricChipActive : ''}
+                    style={{ '--metric-color': metric.color } as CSSProperties}
+                    onClick={() => toggleMetric(metric.key)}
                   >
-                    {t(option.labelKey)}
+                    <span />
+                    {t(metric.labelKey)}
                   </button>
                 ))}
               </div>
-            </div>
-            <div className={styles.trendEntityGrid}>
-              <div className={styles.trendEntityChart}>
-                <h3>{t('usage_analytics.model_compare_title')}</h3>
-                <EntityTrendChart series={usage.modelTrendSeries} metric={usage.trendMetric} />
+              <div className={styles.chartCanvas}>
+                <UsageLineChart
+                  timeline={usage.timeline}
+                  selectedMetrics={selectedMetrics}
+                  selectedBucket={usage.selectedBucket}
+                  onSelectBucket={usage.selectBucket}
+                />
               </div>
-              <div className={styles.trendEntityChart}>
-                <h3>{t('usage_analytics.api_key_compare_title')}</h3>
-                <EntityTrendChart series={usage.apiKeyTrendSeries} metric={usage.trendMetric} />
-              </div>
-            </div>
-          </section>
+            </section>
 
-          <AnomalyPointsPanel
-            rows={usage.anomalyPoints}
-            onOpen={(row) => navigate(buildMonitoringDetailUrl(row, usage.filters))}
-          />
-        </>
-      ) : null}
-
-      {usage.activeTab === 'models' ? (
-        <>
-          <UsageSummarySection cards={modelSummaryCards} />
-          <section className={styles.tablePanel}>
-            <div className={styles.panelHeader}>
-              <h2>{t('usage_analytics.model_rank_title')}</h2>
-              {usage.modelRows.length > rankRowLimit ? (
-                <button
-                  type="button"
-                  className={styles.filterActionButton}
-                  onClick={() => setShowAllModels((open) => !open)}
-                >
-                  {showAllModels
-                    ? t('usage_analytics.rank_collapse')
-                    : t('usage_analytics.rank_show_all', { count: usage.modelRows.length })}
-                </button>
-              ) : null}
-            </div>
-            <RankTable
-              rows={visibleModelRows}
-              type="model"
-              selectedId={usage.selectedModel?.id}
-              onSelect={(row) => usage.setSelectedModelId(row.id)}
-            />
-          </section>
-          <section className={styles.dualChartGrid}>
-            <div className={styles.panel}>
-              <div className={`${styles.panelHeader} ${styles.trendEntityHeader}`}>
-                <div>
-                  <h2>{t('usage_analytics.model_compare_title')}</h2>
-                  <p>{t('usage_analytics.entity_trend_hint')}</p>
+            {usage.anomalyAnalysis ? (
+              <section className={styles.anomalyPanel}>
+                <div className={styles.anomalyMain}>
+                  <IconTrendingUp size={32} />
+                  <div>
+                    <h2>{t('usage_analytics.anomaly_title')}</h2>
+                    <p>
+                      {formatLocalDateTime(usage.anomalyAnalysis.point.bucketMs, i18n.language)}
+                    </p>
+                    <div className={styles.anomalyTags}>
+                      {usage.anomalyAnalysis.anomalies.length > 0 ? (
+                        usage.anomalyAnalysis.anomalies.map((item) => (
+                          <span key={item.key}>{t(item.labelKey)}</span>
+                        ))
+                      ) : (
+                        <span>{t('usage_analytics.anomaly_none')}</span>
+                      )}
+                    </div>
+                  </div>
                 </div>
-                <div
-                  className={`${styles.segmentedControl} ${styles.trendMetricTabs}`}
-                  aria-label={t('usage_analytics.filter_metric')}
-                >
-                  {trendMetricOptions.map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      className={`${styles.segmentButton} ${
-                        usage.trendMetric === option.value ? styles.segmentButtonActive : ''
-                      }`}
-                      onClick={() => usage.setTrendMetric(option.value)}
-                      aria-pressed={usage.trendMetric === option.value}
-                    >
-                      {t(option.labelKey)}
-                    </button>
-                  ))}
+                <div className={styles.anomalyMetrics}>
+                  {(['requestCount', 'totalTokens', 'estimatedCost'] as UsageMetricKey[]).map(
+                    (key) => (
+                      <div key={key}>
+                        <span>{getMetricLabel(key, t)}</span>
+                        <strong>{formatMetricValue(key, usage.anomalyAnalysis!.point[key])}</strong>
+                        <em>{formatDelta(usage.anomalyAnalysis!.changes[key])}</em>
+                      </div>
+                    )
+                  )}
                 </div>
-              </div>
-              <EntityTrendChart
-                series={usage.modelTrendSeries}
-                metric={usage.trendMetric}
-                highlightId={usage.selectedModel?.id}
-              />
-            </div>
-            <div className={styles.panel}>
-              <h2>{t('usage_analytics.cost_share_title')}</h2>
-              <CostShareChart rows={usage.modelRows} />
-            </div>
-          </section>
-          {usage.selectedModel ? (
-            <DetailPanel
-              row={usage.selectedModel}
-              type="model"
-              keyDistribution={selectedModelKeyDistribution}
-              action={
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => {
-                    const model = usage.selectedModel?.label ?? '';
-                    navigate(
-                      usage.bounds
-                        ? buildMonitoringDetailUrl(
-                            { bucketMs: usage.bounds.fromMs, bucketEndMs: usage.bounds.toMs },
-                            { ...usage.filters, model }
-                          )
-                        : `/monitoring?model=${encodeURIComponent(model)}`
-                    );
-                  }}
-                >
-                  <IconExternalLink size={14} />
-                  {t('usage_analytics.view_request_details')}
+                <div className={styles.possibleCauses}>
+                  <h3>{t('usage_analytics.possible_causes')}</h3>
+                  <ul>
+                    {usage.anomalyAnalysis.causeKeys.map((causeKey) => (
+                      <li key={causeKey}>{t(causeKey)}</li>
+                    ))}
+                  </ul>
+                </div>
+                <Button onClick={() => navigate(anomalyUrl)}>
+                  {t('usage_analytics.view_monitoring_details')}
                 </Button>
-              }
-            />
-          ) : null}
-        </>
-      ) : null}
+              </section>
+            ) : null}
 
-      {usage.activeTab === 'apiKeys' ? (
-        <>
-          <UsageSummarySection cards={apiKeySummaryCards} />
-          <section className={styles.apiKeyAnalysisGrid}>
-            <div className={styles.tablePanel}>
-              <div className={styles.panelHeader}>
-                <h2>{t('usage_analytics.api_key_rank_title')}</h2>
-                <div className={styles.apiSearchBar}>
-                  <IconSearch size={16} />
-                  <input
-                    value={usage.filters.apiKeyKeyword}
-                    onChange={(event) => updateFilters({ apiKeyKeyword: event.target.value })}
-                    placeholder={t('usage_analytics.api_key_keyword_placeholder')}
-                  />
+            {usage.selectedBucket ? (
+              <DrilldownPreviewPanel rows={usage.drilldownPreview} locale={i18n.language} />
+            ) : null}
+
+            <section className={styles.dualChartGrid}>
+              <div className={styles.panel}>
+                <div className={styles.panelHeader}>
+                  <div>
+                    <h2>{t('usage_analytics.health_trend_title')}</h2>
+                  </div>
                 </div>
+                <HealthTrendChart timeline={usage.timeline} />
               </div>
-              <RankTable
-                rows={visibleApiKeyRows}
-                type="apiKey"
-                selectedId={selectedApiKeyHash}
-                canSelect={(row) => Boolean(getSelectableApiKeyHash(row.apiKeyHash))}
-                onSelect={(row) => usage.setSelectedApiKeyHash(row.apiKeyHash || '')}
-              />
-            </div>
-            <div className={styles.panel}>
+              <div className={styles.panel}>
+                <div className={styles.panelHeader}>
+                  <div>
+                    <h2>{t('usage_analytics.token_structure_title')}</h2>
+                    <p>{t('usage_analytics.token_structure_hint')}</p>
+                  </div>
+                </div>
+                <TokenStructureChart timeline={usage.timeline} />
+              </div>
+            </section>
+
+            <section className={styles.panel}>
               <div className={`${styles.panelHeader} ${styles.trendEntityHeader}`}>
-                <h2>{t('usage_analytics.api_key_compare_title')}</h2>
+                <h2>{t('usage_analytics.trend_entity_compare_title')}</h2>
                 <div
                   className={`${styles.segmentedControl} ${styles.trendMetricTabs}`}
                   aria-label={t('usage_analytics.filter_metric')}
@@ -3343,118 +3292,107 @@ function UsageAnalyticsPageInner() {
                   ))}
                 </div>
               </div>
-              <EntityTrendChart
-                series={usage.selectedApiKeyTrendSeries}
-                metric={usage.trendMetric}
-                highlightId={selectedApiKeyHash}
-              />
-            </div>
-            {usage.selectedApiKey ? (
-              <DetailPanel
-                row={usage.selectedApiKey}
-                type="apiKey"
-                action={
-                  selectedApiKeyHash ? (
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => {
-                        const url = buildApiKeyMonitoringUrl(selectedApiKeyHash);
-                        if (url) navigate(url);
-                      }}
-                    >
-                      <IconExternalLink size={14} />
-                      {t('usage_analytics.view_request_details')}
-                    </Button>
-                  ) : undefined
-                }
-              />
-            ) : null}
-            <div className={`${styles.warningPanel} ${styles.fullWidthPanel}`}>
+              <div className={styles.trendEntityGrid}>
+                <div className={styles.trendEntityChart}>
+                  <h3>{t('usage_analytics.model_compare_title')}</h3>
+                  <EntityTrendChart series={usage.modelTrendSeries} metric={usage.trendMetric} />
+                </div>
+                <div className={styles.trendEntityChart}>
+                  <h3>{t('usage_analytics.api_key_compare_title')}</h3>
+                  <EntityTrendChart series={usage.apiKeyTrendSeries} metric={usage.trendMetric} />
+                </div>
+              </div>
+            </section>
+
+            <AnomalyPointsPanel
+              rows={usage.anomalyPoints}
+              onOpen={(row) => navigate(buildMonitoringDetailUrl(row, usage.filters))}
+            />
+          </>
+        ) : null}
+
+        {usage.activeTab === 'models' ? (
+          <>
+            <UsageSummarySection cards={modelSummaryCards} />
+            <section className={styles.tablePanel}>
               <div className={styles.panelHeader}>
-                <h2>{t('usage_analytics.api_key_warning_title')}</h2>
-                {selectedApiKeyHash ? (
-                  <button type="button" onClick={openApiKeyCombinationHeatmap}>
-                    {t('usage_analytics.view_exception_combinations')}
+                <h2>{t('usage_analytics.model_rank_title')}</h2>
+                {usage.modelRows.length > rankRowLimit ? (
+                  <button
+                    type="button"
+                    className={styles.filterActionButton}
+                    onClick={() => setShowAllModels((open) => !open)}
+                  >
+                    {showAllModels
+                      ? t('usage_analytics.rank_collapse')
+                      : t('usage_analytics.rank_show_all', { count: usage.modelRows.length })}
                   </button>
                 ) : null}
               </div>
-              <KeyAnomalyTable
-                rows={usage.keyAnomalies}
-                locale={i18n.language}
-                canOpen={(row) => Boolean(getSelectableApiKeyHash(row.row.apiKeyHash))}
-                onOpen={(row) => {
-                  const url = buildApiKeyMonitoringUrl(
-                    row.row.apiKeyHash || '',
-                    row.reasonKey === 'usage_analytics.anomaly_reason_error_rate'
-                      ? 'failed'
-                      : usage.filters.status
-                  );
-                  if (url) navigate(url);
-                }}
-              />
-            </div>
-          </section>
-        </>
-      ) : null}
-
-      {usage.activeTab === 'credentials' ? (
-        <>
-          <UsageSummarySection cards={credentialSummaryCards} />
-          <section className={styles.credentialAnalysisGrid}>
-            <div className={styles.tablePanel}>
-              <div className={styles.panelHeader}>
-                <div>
-                  <h2>{t('usage_analytics.credential_rank_title')}</h2>
-                  <p>
-                    {t('usage_analytics.active_credential_hint', {
-                      active: usage.credentialRows.length,
-                      total: usage.allCredentialRows.length,
-                    })}
-                  </p>
-                </div>
-              </div>
               <RankTable
-                rows={visibleCredentialRows}
-                type="credential"
-                selectedId={usage.selectedCredential?.id}
-                onSelect={(row) => usage.setSelectedCredentialId(row.id)}
+                rows={visibleModelRows}
+                type="model"
+                selectedId={usage.selectedModel?.id}
+                onSelect={(row) => usage.setSelectedModelId(row.id)}
               />
-            </div>
-            <div className={styles.panel}>
-              <div className={`${styles.panelHeader} ${styles.trendEntityHeader}`}>
-                <h2>{t('usage_analytics.selected_credential_trend_title')}</h2>
-                <div
-                  className={`${styles.segmentedControl} ${styles.trendMetricTabs}`}
-                  aria-label={t('usage_analytics.filter_metric')}
-                >
-                  {trendMetricOptions.map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      className={`${styles.segmentButton} ${
-                        usage.trendMetric === option.value ? styles.segmentButtonActive : ''
-                      }`}
-                      onClick={() => usage.setTrendMetric(option.value)}
-                      aria-pressed={usage.trendMetric === option.value}
-                    >
-                      {t(option.labelKey)}
-                    </button>
-                  ))}
+            </section>
+            <section className={styles.dualChartGrid}>
+              <div className={styles.panel}>
+                <div className={`${styles.panelHeader} ${styles.trendEntityHeader}`}>
+                  <div>
+                    <h2>{t('usage_analytics.model_compare_title')}</h2>
+                    <p>{t('usage_analytics.entity_trend_hint')}</p>
+                  </div>
+                  <div
+                    className={`${styles.segmentedControl} ${styles.trendMetricTabs}`}
+                    aria-label={t('usage_analytics.filter_metric')}
+                  >
+                    {trendMetricOptions.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className={`${styles.segmentButton} ${
+                          usage.trendMetric === option.value ? styles.segmentButtonActive : ''
+                        }`}
+                        onClick={() => usage.setTrendMetric(option.value)}
+                        aria-pressed={usage.trendMetric === option.value}
+                      >
+                        {t(option.labelKey)}
+                      </button>
+                    ))}
+                  </div>
                 </div>
+                <EntityTrendChart
+                  series={usage.modelTrendSeries}
+                  metric={usage.trendMetric}
+                  highlightId={usage.selectedModel?.id}
+                />
               </div>
-              <EntityTrendChart series={usage.credentialTrendSeries} metric={usage.trendMetric} />
-            </div>
-            {usage.selectedCredential ? (
+              <div className={styles.panel}>
+                <h2>{t('usage_analytics.cost_share_title')}</h2>
+                <CostShareChart rows={usage.modelRows} />
+              </div>
+            </section>
+            {usage.selectedModel ? (
               <DetailPanel
-                className={`${styles.credentialDetailPanel} ${styles.fullWidthPanel}`}
-                row={usage.selectedCredential}
-                type="credential"
+                row={usage.selectedModel}
+                type="model"
+                keyDistribution={selectedModelKeyDistribution}
                 action={
                   <Button
                     variant="secondary"
                     size="sm"
-                    onClick={() => navigate(buildCredentialMonitoringUrl(usage.selectedCredential))}
+                    onClick={() => {
+                      const model = usage.selectedModel?.label ?? '';
+                      navigate(
+                        usage.bounds
+                          ? buildMonitoringDetailUrl(
+                              { bucketMs: usage.bounds.fromMs, bucketEndMs: usage.bounds.toMs },
+                              { ...usage.filters, model }
+                            )
+                          : `/monitoring?model=${encodeURIComponent(model)}`
+                      );
+                    }}
                   >
                     <IconExternalLink size={14} />
                     {t('usage_analytics.view_request_details')}
@@ -3462,139 +3400,325 @@ function UsageAnalyticsPageInner() {
                 }
               />
             ) : null}
-            <div className={`${styles.warningPanel} ${styles.fullWidthPanel}`}>
-              <div className={styles.panelHeader}>
-                <div>
-                  <h2>{t('usage_analytics.credential_warning_title')}</h2>
-                  <p>
-                    {t('usage_analytics.credential_warning_summary', {
-                      count: abnormalCredentialCount,
-                      high: highRiskCredentialCount,
-                      lowest: lowestSuccessCredential
-                        ? formatPercent(lowestSuccessCredential.successRate)
-                        : '-',
-                    })}
-                  </p>
+          </>
+        ) : null}
+
+        {usage.activeTab === 'apiKeys' ? (
+          <>
+            <UsageSummarySection cards={apiKeySummaryCards} />
+            <section className={styles.apiKeyAnalysisGrid}>
+              <div className={styles.tablePanel}>
+                <div className={styles.panelHeader}>
+                  <div>
+                    <h2>{t('usage_analytics.api_key_rank_title')}</h2>
+                    <p>{apiKeyRankContext}</p>
+                  </div>
+                  <div className={styles.apiSearchBar}>
+                    <IconSearch size={16} />
+                    <input
+                      value={usage.filters.apiKeyKeyword}
+                      onChange={(event) => updateFilters({ apiKeyKeyword: event.target.value })}
+                      placeholder={t('usage_analytics.api_key_keyword_placeholder')}
+                    />
+                  </div>
                 </div>
-                <label className={styles.toggleControl}>
-                  <input
-                    type="checkbox"
-                    checked={credentialWarningsForSelectionOnly}
-                    onChange={(event) =>
-                      setCredentialWarningsForSelectionOnly(event.target.checked)
-                    }
-                    disabled={!usage.selectedCredential}
-                  />
-                  <span>{t('usage_analytics.credential_warning_selected_only')}</span>
-                </label>
+                <RankTable
+                  rows={visibleApiKeyRows}
+                  type="apiKey"
+                  canSelect={(row) => Boolean(getSelectableApiKeyHash(row.apiKeyHash))}
+                  selectedId={usage.selectedApiKey?.apiKeyHash}
+                  onSelect={(row) => {
+                    const apiKeyHash = getSelectableApiKeyHash(row.apiKeyHash);
+                    if (apiKeyHash) usage.setSelectedApiKeyHash(apiKeyHash);
+                  }}
+                  onCopyApiKey={(row) => {
+                    if (row.apiKeyCopyValue) void handleCopyApiKey(row.apiKeyCopyValue);
+                  }}
+                />
               </div>
-              <KeyAnomalyTable
-                rows={visibleCredentialAnomalies}
-                locale={i18n.language}
-                type="credential"
-                onOpen={(row) =>
-                  navigate(
-                    buildCredentialMonitoringUrl(
-                      row.row,
+              <div className={styles.panel}>
+                <div className={`${styles.panelHeader} ${styles.trendEntityHeader}`}>
+                  <h2>{t('usage_analytics.api_key_compare_title')}</h2>
+                  <div
+                    className={`${styles.segmentedControl} ${styles.trendMetricTabs}`}
+                    aria-label={t('usage_analytics.filter_metric')}
+                  >
+                    {trendMetricOptions.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className={`${styles.segmentButton} ${
+                          usage.trendMetric === option.value ? styles.segmentButtonActive : ''
+                        }`}
+                        onClick={() => usage.setTrendMetric(option.value)}
+                        aria-pressed={usage.trendMetric === option.value}
+                      >
+                        {t(option.labelKey)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <EntityTrendChart
+                  series={usage.selectedApiKeyTrendSeries}
+                  metric={usage.trendMetric}
+                  highlightId={selectedApiKeyHash}
+                />
+              </div>
+              {usage.selectedApiKey ? (
+                <DetailPanel
+                  row={usage.selectedApiKey}
+                  type="apiKey"
+                  action={
+                    selectedApiKeyHash ? (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => {
+                          const url = buildApiKeyMonitoringUrl(selectedApiKeyHash);
+                          if (url) navigate(url);
+                        }}
+                      >
+                        <IconExternalLink size={14} />
+                        {t('usage_analytics.view_request_details')}
+                      </Button>
+                    ) : undefined
+                  }
+                />
+              ) : null}
+              <div className={`${styles.warningPanel} ${styles.fullWidthPanel}`}>
+                <div className={styles.panelHeader}>
+                  <h2>{t('usage_analytics.api_key_warning_title')}</h2>
+                  {selectedApiKeyHash ? (
+                    <button type="button" onClick={openApiKeyCombinationHeatmap}>
+                      {t('usage_analytics.view_exception_combinations')}
+                    </button>
+                  ) : null}
+                </div>
+                <KeyAnomalyTable
+                  rows={usage.keyAnomalies}
+                  locale={i18n.language}
+                  canOpen={(row) => Boolean(getSelectableApiKeyHash(row.row.apiKeyHash))}
+                  onOpen={(row) => {
+                    const url = buildApiKeyMonitoringUrl(
+                      row.row.apiKeyHash || '',
                       row.reasonKey === 'usage_analytics.anomaly_reason_error_rate'
                         ? 'failed'
                         : usage.filters.status
-                    )
-                  )
-                }
-              />
-            </div>
-          </section>
-        </>
-      ) : null}
+                    );
+                    if (url) navigate(url);
+                  }}
+                />
+              </div>
+            </section>
+          </>
+        ) : null}
 
-      {usage.activeTab === 'heatmap' ? (
-        <>
-          <UsageSummarySection cards={heatmapSummaryCards} />
-          <section className={styles.chartPanel}>
-            <div className={`${styles.panelHeader} ${styles.heatmapPanelHeader}`}>
-              <div>
-                <h2>{t('usage_analytics.heatmap_title')}</h2>
-                <p>
-                  {t('usage_analytics.heatmap_hint')}{' '}
-                  {t('usage_analytics.heatmap_timezone_hint', {
-                    timeZone: usage.browserTimeZone,
-                  })}
-                </p>
-              </div>
-              <div className={styles.heatmapToolbar}>
-                <div
-                  className={`${styles.segmentedControl} ${styles.heatmapSegmented}`}
-                  aria-label={t('usage_analytics.filter_metric')}
-                >
-                  {heatmapMetricOptions.map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      aria-pressed={usage.heatmapMetric === option.value}
-                      className={`${styles.segmentButton} ${
-                        usage.heatmapMetric === option.value ? styles.segmentButtonActive : ''
-                      }`}
-                      onClick={() => usage.setHeatmapMetric(option.value)}
-                    >
-                      {t(option.labelKey)}
-                    </button>
-                  ))}
+        {usage.activeTab === 'credentials' ? (
+          <>
+            <UsageSummarySection cards={credentialSummaryCards} />
+            <section className={styles.credentialAnalysisGrid}>
+              <div className={styles.tablePanel}>
+                <div className={styles.panelHeader}>
+                  <div>
+                    <h2>{t('usage_analytics.credential_rank_title')}</h2>
+                    <p>
+                      {t('usage_analytics.active_credential_hint', {
+                        active: usage.credentialRows.length,
+                        total: usage.allCredentialRows.length,
+                      })}
+                    </p>
+                  </div>
                 </div>
-                <div
-                  className={`${styles.segmentedControl} ${styles.heatmapSegmented}`}
-                  aria-label={t('usage_analytics.heatmap_scale_label')}
-                >
-                  {heatmapScaleOptions.map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      aria-pressed={usage.heatmapScaleMode === option.value}
-                      className={`${styles.segmentButton} ${
-                        usage.heatmapScaleMode === option.value ? styles.segmentButtonActive : ''
-                      }`}
-                      onClick={() => usage.setHeatmapScaleMode(option.value)}
+                <RankTable
+                  rows={visibleCredentialRows}
+                  type="credential"
+                  selectedId={usage.selectedCredential?.id}
+                  onSelect={(row) => usage.setSelectedCredentialId(row.id)}
+                />
+              </div>
+              <div className={styles.panel}>
+                <div className={`${styles.panelHeader} ${styles.trendEntityHeader}`}>
+                  <h2>{t('usage_analytics.selected_credential_trend_title')}</h2>
+                  <div
+                    className={`${styles.segmentedControl} ${styles.trendMetricTabs}`}
+                    aria-label={t('usage_analytics.filter_metric')}
+                  >
+                    {trendMetricOptions.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className={`${styles.segmentButton} ${
+                          usage.trendMetric === option.value ? styles.segmentButtonActive : ''
+                        }`}
+                        onClick={() => usage.setTrendMetric(option.value)}
+                        aria-pressed={usage.trendMetric === option.value}
+                      >
+                        {t(option.labelKey)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <EntityTrendChart
+                  series={usage.credentialTrendSeries}
+                  metric={usage.trendMetric}
+                  loading={usage.credentialTrendLoading}
+                  loaded={usage.credentialTrendLoaded}
+                  error={usage.credentialTrendError}
+                />
+              </div>
+              {usage.selectedCredential ? (
+                <DetailPanel
+                  className={`${styles.credentialDetailPanel} ${styles.fullWidthPanel}`}
+                  row={usage.selectedCredential}
+                  type="credential"
+                  action={
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() =>
+                        navigate(buildCredentialMonitoringUrl(usage.selectedCredential))
+                      }
                     >
-                      {t(option.labelKey)}
-                    </button>
-                  ))}
+                      <IconExternalLink size={14} />
+                      {t('usage_analytics.view_request_details')}
+                    </Button>
+                  }
+                />
+              ) : null}
+              <div className={`${styles.warningPanel} ${styles.fullWidthPanel}`}>
+                <div className={styles.panelHeader}>
+                  <div>
+                    <h2>{t('usage_analytics.credential_warning_title')}</h2>
+                    <p>
+                      {t('usage_analytics.credential_warning_summary', {
+                        count: abnormalCredentialCount,
+                        high: highRiskCredentialCount,
+                        lowest: lowestSuccessCredential
+                          ? formatPercent(lowestSuccessCredential.successRate)
+                          : '-',
+                      })}
+                    </p>
+                  </div>
+                  <label className={styles.toggleControl}>
+                    <input
+                      type="checkbox"
+                      checked={credentialWarningsForSelectionOnly}
+                      onChange={(event) =>
+                        setCredentialWarningsForSelectionOnly(event.target.checked)
+                      }
+                      disabled={!usage.selectedCredential}
+                    />
+                    <span>{t('usage_analytics.credential_warning_selected_only')}</span>
+                  </label>
+                </div>
+                <KeyAnomalyTable
+                  rows={visibleCredentialAnomalies}
+                  locale={i18n.language}
+                  type="credential"
+                  onOpen={(row) =>
+                    navigate(
+                      buildCredentialMonitoringUrl(
+                        row.row,
+                        row.reasonKey === 'usage_analytics.anomaly_reason_error_rate'
+                          ? 'failed'
+                          : usage.filters.status
+                      )
+                    )
+                  }
+                />
+              </div>
+            </section>
+          </>
+        ) : null}
+
+        {usage.activeTab === 'heatmap' ? (
+          <>
+            <UsageSummarySection cards={heatmapSummaryCards} />
+            <section className={styles.chartPanel}>
+              <div className={`${styles.panelHeader} ${styles.heatmapPanelHeader}`}>
+                <div>
+                  <h2>{t('usage_analytics.heatmap_title')}</h2>
+                  <p>
+                    {t('usage_analytics.heatmap_hint')}{' '}
+                    {t('usage_analytics.heatmap_timezone_hint', {
+                      timeZone: usage.browserTimeZone,
+                    })}
+                  </p>
+                </div>
+                <div className={styles.heatmapToolbar}>
+                  <div
+                    className={`${styles.segmentedControl} ${styles.heatmapSegmented}`}
+                    aria-label={t('usage_analytics.filter_metric')}
+                  >
+                    {heatmapMetricOptions.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        aria-pressed={usage.heatmapMetric === option.value}
+                        className={`${styles.segmentButton} ${
+                          usage.heatmapMetric === option.value ? styles.segmentButtonActive : ''
+                        }`}
+                        onClick={() => usage.setHeatmapMetric(option.value)}
+                      >
+                        {t(option.labelKey)}
+                      </button>
+                    ))}
+                  </div>
+                  <div
+                    className={`${styles.segmentedControl} ${styles.heatmapSegmented}`}
+                    aria-label={t('usage_analytics.heatmap_scale_label')}
+                  >
+                    {heatmapScaleOptions.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        aria-pressed={usage.heatmapScaleMode === option.value}
+                        className={`${styles.segmentButton} ${
+                          usage.heatmapScaleMode === option.value ? styles.segmentButtonActive : ''
+                        }`}
+                        onClick={() => usage.setHeatmapScaleMode(option.value)}
+                      >
+                        {t(option.labelKey)}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
-            </div>
-            <UsageHeatmapChart
-              loading={usage.loading && usage.heatmap.length === 0}
-              metric={usage.heatmapMetric}
-              points={usage.heatmap}
-              scaleMode={usage.heatmapScaleMode}
-              selectedCell={usage.selectedHeatmapCell}
-              onSelect={usage.selectHeatmapCell}
-            />
-          </section>
-          <section className={styles.heatmapWorkspace}>
-            {usage.selectedHeatmapCell ? (
-              <HeatmapDetailPanel
-                dateError={usage.heatmapDateError}
-                dateLoading={usage.heatmapDateLoading}
-                dateOptions={usage.heatmapDateOptions}
-                detail={usage.heatmapDetail}
+              <UsageHeatmapChart
+                loading={usage.loading && usage.heatmap.length === 0}
                 metric={usage.heatmapMetric}
+                points={usage.heatmap}
+                scaleMode={usage.heatmapScaleMode}
                 selectedCell={usage.selectedHeatmapCell}
-                selectedDateKey={usage.selectedHeatmapDateKey}
-                timeZone={usage.browserTimeZone}
-                onClear={() => usage.selectHeatmapCell(null)}
-                onSelectDate={usage.selectHeatmapDate}
-              />
-            ) : (
-              <HeatmapHighlightsPanel
-                highlights={usage.heatmapHighlights}
-                selectedCell={usage.selectedHeatmapCell}
-                timeZone={usage.browserTimeZone}
                 onSelect={usage.selectHeatmapCell}
               />
-            )}
-          </section>
-        </>
-      ) : null}
+            </section>
+            <section className={styles.heatmapWorkspace}>
+              {usage.selectedHeatmapCell ? (
+                <HeatmapDetailPanel
+                  dateError={usage.heatmapDateError}
+                  dateLoading={usage.heatmapDateLoading}
+                  dateLoaded={usage.heatmapDateLoaded}
+                  dateOptions={usage.heatmapDateOptions}
+                  detail={usage.heatmapDetail}
+                  metric={usage.heatmapMetric}
+                  selectedCell={usage.selectedHeatmapCell}
+                  selectedDateKey={usage.selectedHeatmapDateKey}
+                  timeZone={usage.browserTimeZone}
+                  onClear={() => usage.selectHeatmapCell(null)}
+                  onSelectDate={usage.selectHeatmapDate}
+                />
+              ) : (
+                <HeatmapHighlightsPanel
+                  highlights={usage.heatmapHighlights}
+                  selectedCell={usage.selectedHeatmapCell}
+                  timeZone={usage.browserTimeZone}
+                  onSelect={usage.selectHeatmapCell}
+                />
+              )}
+            </section>
+          </>
+        ) : null}
       </UpdatingOverlay>
     </div>
   );
@@ -3766,12 +3890,14 @@ function RankTable({
   selectedId,
   onSelect,
   canSelect,
+  onCopyApiKey,
 }: {
   rows: UsageRankRow[];
   type: 'model' | 'apiKey' | 'credential';
   selectedId?: string;
   onSelect: (row: UsageRankRow) => void;
   canSelect?: (row: UsageRankRow) => boolean;
+  onCopyApiKey?: (row: UsageRankRow) => void;
 }) {
   const { t } = useTranslation();
   const entityHeader =
@@ -3843,14 +3969,27 @@ function RankTable({
                     ) : (
                       row.label
                     )}
-                    {type === 'apiKey' && selectable ? <IconCopy size={13} /> : null}
+                    {type === 'apiKey' && row.apiKeyCopyValue && onCopyApiKey ? (
+                      <button
+                        type="button"
+                        className={styles.entityCopyButton}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onCopyApiKey(row);
+                        }}
+                        title={t('common.copy')}
+                        aria-label={t('common.copy')}
+                      >
+                        <IconCopy size={13} />
+                      </button>
+                    ) : null}
                   </span>
                 </td>
                 <td>{compactNumber(row.requestCount)}</td>
                 <td>{compactNumber(row.totalTokens)}</td>
                 <td>{compactNumber(row.inputTokens)}</td>
                 <td>{compactNumber(row.outputTokens)}</td>
-                <td>{compactNumber(row.cachedTokens)}</td>
+                <td>{compactNumber(getNormalizedUsageCacheTokens(row))}</td>
                 {type !== 'credential' ? (
                   <td>{formatPercent(computeRowCacheHitRate(row))}</td>
                 ) : null}

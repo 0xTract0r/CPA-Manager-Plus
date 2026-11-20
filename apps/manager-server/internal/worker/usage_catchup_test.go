@@ -2,6 +2,8 @@ package worker
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"path/filepath"
 	"sync"
@@ -83,6 +85,8 @@ func newCatchUpTestStore(t *testing.T) *store.Store {
 }
 
 func testCatchUpEvent(hash string, timestampMS int64) usage.Event {
+	digest := sha256.Sum256([]byte(hash))
+	hash = hex.EncodeToString(digest[:])
 	return usage.Event{
 		EventHash:    hash,
 		TimestampMS:  timestampMS,

@@ -11,6 +11,7 @@ import { buildSourceInfoMap } from '@/utils/sourceResolver';
 import { maskSensitiveText, truncateText } from '@/utils/format';
 import { formatInUtc8 } from '@/utils/datetime';
 import { formatDurationMs } from '@/utils/usage';
+import { getPlanPresentation } from '@/utils/plans';
 import styles from './HealthAlertsCard.module.scss';
 
 interface HealthAlertsCardProps {
@@ -93,9 +94,14 @@ export function HealthAlertsCard({
       sourceDisplayContext
     );
 
-  const buildFailureTooltip = (failure: DashboardRecentFailure) => {
+  const buildFailureTooltip = (failure: DashboardRecentFailure, provider: string) => {
     const statusCode = failure.fail_status_code;
     const summary = maskSensitiveText(failure.fail_summary || '');
+    const quotaPlanLabel = getPlanPresentation({
+      provider,
+      planType: failure.header_quota_plan_type,
+      t,
+    })?.fullLabel;
     const diagnostics = [
       failure.header_error_code || failure.header_error_kind
         ? `${t('monitoring.header_error')}: ${[failure.header_error_kind, failure.header_error_code]
@@ -105,7 +111,7 @@ export function HealthAlertsCard({
       failure.header_trace_id ? `${t('monitoring.header_trace')}: ${failure.header_trace_id}` : '',
       failure.header_quota_plan_type || typeof failure.header_quota_used_percent === 'number'
         ? `${t('monitoring.header_quota')}: ${[
-            failure.header_quota_plan_type,
+            quotaPlanLabel,
             typeof failure.header_quota_used_percent === 'number'
               ? `${failure.header_quota_used_percent.toFixed(0)}%`
               : '',
@@ -199,7 +205,7 @@ export function HealthAlertsCard({
         <div className={styles.list}>
           {recentFailures.slice(0, 3).map((failure) => {
             const display = buildRecentFailureDisplay(failure);
-            const tooltip = buildFailureTooltip(failure);
+            const tooltip = buildFailureTooltip(failure, display.provider);
             return (
               <div
                 key={`${failure.timestamp_ms}-${failure.source_hash}-${failure.model}`}

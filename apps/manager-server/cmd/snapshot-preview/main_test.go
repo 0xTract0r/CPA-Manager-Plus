@@ -22,7 +22,7 @@ import (
 func snapshotFiles(t *testing.T) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
-	event := `{"event_hash":"one","request_id":"one","timestamp_ms":1790900000000,"model":"gpt-6-astra","auth_index":"snapshot-account","auth_provider_snapshot":"codex","input_tokens":1000,"output_tokens":600,"reasoning_tokens":100,"latency_ms":10000,"telemetry":{"version":2,"attempt_id":"one","started_at_ms":1790900000000,"ended_at_ms":1790900010000,"first_visible_content_ms":1000,"last_visible_content_ms":9000,"visible_content_events":2,"visible_content_observed":true,"output_reasoning_subset":true,"stream_completed":true,"fast_context":{"schema_version":1,"upstream_request_service_tier":"priority","server_fast_enabled":true,"tier_source":"account","request_kind":"serving"}}}` + "\n"
+	event := `{"event_hash":"7692c3ad3540bb803c020b3aee66cd8887123234ea0c6e7143c0add73ff431ed","request_id":"one","timestamp_ms":1790900000000,"model":"gpt-6-astra","auth_index":"snapshot-account","auth_provider_snapshot":"codex","input_tokens":1000,"output_tokens":600,"reasoning_tokens":100,"latency_ms":10000,"telemetry":{"version":2,"attempt_id":"one","started_at_ms":1790900000000,"ended_at_ms":1790900010000,"first_visible_content_ms":1000,"last_visible_content_ms":9000,"visible_content_events":2,"visible_content_observed":true,"output_reasoning_subset":true,"stream_completed":true,"fast_context":{"schema_version":1,"upstream_request_service_tier":"priority","server_fast_enabled":true,"tier_source":"account","request_kind":"serving"}}}` + "\n"
 	hash := sha256.Sum256([]byte(event))
 	prices := `{"prices":{"gpt-6-astra":{"prompt":2,"completion":10,"cache":0.2,"cacheRead":0.2,"promptConfigured":true,"completionConfigured":true,"cacheReadConfigured":true,"updatedAtMs":1790890000000,"syncedAtMs":1790880000000}}}`
 	priceHash := sha256.Sum256([]byte(prices))
@@ -148,6 +148,14 @@ func TestPreviewUsesOfficialAPIAndPreservesTelemetry(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), `"priority_attempts":1`) {
 		t.Fatalf("real fast_context lost: %s", recorder.Body.String())
+	}
+	// An unknown selection on the dedicated read route must reach the Manager and fail closed.
+	focused := httptest.NewRequest(http.MethodPost, "/v0/management/monitoring/account-focus/analytics", strings.NewReader(`{"from_ms":1790899999000,"to_ms":1790900011000,"filters":{"account_focus_id":"unknown"},"include":{"summary":true}}`))
+	focused.Header.Set("Authorization", "Bearer "+localAdminKey)
+	focusResponse := httptest.NewRecorder()
+	p.handler.ServeHTTP(focusResponse, focused)
+	if focusResponse.Code != http.StatusConflict {
+		t.Fatalf("focused analytics status %d, want 409", focusResponse.Code)
 	}
 	result, err := monitoring.New(p.db).Analytics(context.Background(), monitoring.Request{FromMS: 1790899999000, ToMS: 1790900011000, Include: monitoring.Include{Summary: true}})
 	if err != nil {

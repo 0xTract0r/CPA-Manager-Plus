@@ -35,17 +35,22 @@ vi.mock('react-i18next', () => ({
 }));
 
 vi.mock('react-router-dom', () => ({
+  useLocation: () => ({ hash: '', search: '' }),
   useNavigate: () => mocks.navigate,
 }));
 
 vi.mock('@/stores', () => ({
   useNotificationStore: () => ({ showNotification: mocks.showNotification }),
-  useAuthStore: (selector: (state: Record<string, unknown>) => unknown) =>
-    selector({
-      connectionStatus: 'disconnected',
-      apiBase: 'http://manager.local',
-      supportsPlugin: false,
-    }),
+  useAuthStore: Object.assign(
+    (selector: (state: Record<string, unknown>) => unknown) =>
+      selector({
+        connectionStatus: 'connected',
+        apiBase: 'http://manager.local',
+        managementKey: 'synthetic-key',
+        supportsPlugin: false,
+      }),
+    { getState: () => ({ apiBase: 'http://manager.local', managementKey: 'synthetic-key' }) }
+  ),
   useThemeStore: (selector: (state: { resolvedTheme: 'light' }) => unknown) =>
     selector({ resolvedTheme: 'light' }),
 }));

@@ -1,6 +1,14 @@
 import type { QuotaSortMode } from '@/components/quota/quotaConfigs';
 
-export type QuotaSectionType = 'antigravity' | 'claude' | 'codex' | 'gemini-cli' | 'kimi' | 'xai';
+export type QuotaSectionType =
+  | 'antigravity'
+  | 'claude'
+  | 'codex'
+  | 'gemini-cli'
+  | 'kimi'
+  | 'xai'
+  | 'devin'
+  | 'meta';
 export type QuotaSectionViewMode = 'paged' | 'all';
 export type QuotaAccountDisplayMode = 'masked' | 'full';
 
@@ -27,6 +35,8 @@ const QUOTA_SECTION_TYPE_SET = new Set<QuotaSectionType>([
   'gemini-cli',
   'kimi',
   'xai',
+  'devin',
+  'meta',
 ]);
 
 export const getDefaultQuotaPageUiState = (): QuotaPageUiState => ({

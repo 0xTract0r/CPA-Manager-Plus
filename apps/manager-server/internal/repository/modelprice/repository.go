@@ -6,13 +6,18 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"time"
 
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/model"
+	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/repository/usagepricing"
 )
+
+var ErrStructureChangeAfterRawDeletion = errors.New("model price structure cannot change after archived raw usage has been deleted")
 
 type Repository interface {
 	LoadAll(ctx context.Context) (map[string]model.ModelPrice, error)
+	LoadAllTx(ctx context.Context, tx *sql.Tx) (map[string]model.ModelPrice, error)
 	ReplaceAll(ctx context.Context, prices map[string]model.ModelPrice) error
 	UpsertSynced(ctx context.Context, prices map[string]model.ModelPrice) (model.ModelPriceSyncResult, error)
 }
@@ -21,12 +26,46 @@ type repository struct {
 	db *sql.DB
 }
 
+type configuredFlag bool
+
+func (f *configuredFlag) Scan(value any) error {
+	switch value := value.(type) {
+	case int64:
+		*f = value != 0
+		return nil
+	case float64:
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return fmt.Errorf("invalid configured flag numeric value %v", value)
+		}
+		*f = value != 0
+		return nil
+	default:
+		return fmt.Errorf("invalid configured flag storage type %T", value)
+	}
+}
+
 func New(db *sql.DB) Repository {
 	return &repository{db: db}
 }
 
 func (r *repository) LoadAll(ctx context.Context) (map[string]model.ModelPrice, error) {
-	rows, err := r.db.QueryContext(ctx, `select
+	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	prices, err := r.LoadAllTx(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return prices, nil
+}
+
+func (r *repository) LoadAllTx(ctx context.Context, tx *sql.Tx) (map[string]model.ModelPrice, error) {
+	rows, err := tx.QueryContext(ctx, `select
 		model, prompt_per_1m, completion_per_1m, cache_per_1m, cache_read_per_1m, cache_creation_per_1m,
 		prompt_configured, completion_configured, cache_read_configured, cache_creation_configured, source, source_model_id, raw_json,
 		updated_at_ms, synced_at_ms
@@ -34,7 +73,6 @@ func (r *repository) LoadAll(ctx context.Context) (map[string]model.ModelPrice, 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
 	prices := map[string]model.ModelPrice{}
 	for rows.Next() {
@@ -42,7 +80,7 @@ func (r *repository) LoadAll(ctx context.Context) (map[string]model.ModelPrice, 
 		var price model.ModelPrice
 		var source, sourceModelID, rawJSON sql.NullString
 		var syncedAt sql.NullInt64
-		var promptConfigured, completionConfigured, cacheReadConfigured, cacheCreationConfigured int
+		var promptConfigured, completionConfigured, cacheReadConfigured, cacheCreationConfigured configuredFlag
 		if err := rows.Scan(
 			&modelID,
 			&price.Prompt,
@@ -63,10 +101,10 @@ func (r *repository) LoadAll(ctx context.Context) (map[string]model.ModelPrice, 
 			return nil, err
 		}
 		price.Source = source.String
-		price.PromptConfigured = promptConfigured != 0
-		price.CompletionConfigured = completionConfigured != 0
-		price.CacheReadConfigured = cacheReadConfigured != 0
-		price.CacheCreationConfigured = cacheCreationConfigured != 0
+		price.PromptConfigured = bool(promptConfigured)
+		price.CompletionConfigured = bool(completionConfigured)
+		price.CacheReadConfigured = bool(cacheReadConfigured)
+		price.CacheCreationConfigured = bool(cacheCreationConfigured)
 		price.SourceModelID = sourceModelID.String
 		price.RawJSON = rawJSON.String
 		if syncedAt.Valid {
@@ -75,7 +113,109 @@ func (r *repository) LoadAll(ctx context.Context) (map[string]model.ModelPrice, 
 		}
 		prices[modelID] = price
 	}
-	return prices, rows.Err()
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+
+	tierRows, err := tx.QueryContext(ctx, `select
+		model, threshold_tokens, prompt_per_1m, completion_per_1m, cache_per_1m, cache_read_per_1m, cache_creation_per_1m,
+		prompt_configured, completion_configured, cache_configured, cache_read_configured, cache_creation_configured
+		from model_price_context_tiers order by model, threshold_tokens`)
+	if err != nil {
+		return nil, err
+	}
+	for tierRows.Next() {
+		var modelID string
+		var tier model.ModelPriceContextTier
+		var promptConfigured, completionConfigured, cacheConfigured, cacheReadConfigured, cacheCreationConfigured configuredFlag
+		if err := tierRows.Scan(
+			&modelID,
+			&tier.ThresholdTokens,
+			&tier.Prompt,
+			&tier.Completion,
+			&tier.Cache,
+			&tier.CacheRead,
+			&tier.CacheCreation,
+			&promptConfigured,
+			&completionConfigured,
+			&cacheConfigured,
+			&cacheReadConfigured,
+			&cacheCreationConfigured,
+		); err != nil {
+			return nil, err
+		}
+		tier.PromptConfigured = bool(promptConfigured)
+		tier.CompletionConfigured = bool(completionConfigured)
+		tier.CacheConfigured = bool(cacheConfigured)
+		tier.CacheReadConfigured = bool(cacheReadConfigured)
+		tier.CacheCreationConfigured = bool(cacheCreationConfigured)
+		price, ok := prices[modelID]
+		if !ok {
+			continue
+		}
+		price.ContextTiers = append(price.ContextTiers, tier)
+		prices[modelID] = price
+	}
+	if err := tierRows.Err(); err != nil {
+		_ = tierRows.Close()
+		return nil, err
+	}
+	if err := tierRows.Close(); err != nil {
+		return nil, err
+	}
+
+	serviceTierRows, err := tx.QueryContext(ctx, `select
+		model, mode, service_tier, prompt_per_1m, completion_per_1m, cache_per_1m, cache_read_per_1m, cache_creation_per_1m,
+		prompt_configured, completion_configured, cache_configured, cache_read_configured, cache_creation_configured
+		from model_price_service_tiers order by model, mode, service_tier`)
+	if err != nil {
+		return nil, err
+	}
+	for serviceTierRows.Next() {
+		var modelID string
+		var tier model.ModelPriceServiceTier
+		var promptConfigured, completionConfigured, cacheConfigured, cacheReadConfigured, cacheCreationConfigured configuredFlag
+		if err := serviceTierRows.Scan(
+			&modelID,
+			&tier.Mode,
+			&tier.ServiceTier,
+			&tier.Prompt,
+			&tier.Completion,
+			&tier.Cache,
+			&tier.CacheRead,
+			&tier.CacheCreation,
+			&promptConfigured,
+			&completionConfigured,
+			&cacheConfigured,
+			&cacheReadConfigured,
+			&cacheCreationConfigured,
+		); err != nil {
+			return nil, err
+		}
+		tier.PromptConfigured = bool(promptConfigured)
+		tier.CompletionConfigured = bool(completionConfigured)
+		tier.CacheConfigured = bool(cacheConfigured)
+		tier.CacheReadConfigured = bool(cacheReadConfigured)
+		tier.CacheCreationConfigured = bool(cacheCreationConfigured)
+		price, ok := prices[modelID]
+		if !ok {
+			continue
+		}
+		price.ServiceTiers = append(price.ServiceTiers, tier)
+		prices[modelID] = price
+	}
+	if err := serviceTierRows.Err(); err != nil {
+		_ = serviceTierRows.Close()
+		return nil, err
+	}
+	if err := serviceTierRows.Close(); err != nil {
+		return nil, err
+	}
+	return prices, nil
 }
 
 func (r *repository) ReplaceAll(ctx context.Context, prices map[string]model.ModelPrice) error {
@@ -87,10 +227,48 @@ func (r *repository) ReplaceAll(ctx context.Context, prices map[string]model.Mod
 		_ = tx.Rollback()
 	}()
 
+	beforePrices, err := r.LoadAllTx(ctx, tx)
+	if err != nil {
+		return err
+	}
+
+	normalizedPrices := make(map[string]model.ModelPrice, len(prices))
+	for modelID, price := range prices {
+		if err := model.ValidateModelPrice(modelID, price); err != nil {
+			return err
+		}
+		price.ContextTiers, err = model.NormalizeModelPriceContextTiers(price.ContextTiers)
+		if err != nil {
+			return err
+		}
+		price.ServiceTiers, err = model.NormalizeModelPriceServiceTiers(price.ServiceTiers)
+		if err != nil {
+			return err
+		}
+		normalizedPrices[modelID] = price
+	}
+
+	beforeRevision := model.ModelPriceStructureRevision(beforePrices)
+	afterRevision := model.ModelPriceStructureRevision(normalizedPrices)
+	if beforeRevision != afterRevision {
+		if err := usagepricing.VerifyRetainedPricingRebuildSourceTx(ctx, tx); err != nil {
+			if errors.Is(err, usagepricing.ErrRetainedPricingHistoryIncomplete) {
+				return fmt.Errorf("%w: %v", ErrStructureChangeAfterRawDeletion, err)
+			}
+			return err
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx, `delete from model_price_service_tiers`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `delete from model_price_context_tiers`); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `delete from model_prices`); err != nil {
 		return err
 	}
-	if len(prices) == 0 {
+	if len(normalizedPrices) == 0 {
 		return tx.Commit()
 	}
 
@@ -103,12 +281,19 @@ func (r *repository) ReplaceAll(ctx context.Context, prices map[string]model.Mod
 		return err
 	}
 	defer stmt.Close()
+	tierStmt, err := prepareContextTierInsert(ctx, tx)
+	if err != nil {
+		return err
+	}
+	defer tierStmt.Close()
+	serviceTierStmt, err := prepareServiceTierInsert(ctx, tx)
+	if err != nil {
+		return err
+	}
+	defer serviceTierStmt.Close()
 
 	now := time.Now().UnixMilli()
-	for modelID, price := range prices {
-		if err := validateModelPrice(modelID, price); err != nil {
-			return err
-		}
+	for modelID, price := range normalizedPrices {
 		if _, err := stmt.ExecContext(
 			ctx,
 			modelID,
@@ -129,6 +314,12 @@ func (r *repository) ReplaceAll(ctx context.Context, prices map[string]model.Mod
 		); err != nil {
 			return err
 		}
+		if err := insertContextTiers(ctx, tierStmt, modelID, price.ContextTiers); err != nil {
+			return err
+		}
+		if err := insertServiceTiers(ctx, serviceTierStmt, modelID, price.ServiceTiers); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -144,6 +335,11 @@ func (r *repository) UpsertSynced(ctx context.Context, prices map[string]model.M
 	defer func() {
 		_ = tx.Rollback()
 	}()
+
+	beforePrices, err := r.LoadAllTx(ctx, tx)
+	if err != nil {
+		return model.ModelPriceSyncResult{}, err
+	}
 
 	stmt, err := tx.PrepareContext(ctx, `insert into model_prices (
 		model, prompt_per_1m, completion_per_1m, cache_per_1m, cache_read_per_1m, cache_creation_per_1m,
@@ -164,16 +360,47 @@ func (r *repository) UpsertSynced(ctx context.Context, prices map[string]model.M
 		source_model_id = excluded.source_model_id,
 		raw_json = excluded.raw_json,
 		updated_at_ms = excluded.updated_at_ms,
-		synced_at_ms = excluded.synced_at_ms`)
+		synced_at_ms = excluded.synced_at_ms
+	where lower(trim(coalesce(model_prices.source, ''))) <> 'manual'`)
 	if err != nil {
 		return model.ModelPriceSyncResult{}, err
 	}
 	defer stmt.Close()
+	deleteTierStmt, err := tx.PrepareContext(ctx, `delete from model_price_context_tiers where model = ?`)
+	if err != nil {
+		return model.ModelPriceSyncResult{}, err
+	}
+	defer deleteTierStmt.Close()
+	tierStmt, err := prepareContextTierInsert(ctx, tx)
+	if err != nil {
+		return model.ModelPriceSyncResult{}, err
+	}
+	defer tierStmt.Close()
+	deleteServiceTierStmt, err := tx.PrepareContext(ctx, `delete from model_price_service_tiers where model = ?`)
+	if err != nil {
+		return model.ModelPriceSyncResult{}, err
+	}
+	defer deleteServiceTierStmt.Close()
+	serviceTierStmt, err := prepareServiceTierInsert(ctx, tx)
+	if err != nil {
+		return model.ModelPriceSyncResult{}, err
+	}
+	defer serviceTierStmt.Close()
 
 	now := time.Now().UnixMilli()
 	result := model.ModelPriceSyncResult{}
 	for modelID, price := range prices {
-		if err := validateModelPrice(modelID, price); err != nil {
+		if err := model.ValidateModelPrice(modelID, price); err != nil {
+			result.Skipped++
+			continue
+		}
+		price.ContextTiers, err = model.NormalizeModelPriceContextTiers(price.ContextTiers)
+		if err != nil {
+			result.Skipped++
+			continue
+		}
+		price.ServiceTiers, err = model.NormalizeModelPriceServiceTiers(price.ServiceTiers)
+		if err != nil {
 			result.Skipped++
 			continue
 		}
@@ -185,7 +412,7 @@ func (r *repository) UpsertSynced(ctx context.Context, prices map[string]model.M
 		}
 		price.UpdatedAtMS = now
 		price.SyncedAtMS = &now
-		if _, err := stmt.ExecContext(
+		execResult, err := stmt.ExecContext(
 			ctx,
 			modelID,
 			price.Prompt,
@@ -202,30 +429,112 @@ func (r *repository) UpsertSynced(ctx context.Context, prices map[string]model.M
 			nullString(price.RawJSON),
 			now,
 			now,
-		); err != nil {
+		)
+		if err != nil {
+			return model.ModelPriceSyncResult{}, err
+		}
+		rowsAffected, err := execResult.RowsAffected()
+		if err != nil {
+			return model.ModelPriceSyncResult{}, err
+		}
+		if rowsAffected == 0 {
+			result.Preserved = append(result.Preserved, modelID)
+			continue
+		}
+		if _, err := deleteTierStmt.ExecContext(ctx, modelID); err != nil {
+			return model.ModelPriceSyncResult{}, err
+		}
+		if err := insertContextTiers(ctx, tierStmt, modelID, price.ContextTiers); err != nil {
+			return model.ModelPriceSyncResult{}, err
+		}
+		if _, err := deleteServiceTierStmt.ExecContext(ctx, modelID); err != nil {
+			return model.ModelPriceSyncResult{}, err
+		}
+		if err := insertServiceTiers(ctx, serviceTierStmt, modelID, price.ServiceTiers); err != nil {
 			return model.ModelPriceSyncResult{}, err
 		}
 		result.Imported++
 	}
+	afterPrices, err := r.LoadAllTx(ctx, tx)
+	if err != nil {
+		return model.ModelPriceSyncResult{}, err
+	}
+	beforeRevision := model.ModelPriceStructureRevision(beforePrices)
+	afterRevision := model.ModelPriceStructureRevision(afterPrices)
+	if beforeRevision != afterRevision {
+		if err := usagepricing.VerifyRetainedPricingRebuildSourceTx(ctx, tx); err != nil {
+			if errors.Is(err, usagepricing.ErrRetainedPricingHistoryIncomplete) {
+				return model.ModelPriceSyncResult{}, fmt.Errorf("%w: %v", ErrStructureChangeAfterRawDeletion, err)
+			}
+			return model.ModelPriceSyncResult{}, err
+		}
+	}
+	sort.Strings(result.Preserved)
 	if err := tx.Commit(); err != nil {
 		return model.ModelPriceSyncResult{}, err
 	}
 	return result, nil
 }
 
-func validateModelPrice(modelID string, price model.ModelPrice) error {
-	if modelID == "" {
-		return errors.New("model is required")
-	}
-	if !validPriceValue(price.Prompt) || !validPriceValue(price.Completion) || !validPriceValue(price.Cache) ||
-		!validPriceValue(price.CacheRead) || !validPriceValue(price.CacheCreation) {
-		return fmt.Errorf("invalid model price for %s", modelID)
+func prepareContextTierInsert(ctx context.Context, tx *sql.Tx) (*sql.Stmt, error) {
+	return tx.PrepareContext(ctx, `insert into model_price_context_tiers (
+		model, threshold_tokens, prompt_per_1m, completion_per_1m, cache_per_1m, cache_read_per_1m, cache_creation_per_1m,
+		prompt_configured, completion_configured, cache_configured, cache_read_configured, cache_creation_configured
+	) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+}
+
+func insertContextTiers(ctx context.Context, stmt *sql.Stmt, modelID string, tiers []model.ModelPriceContextTier) error {
+	for _, tier := range tiers {
+		if _, err := stmt.ExecContext(
+			ctx,
+			modelID,
+			tier.ThresholdTokens,
+			tier.Prompt,
+			tier.Completion,
+			tier.Cache,
+			tier.CacheRead,
+			tier.CacheCreation,
+			tier.PromptConfigured,
+			tier.CompletionConfigured,
+			tier.CacheConfigured,
+			tier.CacheReadConfigured,
+			tier.CacheCreationConfigured,
+		); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-func validPriceValue(value float64) bool {
-	return value >= 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
+func prepareServiceTierInsert(ctx context.Context, tx *sql.Tx) (*sql.Stmt, error) {
+	return tx.PrepareContext(ctx, `insert into model_price_service_tiers (
+		model, mode, service_tier, prompt_per_1m, completion_per_1m, cache_per_1m, cache_read_per_1m, cache_creation_per_1m,
+		prompt_configured, completion_configured, cache_configured, cache_read_configured, cache_creation_configured
+	) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+}
+
+func insertServiceTiers(ctx context.Context, stmt *sql.Stmt, modelID string, tiers []model.ModelPriceServiceTier) error {
+	for _, tier := range tiers {
+		if _, err := stmt.ExecContext(
+			ctx,
+			modelID,
+			tier.Mode,
+			tier.ServiceTier,
+			tier.Prompt,
+			tier.Completion,
+			tier.Cache,
+			tier.CacheRead,
+			tier.CacheCreation,
+			tier.PromptConfigured,
+			tier.CompletionConfigured,
+			tier.CacheConfigured,
+			tier.CacheReadConfigured,
+			tier.CacheCreationConfigured,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func nullString(value string) any {

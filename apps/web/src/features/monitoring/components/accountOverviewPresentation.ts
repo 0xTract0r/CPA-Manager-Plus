@@ -2,19 +2,22 @@ import type { TFunction } from 'i18next';
 import type { MonitoringAccountAuthState } from '@/features/monitoring/accountOverviewState';
 import type { MonitoringAccountQuotaProvider } from '@/features/monitoring/accountOverviewQuotaTargets';
 import type { MonitoringAccountRow } from '@/features/monitoring/hooks/useMonitoringData';
-import { normalizePlanType } from '@/utils/quota';
 import { formatDateTimeUtc8 } from '@/utils/datetime';
+import type { QuotaModelScope, QuotaResetAccuracy } from '@/types';
+import { formatQuotaResetTime, type QuotaResetTimeFormatOptions } from '@/utils/quota/formatters';
 import { formatCompactNumber, formatUsd } from '@/utils/usage';
 import styles from '../MonitoringCenterPage.module.scss';
-
-const PREMIUM_CODEX_PLAN_TYPES = new Set(['pro', 'prolite', 'pro-lite', 'pro_lite']);
 
 export type AccountQuotaWindow = {
   id: string;
   label: string;
   remainingPercent: number | null;
   resetLabel: string;
+  resetAtMs?: number | null;
+  resetAccuracy?: QuotaResetAccuracy;
   usageLabel: string | null;
+  modelScope?: QuotaModelScope;
+  providerWindowAliases?: string[];
 };
 
 export type AccountQuotaEntry = {
@@ -28,8 +31,10 @@ export type AccountQuotaEntry = {
   emptyMessage?: string;
   windows: AccountQuotaWindow[];
   error?: string;
+  errorStatus?: number;
   failedAtMs?: number;
   fetchedAtMs?: number;
+  quotaInventoryObserved?: boolean;
   observedAtMs?: number;
   observedFromUsageHeaders?: boolean;
 };
@@ -51,7 +56,25 @@ export type AccountSummaryMetric = {
   valueClassName?: string;
 };
 
+export type CacheTokenPresentation = {
+  label: string;
+  fullLabel: string;
+  value: string;
+};
+
 export const formatPercent = (value: number) => `${(value * 100).toFixed(1)}%`;
+
+export const formatAccountQuotaResetDisplay = (
+  resetAtMs: number | null | undefined,
+  resetLabel: string | null | undefined,
+  options?: QuotaResetTimeFormatOptions
+): string => {
+  const canonicalLabel = formatQuotaResetTime(resetAtMs, options);
+  if (canonicalLabel !== '-') return canonicalLabel;
+  const fallbackLabel = resetLabel?.trim() ?? '';
+  const parsedFallbackLabel = formatQuotaResetTime(fallbackLabel, options);
+  return parsedFallbackLabel !== '-' ? parsedFallbackLabel : fallbackLabel || '-';
+};
 
 const joinShort = (values: string[], limit = 2) => {
   if (values.length <= limit) {
@@ -66,34 +89,84 @@ const shortLabel = (t: TFunction, shortKey: string, fallbackKey: string) => {
   return label === shortKey ? fallback : label;
 };
 
-export const getCodexPlanLabel = (
-  planType: string | null | undefined,
+export const buildCacheTokenPresentation = (
+  tokens: Pick<MonitoringAccountRow, 'cachedTokens' | 'cacheReadTokens' | 'cacheCreationTokens'>,
   t: TFunction
-): string | null => {
-  const normalized = normalizePlanType(planType);
-  if (!normalized) return null;
-  if (normalized === 'pro') return t('codex_quota.plan_pro');
-  if (PREMIUM_CODEX_PLAN_TYPES.has(normalized) && normalized !== 'pro') {
-    return t('codex_quota.plan_prolite');
+): CacheTokenPresentation => {
+  const cachedTokens = Math.max(tokens.cachedTokens || 0, 0);
+  const cacheReadTokens = Math.max(tokens.cacheReadTokens || 0, 0);
+  const cacheCreationTokens = Math.max(tokens.cacheCreationTokens || 0, 0);
+  const hasFineGrainedCache = cacheReadTokens > 0 || cacheCreationTokens > 0;
+
+  if (!hasFineGrainedCache) {
+    return {
+      label: shortLabel(t, 'monitoring.cached_tokens_short', 'monitoring.cached_tokens'),
+      fullLabel: t('monitoring.cached_tokens'),
+      value: formatCompactNumber(cachedTokens),
+    };
   }
-  if (normalized === 'plus') return t('codex_quota.plan_plus');
-  if (normalized === 'team') return t('codex_quota.plan_team');
-  if (normalized === 'free') return t('codex_quota.plan_free');
-  return planType || normalized;
+
+  const parts = [
+    cachedTokens > 0
+      ? { code: 'C', fullLabel: t('monitoring.cached_tokens'), value: cachedTokens }
+      : null,
+    cacheReadTokens > 0
+      ? { code: 'CR', fullLabel: t('monitoring.cache_read_tokens'), value: cacheReadTokens }
+      : null,
+    cacheCreationTokens > 0
+      ? {
+          code: 'CW',
+          fullLabel: t('monitoring.cache_creation_tokens'),
+          value: cacheCreationTokens,
+        }
+      : null,
+  ].filter((part): part is { code: string; fullLabel: string; value: number } => part !== null);
+
+  return {
+    label: parts.map((part) => part.code).join(' / '),
+    fullLabel: parts
+      .map((part) => `${part.fullLabel}: ${formatCompactNumber(part.value)}`)
+      .join(' · '),
+    value: parts.map((part) => formatCompactNumber(part.value)).join(' / '),
+  };
+};
+
+const buildAccountCacheSummaryMetric = (
+  row: MonitoringAccountRow,
+  t: TFunction
+): AccountSummaryMetric => {
+  const cacheMetric = buildCacheTokenPresentation(row, t);
+  return {
+    key: 'cached-tokens',
+    label: cacheMetric.label,
+    fullLabel: cacheMetric.fullLabel,
+    value: cacheMetric.value,
+  };
+};
+
+const isRedundantAccountSecondaryLabel = (candidate: string, primaryText: string) => {
+  if (!candidate || !primaryText || candidate === primaryText) return true;
+  const lowerCandidate = candidate.toLowerCase();
+  const lowerPrimary = primaryText.toLowerCase();
+  return (
+    lowerPrimary.startsWith(`${lowerCandidate} #`) || lowerCandidate.startsWith(`${lowerPrimary} #`)
+  );
 };
 
 export const buildAccountSecondaryText = (row: MonitoringAccountRow) => {
   const primaryText = row.displayAccount || row.account;
-  if (row.account && row.account !== primaryText) {
+  if (row.account && !isRedundantAccountSecondaryLabel(row.account, primaryText)) {
     return row.account;
   }
 
-  const extraAuthLabels = row.authLabels.filter((label) => label && label !== primaryText);
+  const extraAuthLabels = row.authLabels.filter(
+    (label) => label && !isRedundantAccountSecondaryLabel(label, primaryText)
+  );
   if (extraAuthLabels.length > 0) {
     return joinShort(extraAuthLabels, 2);
   }
   const extraChannels = row.channels.filter(
-    (label) => label && label !== '-' && label !== primaryText
+    (label) => label && label !== '-' && !isRedundantAccountSecondaryLabel(label, primaryText)
   );
   if (extraChannels.length > 0) {
     return joinShort(extraChannels, 2);
@@ -145,12 +218,7 @@ export const buildAccountSummaryMetrics = (
     fullLabel: t('monitoring.output_tokens'),
     value: formatCompactNumber(row.outputTokens),
   },
-  {
-    key: 'cached-tokens',
-    label: shortLabel(t, 'monitoring.cached_tokens_short', 'monitoring.cached_tokens'),
-    fullLabel: t('monitoring.cached_tokens'),
-    value: formatCompactNumber(row.cachedTokens),
-  },
+  buildAccountCacheSummaryMetric(row, t),
   {
     key: 'cache-creation-tokens',
     label: shortLabel(

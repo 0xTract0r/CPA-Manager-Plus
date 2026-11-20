@@ -20,9 +20,12 @@ import {
   resolveSourceDisplay,
   resolveSourceIdentityKey,
 } from '@/utils/sourceResolver';
-import { normalizeAuthIndex, type UsageDetailWithEndpoint } from '@/utils/usage';
 import {
-  buildMonitoringAccountKey,
+  normalizeAnalyticsModel,
+  normalizeAuthIndex,
+  type UsageDetailWithEndpoint,
+} from '@/utils/usage';
+import {
   formatApiKeyHashLabel,
   joinUnique,
   maskAuthIndex,
@@ -30,6 +33,7 @@ import {
   readString,
 } from './base';
 import { sanitizeApiKeyDisplayText, type ApiKeyDisplayInfo } from './apiKeys';
+import { buildMonitoringAccountRowId, normalizeMonitoringProvider } from './accountIdentity';
 import { buildDayLabel, buildHourLabel, buildLocalDayKey, padNumber } from './range';
 import { buildMonitoringSourceDisplay } from './sourceDisplay';
 import type {
@@ -103,16 +107,28 @@ const ACCOUNT_FILTER_PREFIXES = {
   source: 'source:',
   apiKey: 'api-key:',
   account: 'account:',
+  accountProvider: 'account-provider:',
+  authAccount: 'auth-account:',
+  /** typed 服务端精确聚焦 token：focus:<opaque>，仅原样回传，不解析内容。 */
+  focus: 'focus:',
+  /** 在线行未返回 account_focus_id：无法证明能精确返回，点击后 fail-closed。 */
+  unsupported: 'focus-unsupported:',
 } as const;
+
+export const buildMonitoringUnsupportedFocusFilterValue = (rowId: string) =>
+  `${ACCOUNT_FILTER_PREFIXES.unsupported}${encodeURIComponent(rowId)}`;
+
+export const isMonitoringUnsupportedFocusFilterValue = (value: string | null | undefined) =>
+  readString(value).startsWith(ACCOUNT_FILTER_PREFIXES.unsupported);
 
 const NO_MATCH_FILTER_VALUE = '__no_matching_filter_value__';
 
 export type MonitoringAccountFilterCriteria = {
-  provider?: string;
   accounts: string[];
   authIndices: string[];
   sourceHashes: string[];
   apiKeyHashes: string[];
+  provider?: string;
 };
 
 const normalizeAccountFilterValues = (values: Array<string | null | undefined> = []) =>
@@ -151,44 +167,136 @@ const decodeAccountFilterValues = (value: string) =>
 const buildAccountFilterToken = (prefix: string, values: string[]) =>
   values.length > 0 ? `${prefix}${encodeAccountFilterValues(values)}` : '';
 
+/** 能力缺失/未加载/过期时用于网络请求的“无结果”哨兵，避免回退成全量。 */
+export const ACCOUNT_FOCUS_BLOCKED_AUTH_INDEX = '__account_focus_unconfirmed__';
+
+export const buildMonitoringAccountFocusFilterValue = (focusId: string | null | undefined) => {
+  const trimmed = readString(focusId).trim();
+  return trimmed && trimmed !== '-'
+    ? `${ACCOUNT_FILTER_PREFIXES.focus}${encodeURIComponent(trimmed)}`
+    : '';
+};
+
+/** 读取 typed 选择器里的服务端聚焦 token；旧口径选择器返回空串。 */
+export const readMonitoringAccountFocusId = (value: string | null | undefined) => {
+  const text = readString(value);
+  if (!text.startsWith(ACCOUNT_FILTER_PREFIXES.focus)) return '';
+  return decodeAccountFilterValue(text.slice(ACCOUNT_FILTER_PREFIXES.focus.length)).trim();
+};
+
+type AccountIndexClaim = {
+  provider?: string | null;
+  account?: string | null;
+  authIndices?: Iterable<string>;
+};
+
+export type AuthIndexAccountConstraint = { exactAccount?: string; exactProvider?: string };
+
+const isKnownMonitoringProvider = (provider: string) => Boolean(provider) && provider !== 'unknown';
+
+/**
+ * 按真实账号行判定凭据索引是否需要追加精确约束（网络 filters 与本地 Scope 共用）：
+ * - 同一索引被不同原始账号占有 => 加精确 accounts（unknown 行也计入，不剔除）；
+ * - 同一索引 + 同一原始账号被多个已知 provider 占有 => 再加精确 providers；
+ * - 同名仅一个已知 provider（其余为 unknown）=> 不加 provider，避免丢 unknown 事件；
+ * - 单一账号独占索引 => 不加约束，保留缺快照历史按凭据恢复。
+ */
+export const buildAuthIndexAccountConstraintResolver = (claims: AccountIndexClaim[]) => {
+  const accountsByIndex = new Map<string, Set<string>>();
+  const providersByIndexAccount = new Map<string, Set<string>>();
+  claims.forEach(({ provider, account, authIndices }) => {
+    const normalizedAccount = normalizeFilterText(account);
+    const normalizedProvider = normalizeMonitoringProvider(provider);
+    normalizeAuthFilterValues(Array.from(authIndices ?? [])).forEach((authIndex) => {
+      const accounts = accountsByIndex.get(authIndex) ?? new Set<string>();
+      accounts.add(normalizedAccount);
+      accountsByIndex.set(authIndex, accounts);
+      if (!isKnownMonitoringProvider(normalizedProvider)) return;
+      const key = `${authIndex}\u0000${normalizedAccount}`;
+      const providers = providersByIndexAccount.get(key) ?? new Set<string>();
+      providers.add(normalizedProvider);
+      providersByIndexAccount.set(key, providers);
+    });
+  });
+
+  return (claim: AccountIndexClaim): AuthIndexAccountConstraint => {
+    const account = readString(claim.account).trim();
+    const normalizedAccount = normalizeFilterText(account);
+    const normalizedProvider = normalizeMonitoringProvider(claim.provider);
+    const authIndices = normalizeAuthFilterValues(Array.from(claim.authIndices ?? []));
+    const needsAccount =
+      Boolean(account) &&
+      authIndices.some((authIndex) => (accountsByIndex.get(authIndex)?.size ?? 0) > 1);
+    const needsProvider =
+      Boolean(account) &&
+      isKnownMonitoringProvider(normalizedProvider) &&
+      authIndices.some(
+        (authIndex) =>
+          (providersByIndexAccount.get(`${authIndex}\u0000${normalizedAccount}`)?.size ?? 0) > 1
+      );
+    if (!needsAccount && !needsProvider) return {};
+    return {
+      exactAccount: account,
+      exactProvider: needsProvider ? normalizedProvider : undefined,
+    };
+  };
+};
+
 export const buildMonitoringAccountFilterValue = ({
   account,
   provider,
   authIndices,
   sourceHashes,
   apiKeyHashes,
+  exactAccount,
+  exactProvider,
 }: {
   account?: string | null;
-  provider?: string;
+  provider?: string | null;
+  /** 凭据索引需精确约束时传入的原始账号（不可传 opaque 行 ID）。 */
+  exactAccount?: string | null;
+  /** 同索引同名被多个已知 provider 占有时传入。 */
+  exactProvider?: string | null;
   authIndices?: Array<string | null | undefined>;
   sourceHashes?: Array<string | null | undefined>;
   apiKeyHashes?: Array<string | null | undefined>;
 }) => {
-  const scopeToken = (token: string) =>
-    provider?.trim() && token
-      ? `provider:${encodeURIComponent(provider.trim().toLowerCase())}|${token}`
-      : token;
   const normalizedAuthIndices = normalizeAuthFilterValues(authIndices);
   if (normalizedAuthIndices.length > 0) {
-    return scopeToken(buildAccountFilterToken(ACCOUNT_FILTER_PREFIXES.auth, normalizedAuthIndices));
+    const [normalizedExactAccount] = normalizeAccountFilterValues([exactAccount]);
+    if (normalizedExactAccount) {
+      const token = `${ACCOUNT_FILTER_PREFIXES.authAccount}${encodeAccountFilterValues(normalizedAuthIndices)}|${encodeURIComponent(normalizedExactAccount)}`;
+      const normalizedExactProvider = normalizeMonitoringProvider(exactProvider);
+      return normalizedExactProvider
+        ? `provider:${encodeURIComponent(normalizedExactProvider)}|${token}`
+        : token;
+    }
+    return buildAccountFilterToken(ACCOUNT_FILTER_PREFIXES.auth, normalizedAuthIndices);
   }
 
   const normalizedSourceHashes = normalizeAccountFilterValues(sourceHashes);
   if (normalizedSourceHashes.length > 0) {
-    return scopeToken(
-      buildAccountFilterToken(ACCOUNT_FILTER_PREFIXES.source, normalizedSourceHashes)
-    );
+    return buildAccountFilterToken(ACCOUNT_FILTER_PREFIXES.source, normalizedSourceHashes);
   }
 
+  const normalizedProvider = normalizeMonitoringProvider(provider);
   const normalizedApiKeyHashes = normalizeApiKeyHashValues(apiKeyHashes);
   if (normalizedApiKeyHashes.length > 0) {
-    return scopeToken(
-      buildAccountFilterToken(ACCOUNT_FILTER_PREFIXES.apiKey, normalizedApiKeyHashes)
+    const apiKeyToken = buildAccountFilterToken(
+      ACCOUNT_FILTER_PREFIXES.apiKey,
+      normalizedApiKeyHashes
     );
+    // 客户端 API Key 可跨提供方共享；同邮箱多提供方时需带 provider 前缀避免混用。
+    return normalizedProvider
+      ? `provider:${encodeURIComponent(normalizedProvider)}|${apiKeyToken}`
+      : apiKeyToken;
   }
 
   const normalizedAccounts = normalizeAccountFilterValues([account]);
-  return scopeToken(buildAccountFilterToken(ACCOUNT_FILTER_PREFIXES.account, normalizedAccounts));
+  if (normalizedProvider && normalizedAccounts.length > 0) {
+    return `${ACCOUNT_FILTER_PREFIXES.accountProvider}${encodeURIComponent(normalizedProvider)}|${encodeAccountFilterValues(normalizedAccounts)}`;
+  }
+  return buildAccountFilterToken(ACCOUNT_FILTER_PREFIXES.account, normalizedAccounts);
 };
 
 export const parseMonitoringAccountFilterValue = (
@@ -202,11 +310,34 @@ export const parseMonitoringAccountFilterValue = (
     apiKeyHashes: [],
   };
   if (!text || text === 'all') return emptyCriteria;
+  if (
+    text.startsWith(ACCOUNT_FILTER_PREFIXES.focus) ||
+    text.startsWith(ACCOUNT_FILTER_PREFIXES.unsupported)
+  ) {
+    // focus token 不能被解释为账号/索引；交给 buildAnalyticsFilters 的能力判定处理。
+    return emptyCriteria;
+  }
+  // 兼容生产热修 #80/#81 生成的 provider:<p>|<token> 旧选择器。
   if (text.startsWith('provider:') && text.includes('|')) {
     const split = text.indexOf('|');
     return {
       ...parseMonitoringAccountFilterValue(text.slice(split + 1)),
       provider: decodeAccountFilterValue(text.slice('provider:'.length, split)),
+    };
+  }
+
+  if (text.startsWith(ACCOUNT_FILTER_PREFIXES.authAccount)) {
+    const body = text.slice(ACCOUNT_FILTER_PREFIXES.authAccount.length);
+    const delimiter = body.indexOf('|');
+    return {
+      ...emptyCriteria,
+      authIndices: normalizeAuthFilterValues(
+        decodeAccountFilterValues(delimiter >= 0 ? body.slice(0, delimiter) : body)
+      ),
+      accounts:
+        delimiter >= 0
+          ? normalizeAccountFilterValues([decodeAccountFilterValue(body.slice(delimiter + 1))])
+          : [],
     };
   }
 
@@ -234,6 +365,19 @@ export const parseMonitoringAccountFilterValue = (
       apiKeyHashes: normalizeApiKeyHashValues(
         decodeAccountFilterValues(text.slice(ACCOUNT_FILTER_PREFIXES.apiKey.length))
       ),
+    };
+  }
+
+  if (text.startsWith(ACCOUNT_FILTER_PREFIXES.accountProvider)) {
+    const body = text.slice(ACCOUNT_FILTER_PREFIXES.accountProvider.length);
+    const delimiter = body.indexOf('|');
+    const providerPart = delimiter >= 0 ? body.slice(0, delimiter) : '';
+    const accountPart = delimiter >= 0 ? body.slice(delimiter + 1) : body;
+    const provider = decodeAccountFilterValue(providerPart);
+    return {
+      ...emptyCriteria,
+      accounts: normalizeAccountFilterValues([decodeAccountFilterValue(accountPart)]),
+      provider: readString(provider),
     };
   }
 
@@ -311,10 +455,12 @@ const addFilterValueConstraint = (
 export const buildAnalyticsFilters = (
   scopeFilters: MonitoringScopeFilters | undefined,
   authMetaMap: Map<string, MonitoringAuthMeta>,
-  channels: MonitoringChannelMeta[]
+  channels: MonitoringChannelMeta[],
+  accountFocus?: { acceptedFocusId?: string | null }
 ): MonitoringAnalyticsFilters => {
   const filters: MonitoringAnalyticsFilters = {};
   if (!scopeFilters) return filters;
+  const selectedFocusId = readMonitoringAccountFocusId(scopeFilters.account);
 
   if (isActiveFilterValue(scopeFilters.model)) {
     filters.models = [scopeFilters.model!.trim()];
@@ -355,7 +501,21 @@ export const buildAnalyticsFilters = (
   }
 
   let authIndices: Set<string> | null = null;
-  if (isActiveFilterValue(scopeFilters.account)) {
+  if (isActiveFilterValue(scopeFilters.authIndex)) {
+    authIndices = addAuthIndexConstraint(authIndices, [scopeFilters.authIndex!.trim()]);
+  }
+  let accountFocusBlocked = false;
+  if (isMonitoringUnsupportedFocusFilterValue(scopeFilters.account)) {
+    // 旧服务在线行无 token：不发任何账号明细条件（禁止旧 AND 宽查询），以无结果哨兵阻断。
+    accountFocusBlocked = true;
+  } else if (selectedFocusId) {
+    // 仅当本轮服务端确实发出同一 token 时原样回传；否则以无结果哨兵阻断，绝不回退全量。
+    if (readString(accountFocus?.acceptedFocusId).trim() === selectedFocusId) {
+      filters.account_focus_id = selectedFocusId;
+    } else {
+      accountFocusBlocked = true;
+    }
+  } else if (isActiveFilterValue(scopeFilters.account)) {
     const account = scopeFilters.account!.trim();
     const accountCriteria = parseMonitoringAccountFilterValue(account);
     // 明确的凭据索引也覆盖缺少provider快照的历史事件。
@@ -364,6 +524,11 @@ export const buildAnalyticsFilters = (
     }
 
     authIndices = addAuthIndexConstraint(authIndices, accountCriteria.authIndices);
+    if (accountCriteria.authIndices.length > 0 && accountCriteria.accounts.length > 0) {
+      // 共享凭据索引：同时携带精确原始账号（及必要时的 provider），与本地 Scope 同口径。
+      filters.accounts = accountCriteria.accounts;
+      if (accountCriteria.provider) filters.providers = [accountCriteria.provider];
+    }
     filters.source_hashes = addFilterValueConstraint(
       filters.source_hashes,
       accountCriteria.sourceHashes
@@ -378,15 +543,25 @@ export const buildAnalyticsFilters = (
       accountCriteria.sourceHashes.length === 0 &&
       accountCriteria.apiKeyHashes.length === 0
     ) {
-      const legacyAccount = accountCriteria.accounts[0] || account;
-      const normalizedAccount = normalizeFilterText(legacyAccount);
-      const accountAuthIndices = Array.from(authMetaMap.entries())
-        .filter(([, meta]) => normalizeFilterText(meta.account) === normalizedAccount)
-        .map(([authIndex]) => authIndex);
-      authIndices = addAuthIndexConstraint(authIndices, accountAuthIndices);
-      if (accountAuthIndices.length === 0) {
+      if (accountCriteria.provider) {
+        // Provider-scoped logical account selector (account-provider:...).
+        // Query persisted data directly; do not re-interpret through current
+        // auth metadata, whose auth indices may differ from historical events.
         filters.accounts =
           accountCriteria.accounts.length > 0 ? accountCriteria.accounts : [account];
+        filters.providers = [accountCriteria.provider];
+      } else {
+        // Legacy account selector (account:...) keeps authMeta-based expansion.
+        const legacyAccount = accountCriteria.accounts[0] || account;
+        const normalizedAccount = normalizeFilterText(legacyAccount);
+        const accountAuthIndices = Array.from(authMetaMap.entries())
+          .filter(([, meta]) => normalizeFilterText(meta.account) === normalizedAccount)
+          .map(([authIndex]) => authIndex);
+        authIndices = addAuthIndexConstraint(authIndices, accountAuthIndices);
+        if (accountAuthIndices.length === 0) {
+          filters.accounts =
+            accountCriteria.accounts.length > 0 ? accountCriteria.accounts : [account];
+        }
       }
     }
   }
@@ -422,6 +597,9 @@ export const buildAnalyticsFilters = (
         ? [scopeFilters.authIndex]
         : ['__no_matching_auth_index__'];
   }
+  if (accountFocusBlocked) {
+    filters.auth_indices = [ACCOUNT_FOCUS_BLOCKED_AUTH_INDEX];
+  }
   if (scopeFilters.requestId) filters.request_ids = [scopeFilters.requestId];
   if (scopeFilters.resolvedModel) filters.resolved_models = [scopeFilters.resolvedModel];
   if (scopeFilters.unresolvedModel) filters.unresolved_models = [scopeFilters.unresolvedModel];
@@ -441,6 +619,7 @@ export const buildSummaryFromAnalytics = (
   cachedTokens: summary.cached_tokens,
   cacheReadTokens: summary.cache_read_tokens ?? 0,
   cacheCreationTokens: summary.cache_creation_tokens ?? 0,
+  cacheHitRate: summary.cache_hit_rate,
   totalTokens: summary.total_tokens,
   totalCost: summary.total_cost,
   averageLatencyMs: summary.average_latency_ms,
@@ -616,8 +795,15 @@ export const buildAccountRowsFromAnalytics = (
   authFileMap: Map<string, CredentialInfo>,
   sourceInfoMap: ReturnType<typeof buildSourceInfoMap>,
   channelByAuthIndex: Map<string, MonitoringChannelMeta>
-): MonitoringAccountRow[] =>
-  rows
+): MonitoringAccountRow[] => {
+  const resolveAuthIndexConstraint = buildAuthIndexAccountConstraintResolver(
+    rows.map((row) => ({
+      provider: row.auth_provider_snapshot,
+      account: row.account_snapshot,
+      authIndices: row.auth_indices,
+    }))
+  );
+  return rows
     .map((row) => {
       const authIndex = resolveFirstAuthIndex(row.auth_indices);
       const authMetas = resolveAuthMetas(row.auth_indices, authMetaMap);
@@ -641,8 +827,17 @@ export const buildAccountRowsFromAnalytics = (
         { authMetaMap, authFileMap, sourceInfoMap, channelByAuthIndex }
       );
       const account = firstReadableValue(display.account, row.account_snapshot, row.id);
+      const provider = normalizeMonitoringProvider(
+        firstReadableValue(row.auth_provider_snapshot, display.provider)
+      );
       const accountNote = firstReadableValue(...authMetas.map((meta) => meta.note));
-      const displayAccount = firstReadableValue(accountNote, account, display.primary);
+      const displayAccount = firstReadableValue(accountNote, display.primary, account);
+      const filterAccount = firstReadableValue(
+        row.account_snapshot,
+        row.auth_label_snapshot,
+        row.sources?.[0],
+        account
+      );
       const authLabels = uniqueReadableValues([
         ...authMetas.map((meta) => meta.label),
         row.auth_label_snapshot,
@@ -657,20 +852,26 @@ export const buildAccountRowsFromAnalytics = (
       );
 
       return {
-        id: buildMonitoringAccountKey(
-          row.auth_provider_snapshot || authMetas[0]?.provider || '',
-          account,
-          row.auth_label_snapshot || '',
-          row.sources?.[0] || '',
-          authIndex || ''
-        ),
+        id:
+          firstReadableValue(row.id) ||
+          buildMonitoringAccountRowId({
+            provider,
+            account: row.account_snapshot,
+            authLabel: row.auth_label_snapshot,
+            source: row.sources?.[0],
+            // '-' 是展示占位，不能抢占 source-hash 回退身份
+            authIndex: authIndex === '-' ? '' : authIndex,
+            sourceHash: row.source_hashes?.[0],
+          }),
         account,
+        provider,
         displayAccount,
         accountMasked: display.accountMasked || maskEmailLike(account),
         authLabels,
         authIndices: uniqueReadableValues(row.auth_indices),
         sourceKeys,
         channels,
+        planTypes: uniqueReadableValues(authMetas.map((meta) => meta.planType)),
         totalCalls: row.calls,
         successCalls: row.success_calls,
         failureCalls: row.failure_calls,
@@ -685,13 +886,38 @@ export const buildAccountRowsFromAnalytics = (
         averageLatencyMs: row.average_latency_ms,
         lastSeenAt: row.last_seen_ms,
         recentPattern: [],
-        filterValue:
-          buildMonitoringAccountFilterValue({
-            account,
-            provider: row.auth_provider_snapshot || authMetas[0]?.provider || undefined,
-            authIndices: row.auth_indices,
-            sourceHashes: row.source_hashes,
-          }) || account,
+        ...(() => {
+          const legacyFilterValue =
+            buildMonitoringAccountFilterValue({
+              account: filterAccount,
+              provider,
+              authIndices: row.auth_indices,
+              sourceHashes: row.source_hashes,
+              ...resolveAuthIndexConstraint({
+                provider: row.auth_provider_snapshot,
+                account: row.account_snapshot,
+                authIndices: row.auth_indices,
+              }),
+            }) || account;
+          // 只有该行确实返回非空 account_focus_id 才使用 typed focus token；不从 id 推断。
+          const focusValue = buildMonitoringAccountFocusFilterValue(row.account_focus_id);
+          // 在线行无 token（旧 Manager）：禁止回落旧口径宽查询，改为 fail-closed 标记。
+          if (!focusValue) {
+            return {
+              filterValue: buildMonitoringUnsupportedFocusFilterValue(
+                firstReadableValue(row.id) || legacyFilterValue
+              ),
+              legacyFilterValue,
+            };
+          }
+          return focusValue
+            ? {
+                filterValue: focusValue,
+                legacyFilterValue,
+                accountFocusId: row.account_focus_id!.trim(),
+              }
+            : { filterValue: legacyFilterValue };
+        })(),
         models: buildModelSpendRowsFromAnalytics(row.models),
       };
     })
@@ -701,6 +927,7 @@ export const buildAccountRowsFromAnalytics = (
         right.totalCalls - left.totalCalls ||
         right.totalCost - left.totalCost
     );
+};
 
 export const buildApiKeyRowsFromAnalytics = (
   rows: MonitoringAnalyticsApiKeyStatRow[],
@@ -752,6 +979,7 @@ export const buildApiKeyRowsFromAnalytics = (
         apiKeyHash,
         apiKeyLabel: isUnknown ? '' : apiKeyLabel,
         apiKeyMasked: isUnknown ? '' : apiKeyMasked,
+        apiKeyCopyValue: isUnknown ? undefined : apiKeyDisplay?.copyValue,
         isUnknown,
         authLabels: uniqueReadableValues([
           ...authMetas.map((meta) => meta.label),
@@ -805,40 +1033,125 @@ export const buildFilterOptionsFromAnalytics = (
   const resolveAuthIndex = (value: string | undefined) => normalizeAuthIndex(value) ?? value ?? '';
   const resolveAuthMeta = (value: string | undefined) => authMetaMap.get(resolveAuthIndex(value));
   const channelRows = options.channel_share || [];
+  const accountRows = buildAccountRowsFromAnalytics(
+    options.account_stats || [],
+    authMetaMap,
+    authFileMap,
+    sourceInfoMap,
+    channelByAuthIndex
+  );
+  const knownAccounts = new Set(accountRows.map((row) => normalizeFilterText(row.account)));
+  const accountSelectorRows = uniqueReadableValues(options.accounts || [])
+    .filter((account) => !knownAccounts.has(normalizeFilterText(account)))
+    .map(
+      (account): MonitoringAccountRow => ({
+        id: `selector:${normalizeFilterText(account)}`,
+        account,
+        provider: '',
+        // 在线轻量选择器的纯账号行没有 token，同样 fail-closed。
+        filterValue: buildMonitoringUnsupportedFocusFilterValue(
+          `selector:${normalizeFilterText(account)}`
+        ),
+        legacyFilterValue: buildMonitoringAccountFilterValue({ account }) || account,
+        displayAccount: account,
+        accountMasked: maskEmailLike(account),
+        authLabels: [],
+        authIndices: [],
+        sourceKeys: [],
+        channels: [],
+        totalCalls: 0,
+        successCalls: 0,
+        failureCalls: 0,
+        successRate: 1,
+        inputTokens: 0,
+        outputTokens: 0,
+        cachedTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        totalTokens: 0,
+        totalCost: 0,
+        averageLatencyMs: null,
+        lastSeenAt: 0,
+        recentPattern: [],
+        models: [],
+      })
+    );
+  const apiKeyRows = buildApiKeyRowsFromAnalytics(
+    options.api_key_stats || [],
+    authMetaMap,
+    authFileMap,
+    sourceInfoMap,
+    channelByAuthIndex,
+    apiKeyDisplayMap
+  );
+  const knownApiKeyHashes = new Set(apiKeyRows.map((row) => row.apiKeyHash));
+  const apiKeySelectorRows = uniqueReadableValues(options.api_key_hashes || [])
+    .map((value) => value.toLowerCase())
+    .filter((apiKeyHash) => !knownApiKeyHashes.has(apiKeyHash))
+    .map((apiKeyHash): MonitoringApiKeyRow => {
+      const apiKeyDisplay = apiKeyDisplayMap.get(apiKeyHash);
+      const fallbackLabel = formatApiKeyHashLabel(apiKeyHash);
+      const apiKeyLabel = sanitizeApiKeyDisplayText(
+        apiKeyDisplay?.label || fallbackLabel,
+        fallbackLabel
+      );
+      const apiKeyMasked = sanitizeApiKeyDisplayText(
+        apiKeyDisplay?.masked || apiKeyLabel,
+        apiKeyLabel
+      );
+      return {
+        id: apiKeyHash,
+        apiKeyHash,
+        apiKeyLabel,
+        apiKeyMasked,
+        apiKeyCopyValue: apiKeyDisplay?.copyValue,
+        isUnknown: false,
+        authLabels: [],
+        sourceLabels: [],
+        channels: [],
+        totalCalls: 0,
+        successCalls: 0,
+        failureCalls: 0,
+        successRate: 1,
+        inputTokens: 0,
+        outputTokens: 0,
+        cachedTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        totalTokens: 0,
+        totalCost: 0,
+        averageLatencyMs: null,
+        lastSeenAt: 0,
+        models: [],
+      };
+    });
 
   return {
-    accountRows: buildAccountRowsFromAnalytics(
-      options.account_stats || [],
-      authMetaMap,
-      authFileMap,
-      sourceInfoMap,
-      channelByAuthIndex
-    ),
-    apiKeyRows: buildApiKeyRowsFromAnalytics(
-      options.api_key_stats || [],
-      authMetaMap,
-      authFileMap,
-      sourceInfoMap,
-      channelByAuthIndex,
-      apiKeyDisplayMap
-    ),
+    accountRows: [...accountRows, ...accountSelectorRows],
+    apiKeyRows: [...apiKeyRows, ...apiKeySelectorRows],
     providers: uniqueReadableValues([
+      ...(options.providers || []),
       ...channelRows.map((row) => resolveAuthMeta(row.auth_index)?.provider),
       ...channelRows.map((row) => row.auth_provider_snapshot),
       ...(options.account_stats || []).map((row) => row.auth_provider_snapshot),
       ...(options.api_key_stats || []).map((row) => row.auth_provider_snapshot),
     ]),
-    models: uniqueReadableValues((options.model_stats || []).map((row) => row.model)),
-    channels: uniqueReadableValues(
-      channelRows.map((row) => {
+    models: uniqueReadableValues([
+      ...(options.models || []),
+      ...(options.model_stats || []).map((row) => row.model),
+    ]),
+    channels: uniqueReadableValues([
+      ...channelRows.map((row) => {
         const authIndex = resolveAuthIndex(row.auth_index);
         return (
           channelByAuthIndex.get(authIndex)?.name ||
           resolveAuthMeta(row.auth_index)?.provider ||
           row.auth_provider_snapshot
         );
-      })
-    ),
+      }),
+      ...Array.from(channelByAuthIndex.values()).map((channel) => channel.name),
+      ...(options.providers || []),
+    ]),
     headerTraceIds: uniqueReadableValues(options.header_trace_ids || []),
   };
 };
@@ -944,47 +1257,68 @@ export const mergeAnalyticsEventItems = (
 export const buildUsageDetailsFromAnalyticsEvents = (
   items: MonitoringAnalyticsEventRow[] = []
 ): UsageDetailWithEndpoint[] =>
-  items.map((item) => ({
-    timestamp: new Date(item.timestamp_ms).toISOString(),
-    source: readString(item.source),
-    auth_index: item.auth_index || null,
-    api_key_hash: readString(item.api_key_hash),
-    account_snapshot: readString(item.account_snapshot),
-    auth_label_snapshot: readString(item.auth_label_snapshot),
-    auth_file_snapshot: readString(item.auth_file_snapshot),
-    auth_provider_snapshot: readString(item.auth_provider_snapshot),
-    auth_project_id_snapshot: readString(item.auth_project_id_snapshot),
-    reasoning_effort: readString(item.reasoning_effort),
-    service_tier: readString(item.service_tier),
-    executor_type: readString(item.executor_type),
-    telemetry: item.telemetry,
-    latency_ms: item.latency_ms ?? undefined,
-    ttft_ms: item.ttft_ms ?? undefined,
-    tokens: {
-      input_tokens: item.input_tokens,
-      output_tokens: item.output_tokens,
-      reasoning_tokens: item.reasoning_tokens,
-      cached_tokens: item.cached_tokens,
-      cache_read_tokens: item.cache_read_tokens ?? 0,
-      cache_creation_tokens: item.cache_creation_tokens ?? 0,
-      total_tokens: item.total_tokens,
-    },
-    failed: item.failed === true,
-    fail_status_code: item.fail_status_code ?? null,
-    fail_summary: readString(item.fail_summary),
-    response_metadata: item.response_metadata,
-    header_quota_recover_at_ms: item.header_quota_recover_at_ms ?? null,
-    header_quota_used_percent: item.header_quota_used_percent ?? null,
-    header_quota_plan_type: readString(item.header_quota_plan_type),
-    header_error_kind: readString(item.header_error_kind),
-    header_error_code: readString(item.header_error_code),
-    header_trace_id: readString(item.header_trace_id),
-    request_id: readString(item.request_id) || undefined,
-    __modelName: item.model,
-    __resolvedModel: readString(item.resolved_model),
-    __endpoint: item.endpoint || `${item.method} ${item.path}`.trim(),
-    __endpointMethod: item.method,
-    __endpointPath: item.path,
-    __timestampMs: item.timestamp_ms,
-    __eventHash: readString(item.event_hash) || undefined,
-  }));
+  items.map((item) => {
+    const requestedModel = readString(item.requested_model) || item.model;
+    const analyticsModel =
+      readString(item.analytics_model) || normalizeAnalyticsModel(requestedModel);
+    return {
+      timestamp: new Date(item.timestamp_ms).toISOString(),
+      source: readString(item.source),
+      source_hash: readString(item.source_hash),
+      auth_index: item.auth_index || null,
+      api_key_hash: readString(item.api_key_hash),
+      account_snapshot: readString(item.account_snapshot),
+      auth_label_snapshot: readString(item.auth_label_snapshot),
+      auth_file_snapshot: readString(item.auth_file_snapshot),
+      auth_provider_snapshot: readString(item.auth_provider_snapshot),
+      auth_account_id_snapshot: readString(item.auth_account_id_snapshot),
+      auth_project_id_snapshot: readString(item.auth_project_id_snapshot),
+      client_ip: readString(item.client_ip),
+      x_forwarded_for: readString(item.x_forwarded_for),
+      user_agent: readString(item.user_agent),
+      reasoning_effort: readString(item.reasoning_effort),
+      service_tier: readString(item.service_tier),
+      executor_type: readString(item.executor_type),
+      telemetry: item.telemetry,
+      request_id: readString(item.request_id) || undefined,
+      latency_ms: item.latency_ms ?? undefined,
+      ttft_ms: item.ttft_ms ?? undefined,
+      tokens: {
+        input_tokens: item.input_tokens,
+        output_tokens: item.output_tokens,
+        reasoning_tokens: item.reasoning_tokens,
+        cached_tokens: item.cached_tokens,
+        cache_read_tokens: item.cache_read_tokens ?? 0,
+        cache_creation_tokens: item.cache_creation_tokens ?? 0,
+        total_tokens: item.total_tokens,
+      },
+      failed: item.failed === true,
+      fail_status_code: item.fail_status_code ?? null,
+      fail_summary: readString(item.fail_summary),
+      response_metadata: item.response_metadata,
+      header_quota_recover_at_ms: item.header_quota_recover_at_ms ?? null,
+      header_quota_used_percent: item.header_quota_used_percent ?? null,
+      header_quota_plan_type: readString(item.header_quota_plan_type),
+      header_error_kind: readString(item.header_error_kind),
+      header_error_code: readString(item.header_error_code),
+      header_trace_id: readString(item.header_trace_id),
+      analytics_model: analyticsModel,
+      requested_model: requestedModel,
+      resolved_model: readString(item.resolved_model),
+      response_model: readString(item.response_model),
+      session_id: readString(item.session_id),
+      parent_session_id: readString(item.parent_session_id),
+      access_token_sha256: readString(item.access_token_sha256),
+      generate: typeof item.generate === 'boolean' ? item.generate : undefined,
+      stream: typeof item.stream === 'boolean' ? item.stream : undefined,
+      __modelName: analyticsModel,
+      __requestedModel: requestedModel,
+      __resolvedModel: readString(item.resolved_model),
+      __responseModel: readString(item.response_model),
+      __endpoint: item.endpoint || `${item.method} ${item.path}`.trim(),
+      __endpointMethod: item.method,
+      __endpointPath: item.path,
+      __timestampMs: item.timestamp_ms,
+      __eventHash: readString(item.event_hash) || undefined,
+    };
+  });

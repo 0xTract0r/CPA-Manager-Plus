@@ -23,6 +23,7 @@ import {
 import {
   adaptUsageAnalyticsData,
   analyzeUsageBucket,
+  buildApiKeyTrendSeries,
   buildSelectedApiKeyTrendSeries,
   buildSelectedCredentialTrendSeries,
   buildCredentialQuotaRows,
@@ -36,11 +37,14 @@ import {
   buildUsageHeatmapRangeContext,
   buildUsageMatrix,
   buildUsageSummaryDelta,
+  buildUsageCredentialTimeline,
+  buildUsageApiKeyTimeline,
   buildUsageAnalyticsFilters,
   buildUsageAnalyticsFilterSelectorsInclude,
   buildUsageAnalyticsInclude,
   buildUsageTimeline,
   getSelectableApiKeyHash,
+  getUsagePresentationRangeScopeKey,
   getUsageRangeBounds,
   resolveUsageGranularity,
   USAGE_ANALYTICS_DEFAULT_FILTERS,
@@ -68,6 +72,7 @@ import {
 
 const USAGE_SEARCH_DEBOUNCE_MS = 350;
 const USAGE_HEATMAP_ALL_DATES_KEY = 'all';
+const API_KEY_TREND_SERIES_LIMIT = 4;
 
 type UsageAnalyticsMonitoringMeta = {
   authFiles: AuthFileItem[];
@@ -98,6 +103,7 @@ export function useUsageAnalytics() {
   const [monitoringMeta, setMonitoringMeta] = useState<UsageAnalyticsMonitoringMeta>(
     EMPTY_USAGE_ANALYTICS_MONITORING_META
   );
+  const [monitoringMetaError, setMonitoringMetaError] = useState('');
   const [searchParams, setSearchParams] = useSearchParams();
   const [initialUiState] = useState<UsageAnalyticsUiState>(() =>
     buildUsageAnalyticsUiStateFromSearchParams(searchParams, readUsageAnalyticsUiState())
@@ -137,10 +143,11 @@ export function useUsageAnalytics() {
   );
   const loadMonitoringMeta = useCallback(async () => {
     const payload = await loadMonitoringMetaPayload(config);
-    setMonitoringMeta({
-      authFiles: payload.authFiles,
-      channels: payload.channels,
-    });
+    setMonitoringMeta((current) => ({
+      authFiles: payload.authFilesLoaded ? payload.authFiles : current.authFiles,
+      channels: payload.channelsLoaded ? payload.channels : current.channels,
+    }));
+    setMonitoringMetaError(payload.error);
   }, [config]);
   useEffect(() => {
     let cancelled = false;
@@ -151,10 +158,12 @@ export function useUsageAnalytics() {
           authFiles: payload.authFiles,
           channels: payload.channels,
         });
+        setMonitoringMetaError(payload.error);
       })
-      .catch(() => {
+      .catch((error) => {
         if (!cancelled) {
           setMonitoringMeta(EMPTY_USAGE_ANALYTICS_MONITORING_META);
+          setMonitoringMetaError(error instanceof Error ? error.message : String(error));
         }
       });
     return () => {
@@ -183,6 +192,8 @@ export function useUsageAnalytics() {
         geminiApiKeys: config?.geminiApiKeys || [],
         claudeApiKeys: config?.claudeApiKeys || [],
         codexApiKeys: config?.codexApiKeys || [],
+        xaiApiKeys: config?.xaiApiKeys || [],
+        metaApiKeys: config?.metaApiKeys || [],
         vertexApiKeys: config?.vertexApiKeys || [],
         openaiCompatibility: config?.openaiCompatibility || [],
       }),
@@ -206,41 +217,52 @@ export function useUsageAnalytics() {
     }),
     [authFileMap, authMetaMap, channelByAuthIndex, sourceInfoMap]
   );
-  const setActiveTab = useCallback((tab: UsageAnalyticsTab) => {
-    if (tab === 'codexFast') {
-      setFiltersState(current => {
-        const candidate = current.authIndex || fastAuthIndexRef.current;
-        const authIndex = monitoringMeta.authFiles.some(a =>
-          String(a.auth_index ?? a.authIndex) === candidate && (a.provider || a.type) !== 'codex'
-        ) ? 'all' : candidate || 'all';
-        fastAuthIndexRef.current = authIndex;
-        return {
-          ...USAGE_ANALYTICS_DEFAULT_FILTERS,
-          timeRange: current.timeRange,
-          customRange: current.customRange,
-          authIndex,
-          provider: 'codex',
-          fastMode: 'tier',
-          fastMetric: 'end_to_end_tps',
-        };
-      });
-    } else if (activeTabState === 'codexFast') {
-      setFiltersState(current => {
-        fastAuthIndexRef.current = current.authIndex || 'all';
-        return {
-          ...current,
-          authIndex: undefined,
-          performanceView: 'overview',
-          provider: USAGE_ANALYTICS_DEFAULT_FILTERS.provider,
-        };
-      });
-    }
-    setActiveTabState(tab);
-    writeUsageAnalyticsUiState({ activeTab: tab });
-  }, [activeTabState, monitoringMeta.authFiles]);
-  const fastAuthIndex = monitoringMeta.authFiles.some(a =>
-    String(a.auth_index ?? a.authIndex) === filters.authIndex && (a.provider || a.type) !== 'codex'
-  ) ? 'all' : filters.authIndex;
+  const setActiveTab = useCallback(
+    (tab: UsageAnalyticsTab) => {
+      if (tab === 'codexFast') {
+        setFiltersState((current) => {
+          const candidate = current.authIndex || fastAuthIndexRef.current;
+          const authIndex = monitoringMeta.authFiles.some(
+            (a) =>
+              String(a.auth_index ?? a.authIndex) === candidate &&
+              (a.provider || a.type) !== 'codex'
+          )
+            ? 'all'
+            : candidate || 'all';
+          fastAuthIndexRef.current = authIndex;
+          return {
+            ...USAGE_ANALYTICS_DEFAULT_FILTERS,
+            timeRange: current.timeRange,
+            customRange: current.customRange,
+            authIndex,
+            provider: 'codex',
+            fastMode: 'tier',
+            fastMetric: 'end_to_end_tps',
+          };
+        });
+      } else if (activeTabState === 'codexFast') {
+        setFiltersState((current) => {
+          fastAuthIndexRef.current = current.authIndex || 'all';
+          return {
+            ...current,
+            authIndex: undefined,
+            performanceView: 'overview',
+            provider: USAGE_ANALYTICS_DEFAULT_FILTERS.provider,
+          };
+        });
+      }
+      setActiveTabState(tab);
+      writeUsageAnalyticsUiState({ activeTab: tab });
+    },
+    [activeTabState, monitoringMeta.authFiles]
+  );
+  const fastAuthIndex = monitoringMeta.authFiles.some(
+    (a) =>
+      String(a.auth_index ?? a.authIndex) === filters.authIndex &&
+      (a.provider || a.type) !== 'codex'
+  )
+    ? 'all'
+    : filters.authIndex;
   const debouncedSearchQuery = useDebouncedValue(
     filters.searchQuery.trim(),
     USAGE_SEARCH_DEBOUNCE_MS
@@ -260,6 +282,7 @@ export function useUsageAnalytics() {
   );
 
   const bounds = useMemo(() => getUsageRangeBounds(filters, nowMs), [filters, nowMs]);
+  const presentationRangeScopeKey = getUsagePresentationRangeScopeKey(filters, bounds);
   const heatmapRangeContext = useMemo(
     () => buildUsageHeatmapRangeContext(bounds, 'en-US', browserTimeZone),
     [bounds, browserTimeZone]
@@ -283,11 +306,15 @@ export function useUsageAnalytics() {
     [filters, nowMs]
   );
   const analyticsFilters = useMemo(
-    () => activeTabState === 'codexFast'
-      ? buildUsageAnalyticsFilters({ authIndex: fastAuthIndex, provider: 'codex' })
-      : applyIdentitySearchScope(buildUsageAnalyticsFilters({
-          ...filters, apiKeyHash: getSelectableApiKeyHash(filters.apiKeyHash) || 'all',
-        })),
+    () =>
+      activeTabState === 'codexFast'
+        ? buildUsageAnalyticsFilters({ authIndex: fastAuthIndex, provider: 'codex' })
+        : applyIdentitySearchScope(
+            buildUsageAnalyticsFilters({
+              ...filters,
+              apiKeyHash: getSelectableApiKeyHash(filters.apiKeyHash) || 'all',
+            })
+          ),
     [activeTabState, fastAuthIndex, applyIdentitySearchScope, filters]
   );
 
@@ -311,7 +338,9 @@ export function useUsageAnalytics() {
         setActiveTabState(incoming.activeTab);
         setFiltersState({ ...incoming.filters, performanceView: 'overview' });
       });
-      return () => { cancelled = true; };
+      return () => {
+        cancelled = true;
+      };
     }
     const nextState = { activeTab: activeTabState, filters };
     writeUsageAnalyticsUiState(nextState);
@@ -341,15 +370,10 @@ export function useUsageAnalytics() {
             granularity: resolvedGranularity,
           }
         : buildUsageAnalyticsInclude(activeTabState, resolvedGranularity, drilldownPreview),
-    [
-      activeTabState,
-      drilldownPreview,
-      resolvedGranularity,
-      fastAuthIndex,
-    ]
+    [activeTabState, drilldownPreview, resolvedGranularity, fastAuthIndex]
   );
   const fastImpactOptions = useMemo(
-    () => ({ mode: 'tier', metric: 'end_to_end_tps' } as const),
+    () => ({ mode: 'tier', metric: 'end_to_end_tps' }) as const,
     []
   );
   const dataScopeKey = useMemo(
@@ -358,7 +382,7 @@ export function useUsageAnalytics() {
         fastView: filters.performanceView,
         fastImpactOptions,
         activeTab: activeTabState,
-        bounds,
+        presentationRangeScopeKey,
         drilldownPreview,
         filters: analyticsFilters,
         granularity: resolvedGranularity,
@@ -369,7 +393,7 @@ export function useUsageAnalytics() {
       filters.performanceView,
       fastImpactOptions,
       analyticsFilters,
-      bounds,
+      presentationRangeScopeKey,
       debouncedSearchQuery,
       drilldownPreview,
       resolvedGranularity,
@@ -409,11 +433,10 @@ export function useUsageAnalytics() {
   const filterSelectorsDataScopeKey = useMemo(
     () =>
       JSON.stringify({
-        bounds,
-        filters: identitySearchFilters,
+        presentationRangeScopeKey,
         searchQuery: debouncedSearchQuery,
       }),
-    [bounds, debouncedSearchQuery, identitySearchFilters]
+    [presentationRangeScopeKey, debouncedSearchQuery]
   );
   const filterSelectorsAnalytics = useMonitoringAnalytics({
     fromMs: activeTabState === 'codexFast' ? null : bounds?.fromMs,
@@ -463,6 +486,7 @@ export function useUsageAnalytics() {
   const filterSelectorsData = filterSelectorsAnalytics.dataStale
     ? null
     : filterSelectorsAnalytics.data;
+  const timelineBounds = include.timeline ? bounds : null;
   const adapted = useMemo(
     () =>
       adaptUsageAnalyticsData(
@@ -470,16 +494,83 @@ export function useUsageAnalytics() {
         resolvedGranularity,
         filters.apiKeyKeyword,
         apiKeyDisplayMap,
-        credentialDisplayContext
+        credentialDisplayContext,
+        timelineBounds
       ),
     [
       analyticsData,
       apiKeyDisplayMap,
       credentialDisplayContext,
       filters.apiKeyKeyword,
+      timelineBounds,
       resolvedGranularity,
     ]
   );
+  const apiKeyTrendRows = useMemo(
+    () => adapted.apiKeyRows.filter((row) => Boolean(getSelectableApiKeyHash(row.apiKeyHash))),
+    [adapted.apiKeyRows]
+  );
+  const apiKeyTrendHashes = useMemo(() => {
+    if (activeTabState !== 'overview' && activeTabState !== 'trends') return [];
+    return Array.from(
+      new Set(apiKeyTrendRows.map((row) => getSelectableApiKeyHash(row.apiKeyHash)))
+    ).slice(0, API_KEY_TREND_SERIES_LIMIT);
+  }, [activeTabState, apiKeyTrendRows]);
+  const apiKeyTrendFilters = useMemo(
+    () =>
+      apiKeyTrendHashes.length > 0
+        ? { ...analyticsFilters, api_key_hashes: apiKeyTrendHashes }
+        : analyticsFilters,
+    [analyticsFilters, apiKeyTrendHashes]
+  );
+  const apiKeyTrendInclude = useMemo(
+    () => ({
+      granularity: resolvedGranularity,
+      api_key_timeline: true,
+    }),
+    [resolvedGranularity]
+  );
+  const apiKeyTrendDataScopeKey = useMemo(
+    () =>
+      JSON.stringify({
+        activeTab: activeTabState,
+        apiKeyHashes: apiKeyTrendHashes,
+        presentationRangeScopeKey,
+        filters: apiKeyTrendFilters,
+        granularity: resolvedGranularity,
+        searchQuery: debouncedSearchQuery,
+      }),
+    [
+      activeTabState,
+      apiKeyTrendFilters,
+      apiKeyTrendHashes,
+      presentationRangeScopeKey,
+      debouncedSearchQuery,
+      resolvedGranularity,
+    ]
+  );
+  const apiKeyTrendAnalytics = useMonitoringAnalytics({
+    fromMs:
+      (activeTabState === 'overview' || activeTabState === 'trends') && apiKeyTrendHashes.length > 0
+        ? bounds?.fromMs
+        : undefined,
+    toMs:
+      (activeTabState === 'overview' || activeTabState === 'trends') && apiKeyTrendHashes.length > 0
+        ? bounds?.toMs
+        : undefined,
+    nowMs,
+    dataScopeKey: apiKeyTrendDataScopeKey,
+    searchQuery: debouncedSearchQuery,
+    filters: apiKeyTrendFilters,
+    include: apiKeyTrendInclude,
+    throttleMs: 0,
+  });
+  const apiKeyTrendData = apiKeyTrendAnalytics.dataStale ? null : apiKeyTrendAnalytics.data;
+  const apiKeyTimeline = useMemo(
+    () => buildUsageApiKeyTimeline(apiKeyTrendData?.api_key_timeline ?? [], resolvedGranularity),
+    [apiKeyTrendData, resolvedGranularity]
+  );
+  const hasExactAPIKeyTimeline = Array.isArray(apiKeyTrendData?.api_key_timeline);
   const heatmapDateData = heatmapDateAnalytics.dataStale ? null : heatmapDateAnalytics.data;
   const heatmapDateRows = useMemo(
     () => buildUsageHeatmap(heatmapDateData?.heatmap ?? [], apiKeyDisplayMap),
@@ -531,14 +622,31 @@ export function useUsageAnalytics() {
     () => buildEntityTrendSeries(adapted.modelRows, adapted.timeline, trendMetric, 4),
     [adapted.modelRows, adapted.timeline, trendMetric]
   );
-  const apiKeyTrendRows = useMemo(
-    () => adapted.apiKeyRows.filter((row) => Boolean(getSelectableApiKeyHash(row.apiKeyHash))),
-    [adapted.apiKeyRows]
-  );
   const apiKeyTrendSeries = useMemo(
     () =>
-      buildEntityTrendSeries(apiKeyTrendRows, adapted.timeline, trendMetric, 4, adapted.apiKeyRows),
-    [adapted.apiKeyRows, adapted.timeline, apiKeyTrendRows, trendMetric]
+      hasExactAPIKeyTimeline
+        ? buildApiKeyTrendSeries(
+            apiKeyTrendRows,
+            adapted.timeline,
+            apiKeyTimeline,
+            trendMetric,
+            API_KEY_TREND_SERIES_LIMIT
+          )
+        : buildEntityTrendSeries(
+            apiKeyTrendRows,
+            adapted.timeline,
+            trendMetric,
+            API_KEY_TREND_SERIES_LIMIT,
+            adapted.apiKeyRows
+          ),
+    [
+      apiKeyTimeline,
+      apiKeyTrendRows,
+      adapted.apiKeyRows,
+      adapted.timeline,
+      hasExactAPIKeyTimeline,
+      trendMetric,
+    ]
   );
   const selectedApiKeyFilterHash = getSelectableApiKeyHash(selectedApiKey?.apiKeyHash);
   const selectedApiKeyTimelineFilters = useMemo(
@@ -561,7 +669,7 @@ export function useUsageAnalytics() {
     () =>
       JSON.stringify({
         activeTab: activeTabState,
-        bounds,
+        presentationRangeScopeKey,
         filters: selectedApiKeyTimelineFilters,
         granularity: resolvedGranularity,
         searchQuery: debouncedSearchQuery,
@@ -569,7 +677,7 @@ export function useUsageAnalytics() {
       }),
     [
       activeTabState,
-      bounds,
+      presentationRangeScopeKey,
       debouncedSearchQuery,
       resolvedGranularity,
       selectedApiKeyFilterHash,
@@ -597,14 +705,82 @@ export function useUsageAnalytics() {
     () => buildSelectedApiKeyTrendSeries(selectedApiKey, selectedApiKeyTimeline, trendMetric),
     [selectedApiKey, selectedApiKeyTimeline, trendMetric]
   );
+  const selectedCredentialFilterID = selectedCredential?.id || '';
+  const selectedCredentialTimelineFilters = useMemo(
+    () =>
+      selectedCredentialFilterID
+        ? { ...analyticsFilters, credential_ids: [selectedCredentialFilterID] }
+        : analyticsFilters,
+    [analyticsFilters, selectedCredentialFilterID]
+  );
+  const selectedCredentialTimelineInclude = useMemo(
+    () => ({
+      granularity: resolvedGranularity,
+      credential_timeline: true,
+    }),
+    [resolvedGranularity]
+  );
+  const selectedCredentialTimelineDataScopeKey = useMemo(
+    () =>
+      JSON.stringify({
+        activeTab: activeTabState,
+        presentationRangeScopeKey,
+        filters: selectedCredentialTimelineFilters,
+        granularity: resolvedGranularity,
+        searchQuery: debouncedSearchQuery,
+        selectedCredentialID: selectedCredentialFilterID,
+      }),
+    [
+      activeTabState,
+      presentationRangeScopeKey,
+      debouncedSearchQuery,
+      resolvedGranularity,
+      selectedCredentialFilterID,
+      selectedCredentialTimelineFilters,
+    ]
+  );
+  const selectedCredentialTimelineAnalytics = useMonitoringAnalytics({
+    fromMs:
+      activeTabState === 'credentials' && selectedCredentialFilterID ? bounds?.fromMs : undefined,
+    toMs: activeTabState === 'credentials' && selectedCredentialFilterID ? bounds?.toMs : undefined,
+    nowMs,
+    dataScopeKey: selectedCredentialTimelineDataScopeKey,
+    searchQuery: debouncedSearchQuery,
+    filters: selectedCredentialTimelineFilters,
+    include: selectedCredentialTimelineInclude,
+    throttleMs: 0,
+  });
+  const selectedCredentialTimelineData = selectedCredentialTimelineAnalytics.dataStale
+    ? null
+    : selectedCredentialTimelineAnalytics.data;
+  const credentialTrendLoading = Boolean(
+    activeTabState === 'credentials' &&
+    selectedCredentialFilterID &&
+    (selectedCredentialTimelineAnalytics.loading ||
+      selectedCredentialTimelineAnalytics.dataStale ||
+      (!selectedCredentialTimelineAnalytics.data && !selectedCredentialTimelineAnalytics.error))
+  );
+  const credentialTrendError =
+    activeTabState === 'credentials' && selectedCredentialFilterID
+      ? selectedCredentialTimelineAnalytics.error
+      : '';
+  const selectedCredentialTimeline = useMemo(
+    () =>
+      buildUsageCredentialTimeline(
+        selectedCredentialTimelineData?.credential_timeline ?? [],
+        resolvedGranularity,
+        credentialDisplayContext
+      ),
+    [credentialDisplayContext, resolvedGranularity, selectedCredentialTimelineData]
+  );
   const credentialTrendSeries = useMemo(
     () =>
       buildSelectedCredentialTrendSeries(
         selectedCredential,
-        adapted.credentialTimeline,
+        selectedCredentialTimeline,
         trendMetric
       ),
-    [adapted.credentialTimeline, selectedCredential, trendMetric]
+    [selectedCredential, selectedCredentialTimeline, trendMetric]
   );
   const heatmapDetail = useMemo(
     () => buildUsageHeatmapCellDetail(heatmapDetailSource, selectedHeatmapCell, heatmapMetric),
@@ -650,25 +826,28 @@ export function useUsageAnalytics() {
       adapted.summary,
     ]
   );
-  const setFilters = useCallback((patch: Partial<UsageAnalyticsFiltersState>) => {
-    if (activeTabState === 'codexFast' && patch.authIndex !== undefined) {
-      fastAuthIndexRef.current = patch.authIndex || 'all';
-    }
-    setFiltersState((current) => {
-      const next = {
-        ...current,
-        ...patch,
-        ...(patch.apiKeyHash === undefined
-          ? {}
-          : { apiKeyHash: getSelectableApiKeyHash(patch.apiKeyHash) || 'all' }),
-      };
-      writeUsageAnalyticsUiState({ filters: next });
-      return next;
-    });
-    setSelectedBucketMs(null);
-    setSelectedHeatmapDateKey(USAGE_HEATMAP_ALL_DATES_KEY);
-    setSelectedHeatmapCell(null);
-  }, [activeTabState]);
+  const setFilters = useCallback(
+    (patch: Partial<UsageAnalyticsFiltersState>) => {
+      if (activeTabState === 'codexFast' && patch.authIndex !== undefined) {
+        fastAuthIndexRef.current = patch.authIndex || 'all';
+      }
+      setFiltersState((current) => {
+        const next = {
+          ...current,
+          ...patch,
+          ...(patch.apiKeyHash === undefined
+            ? {}
+            : { apiKeyHash: getSelectableApiKeyHash(patch.apiKeyHash) || 'all' }),
+        };
+        writeUsageAnalyticsUiState({ filters: next });
+        return next;
+      });
+      setSelectedBucketMs(null);
+      setSelectedHeatmapDateKey(USAGE_HEATMAP_ALL_DATES_KEY);
+      setSelectedHeatmapCell(null);
+    },
+    [activeTabState]
+  );
 
   const resetFilters = useCallback(() => {
     if (activeTabState === 'codexFast') fastAuthIndexRef.current = 'all';
@@ -719,16 +898,24 @@ export function useUsageAnalytics() {
     if (selectedApiKeyTimelineAnalytics.enabled) {
       void selectedApiKeyTimelineAnalytics.refresh({ force: true });
     }
+    if (apiKeyTrendAnalytics.enabled) {
+      void apiKeyTrendAnalytics.refresh({ force: true });
+    }
+    if (selectedCredentialTimelineAnalytics.enabled) {
+      void selectedCredentialTimelineAnalytics.refresh({ force: true });
+    }
     if (selectedHeatmapDate) {
       void heatmapDateAnalytics.refresh({ force: true });
     }
   }, [
     analytics,
+    apiKeyTrendAnalytics,
     filterSelectorsAnalytics,
     heatmapDateAnalytics,
     loadApiKeyAliases,
     loadMonitoringMeta,
     selectedApiKeyTimelineAnalytics,
+    selectedCredentialTimelineAnalytics,
     selectedHeatmapDate,
   ]);
 
@@ -747,7 +934,7 @@ export function useUsageAnalytics() {
     isUpdating,
     // isFirstLoad: 从未成功获取过数据的首屏加载——UI 应该展示骨架屏占位。
     isFirstLoad,
-    error: analytics.error,
+    error: analytics.error || monitoringMetaError,
     enabled: analytics.enabled,
     apiKeyDisplayMap,
     unavailableReason: analytics.unavailableReason,
@@ -755,13 +942,18 @@ export function useUsageAnalytics() {
     refresh,
     fastImpact: analyticsData?.fast_impact,
     fastFilters: {
-      ...USAGE_ANALYTICS_DEFAULT_FILTERS, authIndex: fastAuthIndex, provider: 'codex',
-      timeRange: filters.timeRange, customRange: filters.customRange,
-      fastMode: 'tier' as const, fastMetric: 'end_to_end_tps' as const,
+      ...USAGE_ANALYTICS_DEFAULT_FILTERS,
+      authIndex: fastAuthIndex,
+      provider: 'codex',
+      timeRange: filters.timeRange,
+      customRange: filters.customRange,
+      fastMode: 'tier' as const,
+      fastMetric: 'end_to_end_tps' as const,
     },
     performance: analyticsData?.performance,
     performanceAuthFiles: monitoringMeta.authFiles,
     performanceAccountSnapshots: analyticsData?.account_stats,
+    coverage: adapted.coverage,
     summary: adapted.summary,
     summaryDelta,
     timeline: adapted.timeline,
@@ -779,6 +971,7 @@ export function useUsageAnalytics() {
     selectedHeatmapDateKey: activeHeatmapDateKey,
     selectHeatmapDate,
     heatmapDateLoading: heatmapDateRefreshing,
+    heatmapDateLoaded: Boolean(heatmapDateData),
     heatmapDateError: selectedHeatmapDate ? heatmapDateAnalytics.error : '',
     selectedHeatmapCell,
     selectHeatmapCell,
@@ -796,6 +989,9 @@ export function useUsageAnalytics() {
     apiKeyTrendSeries,
     selectedApiKeyTrendSeries,
     credentialTrendSeries,
+    credentialTrendLoading,
+    credentialTrendLoaded: Boolean(selectedCredentialTimelineData),
+    credentialTrendError,
     keyAnomalies,
     credentialAnomalies,
     credentialQuotaRows,

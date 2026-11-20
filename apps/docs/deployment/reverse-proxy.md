@@ -8,21 +8,32 @@
 - CPA / CLI Proxy API：`https://your-domain.com/v1/...`
 - CPA OAuth 回调、Codex API、Amp 路由等 CPA 侧接口
 
-本文适用于 Full Docker / Manager Server 模式。CPA 托管面板由 CPA 自己托管 `/management.html`，通常不需要这套混合分流。
+本文适用于 Full Docker / Manager Server 模式。CPAMP 轻量面板由 CPA 自己托管 `/management.html`，通常不需要这套混合分流。
+
+## 先选场景
+
+| 目标                                  | 推荐方式                                             |
+| ------------------------------------- | ---------------------------------------------------- |
+| 只代理 CPAMP 轻量面板                 | 所有管理页面和接口都转发到 CPA，不使用本页的混合分流 |
+| CPAMP 和 CPA 使用不同域名             | 最简单：CPAMP 转发到 `18317`，CPA 转发到 `8317`      |
+| CPAMP 面板和 CPA API 必须使用同一域名 | 继续使用本页的路径分流配置                           |
+
+大多数用户建议为 CPAMP 和 CPA 使用不同域名或子域名。只有必须共用域名时，才需要理解下面的完整路径表。
 
 ## 路径边界
 
-| 流量 | 推荐后端 | 说明 |
-|---|---|---|
-| `/management.html` | CPAMP `:18317` | Manager Server 托管的管理面板。 |
-| `/usage-service/*` | CPAMP `:18317` | Manager Server 模式探测和配置接口。 |
-| `/v0/management/*` | CPAMP `:18317` | CPAMP 先处理用量、模型价格、别名、仪表盘、请求监控、Codex 账号巡检；其他管理接口再由 CPAMP 代理到 CPA。 |
-| `/v0/resource/plugins/*` | CPAMP `:18317` | CPAMP 面板中的插件页面资源；CPAMP 会按需代理到 CPA。 |
-| `/models` | CPAMP `:18317` | setup 后由 CPAMP 兼容代理到 CPA。 |
-| `/v1/*`、`/v1beta/*`、`/backend-api/codex/*` | CPA `:8317` | 实际模型 API、Codex API 和提供商请求。 |
-| OAuth 回调 | CPA `:8317` | 例如 `/anthropic/callback`、`/codex/callback`。 |
-| 未明确归属的新路径 | CPA `:8317` | 避免阻断 CPA 未来新增接口。 |
-| RESP Pub/Sub / RESP pop | 直连 CPA `:8317` | 不能经过 HTTP 反向代理。 |
+| 流量                                         | 推荐后端         | 说明                                                                                                    |
+| -------------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------- |
+| `/management.html`                           | CPAMP `:18317`   | Manager Server 托管的管理面板。                                                                         |
+| `/favicon.ico`、`/apple-touch-icon.png`      | CPAMP `:18317`   | 旧版 Safari / iOS 的站点图标根路径 fallback；现代 Safari 可直接使用面板内嵌图标。                       |
+| `/usage-service/*`                           | CPAMP `:18317`   | Manager Server 模式探测和配置接口。                                                                     |
+| `/v0/management/*`                           | CPAMP `:18317`   | CPAMP 先处理用量、模型价格、别名、仪表盘、请求监控、Codex 账号巡检；其他管理接口再由 CPAMP 代理到 CPA。 |
+| `/v0/resource/plugins/*`                     | CPAMP `:18317`   | CPAMP 面板中的插件页面资源；CPAMP 会按需代理到 CPA。                                                    |
+| `/models`                                    | CPAMP `:18317`   | setup 后由 CPAMP 兼容代理到 CPA。                                                                       |
+| `/v1/*`、`/v1beta/*`、`/backend-api/codex/*` | CPA `:8317`      | 实际模型 API、Codex API 和提供商请求。                                                                  |
+| OAuth 回调                                   | CPA `:8317`      | 例如 `/anthropic/callback`、`/codex/callback`。                                                         |
+| 未明确归属的新路径                           | CPA `:8317`      | 避免阻断 CPA 未来新增接口。                                                                             |
+| RESP Pub/Sub / RESP pop                      | 直连 CPA `:8317` | 不能经过 HTTP 反向代理。                                                                                |
 
 推荐架构：
 
@@ -30,6 +41,8 @@
 Browser
   -> https://your-domain.com
       -> /management.html       -> CPA Manager Plus :18317
+      -> /favicon.ico            -> CPA Manager Plus :18317
+      -> /apple-touch-icon.png   -> CPA Manager Plus :18317
       -> /usage-service/*       -> CPA Manager Plus :18317
       -> /v0/management/*       -> CPA Manager Plus :18317
       -> /v0/resource/plugins/* -> CPA Manager Plus :18317
@@ -52,7 +65,7 @@ CPA 配置中至少需要开启：
 
 ```yaml
 remote-management:
-  secret-key: "你的 CPA Management Key"
+  secret-key: '你的 CPA Management Key'
   allow-remote: true
 ```
 
@@ -90,7 +103,7 @@ services:
       - ./cliproxyapi/auths:/app/auths
       - ./cliproxyapi/logs:/app/logs
     expose:
-      - "8317"
+      - '8317'
 
   cpa-manager-plus:
     image: seakee/cpa-manager-plus:latest
@@ -99,7 +112,7 @@ services:
     volumes:
       - ./cpa-manager-plus-data:/data
     expose:
-      - "18317"
+      - '18317'
     depends_on:
       - cli-proxy-api
 
@@ -108,7 +121,7 @@ services:
     container_name: cpa-nginx
     restart: unless-stopped
     ports:
-      - "80:80"
+      - '80:80'
       # 如果使用 HTTPS，可以再暴露 443。
       # - "443:443"
     volumes:
@@ -169,8 +182,10 @@ server {
 
     # ===== CPA Manager Plus =====
 
-    location = /management.html { proxy_pass http://cpamp; }
-    location = /health          { proxy_pass http://cpamp; }
+    location = /management.html       { proxy_pass http://cpamp; }
+    location = /favicon.ico            { proxy_pass http://cpamp; }
+    location = /apple-touch-icon.png   { proxy_pass http://cpamp; }
+    location = /health                 { proxy_pass http://cpamp; }
     location = /status          { proxy_pass http://cpamp; }
     location = /setup           { proxy_pass http://cpamp; }
 
@@ -259,12 +274,12 @@ upstream cpamp {
 
 ```yaml
 ports:
-  - "8317:8317"
+  - '8317:8317'
 ```
 
 ```yaml
 ports:
-  - "18317:18317"
+  - '18317:18317'
 ```
 
 ## CPAMP 首次 setup
@@ -312,24 +327,28 @@ Linux Docker 环境则建议把 CPA 和 CPAMP 放到同一个 Docker network，�
 # 1. CPAMP 面板能打开
 curl -I https://your-domain.com/management.html
 
-# 2. CPAMP 健康检查
+# 2. 旧版 Safari / iOS 图标 fallback 应进入 CPAMP
+curl -I https://your-domain.com/favicon.ico
+curl -I https://your-domain.com/apple-touch-icon.png
+
+# 3. CPAMP 健康检查
 curl -i https://your-domain.com/health
 
-# 3. CPA 健康检查
+# 4. CPA 健康检查
 curl -i https://your-domain.com/healthz
 
-# 4. CPAMP 运行时信息
+# 5. CPAMP 运行时信息
 curl -i https://your-domain.com/usage-service/info
 
-# 5. CPA API 请求，应该命中 CPA
+# 6. CPA API 请求，应该命中 CPA
 curl -i https://your-domain.com/v1/models \
   -H "Authorization: Bearer 你的 API 密钥"
 
-# 6. CPAMP 代理的管理接口，应该先命中 CPAMP，再由 CPAMP 访问 CPA
+# 7. CPAMP 代理的管理接口，应该先命中 CPAMP，再由 CPAMP 访问 CPA
 curl -i https://your-domain.com/v0/management/config \
   -H "Authorization: Bearer 你的 CPAMP 管理员密钥"
 
-# 7. 插件资源路径应该命中 CPAMP；不存在的资源可以返回 404，但不应被 Nginx 转到错误后端
+# 8. 插件资源路径应该命中 CPAMP；不存在的资源可以返回 404，但不应被 Nginx 转到错误后端
 curl -i https://your-domain.com/v0/resource/plugins/
 ```
 
@@ -440,6 +459,6 @@ location ^~ /v0/resource/plugins/ { proxy_pass http://cpamp; }
 location ^~ /usage-service/ { proxy_pass http://cpamp; }
 ```
 
-如果实际使用中发现 CPAMP 面板中的配置、日志、认证文件等页面出现 401 / 404，再根据具体路径补充精确规则。
+如果实际使用中发现 CPAMP 面板中的配置、日志或凭证管理出现 401 / 404，再根据具体路径补充精确规则。
 
 不建议一开始就把所有不确定路径都转给 CPAMP，否则可能影响 CPA 原生接口或未来新增路由。

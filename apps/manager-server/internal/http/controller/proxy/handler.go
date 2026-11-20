@@ -53,22 +53,44 @@ func (h *Handler) Farm(w http.ResponseWriter, r *http.Request) {
 	h.App.ProxyService.ProxyFarm(w, r, response.Error)
 }
 
+// V8APIKeysConfig forwards CPA v8 API-key group reads for verified admins only.
+// Callers' own credentials are never passed through to the v8 management API.
+func (h *Handler) V8APIKeysConfig(w http.ResponseWriter, r *http.Request) {
+	ok, err := h.App.AdminAuthService.VerifyHeader(r.Context(), r.Header.Get("Authorization"))
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, errors.New("invalid admin key"))
+		return
+	}
+	h.App.ProxyService.ProxyV8APIKeysConfig(w, r, response.Error, response.MethodNotAllowed)
+}
+
 func (h *Handler) CPAResource(w http.ResponseWriter, r *http.Request) {
-	useSavedManagementKey := true
 	switch r.Method {
-	case http.MethodGet, http.MethodHead:
-	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
-		ok, err := h.App.AdminAuthService.VerifyHeader(r.Context(), r.Header.Get("Authorization"))
-		if err != nil {
-			response.Error(w, http.StatusInternalServerError, err)
-			return
-		}
-		useSavedManagementKey = ok
+	case http.MethodGet,
+		http.MethodHead,
+		http.MethodPost,
+		http.MethodPut,
+		http.MethodPatch,
+		http.MethodDelete:
 	default:
 		response.MethodNotAllowed(w)
 		return
 	}
-	if useSavedManagementKey {
+
+	ok, err := h.App.AdminAuthService.VerifyHeader(r.Context(), r.Header.Get("Authorization"))
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	// Only a verified CPAMP admin key authorizes substituting the saved CPA
+	// management key. Otherwise preserve the caller's own authorization (or
+	// lack of it) so public plugin resources remain reachable without privilege
+	// elevation.
+	if ok {
 		h.App.ProxyService.ProxyPluginResource(w, r, response.Error)
 		return
 	}

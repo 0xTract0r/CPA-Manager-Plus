@@ -7,25 +7,96 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strconv"
 	"strings"
 
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/model"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/usage"
+	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/usageidentity"
 )
 
 const (
-	defaultUsageStreamLimit = 50000
-	usageStreamBufferSize   = 64 * 1024
-	usageExportBatchSize    = 512
+	defaultUsageStreamLimit        = 50000
+	maxCompatibleUsageStreamLimit  = 50000
+	usageStreamBufferSize          = 64 * 1024
+	usageExportBatchSize           = 512
+	compatibleUsageDetailBatchSize = 1024
 )
+
+var compatibleUsageOrderedIDsQuery = `select id
+	from usage_events
+	where id <= ? and (
+		timestamp_ms > ? or (timestamp_ms = ? and id >= ?)
+	)
+	order by
+		coalesce(nullif(endpoint, ''), '-') asc,
+			` + compatibleUsageAnalyticsModelExpression + ` asc,
+		timestamp_ms desc,
+		id desc`
+
+var compatibleUsageDetailQueryPrefix = `select
+		id,
+		coalesce(nullif(endpoint, ''), '-') as group_endpoint,
+			` + compatibleUsageAnalyticsModelExpression + ` as group_model,
+		timestamp,
+		coalesce(source, ''),
+		coalesce(auth_index, ''),
+		coalesce(api_key_hash, ''),
+		coalesce(account_snapshot, ''),
+		coalesce(auth_label_snapshot, ''),
+		coalesce(auth_file_snapshot, ''),
+		coalesce(auth_provider_snapshot, ''),
+			coalesce(auth_account_id_snapshot, ''),
+			coalesce(auth_project_id_snapshot, ''),
+			auth_snapshot_at_ms,
+			latency_ms,
+			ttft_ms,
+			coalesce(nullif(requested_model, ''), model, ''),
+			coalesce(resolved_model, ''),
+		coalesce(reasoning_effort, ''),
+		coalesce(service_tier, ''),
+		coalesce(request_service_tier, ''),
+		coalesce(response_service_tier, ''),
+		coalesce(cache_input_mode, ''),
+		coalesce(executor_type, ''),
+		input_tokens,
+		output_tokens,
+		reasoning_tokens,
+		cached_tokens,
+		cache_tokens,
+		cache_read_tokens,
+		cache_creation_tokens,
+		total_tokens,
+		failed,
+		fail_status_code,
+		coalesce(fail_summary, ''),
+		coalesce(response_metadata_json, ''),
+		coalesce(response_model, ''),
+		coalesce(session_id, ''),
+		coalesce(parent_session_id, ''),
+		coalesce(access_token_sha256, ''),
+		generate,
+		stream,
+		coalesce(telemetry_json, '')
+	from usage_events
+		where id in (`
+
+var compatibleUsageAnalyticsModelExpression = "coalesce(nullif(" + usageidentity.SQLRequestAnalyticsModelExpression("model", "requested_model") + ", ''), '-')"
 
 type usageSnapshot struct {
 	maxID             int64
 	cutoffTimestampMS int64
 	cutoffID          int64
+	eventCount        int64
+	strict            bool
 	empty             bool
+}
+
+type usageStreamQueryer interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
 type compatibleUsageTotals struct {
@@ -40,26 +111,56 @@ type rawMetadataDetail struct {
 	ResponseMetadata json.RawMessage `json:"response_metadata,omitempty"`
 }
 
+type compatibleExportRow struct {
+	id       int64
+	endpoint string
+	model    string
+	detail   rawMetadataDetail
+}
+
+type compatibleStreamState struct {
+	currentEndpoint string
+	currentModel    string
+	endpointOpen    bool
+	modelOpen       bool
+	firstEndpoint   bool
+	firstModel      bool
+	firstDetail     bool
+}
+
 type exportRow struct {
-	id               int64
-	timestampMS      int64
-	event            model.UsageEvent
-	responseMetadata json.RawMessage
+	id                     int64
+	timestampMS            int64
+	event                  model.UsageEvent
+	cacheInputModeExplicit bool
+	responseMetadata       json.RawMessage
 }
 
 type rawMetadataEvent struct {
 	usage.Event
-	ResponseMetadata json.RawMessage `json:"response_metadata,omitempty"`
+	DerivedCacheInputMode string          `json:"derived_cache_input_mode,omitempty"`
+	ResponseMetadata      json.RawMessage `json:"response_metadata,omitempty"`
 }
 
 func (r *repository) WriteCompatibleUsage(ctx context.Context, writer io.Writer, limit int) error {
-	limit = normalizeUsageStreamLimit(limit)
+	limit = normalizeCompatibleUsageStreamLimit(limit)
 	snapshot, err := r.captureUsageSnapshot(ctx, limit)
 	if err != nil {
 		return err
 	}
 	totals, err := r.compatibleUsageTotals(ctx, snapshot)
 	if err != nil {
+		return err
+	}
+
+	var orderedIDs []int64
+	if !snapshot.empty {
+		orderedIDs, err = r.compatibleOrderedIDs(ctx, snapshot, int(totals.totalRequests))
+		if err != nil {
+			return err
+		}
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 
@@ -74,150 +175,207 @@ func (r *repository) WriteCompatibleUsage(ctx context.Context, writer io.Writer,
 		return buffer.Flush()
 	}
 
-	rows, err := r.db.QueryContext(ctx, `select
-		coalesce(nullif(endpoint, ''), '-') as group_endpoint,
-		coalesce(nullif(model, ''), '-') as group_model,
-		timestamp,
-		coalesce(source, ''),
-		coalesce(auth_index, ''),
-		coalesce(api_key_hash, ''),
-		coalesce(account_snapshot, ''),
-		coalesce(auth_label_snapshot, ''),
-		coalesce(auth_file_snapshot, ''),
-		coalesce(auth_provider_snapshot, ''),
-		coalesce(auth_project_id_snapshot, ''),
-		auth_snapshot_at_ms,
-		latency_ms,
-		ttft_ms,
-		coalesce(resolved_model, ''),
-		coalesce(reasoning_effort, ''),
-		coalesce(service_tier, ''),
-		coalesce(executor_type, ''),
-		input_tokens,
-		output_tokens,
-		reasoning_tokens,
-		cached_tokens,
-		cache_tokens,
-		cache_read_tokens,
-		cache_creation_tokens,
-		total_tokens,
-		failed,
-		fail_status_code,
-		coalesce(fail_summary, ''),
-		coalesce(response_metadata_json, '')
-	from usage_events
-	where id <= ? and (
-		timestamp_ms > ? or (timestamp_ms = ? and id >= ?)
-	)
-	order by group_endpoint asc, group_model asc, timestamp_ms desc, id desc`,
+	state := newCompatibleStreamState()
+	for start := 0; start < len(orderedIDs); start += compatibleUsageDetailBatchSize {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		end := min(start+compatibleUsageDetailBatchSize, len(orderedIDs))
+		batchIDs := orderedIDs[start:end]
+		rowsByID, err := r.compatibleRowsByIDs(ctx, batchIDs)
+		if err != nil {
+			return err
+		}
+
+		// Do not write to the HTTP writer while sql.Rows is still active.
+		// Network backpressure across an open SQLite reader can pin the WAL.
+		if err := writeCompatibleRows(ctx, buffer, batchIDs, rowsByID, &state); err != nil {
+			return err
+		}
+	}
+	if err := finishCompatibleStream(buffer, &state); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return buffer.Flush()
+}
+
+func (r *repository) compatibleOrderedIDs(ctx context.Context, snapshot usageSnapshot, expectedCount int) ([]int64, error) {
+	rows, err := r.db.QueryContext(
+		ctx,
+		compatibleUsageOrderedIDsQuery,
 		snapshot.maxID,
 		snapshot.cutoffTimestampMS,
 		snapshot.cutoffTimestampMS,
 		snapshot.cutoffID,
 	)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer rows.Close()
 
-	var currentEndpoint string
-	var currentModel string
-	endpointOpen := false
-	modelOpen := false
-	firstEndpoint := true
-	firstModel := true
-	firstDetail := true
-
+	orderedIDs := make([]int64, 0, expectedCount)
 	for rows.Next() {
-		endpoint, modelName, detail, err := scanCompatibleDetail(rows)
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		orderedIDs = append(orderedIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	return orderedIDs, nil
+}
+
+func (r *repository) compatibleRowsByIDs(ctx context.Context, ids []int64) (map[int64]compatibleExportRow, error) {
+	if len(ids) == 0 {
+		return map[int64]compatibleExportRow{}, nil
+	}
+
+	args := make([]any, len(ids))
+	for index, id := range ids {
+		args[index] = id
+	}
+	rows, err := r.db.QueryContext(ctx, compatibleUsageDetailQuery(len(ids)), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	rowsByID := make(map[int64]compatibleExportRow, len(ids))
+	for rows.Next() {
+		row, err := scanCompatibleDetail(rows)
 		if err != nil {
+			return nil, err
+		}
+		rowsByID[row.id] = row
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+
+	for _, id := range ids {
+		if _, ok := rowsByID[id]; !ok {
+			return nil, fmt.Errorf("compatible usage snapshot row disappeared: id=%d", id)
+		}
+	}
+	return rowsByID, nil
+}
+
+func compatibleUsageDetailQuery(count int) string {
+	return compatibleUsageDetailQueryPrefix + strings.TrimSuffix(strings.Repeat("?,", count), ",") + ")"
+}
+
+func newCompatibleStreamState() compatibleStreamState {
+	return compatibleStreamState{
+		firstEndpoint: true,
+		firstModel:    true,
+		firstDetail:   true,
+	}
+}
+
+func writeCompatibleRows(ctx context.Context, buffer *bufio.Writer, orderedIDs []int64, rowsByID map[int64]compatibleExportRow, state *compatibleStreamState) error {
+	for _, id := range orderedIDs {
+		if err := ctx.Err(); err != nil {
 			return err
 		}
+		row, ok := rowsByID[id]
+		if !ok {
+			return fmt.Errorf("compatible usage snapshot row disappeared: id=%d", id)
+		}
 
-		if !endpointOpen || endpoint != currentEndpoint {
-			if modelOpen {
+		if !state.endpointOpen || row.endpoint != state.currentEndpoint {
+			if state.modelOpen {
 				if _, err := io.WriteString(buffer, "]}"); err != nil {
 					return err
 				}
-				modelOpen = false
+				state.modelOpen = false
 			}
-			if endpointOpen {
+			if state.endpointOpen {
 				if _, err := io.WriteString(buffer, "}}"); err != nil {
 					return err
 				}
 			}
-			if !firstEndpoint {
+			if !state.firstEndpoint {
 				if err := buffer.WriteByte(','); err != nil {
 					return err
 				}
 			}
-			if err := writeJSONString(buffer, endpoint); err != nil {
+			if err := writeJSONString(buffer, row.endpoint); err != nil {
 				return err
 			}
 			if _, err := io.WriteString(buffer, `:{"models":{`); err != nil {
 				return err
 			}
-			currentEndpoint = endpoint
-			currentModel = ""
-			endpointOpen = true
-			firstEndpoint = false
-			firstModel = true
+			state.currentEndpoint = row.endpoint
+			state.currentModel = ""
+			state.endpointOpen = true
+			state.firstEndpoint = false
+			state.firstModel = true
 		}
 
-		if !modelOpen || modelName != currentModel {
-			if modelOpen {
+		if !state.modelOpen || row.model != state.currentModel {
+			if state.modelOpen {
 				if _, err := io.WriteString(buffer, "]}"); err != nil {
 					return err
 				}
 			}
-			if !firstModel {
+			if !state.firstModel {
 				if err := buffer.WriteByte(','); err != nil {
 					return err
 				}
 			}
-			if err := writeJSONString(buffer, modelName); err != nil {
+			if err := writeJSONString(buffer, row.model); err != nil {
 				return err
 			}
 			if _, err := io.WriteString(buffer, `:{"details":[`); err != nil {
 				return err
 			}
-			currentModel = modelName
-			modelOpen = true
-			firstModel = false
-			firstDetail = true
+			state.currentModel = row.model
+			state.modelOpen = true
+			state.firstModel = false
+			state.firstDetail = true
 		}
 
-		if !firstDetail {
+		if !state.firstDetail {
 			if err := buffer.WriteByte(','); err != nil {
 				return err
 			}
 		}
-		encoded, err := json.Marshal(detail)
+		encoded, err := json.Marshal(row.detail)
 		if err != nil {
 			return err
 		}
 		if _, err := buffer.Write(encoded); err != nil {
 			return err
 		}
-		firstDetail = false
+		state.firstDetail = false
 	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	if modelOpen {
+	return nil
+}
+
+func finishCompatibleStream(buffer *bufio.Writer, state *compatibleStreamState) error {
+	if state.modelOpen {
 		if _, err := io.WriteString(buffer, "]}"); err != nil {
 			return err
 		}
 	}
-	if endpointOpen {
+	if state.endpointOpen {
 		if _, err := io.WriteString(buffer, "}}"); err != nil {
 			return err
 		}
 	}
-	if _, err := io.WriteString(buffer, "}}\n"); err != nil {
-		return err
-	}
-	return buffer.Flush()
+	_, err := io.WriteString(buffer, "}}\n")
+	return err
 }
 
 func (r *repository) WriteExportJSONL(ctx context.Context, writer io.Writer, limit int) error {
@@ -226,15 +384,63 @@ func (r *repository) WriteExportJSONL(ctx context.Context, writer io.Writer, lim
 	if err != nil {
 		return err
 	}
+	return r.writeExportJSONL(ctx, writer, snapshot)
+}
+
+// WriteFullExportJSONL writes every raw usage event visible at a stable
+// snapshot boundary. It intentionally has no UI/query limit: the caller is
+// the data-lifecycle export path, not the bounded analytics endpoint.
+func (r *repository) WriteFullExportJSONL(ctx context.Context, writer io.Writer) error {
+	// Pin one deferred read transaction for the full export. SQLite WAL keeps
+	// writers non-blocking while this snapshot is open, and every batch closes
+	// its rows before writing to the network. That gives the export a stable
+	// visibility boundary without retaining a live sql.Rows during backpressure.
+	conn, err := r.db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "begin"); err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = conn.ExecContext(context.Background(), "rollback")
+		}
+	}()
+	snapshot, err := r.captureFullUsageSnapshotOn(ctx, conn)
+	if err != nil {
+		return err
+	}
+	if err := r.writeExportJSONLOn(ctx, writer, snapshot, conn); err != nil {
+		return err
+	}
+	if _, err := conn.ExecContext(ctx, "commit"); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
+func (r *repository) writeExportJSONL(ctx context.Context, writer io.Writer, snapshot usageSnapshot) error {
+	return r.writeExportJSONLOn(ctx, writer, snapshot, r.db)
+}
+
+func (r *repository) writeExportJSONLOn(ctx context.Context, writer io.Writer, snapshot usageSnapshot, queryer usageStreamQueryer) error {
 	if snapshot.empty {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		return nil
 	}
 
 	buffer := bufio.NewWriterSize(writer, usageStreamBufferSize)
 	cursorTimestampMS := snapshot.cutoffTimestampMS
 	cursorID := snapshot.cutoffID - 1
+	var exportedCount int64
 	for {
-		batch, err := r.exportBatch(ctx, snapshot, cursorTimestampMS, cursorID)
+		batch, err := r.exportBatchOn(ctx, snapshot, cursorTimestampMS, cursorID, queryer)
 		if err != nil {
 			return err
 		}
@@ -242,11 +448,21 @@ func (r *repository) WriteExportJSONL(ctx context.Context, writer io.Writer, lim
 			break
 		}
 		for _, row := range batch {
+			exportedEvent := row.event
+			derivedCacheInputMode := ""
+			if !row.cacheInputModeExplicit {
+				derivedCacheInputMode = exportedEvent.CacheInputMode
+				exportedEvent.CacheInputMode = ""
+			}
 			encoded, err := json.Marshal(rawMetadataEvent{
-				Event:            row.event,
-				ResponseMetadata: row.responseMetadata,
+				Event:                 exportedEvent,
+				DerivedCacheInputMode: derivedCacheInputMode,
+				ResponseMetadata:      row.responseMetadata,
 			})
 			if err != nil {
+				return err
+			}
+			if err := ctx.Err(); err != nil {
 				return err
 			}
 			if _, err := buffer.Write(encoded); err != nil {
@@ -255,6 +471,7 @@ func (r *repository) WriteExportJSONL(ctx context.Context, writer io.Writer, lim
 			if err := buffer.WriteByte('\n'); err != nil {
 				return err
 			}
+			exportedCount++
 		}
 		last := batch[len(batch)-1]
 		cursorTimestampMS = last.timestampMS
@@ -263,7 +480,16 @@ func (r *repository) WriteExportJSONL(ctx context.Context, writer io.Writer, lim
 			break
 		}
 	}
-	return buffer.Flush()
+	if snapshot.strict && exportedCount != snapshot.eventCount {
+		return fmt.Errorf("usage export snapshot changed during streaming: exported %d of %d events", exportedCount, snapshot.eventCount)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := buffer.Flush(); err != nil {
+		return err
+	}
+	return ctx.Err()
 }
 
 func (r *repository) ExportJSONL(ctx context.Context) ([]byte, error) {
@@ -304,6 +530,43 @@ func (r *repository) captureUsageSnapshot(ctx context.Context, limit int) (usage
 	return snapshot, nil
 }
 
+func (r *repository) captureFullUsageSnapshot(ctx context.Context) (usageSnapshot, error) {
+	return r.captureFullUsageSnapshotOn(ctx, r.db)
+}
+
+func (r *repository) captureFullUsageSnapshotOn(ctx context.Context, queryer usageStreamQueryer) (usageSnapshot, error) {
+	var snapshot usageSnapshot
+	snapshot.strict = true
+	// Keep the boundary and count in one SQLite statement.  Separate queries
+	// could observe different commits when a writer deletes or inserts an event
+	// between them, which would turn a supposedly stable export into a moving
+	// target.  New rows with an id above max_id are intentionally outside this
+	// snapshot; a concurrent delete is detected by the strict count check.
+	if err := queryer.QueryRowContext(ctx, `select
+		coalesce(max(id), 0),
+		count(*),
+		coalesce((select timestamp_ms from usage_events order by timestamp_ms asc, id asc limit 1), 0),
+		coalesce((select id from usage_events order by timestamp_ms asc, id asc limit 1), 0)
+		from usage_events`).Scan(
+		&snapshot.maxID,
+		&snapshot.eventCount,
+		&snapshot.cutoffTimestampMS,
+		&snapshot.cutoffID,
+	); err != nil {
+		return usageSnapshot{}, err
+	}
+	if snapshot.maxID == 0 {
+		snapshot.empty = true
+		return snapshot, nil
+	}
+	if snapshot.cutoffID == 0 {
+		// max(id) is non-zero, so this can only mean the snapshot changed while
+		// SQLite evaluated the statement or the database contains corrupt rows.
+		return usageSnapshot{}, errors.New("usage export snapshot has no cutoff row")
+	}
+	return snapshot, nil
+}
+
 func (r *repository) compatibleUsageTotals(ctx context.Context, snapshot usageSnapshot) (compatibleUsageTotals, error) {
 	if snapshot.empty {
 		return compatibleUsageTotals{}, nil
@@ -329,16 +592,22 @@ func (r *repository) compatibleUsageTotals(ctx context.Context, snapshot usageSn
 }
 
 func (r *repository) exportBatch(ctx context.Context, snapshot usageSnapshot, cursorTimestampMS, cursorID int64) ([]exportRow, error) {
-	rows, err := r.db.QueryContext(ctx, `select
+	return r.exportBatchOn(ctx, snapshot, cursorTimestampMS, cursorID, r.db)
+}
+
+func (r *repository) exportBatchOn(ctx context.Context, snapshot usageSnapshot, cursorTimestampMS, cursorID int64, queryer usageStreamQueryer) ([]exportRow, error) {
+	rows, err := queryer.QueryContext(ctx, `select
 		id,
 		request_id, event_hash, timestamp_ms, timestamp, provider, executor_type, model, endpoint, method, path,
 		auth_type, auth_index, source, source_hash, api_key_hash,
-		account_snapshot, auth_label_snapshot, auth_file_snapshot, auth_provider_snapshot, auth_project_id_snapshot, auth_snapshot_at_ms,
-		requested_model, resolved_model, reasoning_effort, service_tier,
+		account_snapshot, auth_label_snapshot, auth_file_snapshot, auth_provider_snapshot, auth_account_id_snapshot, auth_project_id_snapshot, auth_snapshot_at_ms,
+		requested_model, resolved_model, reasoning_effort, service_tier, coalesce(cache_input_mode, ''), coalesce(raw_json, ''),
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, cache_read_tokens, cache_creation_tokens, total_tokens,
 		latency_ms, ttft_ms, failed, fail_status_code, fail_summary,
 		coalesce(response_metadata_json, ''), header_quota_recover_at_ms, header_quota_used_percent, coalesce(header_quota_plan_type, ''), coalesce(header_error_kind, ''), coalesce(header_error_code, ''), coalesce(header_trace_id, ''),
-		created_at_ms
+		coalesce(response_model, ''), coalesce(session_id, ''), coalesce(parent_session_id, ''), coalesce(access_token_sha256, ''),
+		generate, stream,
+		created_at_ms, coalesce(telemetry_json, '')
 	from usage_events
 	where id <= ?
 		and (timestamp_ms > ? or (timestamp_ms = ? and id >= ?))
@@ -373,22 +642,24 @@ func (r *repository) exportBatch(ctx context.Context, snapshot usageSnapshot, cu
 	return batch, nil
 }
 
-func scanCompatibleDetail(rows *sql.Rows) (string, string, rawMetadataDetail, error) {
-	var endpoint string
-	var modelName string
+func scanCompatibleDetail(rows *sql.Rows) (compatibleExportRow, error) {
+	var row compatibleExportRow
 	var detail usage.Detail
 	var authSnapshotAt sql.NullInt64
 	var latency sql.NullInt64
 	var ttft sql.NullInt64
 	var failStatusCode sql.NullInt64
-	var responseMetadataJSON string
+	var responseMetadataJSON, telemetryJSON string
+	var responseModel, sessionID, parentSessionID, accessTokenSHA256 sql.NullString
+	var generate, stream sql.NullInt64
 	var failed int
 	var cachedTokens int64
 	var cacheTokens int64
 
 	err := rows.Scan(
-		&endpoint,
-		&modelName,
+		&row.id,
+		&row.endpoint,
+		&row.model,
 		&detail.Timestamp,
 		&detail.Source,
 		&detail.AuthIndex,
@@ -397,13 +668,18 @@ func scanCompatibleDetail(rows *sql.Rows) (string, string, rawMetadataDetail, er
 		&detail.AuthLabelSnapshot,
 		&detail.AuthFileSnapshot,
 		&detail.AuthProviderSnapshot,
+		&detail.AuthAccountIDSnapshot,
 		&detail.AuthProjectIDSnapshot,
 		&authSnapshotAt,
 		&latency,
 		&ttft,
+		&detail.RequestedModel,
 		&detail.ResolvedModel,
 		&detail.ReasoningEffort,
 		&detail.ServiceTier,
+		&detail.RequestServiceTier,
+		&detail.ResponseServiceTier,
+		&detail.CacheInputMode,
 		&detail.ExecutorType,
 		&detail.Tokens.InputTokens,
 		&detail.Tokens.OutputTokens,
@@ -417,9 +693,29 @@ func scanCompatibleDetail(rows *sql.Rows) (string, string, rawMetadataDetail, er
 		&failStatusCode,
 		&detail.FailSummary,
 		&responseMetadataJSON,
+		&responseModel,
+		&sessionID,
+		&parentSessionID,
+		&accessTokenSHA256,
+		&generate,
+		&stream,
+		&telemetryJSON,
 	)
 	if err != nil {
-		return "", "", rawMetadataDetail{}, err
+		return compatibleExportRow{}, err
+	}
+	detail.Telemetry = usage.TelemetryFromJSON(telemetryJSON)
+	detail.ResponseModel = responseModel.String
+	detail.SessionID = sessionID.String
+	detail.ParentSessionID = parentSessionID.String
+	detail.AccessTokenSHA256 = accessTokenSHA256.String
+	if generate.Valid {
+		v := generate.Int64 != 0
+		detail.Generate = &v
+	}
+	if stream.Valid {
+		v := stream.Int64 != 0
+		detail.Stream = &v
 	}
 	if authSnapshotAt.Valid {
 		detail.AuthSnapshotAtMS = authSnapshotAt.Int64
@@ -444,17 +740,20 @@ func scanCompatibleDetail(rows *sql.Rows) (string, string, rawMetadataDetail, er
 	)
 	detail.Tokens.CachedTokens = compatibleCachedTokens
 	detail.Tokens.CacheTokens = compatibleCachedTokens
-	return endpoint, modelName, rawMetadataDetail{
+	row.detail = rawMetadataDetail{
 		Detail:           detail,
 		ResponseMetadata: validatedMetadataJSON(responseMetadataJSON),
-	}, nil
+	}
+	return row, nil
 }
 
 func scanExportRow(rows *sql.Rows) (exportRow, error) {
 	var row exportRow
 	event := &row.event
-	var requestID, provider, executorType, endpoint, method, path, authType, authIndex, source, sourceHash, apiKeyHash, accountSnapshot, authLabelSnapshot, authFileSnapshot, authProviderSnapshot, authProjectIDSnapshot, requestedModel, resolvedModel, reasoningEffort, serviceTier, failSummary sql.NullString
-	var responseMetadataJSON, quotaPlanType, errorKind, errorCode, traceID string
+	var requestID, provider, executorType, endpoint, method, path, authType, authIndex, source, sourceHash, apiKeyHash, accountSnapshot, authLabelSnapshot, authFileSnapshot, authProviderSnapshot, authAccountIDSnapshot, authProjectIDSnapshot, requestedModel, resolvedModel, reasoningEffort, serviceTier, cacheInputMode, failSummary sql.NullString
+	var rawJSON, responseMetadataJSON, quotaPlanType, errorKind, errorCode, traceID, telemetryJSON string
+	var responseModel, sessionID, parentSessionID, accessTokenSHA256 sql.NullString
+	var generate, stream sql.NullInt64
 	var authSnapshotAt sql.NullInt64
 	var latency, ttft sql.NullInt64
 	var failStatusCode sql.NullInt64
@@ -482,12 +781,15 @@ func scanExportRow(rows *sql.Rows) (exportRow, error) {
 		&authLabelSnapshot,
 		&authFileSnapshot,
 		&authProviderSnapshot,
+		&authAccountIDSnapshot,
 		&authProjectIDSnapshot,
 		&authSnapshotAt,
 		&requestedModel,
 		&resolvedModel,
 		&reasoningEffort,
 		&serviceTier,
+		&cacheInputMode,
+		&rawJSON,
 		&event.InputTokens,
 		&event.OutputTokens,
 		&event.ReasoningTokens,
@@ -508,11 +810,20 @@ func scanExportRow(rows *sql.Rows) (exportRow, error) {
 		&errorKind,
 		&errorCode,
 		&traceID,
+		&responseModel,
+		&sessionID,
+		&parentSessionID,
+		&accessTokenSHA256,
+		&generate,
+		&stream,
 		&event.CreatedAtMS,
+		&telemetryJSON,
 	); err != nil {
 		return exportRow{}, err
 	}
+	event.Telemetry = usage.TelemetryFromJSON(telemetryJSON)
 	event.RequestID = requestID.String
+	event.AnalyticsModel = usageidentity.AnalyticsModelForRequest(event.Model, requestedModel.String)
 	event.Provider = provider.String
 	event.ExecutorType = executorType.String
 	event.Endpoint = endpoint.String
@@ -527,11 +838,27 @@ func scanExportRow(rows *sql.Rows) (exportRow, error) {
 	event.AuthLabelSnapshot = authLabelSnapshot.String
 	event.AuthFileSnapshot = authFileSnapshot.String
 	event.AuthProviderSnapshot = authProviderSnapshot.String
+	event.AuthAccountIDSnapshot = authAccountIDSnapshot.String
 	event.AuthProjectIDSnapshot = authProjectIDSnapshot.String
 	event.RequestedModel = requestedModel.String
 	event.ResolvedModel = resolvedModel.String
+	event.ResponseModel = responseModel.String
+	event.SessionID = sessionID.String
+	event.ParentSessionID = parentSessionID.String
+	event.AccessTokenSHA256 = accessTokenSHA256.String
+	if generate.Valid {
+		v := generate.Int64 != 0
+		event.Generate = &v
+	}
+	if stream.Valid {
+		v := stream.Int64 != 0
+		event.Stream = &v
+	}
 	event.ReasoningEffort = reasoningEffort.String
 	event.ServiceTier = serviceTier.String
+	event.CacheInputMode = cacheInputMode.String
+	hints := usage.RawCacheAccountingHintsFromJSON(rawJSON)
+	row.cacheInputModeExplicit = hints.ExplicitMode != "" && hints.ExplicitMode == event.CacheInputMode
 	event.FailSummary = failSummary.String
 	event.HeaderQuotaPlanType = quotaPlanType
 	event.HeaderErrorKind = errorKind
@@ -579,6 +906,17 @@ func validatedMetadataJSON(raw string) json.RawMessage {
 func normalizeUsageStreamLimit(limit int) int {
 	if limit <= 0 {
 		return defaultUsageStreamLimit
+	}
+	return limit
+}
+
+func normalizeCompatibleUsageStreamLimit(limit int) int {
+	limit = normalizeUsageStreamLimit(limit)
+	// Compatible usage retains one ordered int64 ID per exported row so the
+	// SQLite reader can close before HTTP output starts. Keep that snapshot
+	// bounded without changing the independently streamed JSONL export limit.
+	if limit > maxCompatibleUsageStreamLimit {
+		return maxCompatibleUsageStreamLimit
 	}
 	return limit
 }

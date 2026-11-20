@@ -46,7 +46,7 @@ func newSyncTestService(t *testing.T, db *store.Store, upstreamURL string) *Serv
 			t.Fatalf("save manager config: %v", err)
 		}
 	}
-	return New(db, managerConfigService)
+	return New(db, WithManagerConfig(managerConfigService))
 }
 
 func TestSyncFromCoreReturnsErrorWhenConnectionNotConfigured(t *testing.T) {

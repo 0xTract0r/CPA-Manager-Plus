@@ -70,7 +70,7 @@ vi.mock('@/features/authFiles/hooks/useAuthFilesData', () => ({
     loadFiles: vi.fn(async () => undefined),
     handleUploadClick: vi.fn(),
     handleFileChange: vi.fn(),
-    savePastedAuthJson: mocks.savePastedAuthJson,
+    savePastedAuthJsonSingle: mocks.savePastedAuthJson,
     handleDelete: vi.fn(),
     handleDeleteAll: vi.fn(),
     handleDownload: vi.fn(),

@@ -1,9 +1,22 @@
-import { buildMonitoringAccountKey, formatApiKeyHashLabel } from './base';
-import { sanitizeApiKeyDisplayText, shouldPreferApiKeyAlias } from './apiKeys';
+import { formatApiKeyHashLabel } from './base';
+import {
+  calculateCacheHitRateFromTotals,
+  getCacheHitTotals,
+  isOpaqueUsageSourceId,
+} from '@/utils/usage';
+import {
+  sanitizeApiKeyDisplayText,
+  shouldPreferApiKeyAlias,
+  type ApiKeyDisplayInfo,
+} from './apiKeys';
 import {
   buildMonitoringAccountFilterValue,
+  buildAuthIndexAccountConstraintResolver,
   parseMonitoringAccountFilterValue,
+  readMonitoringAccountFocusId,
+  isMonitoringUnsupportedFocusFilterValue,
 } from './analyticsAdapters';
+import { buildMonitoringAccountRowId, normalizeMonitoringProvider } from './accountIdentity';
 import { getRangeBounds } from './range';
 import type {
   MonitoringAccountRow,
@@ -27,8 +40,9 @@ const isEffectiveLabel = (value: string) => {
 const resolveAccountDisplayName = (account: string, channels: Iterable<string>) => {
   if (readEmailLike(account)) return account;
   const channelLabels = Array.from(new Set(Array.from(channels).filter(isEffectiveLabel)));
-  const maskedSource = account.startsWith('m:') || account.startsWith('k:');
-  if (maskedSource && channelLabels.length === 1) return channelLabels[0];
+  if (isOpaqueUsageSourceId(account) && channelLabels.length === 1) {
+    return channelLabels[0];
+  }
   return account || channelLabels[0] || '-';
 };
 
@@ -52,7 +66,9 @@ export const buildRangeFilteredRows = (
   if (!bounds) return [];
 
   return rows.filter((row) => {
-    if (row.timestampMs < bounds.startMs || row.timestampMs > bounds.endMs) {
+    const outsideEnd =
+      timeRange === 'yesterday' ? row.timestampMs >= bounds.endMs : row.timestampMs > bounds.endMs;
+    if (row.timestampMs < bounds.startMs || outsideEnd) {
       return false;
     }
 
@@ -90,15 +106,48 @@ const hasCacheActivity = (
 
 export const buildScopeFilteredRows = (
   rows: MonitoringEventRow[],
-  scopeFilters?: MonitoringScopeFilters
-) => {
+  scopeFilters?: MonitoringScopeFilters,
+  accountFocus?: { acceptedFocusId?: string | null }
+): MonitoringEventRow[] => {
   if (!scopeFilters) return rows;
+
+  // 服务端 focus token：已被本轮服务端确认则账号维度已由服务端精确过滤，本地不再按别名猜；
+  // 未确认（旧服务/加载中/过期）则账号维度为空集，绝不回退成全量。
+  if (isMonitoringUnsupportedFocusFilterValue(scopeFilters.account)) return [];
+  const focusId = readMonitoringAccountFocusId(scopeFilters.account);
+  if (focusId) {
+    const accepted = String(accountFocus?.acceptedFocusId ?? '').trim() === focusId;
+    if (!accepted) return [];
+    return buildScopeFilteredRows(rows, { ...scopeFilters, account: 'all' });
+  }
+  // 本地分组成员：选择器恰好由本批事件的某个列表分组产出时，按该分组真实成员过滤
+  // （与 buildAccountRows 同一归属规则），不把全局 accounts/providers 交集硬套到多个索引。
+  // 不匹配任何分组（旧链接/服务端已过滤子集）时保持原有口径。
+  if (isActiveScopeFilterValue(scopeFilters.account)) {
+    const selector = scopeFilters.account!.trim();
+    const memberGroups = resolveLocalAccountGroupsBySelector(rows).get(selector);
+    if (memberGroups) {
+      const groupIds = resolveLocalAccountGroupIds(rows);
+      const absorbed = resolveAbsorbedUnknownGroupIds(rows, groupIds, memberGroups);
+      const members = rows.filter((row) => {
+        const groupId = groupIds.get(row) ?? '';
+        return memberGroups.has(groupId) || absorbed(row, groupId);
+      });
+      return buildScopeFilteredRows(members, { ...scopeFilters, account: 'all' });
+    }
+  }
 
   const accountCriteria = parseMonitoringAccountFilterValue(scopeFilters.account);
   const account = normalizeScopeValue(accountCriteria.accounts[0] || scopeFilters.account);
   const accountAuthIndices = new Set(accountCriteria.authIndices.map(normalizeScopeValue));
   const accountApiKeyHashes = new Set(accountCriteria.apiKeyHashes.map(normalizeScopeValue));
   const hasAccountSourceHashFilter = accountCriteria.sourceHashes.length > 0;
+  const accountProvider = normalizeScopeValue(accountCriteria.provider);
+  // 共享凭据索引的 auth-account 选择器：索引 + 精确账号同时成立（与服务端 auth_indices+accounts 一致）
+  const exactAccountForAuth =
+    accountAuthIndices.size > 0 && accountCriteria.accounts.length > 0
+      ? normalizeScopeValue(accountCriteria.accounts[0])
+      : '';
   const provider = normalizeScopeValue(scopeFilters.provider);
   const authFile = normalizeScopeValue(scopeFilters.authFile);
   const projectId = normalizeScopeValue(scopeFilters.projectId);
@@ -116,14 +165,30 @@ export const buildScopeFilteredRows = (
 
   return rows.filter((row) => {
     if (isActiveScopeFilterValue(scopeFilters.account)) {
+      // 精确凭据索引覆盖缺少 provider 快照的历史事件；其余选择器保持 provider 隔离。
       if (
-        accountCriteria.provider &&
+        accountProvider &&
         accountAuthIndices.size === 0 &&
-        normalizeScopeValue(row.provider) !== accountCriteria.provider
-      )
+        normalizeScopeValue(row.providerIdentity ?? row.provider) !== accountProvider
+      ) {
         return false;
+      }
       if (accountAuthIndices.size > 0) {
         if (!accountAuthIndices.has(normalizeScopeValue(row.authIndex))) return false;
+        if (
+          exactAccountForAuth &&
+          ![row.accountIdentity, row.account].map(normalizeScopeValue).includes(exactAccountForAuth)
+        ) {
+          return false;
+        }
+        // 同索引同名多已知 provider：与网络 filters.providers 同口径
+        if (
+          exactAccountForAuth &&
+          accountProvider &&
+          normalizeScopeValue(row.providerIdentity ?? row.provider) !== accountProvider
+        ) {
+          return false;
+        }
       } else if (accountApiKeyHashes.size > 0) {
         if (!accountApiKeyHashes.has(normalizeScopeValue(row.apiKeyHash))) return false;
       } else if (hasAccountSourceHashFilter) {
@@ -131,11 +196,15 @@ export const buildScopeFilteredRows = (
         // the backend has already applied the exact source_hash filter.
       } else {
         const rowAccountValues = [
+          row.accountIdentity,
+          row.authLabelIdentity,
+          row.sourceIdentity,
           row.account,
           row.accountMasked,
           row.authLabel,
           row.source,
           row.sourceMasked,
+          row.authIndexIdentity,
           row.authIndex,
         ].map(normalizeScopeValue);
         if (!rowAccountValues.includes(account)) return false;
@@ -232,6 +301,21 @@ export const buildMonitoringSummary = (rows: MonitoringEventRow[]): MonitoringSu
   const cachedTokens = rows.reduce((sum, row) => sum + row.cachedTokens, 0);
   const cacheReadTokens = rows.reduce((sum, row) => sum + (row.cacheReadTokens ?? 0), 0);
   const cacheCreationTokens = rows.reduce((sum, row) => sum + (row.cacheCreationTokens ?? 0), 0);
+  const cacheHitTotals = rows.reduce(
+    (totals, row) => {
+      const rowTotals = getCacheHitTotals({
+        modelName: row.resolvedModel || row.model,
+        inputTokens: row.inputTokens,
+        cachedTokens: row.cachedTokens,
+        cacheReadTokens: row.cacheReadTokens,
+        cacheCreationTokens: row.cacheCreationTokens,
+      });
+      totals.hitTokens += rowTotals.hitTokens;
+      totals.inputTokens += rowTotals.inputTokens;
+      return totals;
+    },
+    { hitTokens: 0, inputTokens: 0 }
+  );
   const totalTokens = rows.reduce((sum, row) => sum + row.totalTokens, 0);
   const totalCost = rows.reduce((sum, row) => sum + row.totalCost, 0);
 
@@ -273,6 +357,10 @@ export const buildMonitoringSummary = (rows: MonitoringEventRow[]): MonitoringSu
     cachedTokens,
     cacheReadTokens,
     cacheCreationTokens,
+    cacheHitRate: calculateCacheHitRateFromTotals(
+      cacheHitTotals.hitTokens,
+      cacheHitTotals.inputTokens
+    ),
     totalTokens,
     totalCost,
     averageLatencyMs: latencyCount > 0 ? latencySum / latencyCount : null,
@@ -289,20 +377,134 @@ export const buildMonitoringSummary = (rows: MonitoringEventRow[]): MonitoringSu
   };
 };
 
+// 与 Manager 的 credentialSnapshotIndex 一致：索引需要至少一条完整快照，且所有已知字段相容。
+// 掩码只代表未记录原值，不按邮箱前缀、域名或其他显示文字匹配账号。
+function accountSnapshotsByCredential(rows: MonitoringEventRow[]) {
+  type Evidence = { provider: string; account: string; complete?: MonitoringEventRow };
+  const evidence = new Map<string, Evidence | null>();
+  for (const row of rows) {
+    const index = (row.authIndexIdentity ?? row.authIndex).trim();
+    if (!index || index === '-') continue;
+    const previous = evidence.get(index);
+    if (previous === null) continue;
+    const sourceProvider = normalizeMonitoringProvider(
+      row.authProviderSnapshot ?? row.providerIdentity
+    );
+    const provider = sourceProvider === 'unknown' || sourceProvider === '-' ? '' : sourceProvider;
+    const sourceAccount = (row.accountIdentity ?? '').trim();
+    const account = sourceAccount === '-' || sourceAccount.includes('*') ? '' : sourceAccount;
+    if (
+      (provider && previous?.provider && previous.provider !== provider) ||
+      (account && previous?.account && previous.account !== account)
+    ) {
+      evidence.set(index, null);
+      continue;
+    }
+    evidence.set(index, {
+      provider: provider || previous?.provider || '',
+      account: account || previous?.account || '',
+      complete: previous?.complete ?? (provider && account ? row : undefined),
+    });
+  }
+  return evidence;
+}
+
+/** 列表分组与详情过滤共用的归属规则：事件 -> 本地分组 ID。 */
+const resolveLocalAccountGroupKey = (
+  row: MonitoringEventRow,
+  snapshots: ReturnType<typeof accountSnapshotsByCredential>
+) => {
+  const index = (row.authIndexIdentity ?? row.authIndex).trim();
+  const owner = snapshots.get(index)?.complete ?? row;
+  const provider = normalizeMonitoringProvider(owner.providerIdentity ?? owner.provider);
+  return {
+    owner,
+    provider,
+    accountKey: buildMonitoringAccountRowId({
+      provider,
+      account: owner.accountIdentity ?? owner.account,
+      authLabel: row.authLabelIdentity ?? row.authLabel,
+      source: row.sourceIdentity ?? row.source,
+      authIndex: row.authIndexIdentity ?? row.authIndex,
+      sourceHash: row.sourceHashIdentity,
+    }),
+  };
+};
+
+export const resolveLocalAccountGroupIds = (rows: MonitoringEventRow[]) => {
+  const snapshots = accountSnapshotsByCredential(rows);
+  return new Map(rows.map((row) => [row, resolveLocalAccountGroupKey(row, snapshots).accountKey]));
+};
+
+const isUnknownProvider = (provider: string) =>
+  !provider || provider === 'unknown' || provider === '-';
+
+/**
+ * 已知 provider 分组的详情可吸收“同凭据索引 + 同原始账号 + 无 provider”的事件，
+ * 但仅当该 (索引, 账号) 只被一个已知 provider 占有时（与服务端/网络口径一致）；
+ * 掩码账号不参与匹配，无 provider 分组自身的详情不吸收任何其他分组。
+ */
+const resolveAbsorbedUnknownGroupIds = (
+  rows: MonitoringEventRow[],
+  groupIds: Map<MonitoringEventRow, string>,
+  targetGroups: Set<string>
+) => {
+  const keyOf = (row: MonitoringEventRow) => {
+    const account = normalizeScopeValue(row.accountIdentity ?? row.account);
+    const index = normalizeScopeValue(row.authIndexIdentity ?? row.authIndex);
+    if (!account || account === '-' || account.includes('*') || !index || index === '-') return '';
+    return `${index}\u0000${account}`;
+  };
+  const providerOf = (row: MonitoringEventRow) =>
+    normalizeMonitoringProvider(row.providerIdentity ?? row.provider);
+  const knownProviders = new Map<string, Set<string>>();
+  const targetKeys = new Set<string>();
+  rows.forEach((row) => {
+    const key = keyOf(row);
+    const provider = providerOf(row);
+    if (!key || isUnknownProvider(provider)) return;
+    const set = knownProviders.get(key) ?? new Set<string>();
+    set.add(provider);
+    knownProviders.set(key, set);
+    if (targetGroups.has(groupIds.get(row) ?? '')) targetKeys.add(key);
+  });
+  return (row: MonitoringEventRow, _groupId: string) => {
+    if (!isUnknownProvider(providerOf(row))) return false;
+    const key = keyOf(row);
+    return Boolean(key) && targetKeys.has(key) && (knownProviders.get(key)?.size ?? 0) === 1;
+  };
+};
+
+/** 选择器 -> 产出该选择器的本地分组 ID 集合（与列表 buildAccountRows 完全同源）。 */
+const resolveLocalAccountGroupsBySelector = (rows: MonitoringEventRow[]) => {
+  const map = new Map<string, Set<string>>();
+  buildAccountRows(rows).forEach((row) => {
+    const key = (row.filterValue || row.account).trim();
+    const ids = map.get(key) ?? new Set<string>();
+    ids.add(row.id);
+    map.set(key, ids);
+  });
+  return map;
+};
+
 export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountRow[] => {
+  const snapshots = accountSnapshotsByCredential(rows);
   const grouped = new Map<
     string,
     {
       id: string;
       account: string;
+      filterAccount: string;
       provider: string;
       accountMasked: string;
       accountNotes: Set<string>;
       authLabels: Set<string>;
       authIndices: Set<string>;
       sourceKeys: Set<string>;
+      sourceHashes: Set<string>;
       apiKeyHashes: Set<string>;
       channels: Set<string>;
+      planTypes: Set<string>;
       modelMap: Map<
         string,
         {
@@ -338,24 +540,25 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
   >();
 
   rows.forEach((row) => {
-    const accountKey = buildMonitoringAccountKey(
-      row.provider,
-      row.account,
-      row.authLabel,
-      row.source,
-      row.authIndex
-    );
+    const { owner, provider, accountKey } = resolveLocalAccountGroupKey(row, snapshots);
+    const filterAccount =
+      [owner.accountIdentity, row.authLabelIdentity, row.sourceIdentity, owner.account].find(
+        (value) => Boolean(value && isEffectiveLabel(value))
+      ) || '';
     const existing = grouped.get(accountKey) ?? {
       id: accountKey,
-      account: row.account,
-      provider: row.provider,
-      accountMasked: row.accountMasked,
+      account: owner.account,
+      filterAccount,
+      provider,
+      accountMasked: owner.accountMasked,
       accountNotes: new Set<string>(),
       authLabels: new Set<string>(),
       authIndices: new Set<string>(),
       sourceKeys: new Set<string>(),
+      sourceHashes: new Set<string>(),
       apiKeyHashes: new Set<string>(),
       channels: new Set<string>(),
+      planTypes: new Set<string>(),
       modelMap: new Map(),
       rows: [] as MonitoringEventRow[],
       totalCalls: 0,
@@ -376,12 +579,16 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
     existing.rows.push(row);
     existing.authLabels.add(row.authLabel);
     if (row.accountNote) existing.accountNotes.add(row.accountNote);
-    existing.authIndices.add(row.authIndex);
+    existing.authIndices.add(row.authIndexIdentity ?? row.authIndex);
     if (row.sourceKey) {
       existing.sourceKeys.add(row.sourceKey);
     }
+    existing.sourceHashes.add(row.sourceHashIdentity ?? '');
     existing.apiKeyHashes.add(row.apiKeyHash);
     existing.channels.add(row.channel);
+    if (row.planType && row.planType !== '-') {
+      existing.planTypes.add(row.planType);
+    }
     existing.totalCalls += 1;
     existing.successCalls += row.failed ? 0 : 1;
     existing.failureCalls += row.failed ? 1 : 0;
@@ -430,32 +637,49 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
     grouped.set(accountKey, existing);
   });
 
+  const resolveAuthIndexConstraint = buildAuthIndexAccountConstraintResolver(
+    Array.from(grouped.values()).map((item) => ({
+      provider: item.provider,
+      account: item.account,
+      authIndices: item.authIndices,
+    }))
+  );
   return Array.from(grouped.values())
     .map((item) => {
       const channels = Array.from(item.channels).sort();
       const authIndices = Array.from(item.authIndices).sort();
       const sourceKeys = Array.from(item.sourceKeys).sort();
+      const sourceHashes = Array.from(item.sourceHashes).sort();
       const apiKeyHashes = Array.from(item.apiKeyHashes).sort();
       const authLabels = Array.from(item.authLabels).filter(Boolean).sort();
       const accountLabel =
         Array.from(item.accountNotes).find(Boolean) ||
         resolveAccountDisplayName(item.account, channels);
+      const legacyFilterValue =
+        buildMonitoringAccountFilterValue({
+          account: item.filterAccount,
+          provider: item.provider,
+          authIndices,
+          sourceHashes,
+          apiKeyHashes,
+          ...resolveAuthIndexConstraint({
+            provider: item.provider,
+            account: item.account,
+            authIndices,
+          }),
+        }) || item.account;
       return {
         id: item.id,
         account: item.account,
-        filterValue:
-          buildMonitoringAccountFilterValue({
-            account: item.account,
-            provider: item.provider,
-            authIndices,
-            apiKeyHashes,
-          }) || item.account,
+        provider: item.provider,
+        filterValue: legacyFilterValue,
         displayAccount: accountLabel,
         accountMasked: item.accountMasked,
         authLabels,
         authIndices,
         sourceKeys,
         channels,
+        planTypes: Array.from(item.planTypes).sort(),
         totalCalls: item.totalCalls,
         successCalls: item.successCalls,
         failureCalls: item.failureCalls,
@@ -488,7 +712,10 @@ export const buildAccountRows = (rows: MonitoringEventRow[]): MonitoringAccountR
     );
 };
 
-export const buildApiKeyRows = (rows: MonitoringEventRow[]): MonitoringApiKeyRow[] => {
+export const buildApiKeyRows = (
+  rows: MonitoringEventRow[],
+  apiKeyDisplayMap?: ReadonlyMap<string, ApiKeyDisplayInfo>
+): MonitoringApiKeyRow[] => {
   const grouped = new Map<
     string,
     {
@@ -496,6 +723,7 @@ export const buildApiKeyRows = (rows: MonitoringEventRow[]): MonitoringApiKeyRow
       apiKeyHash: string;
       apiKeyLabel: string;
       apiKeyMasked: string;
+      apiKeyCopyValue?: string;
       isUnknown: boolean;
       authLabels: Set<string>;
       sourceLabels: Set<string>;
@@ -547,6 +775,9 @@ export const buildApiKeyRows = (rows: MonitoringEventRow[]): MonitoringApiKeyRow
       apiKeyHash: row.apiKeyHash,
       apiKeyLabel: sanitizeApiKeyDisplayText(row.apiKeyLabel),
       apiKeyMasked: sanitizeApiKeyDisplayText(row.apiKeyMasked),
+      apiKeyCopyValue: row.apiKeyHash
+        ? apiKeyDisplayMap?.get(row.apiKeyHash.toLowerCase())?.copyValue
+        : undefined,
       isUnknown: !hasKnownApiKey,
       authLabels: new Set<string>(),
       sourceLabels: new Set<string>(),
@@ -569,6 +800,11 @@ export const buildApiKeyRows = (rows: MonitoringEventRow[]): MonitoringApiKeyRow
 
     if (!existing.apiKeyHash && row.apiKeyHash) {
       existing.apiKeyHash = row.apiKeyHash;
+    }
+    if (!existing.apiKeyCopyValue && existing.apiKeyHash) {
+      existing.apiKeyCopyValue = apiKeyDisplayMap?.get(
+        existing.apiKeyHash.toLowerCase()
+      )?.copyValue;
     }
     if (!existing.apiKeyMasked && row.apiKeyMasked) {
       existing.apiKeyMasked = sanitizeApiKeyDisplayText(row.apiKeyMasked);
@@ -637,6 +873,7 @@ export const buildApiKeyRows = (rows: MonitoringEventRow[]): MonitoringApiKeyRow
       apiKeyHash: item.apiKeyHash,
       apiKeyLabel: item.apiKeyLabel || item.apiKeyMasked || formatApiKeyHashLabel(item.apiKeyHash),
       apiKeyMasked: item.apiKeyMasked || item.apiKeyLabel || formatApiKeyHashLabel(item.apiKeyHash),
+      apiKeyCopyValue: item.apiKeyCopyValue,
       isUnknown: item.isUnknown,
       authLabels: Array.from(item.authLabels).filter(Boolean).sort(),
       sourceLabels: Array.from(item.sourceLabels).filter(Boolean).sort(),

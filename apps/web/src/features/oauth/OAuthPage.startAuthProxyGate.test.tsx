@@ -12,8 +12,9 @@ import { Input } from '@/components/ui/Input';
 // 响应，命中「missing state」早退分支——此时 oauthApi.startAuth 已被调用，断言成立且不触网 window。
 
 const { mocks } = vi.hoisted(() => {
-  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
-    true;
+  (
+    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT = true;
   return {
     mocks: {
       startAuth: vi.fn(),
@@ -31,13 +32,22 @@ vi.mock('react-i18next', () => ({
 }));
 
 vi.mock('react-router-dom', () => ({
+  useLocation: () => ({ hash: '', search: '' }),
   useNavigate: () => mocks.navigate,
 }));
 
 vi.mock('@/stores', () => ({
   useNotificationStore: () => ({ showNotification: mocks.showNotification }),
-  useAuthStore: (selector: (state: Record<string, unknown>) => unknown) =>
-    selector({ connectionStatus: 'disconnected', apiBase: 'http://manager.local', supportsPlugin: false }),
+  useAuthStore: Object.assign(
+    (selector: (state: Record<string, unknown>) => unknown) =>
+      selector({
+        connectionStatus: 'connected',
+        apiBase: 'http://manager.local',
+        managementKey: 'synthetic-key',
+        supportsPlugin: false,
+      }),
+    { getState: () => ({ apiBase: 'http://manager.local', managementKey: 'synthetic-key' }) }
+  ),
   useThemeStore: (selector: (state: { resolvedTheme: 'light' }) => unknown) =>
     selector({ resolvedTheme: 'light' }),
 }));

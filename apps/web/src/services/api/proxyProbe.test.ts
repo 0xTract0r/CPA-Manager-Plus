@@ -6,7 +6,8 @@ const { mocks } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('./client', () => ({
+vi.mock('./client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./client')>()),
   apiClient: {
     post: mocks.post,
   },
@@ -77,5 +78,20 @@ describe('probeProxyConnectivity', () => {
     const result = await probeProxyConnectivity('socks5://host:1080');
 
     expect(result).toEqual({ ok: true, exitIp: '2001:db8::1', reason: 'ok' });
+  });
+  it('pins the probe request to the captured connection instead of mutable defaults', async () => {
+    mocks.post.mockResolvedValue({ ok: true, exit_ip: '192.0.2.1', reason: 'ok' });
+    await probeProxyConnectivity('socks5://proxy.example:1080', {
+      apiBase: 'http://captured.local:8317',
+      managementKey: 'captured-key',
+    });
+    expect(mocks.post).toHaveBeenCalledWith(
+      '/diagnostics/proxy-connectivity-probe',
+      { proxy_url: 'socks5://proxy.example:1080' },
+      expect.objectContaining({
+        baseURL: 'http://captured.local:8317/v0/management',
+        headers: expect.objectContaining({ Authorization: 'Bearer captured-key' }),
+      })
+    );
   });
 });

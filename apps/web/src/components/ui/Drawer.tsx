@@ -4,7 +4,9 @@ import {
   useId,
   useRef,
   useState,
+  type PointerEvent as ReactPointerEvent,
   type PropsWithChildren,
+  type Ref,
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
@@ -16,10 +18,16 @@ interface DrawerProps {
   open: boolean;
   title?: ReactNode;
   onClose: () => void;
+  /** 返回 false 时取消本次关闭；异步检查会在关闭动画开始前完成。 */
+  onBeforeClose?: () => boolean | Promise<boolean>;
   footer?: ReactNode;
   /** 桌面端面板宽度，移动端自动转为底部全宽弹层 */
   width?: number | string;
   className?: string;
+  /** 可选的正文滚动容器引用，供需要在内容切换时归零滚动位置的调用方使用。 */
+  bodyRef?: Ref<HTMLDivElement>;
+  /** 长列表详情关闭或卸载时，将焦点与视口还给打开它的控件。 */
+  restoreTriggerPosition?: boolean;
 }
 
 const CLOSE_ANIMATION_DURATION = 280;
@@ -51,9 +59,12 @@ export function Drawer({
   open,
   title,
   onClose,
+  onBeforeClose,
   footer,
   width = 420,
   className,
+  bodyRef,
+  restoreTriggerPosition = false,
   children,
 }: PropsWithChildren<DrawerProps>) {
   const { t } = useTranslation();
@@ -61,14 +72,18 @@ export function Drawer({
   const [isVisible, setIsVisible] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const closeRequestPendingRef = useRef(false);
+  const closeRequestTokenRef = useRef(0);
+  const previousOpenRef = useRef(open);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
+  const overlayPointerIdsRef = useRef<Set<number>>(new Set());
 
   const startClose = useCallback(
     (notifyParent: boolean) => {
       if (closeTimerRef.current !== null) return;
       setIsClosing(true);
-      closeTimerRef.current = window.setTimeout(() => {
+      closeTimerRef.current = globalThis.setTimeout(() => {
         setIsVisible(false);
         setIsClosing(false);
         closeTimerRef.current = null;
@@ -83,9 +98,16 @@ export function Drawer({
   useEffect(() => {
     let cancelled = false;
 
+    if (previousOpenRef.current !== open) {
+      previousOpenRef.current = open;
+      closeRequestTokenRef.current += 1;
+      closeRequestPendingRef.current = false;
+      overlayPointerIdsRef.current.clear();
+    }
+
     if (open) {
       if (closeTimerRef.current !== null) {
-        window.clearTimeout(closeTimerRef.current);
+        globalThis.clearTimeout(closeTimerRef.current);
         closeTimerRef.current = null;
       }
       queueMicrotask(() => {
@@ -107,45 +129,104 @@ export function Drawer({
 
   useEffect(() => {
     return () => {
+      closeRequestTokenRef.current += 1;
       if (closeTimerRef.current !== null) {
-        window.clearTimeout(closeTimerRef.current);
+        globalThis.clearTimeout(closeTimerRef.current);
       }
     };
   }, []);
 
-  const handleClose = useCallback(() => {
-    startClose(true);
-  }, [startClose]);
+  const handleClose = useCallback(async () => {
+    if (closeTimerRef.current !== null || closeRequestPendingRef.current) return;
+
+    closeRequestPendingRef.current = true;
+    const requestToken = closeRequestTokenRef.current + 1;
+    closeRequestTokenRef.current = requestToken;
+    try {
+      const allowed = onBeforeClose ? await onBeforeClose() : true;
+      if (closeRequestTokenRef.current !== requestToken || allowed === false) return;
+      startClose(true);
+    } catch {
+      // 关闭前检查失败时保持抽屉打开，避免意外丢失用户输入。
+    } finally {
+      if (closeRequestTokenRef.current === requestToken) {
+        closeRequestPendingRef.current = false;
+      }
+    }
+  }, [onBeforeClose, startClose]);
+
+  // 按 pointerId 配对：仅当同一指针在遮罩上按下且在遮罩上释放时才关闭。
+  // 避免「面板内拖选到遮罩释放」与多指针交错状态互相覆盖。
+  const handleOverlayPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.target === event.currentTarget && event.button === 0) {
+      overlayPointerIdsRef.current.add(event.pointerId);
+    } else {
+      overlayPointerIdsRef.current.delete(event.pointerId);
+    }
+  }, []);
+
+  const handleOverlayPointerUp = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const startedOnOverlay = overlayPointerIdsRef.current.delete(event.pointerId);
+
+      if (startedOnOverlay && event.target === event.currentTarget && event.button === 0) {
+        void handleClose();
+      }
+    },
+    [handleClose]
+  );
+
+  const handleOverlayPointerCancel = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    overlayPointerIdsRef.current.delete(event.pointerId);
+  }, []);
 
   const shouldLockScroll = open || isVisible;
 
   useEffect(() => {
-    if (!shouldLockScroll) return;
+    if (!shouldLockScroll || typeof document === 'undefined' || typeof window === 'undefined') return;
+    const trigger = restoreTriggerPosition && document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    const returnPosition = trigger && trigger !== document.body
+      ? { x: window.scrollX, y: window.scrollY, route: window.location.hash.split('?')[0] }
+      : null;
     lockScroll();
-    return () => unlockScroll();
-  }, [shouldLockScroll]);
+    return () => {
+      unlockScroll();
+      if (
+        trigger?.isConnected &&
+        returnPosition &&
+        window.location.hash.split('?')[0] === returnPosition.route
+      ) {
+        trigger.focus({ preventScroll: true });
+        if (window.scrollX !== returnPosition.x || window.scrollY !== returnPosition.y) {
+          window.scrollTo({ left: returnPosition.x, top: returnPosition.y, behavior: 'instant' });
+        }
+      }
+    };
+  }, [shouldLockScroll, restoreTriggerPosition]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || typeof document === 'undefined' || typeof window === 'undefined') return;
 
     previouslyFocusedRef.current =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
 
-    const focusTimer = window.setTimeout(() => {
-      panelRef.current?.focus();
+    const focusTimer = globalThis.setTimeout(() => {
+      panelRef.current?.focus(restoreTriggerPosition ? { preventScroll: true } : undefined);
     }, 0);
 
-    return () => window.clearTimeout(focusTimer);
-  }, [open]);
+    return () => globalThis.clearTimeout(focusTimer);
+  }, [open, restoreTriggerPosition]);
 
   useEffect(() => {
-    if (open || isVisible) return;
-    previouslyFocusedRef.current?.focus();
+    if (open || isVisible || typeof document === 'undefined') return;
+    if (!restoreTriggerPosition) previouslyFocusedRef.current?.focus();
     previouslyFocusedRef.current = null;
-  }, [isVisible, open]);
+  }, [isVisible, open, restoreTriggerPosition]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || typeof document === 'undefined') return;
 
     const handleKeyDown = (event: KeyboardEvent) => {
       // 嵌套抽屉仅由最上层处理键盘，防止背景对话框抢焦点。
@@ -154,7 +235,7 @@ export function Drawer({
       if (!panel || dialogs[dialogs.length - 1] !== panel) return;
       if (event.key === 'Escape') {
         event.preventDefault();
-        handleClose();
+        void handleClose();
       }
       if (event.key === 'Tab') {
         const focusable = Array.from(panel.querySelectorAll<HTMLElement>(
@@ -195,7 +276,12 @@ export function Drawer({
     .join(' ');
 
   const drawerContent = (
-    <div className={overlayClass} onClick={handleClose}>
+    <div
+      className={overlayClass}
+      onPointerDown={handleOverlayPointerDown}
+      onPointerUp={handleOverlayPointerUp}
+      onPointerCancel={handleOverlayPointerCancel}
+    >
       <div
         ref={panelRef}
         className={panelClass}
@@ -213,13 +299,16 @@ export function Drawer({
           <button
             type="button"
             className={styles.closeButton}
-            onClick={handleClose}
+            onClick={() => void handleClose()}
             aria-label={t('common.close')}
+            title={t('common.close')}
           >
             <IconX size={18} />
           </button>
         </div>
-        <div className={styles.body}>{children}</div>
+        <div ref={bodyRef} className={styles.body}>
+          {children}
+        </div>
         {footer && <div className={styles.footer}>{footer}</div>}
       </div>
     </div>

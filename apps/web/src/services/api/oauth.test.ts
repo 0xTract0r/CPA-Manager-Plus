@@ -4,6 +4,7 @@ const { mocks } = vi.hoisted(() => ({
   mocks: {
     get: vi.fn(),
     post: vi.fn(),
+    delete: vi.fn(),
   },
 }));
 
@@ -11,7 +12,13 @@ vi.mock('./client', () => ({
   apiClient: {
     get: mocks.get,
     post: mocks.post,
+    delete: mocks.delete,
   },
+  createScopedApiRequestConfig: (scope: { apiBase: string; managementKey: string }) => ({
+    baseURL: `${scope.apiBase.replace(/\/+$/, '')}/v0/management`,
+    headers: { Authorization: `Bearer ${scope.managementKey}` },
+    cpampScopedRequest: true,
+  }),
 }));
 
 import { oauthApi } from './oauth';
@@ -19,6 +26,7 @@ import { oauthApi } from './oauth';
 beforeEach(() => {
   mocks.get.mockReset();
   mocks.post.mockReset();
+  mocks.delete.mockReset();
 });
 
 describe('oauthApi', () => {
@@ -42,62 +50,89 @@ describe('oauthApi', () => {
     });
   });
 
-  it('forwards authName as the auth_name query param for re-authentication', async () => {
-    mocks.get.mockResolvedValue({ url: 'https://auth.example/anthropic', state: 'state-3' });
+  it('pins auth-link, polling, and callback requests to the captured CPA scope', async () => {
+    const requestScope = {
+      apiBase: 'http://old-cpa.local:8317',
+      managementKey: 'old-cpa-key',
+    };
+    const scopedConfig = {
+      baseURL: 'http://old-cpa.local:8317/v0/management',
+      headers: { Authorization: 'Bearer old-cpa-key' },
+      cpampScopedRequest: true,
+    };
+    mocks.get
+      .mockResolvedValueOnce({ url: 'https://auth.example/codex', state: 'state-1' })
+      .mockResolvedValueOnce({ status: 'wait' });
+    mocks.post.mockResolvedValue({ status: 'ok' });
 
-    await oauthApi.startAuth('anthropic', { authName: 'claude-primary.json' });
+    await oauthApi.startAuth('codex', requestScope);
+    await oauthApi.getAuthStatus('state-1', requestScope);
+    await oauthApi.submitCallback('codex', 'http://localhost/callback?code=1', requestScope);
 
-    expect(mocks.get).toHaveBeenCalledWith('/anthropic-auth-url', {
-      params: { is_webui: true, auth_name: 'claude-primary.json' },
+    expect(mocks.get).toHaveBeenNthCalledWith(1, '/codex-auth-url', {
+      ...scopedConfig,
+      params: { is_webui: true },
     });
-  });
-
-  it('sends project_id and is_webui for gemini-cli re-authentication', async () => {
-    mocks.get.mockResolvedValue({ url: 'https://auth.example/gemini', state: 'state-4' });
-
-    await oauthApi.startAuth('gemini-cli', {
-      authName: 'gemini-work.json',
-      projectId: 'gcp-project-123',
+    expect(mocks.get).toHaveBeenNthCalledWith(2, '/get-auth-status', {
+      ...scopedConfig,
+      params: { state: 'state-1' },
     });
-
-    expect(mocks.get).toHaveBeenCalledWith('/gemini-cli-auth-url', {
-      params: {
-        is_webui: true,
-        project_id: 'gcp-project-123',
-        auth_name: 'gemini-work.json',
+    expect(mocks.post).toHaveBeenCalledWith(
+      '/oauth-callback',
+      {
+        provider: 'codex',
+        redirect_url: 'http://localhost/callback?code=1',
       },
-    });
+      scopedConfig
+    );
   });
 
-  it('ignores projectId for non gemini-cli providers', async () => {
-    mocks.get.mockResolvedValue({ url: 'https://auth.example/xai', state: 'state-5' });
+  it('starts Devin OAuth with is_webui flag', async () => {
+    mocks.get.mockResolvedValue({ url: 'https://auth.example/devin', state: 'state-devin-1' });
 
-    await oauthApi.startAuth('xai', { projectId: 'should-be-dropped' });
+    await oauthApi.startAuth('devin');
 
-    expect(mocks.get).toHaveBeenCalledWith('/xai-auth-url', {
+    expect(mocks.get).toHaveBeenCalledWith('/devin-auth-url', {
       params: { is_webui: true },
     });
   });
 
-  it('maps gemini-cli to gemini when submitting the OAuth callback', async () => {
-    mocks.post.mockResolvedValue({ status: 'ok' });
+  it('cancels an active OAuth session using DELETE /oauth-session with captured scope', async () => {
+    const requestScope = {
+      apiBase: 'http://cpa.example:8317',
+      managementKey: 'cpa-key-1',
+    };
+    const scopedConfig = {
+      baseURL: 'http://cpa.example:8317/v0/management',
+      headers: { Authorization: 'Bearer cpa-key-1' },
+      cpampScopedRequest: true,
+    };
+    mocks.delete.mockResolvedValue({ status: 'ok', cancelled: true });
 
-    await oauthApi.submitCallback('gemini-cli', 'https://localhost/callback?code=abc');
+    const result = await oauthApi.cancelSession('state-devin-1', requestScope);
 
-    expect(mocks.post).toHaveBeenCalledWith('/oauth-callback', {
-      provider: 'gemini',
-      redirect_url: 'https://localhost/callback?code=abc',
+    expect(mocks.delete).toHaveBeenCalledWith('/oauth-session', {
+      ...scopedConfig,
+      params: { state: 'state-devin-1' },
     });
+    expect(result).toEqual({ status: 'ok', cancelled: true });
   });
 
-  it('keeps the provider name for non-mapped callback providers', async () => {
-    mocks.post.mockResolvedValue({ status: 'ok' });
+  it('starts Meta OAuth without is_webui flag and preserves device flow fields', async () => {
+    const metaResponse = {
+      url: 'https://auth.example/device',
+      state: 'state-meta-1',
+      user_code: 'ABCD-EFGH',
+      flow: 'device',
+      expires_in: 600,
+    };
+    mocks.get.mockResolvedValue(metaResponse);
 
-    await oauthApi.submitCallback('anthropic', 'https://localhost/callback?code=def');
+    const result = await oauthApi.startAuth('meta');
 
-    expect(mocks.post).toHaveBeenCalledWith('/oauth-callback', {
-      provider: 'anthropic',
-      redirect_url: 'https://localhost/callback?code=def',
+    expect(mocks.get).toHaveBeenCalledWith('/meta-auth-url', {
+      params: undefined,
     });
+    expect(result).toEqual(metaResponse);
   });
 });

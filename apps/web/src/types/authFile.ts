@@ -16,6 +16,8 @@ export type AuthFileType =
   | 'xai'
   | 'iflow'
   | 'vertex'
+  | 'devin'
+  | 'meta'
   | 'empty'
   | 'unknown';
 
@@ -235,8 +237,8 @@ export interface AuthFileAccountSettingsPatchRequest {
 }
 
 export interface AuthFileItem {
-  name: string;
   id?: string;
+  name: string;
   label?: string;
   email?: string;
   account?: string;
@@ -247,6 +249,7 @@ export interface AuthFileItem {
   authIndex?: string | number | null;
   runtimeOnly?: boolean | string;
   disabled?: boolean;
+  weight?: number;
   unavailable?: boolean;
   status?: string;
   statusMessage?: string;

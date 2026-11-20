@@ -1,0 +1,9 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    # Upstream seakee/CPA-Manager-Plus uses dev; this fork maintains main.
+    target-branch: main
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0

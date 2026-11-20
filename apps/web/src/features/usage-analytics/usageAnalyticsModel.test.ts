@@ -1,9 +1,14 @@
-import { describe, expect, it } from 'vitest';
-import type { MonitoringAnalyticsResponse } from '@/services/api/usageService';
+import { describe, expect, it, vi } from 'vitest';
+import type {
+  MonitoringAnalyticsApiKeyStatRow,
+  MonitoringAnalyticsResponse,
+} from '@/services/api/usageService';
 import { buildSourceInfoMap } from '@/utils/sourceResolver';
-import type { UsageRankRow } from './usageAnalyticsModel';
+import type { UsageRankRow, UsageTimelinePoint } from './usageAnalyticsModel';
 import {
+  adaptUsageAnalyticsData,
   analyzeUsageBucket,
+  buildApiKeyTrendSeries,
   buildApiKeyRows,
   buildCredentialRows,
   buildEntityTrendSeries,
@@ -26,12 +31,18 @@ import {
   buildUsageHeatmapRangeContext,
   buildUsageHeatmap,
   buildUsageCredentialTimeline,
+  buildUsageApiKeyTimeline,
   buildUsageTimeline,
+  fillUsageTimelineBuckets,
   computeCacheHitRate,
+  computeNormalizedCacheHitRate,
+  getNormalizedUsageCacheTokens,
   computeRowAverageCostPerCall,
   computeRowCacheHitRate,
-  getSelectableApiKeyHash,
+  getUsageCacheTokens,
+  getUsagePresentationRangeScopeKey,
   getUsageRangeBounds,
+  getSelectableApiKeyHash,
   maskApiKeyHash,
   resolveUsageApiKeyLabel,
   resolveUsageGranularity,
@@ -43,7 +54,70 @@ const NOW_MS = Date.UTC(2026, 5, 4, 12, 0, 0);
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 
+const localDateMs = (day: number, hour = 0) => new Date(2026, 7, day, hour, 0, 0, 0).getTime();
+
+const expectZeroTimelinePoint = (point: UsageTimelinePoint) => {
+  expect(point).toMatchObject({
+    requestCount: 0,
+    totalTokens: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cachedTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    reasoningTokens: 0,
+    estimatedCost: 0,
+    successCount: 0,
+    failureCount: 0,
+    successRate: 0,
+    failureRate: 0,
+    cacheHitRate: 0,
+    averageTokensPerRequest: 0,
+  });
+  expect(point.averageLatencyMs).toBeNull();
+  expect(point.p95LatencyMs).toBeNull();
+  expect(point.p95TtftMs).toBeNull();
+};
+
 describe('usage analytics request model', () => {
+  it('keeps synthetic fallback groups out of API key filters', () => {
+    expect(getSelectableApiKeyHash('unknown-client-api-key:source:auth:provider')).toBe('');
+    expect(getSelectableApiKeyHash(' UNKNOWN-CLIENT-API-KEY:legacy ')).toBe('');
+    expect(getSelectableApiKeyHash('all')).toBe('');
+    expect(getSelectableApiKeyHash(' ABCDEF1234567890 ')).toBe('abcdef1234567890');
+    expect(
+      buildUsageAnalyticsFilters({ apiKeyHash: 'unknown-client-api-key:analytics-filter' })
+    ).not.toHaveProperty('api_key_hashes');
+    expect(
+      buildMonitoringDetailUrl(
+        { bucketMs: 1000, bucketEndMs: 2000 },
+        { apiKeyHash: 'unknown-client-api-key:monitoring-link' }
+      )
+    ).not.toContain('api_key_hash');
+  });
+
+  it('keeps rolling-range presentation stable on refresh but separates new calendar days', () => {
+    const rollingFilters = { timeRange: '24h' as const, customRange: null };
+    const firstRolling = getUsageRangeBounds(rollingFilters, NOW_MS);
+    const nextRolling = getUsageRangeBounds(rollingFilters, NOW_MS + 60_000);
+    expect(nextRolling).not.toEqual(firstRolling);
+    expect(getUsagePresentationRangeScopeKey(rollingFilters, nextRolling)).toBe(
+      getUsagePresentationRangeScopeKey(rollingFilters, firstRolling)
+    );
+
+    const todayFilters = { timeRange: 'today' as const, customRange: null };
+    const today = getUsageRangeBounds(todayFilters, localDateMs(20, 12));
+    const tomorrow = getUsageRangeBounds(todayFilters, localDateMs(21, 1));
+    expect(getUsagePresentationRangeScopeKey(todayFilters, tomorrow)).not.toBe(
+      getUsagePresentationRangeScopeKey(todayFilters, today)
+    );
+
+    const customFilters = { timeRange: 'custom' as const, customRange: null };
+    expect(getUsagePresentationRangeScopeKey(customFilters, { fromMs: 1000, toMs: 2000 })).not.toBe(
+      getUsagePresentationRangeScopeKey(customFilters, { fromMs: 2000, toMs: 3000 })
+    );
+  });
+
   it('resolves time ranges and default granularity rules', () => {
     expect(USAGE_ANALYTICS_DEFAULT_FILTERS.timeRange).toBe('24h');
     expect(getUsageRangeBounds({ timeRange: '24h', customRange: null }, NOW_MS)).toEqual({
@@ -126,6 +200,8 @@ describe('usage analytics request model', () => {
   it('builds the minimum analytics include for each active tab', () => {
     expect(buildUsageAnalyticsInclude('overview', 'day')).toEqual({
       summary: true,
+      summary_profile: 'compact',
+      summary_percentiles: true,
       summary_comparison: true,
       timeline: true,
       model_stats: true,
@@ -142,6 +218,7 @@ describe('usage analytics request model', () => {
       })
     ).toEqual({
       summary: true,
+      summary_profile: 'compact',
       summary_comparison: true,
       timeline: true,
       model_stats: true,
@@ -152,6 +229,7 @@ describe('usage analytics request model', () => {
     });
     expect(buildUsageAnalyticsInclude('models', 'day')).toEqual({
       summary: true,
+      summary_profile: 'compact',
       timeline: true,
       model_stats: true,
       api_key_stats: true,
@@ -159,13 +237,14 @@ describe('usage analytics request model', () => {
     });
     expect(buildUsageAnalyticsInclude('apiKeys', 'day')).toEqual({
       summary: true,
+      summary_profile: 'compact',
       api_key_stats: true,
       granularity: 'day',
     });
     expect(buildUsageAnalyticsInclude('credentials', 'day')).toEqual({
       summary: true,
+      summary_profile: 'compact',
       credential_stats: true,
-      credential_timeline: true,
       granularity: 'day',
     });
     expect(
@@ -175,6 +254,7 @@ describe('usage analytics request model', () => {
       })
     ).toEqual({
       summary: true,
+      summary_profile: 'compact',
       heatmap: true,
       granularity: 'day',
     });
@@ -186,6 +266,218 @@ describe('usage analytics request model', () => {
 });
 
 describe('usage analytics adapters', () => {
+  it('preserves archive coverage metadata for presentation layers', () => {
+    const coverage: NonNullable<MonitoringAnalyticsResponse['coverage']> = {
+      scope: 'time_range',
+      mode: 'mixed',
+      raw_complete: false,
+      core_aggregate_used: true,
+      raw_event_count: 4,
+      raw_deleted_event_count: 2,
+      min_deleted_timestamp_ms: 1,
+      max_deleted_timestamp_ms: 2,
+      comparison_raw_event_count: 0,
+      comparison_raw_deleted_event_count: 3,
+      comparison_min_deleted_timestamp_ms: 3,
+      comparison_max_deleted_timestamp_ms: 4,
+      fidelity_limitations: ['event_details_require_raw_events'],
+    };
+
+    expect(
+      adaptUsageAnalyticsData(
+        {
+          generated_at_ms: NOW_MS,
+          granularity: 'hour',
+          coverage,
+        },
+        'hour'
+      ).coverage
+    ).toEqual(coverage);
+  });
+
+  it('fills a missing middle hourly bucket with zero metrics', () => {
+    const fromMs = localDateMs(10, 10);
+    const toMs = localDateMs(10, 13);
+    const timeline = fillUsageTimelineBuckets(
+      buildUsageTimeline(
+        [
+          { bucket_ms: fromMs, label: '', calls: 2, tokens: 20, success: 2, failure: 0 },
+          {
+            bucket_ms: fromMs + 2 * HOUR_MS,
+            label: '',
+            calls: 3,
+            tokens: 30,
+            success: 3,
+            failure: 0,
+          },
+        ],
+        'hour'
+      ),
+      { fromMs, toMs },
+      'hour'
+    );
+
+    expect(timeline.map((point) => point.bucketMs)).toEqual([
+      fromMs,
+      fromMs + HOUR_MS,
+      fromMs + 2 * HOUR_MS,
+    ]);
+    expectZeroTimelinePoint(timeline[1]);
+    expect(timeline[1].bucketEndMs).toBe(fromMs + 2 * HOUR_MS);
+  });
+
+  it('does not synthesize a duplicate local hour across DST fall-back', () => {
+    vi.stubEnv('TZ', 'America/New_York');
+
+    try {
+      const firstMidnight = Date.parse('2026-11-01T04:00:00.000Z');
+      const firstOneAm = Date.parse('2026-11-01T05:00:00.000Z');
+      const repeatedOneAm = Date.parse('2026-11-01T06:00:00.000Z');
+      const twoAm = Date.parse('2026-11-01T07:00:00.000Z');
+      const threeAm = Date.parse('2026-11-01T08:00:00.000Z');
+      const mappedTimeline = buildUsageTimeline(
+        [
+          {
+            bucket_ms: firstMidnight,
+            label: '',
+            calls: 1,
+            tokens: 10,
+            success: 1,
+            failure: 0,
+            cost: 1,
+          },
+          {
+            bucket_ms: firstOneAm,
+            label: '',
+            calls: 2,
+            tokens: 20,
+            success: 2,
+            failure: 0,
+            cost: 2,
+          },
+          {
+            bucket_ms: twoAm,
+            label: '',
+            calls: 3,
+            tokens: 30,
+            success: 3,
+            failure: 0,
+            cost: 3,
+          },
+        ],
+        'hour'
+      );
+      const timeline = fillUsageTimelineBuckets(
+        mappedTimeline,
+        { fromMs: firstMidnight, toMs: threeAm },
+        'hour'
+      );
+
+      expect(timeline.map((point) => point.bucketMs)).toEqual([firstMidnight, firstOneAm, twoAm]);
+      expect(timeline.some((point) => point.bucketMs === repeatedOneAm)).toBe(false);
+      expect(timeline).toEqual(mappedTimeline);
+      expect(timeline.map((point) => point.requestCount)).toEqual([1, 2, 3]);
+      expect(timeline.map((point) => point.totalTokens)).toEqual([10, 20, 30]);
+      expect(timeline.map((point) => point.estimatedCost)).toEqual([1, 2, 3]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('fills missing daily buckets and respects the exclusive range end', () => {
+    const fromMs = localDateMs(10);
+    const toMs = localDateMs(13);
+    const timeline = fillUsageTimelineBuckets(
+      buildUsageTimeline(
+        [
+          { bucket_ms: fromMs, label: '', calls: 1, tokens: 10, success: 1, failure: 0 },
+          {
+            bucket_ms: localDateMs(12),
+            label: '',
+            calls: 2,
+            tokens: 20,
+            success: 2,
+            failure: 0,
+          },
+        ],
+        'day'
+      ),
+      { fromMs, toMs },
+      'day'
+    );
+
+    expect(timeline.map((point) => point.bucketMs)).toEqual([
+      localDateMs(10),
+      localDateMs(11),
+      localDateMs(12),
+    ]);
+    expectZeroTimelinePoint(timeline[1]);
+    expect(timeline.some((point) => point.bucketMs === toMs)).toBe(false);
+  });
+
+  it('fills both leading and trailing buckets without changing real points', () => {
+    const fromMs = localDateMs(10);
+    const toMs = localDateMs(14);
+    const realPoint = buildUsageTimeline(
+      [{ bucket_ms: localDateMs(12), label: '', calls: 4, tokens: 40, success: 3, failure: 1 }],
+      'day'
+    )[0];
+    const timeline = fillUsageTimelineBuckets([realPoint], { fromMs, toMs }, 'day');
+
+    expect(timeline.map((point) => point.bucketMs)).toEqual([
+      localDateMs(10),
+      localDateMs(11),
+      localDateMs(12),
+      localDateMs(13),
+    ]);
+    expectZeroTimelinePoint(timeline[0]);
+    expectZeroTimelinePoint(timeline[1]);
+    expectZeroTimelinePoint(timeline[3]);
+    expect(timeline[2]).toBe(realPoint);
+    expect(timeline[2]).toMatchObject({ requestCount: 4, totalTokens: 40, failureCount: 1 });
+  });
+
+  it('returns a complete timeline unchanged apart from ordering', () => {
+    const fromMs = localDateMs(10, 10);
+    const toMs = localDateMs(10, 13);
+    const mappedTimeline = buildUsageTimeline(
+      [
+        {
+          bucket_ms: fromMs + 2 * HOUR_MS,
+          label: '',
+          calls: 3,
+          tokens: 30,
+          success: 3,
+          failure: 0,
+        },
+        { bucket_ms: fromMs, label: '', calls: 1, tokens: 10, success: 1, failure: 0 },
+        { bucket_ms: fromMs + HOUR_MS, label: '', calls: 2, tokens: 20, success: 1, failure: 1 },
+      ],
+      'hour'
+    );
+    const timeline = fillUsageTimelineBuckets(mappedTimeline, { fromMs, toMs }, 'hour');
+
+    expect(timeline).toEqual(
+      mappedTimeline.slice().sort((left, right) => left.bucketMs - right.bucketMs)
+    );
+    expect(timeline).toHaveLength(3);
+  });
+
+  it('keeps a successful empty analytics response empty', () => {
+    const fromMs = localDateMs(10, 10);
+    const toMs = localDateMs(10, 13);
+    const adapted = adaptUsageAnalyticsData(
+      { generated_at_ms: 1, granularity: 'hour', timeline: [] },
+      'hour',
+      '',
+      undefined,
+      undefined,
+      { fromMs, toMs }
+    );
+
+    expect(adapted.timeline).toEqual([]);
+  });
+
   it('builds heatmap chart data from non-empty valid request buckets only', () => {
     expect(
       buildUsageHeatmapChartData([
@@ -419,6 +711,23 @@ describe('usage analytics adapters', () => {
       successRate: 2 / 3,
       averageLatencyMs: 250,
     });
+  });
+
+  it('combines compatible, cache-read, and cache-creation buckets for display', () => {
+    expect(
+      getUsageCacheTokens({
+        cachedTokens: 0,
+        cacheReadTokens: 80,
+        cacheCreationTokens: 20,
+      })
+    ).toBe(100);
+    expect(
+      getUsageCacheTokens({
+        cachedTokens: 5,
+        cacheReadTokens: 4,
+        cacheCreationTokens: 1,
+      })
+    ).toBe(10);
   });
 
   it('builds selected credential trend series from backend credential timeline buckets', () => {
@@ -689,6 +998,82 @@ describe('usage analytics adapters', () => {
     expect(result[0].points.map((point) => point.value)).toEqual([3, 7]);
   });
 
+  it('builds overview API key trends from exact per-key buckets', () => {
+    const rows: UsageRankRow[] = [
+      {
+        id: 'key-a',
+        label: 'Key A',
+        apiKeyHash: 'key-a',
+        requestCount: 8,
+        successCount: 8,
+        failureCount: 0,
+        successRate: 1,
+        totalTokens: 800,
+        inputTokens: 800,
+        outputTokens: 0,
+        cachedTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        estimatedCost: 0.8,
+        averageLatencyMs: null,
+        share: 0.8,
+      },
+      {
+        id: 'key-b',
+        label: 'Key B',
+        apiKeyHash: 'key-b',
+        requestCount: 2,
+        successCount: 2,
+        failureCount: 0,
+        successRate: 1,
+        totalTokens: 200,
+        inputTokens: 200,
+        outputTokens: 0,
+        cachedTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        estimatedCost: 0.2,
+        averageLatencyMs: null,
+        share: 0.2,
+      },
+    ];
+    const timeline = buildUsageTimeline(
+      [
+        { bucket_ms: NOW_MS, label: '12:00', calls: 5, tokens: 500, success: 5, failure: 0 },
+        {
+          bucket_ms: NOW_MS + HOUR_MS,
+          label: '13:00',
+          calls: 5,
+          tokens: 500,
+          success: 5,
+          failure: 0,
+        },
+      ],
+      'hour'
+    );
+    const apiKeyTimeline = buildUsageApiKeyTimeline(
+      [
+        { api_key_hash: 'key-a', bucket_ms: NOW_MS, calls: 2, tokens: 200, success: 2, failure: 0 },
+        {
+          api_key_hash: 'key-a',
+          bucket_ms: NOW_MS + HOUR_MS,
+          calls: 6,
+          tokens: 600,
+          success: 6,
+          failure: 0,
+        },
+        { api_key_hash: 'key-b', bucket_ms: NOW_MS, calls: 3, tokens: 300, success: 3, failure: 0 },
+      ],
+      'hour'
+    );
+
+    const result = buildApiKeyTrendSeries(rows, timeline, apiKeyTimeline, 'requestCount');
+
+    expect(result).toHaveLength(2);
+    expect(result[0].points.map((point) => point.value)).toEqual([2, 6]);
+    expect(result[1].points.map((point) => point.value)).toEqual([3, 0]);
+  });
+
   it('does not render selected API key trend when the filtered timeline is missing', () => {
     const row = {
       id: 'abcdef1234567890',
@@ -773,74 +1158,58 @@ describe('usage analytics adapters', () => {
     expect(maskApiKeyHash('sk-live-raw-secret-value')).toBe('sk-****alue');
   });
 
-  it('labels unattributed API key rows without faking a sk-**** key', () => {
-    const data: Pick<MonitoringAnalyticsResponse, 'api_key_stats'> = {
-      api_key_stats: [
-        {
-          // 没有真实 api_key_hash（未启用 Key 鉴权/直连请求），后端只给了分组桶 id。
-          id: 'unattributed-bucket',
-          api_key_hash: '',
-          calls: 4,
-          success_calls: 4,
-          failure_calls: 0,
-          success_rate: 1,
-          input_tokens: 40,
-          output_tokens: 10,
-          cached_tokens: 0,
-          cache_read_tokens: 0,
-          cache_creation_tokens: 0,
-          total_tokens: 50,
-          cost: 0.4,
-          average_latency_ms: null,
-          last_seen_ms: NOW_MS,
-        },
-        {
-          // 上游把来源邮箱当兜底值塞进了 id，绝不能被截断渲染成 `sk-****` key。
-          id: 'user@gmail.com',
-          api_key_hash: '',
-          calls: 2,
-          success_calls: 2,
-          failure_calls: 0,
-          success_rate: 1,
-          input_tokens: 20,
-          output_tokens: 5,
-          cached_tokens: 0,
-          cache_read_tokens: 0,
-          cache_creation_tokens: 0,
-          total_tokens: 25,
-          cost: 0.2,
-          average_latency_ms: null,
-          last_seen_ms: NOW_MS,
-        },
-      ],
-    };
-
-    const rows = buildApiKeyRows(data.api_key_stats);
-
-    expect(rows).toHaveLength(2);
-    rows.forEach((row) => {
-      expect(row.label).toBe(UNATTRIBUTED_API_KEY_LABEL);
-      expect(row.label).not.toMatch(/^sk-\*{2,}/);
-      expect(row.label).not.toContain('@gmail.com');
-      expect(row.apiKeyHash).toBe('');
+  it('ranks API keys by cost before request count', () => {
+    const createRow = (
+      id: string,
+      calls: number,
+      cost: number
+    ): MonitoringAnalyticsApiKeyStatRow => ({
+      id,
+      api_key_hash: id,
+      calls,
+      success_calls: calls,
+      failure_calls: 0,
+      success_rate: 1,
+      input_tokens: 0,
+      output_tokens: 0,
+      cached_tokens: 0,
+      cache_read_tokens: 0,
+      cache_creation_tokens: 0,
+      total_tokens: 0,
+      cost,
+      average_latency_ms: null,
+      last_seen_ms: NOW_MS,
     });
-  });
 
-  it('resolveUsageApiKeyLabel never masks a non-hash fallback as a real key', () => {
-    expect(resolveUsageApiKeyLabel('')).toBe(UNATTRIBUTED_API_KEY_LABEL);
-    expect(resolveUsageApiKeyLabel(null, undefined, '')).toBe(UNATTRIBUTED_API_KEY_LABEL);
-    // 邮箱既是 hash 又是 fallback（上游同一个值传了两次）时，必须归为未归属，
-    // 不能把邮箱尾巴（如 `.com`）当成 key 材料截断展示。
-    expect(resolveUsageApiKeyLabel('user@gmail.com', undefined, 'user@gmail.com')).toBe(
-      UNATTRIBUTED_API_KEY_LABEL
-    );
-    // 真实 hash 依然按原逻辑掩码展示。
-    expect(resolveUsageApiKeyLabel('abcdef1234567890')).toBe('sk-****7890');
+    const rows = buildApiKeyRows([
+      createRow('key-a', 1000, 1),
+      createRow('key-b', 100, 20),
+      createRow('key-c', 50, 20),
+    ]);
+
+    expect(
+      rows.map(({ apiKeyHash, requestCount, estimatedCost }) => ({
+        apiKeyHash,
+        requestCount,
+        estimatedCost,
+      }))
+    ).toEqual([
+      { apiKeyHash: 'key-b', requestCount: 100, estimatedCost: 20 },
+      { apiKeyHash: 'key-c', requestCount: 50, estimatedCost: 20 },
+      { apiKeyHash: 'key-a', requestCount: 1000, estimatedCost: 1 },
+    ]);
   });
 
   it('resolves API key aliases by hash across analytics views', () => {
     const displayMap = new Map([
-      ['abcdef1234567890', { label: 'Team Alpha Key', masked: 'sk-****7890' }],
+      [
+        'abcdef1234567890',
+        {
+          label: 'Team Alpha Key',
+          masked: 'sk-****7890',
+          copyValue: 'sk-team-alpha-original',
+        },
+      ],
     ]);
     const apiKeyRows = buildApiKeyRows(
       [
@@ -888,6 +1257,7 @@ describe('usage analytics adapters', () => {
     expect(apiKeyRows[0]).toMatchObject({
       apiKeyHash: 'abcdef1234567890',
       label: 'Team Alpha Key',
+      apiKeyCopyValue: 'sk-team-alpha-original',
     });
     expect(
       buildUsageMatrix({
@@ -1159,13 +1529,91 @@ describe('usage analytics adapters', () => {
     });
   });
 
-  it('estimates drilldown preview cost from model cost per token', () => {
+  it('preserves normalized cache totals while merging provider model aliases', () => {
+    const usageRow = (overrides: Partial<UsageRankRow>): UsageRankRow => ({
+      id: 'row',
+      label: 'row',
+      requestCount: 0,
+      successCount: 0,
+      failureCount: 0,
+      successRate: 0,
+      totalTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cachedTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      estimatedCost: 0,
+      averageLatencyMs: null,
+      share: 0,
+      ...overrides,
+    });
+    const credentialRows = [
+      usageRow({
+        id: 'credential-a',
+        label: 'a',
+        provider: 'OpenAI',
+        models: [
+          usageRow({
+            id: 'internal-fast',
+            label: 'internal-fast',
+            model: 'internal-fast',
+            inputTokens: 100,
+            cacheReadTokens: 90,
+            cacheHitTokens: 90,
+            cacheHitInputTokens: 100,
+          }),
+        ],
+      }),
+      usageRow({
+        id: 'credential-b',
+        label: 'b',
+        provider: 'OpenAI',
+        models: [
+          usageRow({
+            id: 'internal-fast',
+            label: 'internal-fast',
+            model: 'internal-fast',
+            inputTokens: 100,
+            cacheReadTokens: 50,
+            cacheCreationTokens: 50,
+            cacheHitTokens: 50,
+            cacheHitInputTokens: 200,
+          }),
+        ],
+      }),
+    ];
+
+    const rows = buildProviderRows(
+      [
+        {
+          auth_index: 'auth-a',
+          auth_provider_snapshot: 'OpenAI',
+          calls: 2,
+          success: 2,
+          failure: 0,
+          tokens: 200,
+          cost: 0,
+          average_latency_ms: null,
+        },
+      ],
+      [],
+      credentialRows
+    );
+
+    expect(rows[0].cacheRate).toBeCloseTo(140 / 300, 6);
+  });
+
+  it('uses canonical analytics models to estimate drilldown preview cost', () => {
     const rows = buildDrilldownPreview(
       [
         {
           event_hash: 'event-a',
           timestamp_ms: NOW_MS,
-          model: 'gpt-4o',
+          model: 'deepseek-v4-flash(max)',
+          analytics_model: 'deepseek-v4-flash',
+          requested_model: 'deepseek-v4-flash(max)',
+          resolved_model: 'deepseek-v4-flash-202608',
           endpoint: '/v1/chat/completions',
           method: 'POST',
           path: '/v1/chat/completions',
@@ -1192,12 +1640,37 @@ describe('usage analytics adapters', () => {
           header_quota_used_percent: 87,
           header_quota_recover_at_ms: 1780000060000,
         },
+        {
+          event_hash: 'event-b',
+          timestamp_ms: NOW_MS,
+          model: 'deepseek-v4-flash(high)',
+          requested_model: 'deepseek-v4-flash(high)',
+          endpoint: '/v1/chat/completions',
+          method: 'POST',
+          path: '/v1/chat/completions',
+          auth_index: '0',
+          source: 'codex',
+          source_hash: 'source-a',
+          api_key_hash: 'abcdef1234567890',
+          account_snapshot: 'team-alpha',
+          auth_label_snapshot: 'prod',
+          auth_provider_snapshot: 'openai',
+          input_tokens: 60,
+          output_tokens: 40,
+          cached_tokens: 0,
+          cache_read_tokens: 0,
+          cache_creation_tokens: 0,
+          reasoning_tokens: 0,
+          total_tokens: 100,
+          latency_ms: 250,
+          failed: false,
+        },
       ],
       [
         {
-          id: 'gpt-4o',
-          label: 'gpt-4o',
-          model: 'gpt-4o',
+          id: 'deepseek-v4-flash',
+          label: 'deepseek-v4-flash',
+          model: 'deepseek-v4-flash',
           requestCount: 10,
           successCount: 10,
           failureCount: 0,
@@ -1217,7 +1690,7 @@ describe('usage analytics adapters', () => {
 
     expect(rows[0]).toMatchObject({
       eventHash: 'event-a',
-      model: 'gpt-4o',
+      model: 'deepseek-v4-flash',
       estimatedCost: 0.2,
       headerErrorKind: 'rate_limit',
       headerErrorCode: 'retry_after',
@@ -1226,14 +1699,19 @@ describe('usage analytics adapters', () => {
       headerQuotaUsedPercent: 87,
       headerQuotaRecoverAtMs: 1780000060000,
     });
+    expect(rows[1]).toMatchObject({
+      eventHash: 'event-b',
+      model: 'deepseek-v4-flash',
+      estimatedCost: 0.2,
+    });
   });
 });
 
 describe('cache hit rate', () => {
-  it('uses total input (input + cacheRead + cacheCreation) as the denominator for Anthropic usage', () => {
+  it('uses normalized total input as the denominator for Anthropic usage', () => {
     expect(
-      computeCacheHitRate({
-        inputTokens: 100,
+      computeNormalizedCacheHitRate({
+        inputTokens: 450,
         cacheReadTokens: 300,
         cacheCreationTokens: 50,
         cachedTokens: 0,
@@ -1251,6 +1729,18 @@ describe('cache hit rate', () => {
         cachedTokens: 400,
       })
     ).toBeCloseTo(0.4, 6);
+  });
+
+  it('does not double count GPT-5.6 fine-grained cache tokens', () => {
+    expect(
+      computeNormalizedCacheHitRate({
+        modelName: 'openai/gpt-5.6-sol',
+        inputTokens: 152_600,
+        cacheReadTokens: 151_000,
+        cacheCreationTokens: 1_000,
+        cachedTokens: 0,
+      })
+    ).toBeCloseTo(151_000 / 152_600, 6);
   });
 
   it('returns 0 without input and clamps malformed ratios to 1', () => {
@@ -1331,7 +1821,7 @@ describe('model rank derivations', () => {
   it('derives per-row cache hit rate and average cost per call', () => {
     const row = rankRow({
       requestCount: 50,
-      inputTokens: 100,
+      inputTokens: 450,
       cacheReadTokens: 300,
       cacheCreationTokens: 50,
       estimatedCost: 10,
@@ -1342,6 +1832,69 @@ describe('model rank derivations', () => {
     expect(computeRowAverageCostPerCall(rankRow({ estimatedCost: 10 }))).toBe(0);
   });
 
+  it('uses model-aware cache semantics for GPT-5.6 rank rows', () => {
+    const row = rankRow({
+      model: 'gpt-5.6-sol',
+      label: 'gpt-5.6-sol',
+      inputTokens: 152_600,
+      cacheReadTokens: 151_000,
+      cacheCreationTokens: 1_000,
+    });
+    expect(computeRowCacheHitRate(row)).toBeCloseTo(151_000 / 152_600, 6);
+  });
+
+  it('uses server-normalized cache totals when a display alias hides GPT-5.6', () => {
+    const row = rankRow({
+      model: 'internal-fast',
+      label: 'internal-fast',
+      inputTokens: 152_600,
+      cacheReadTokens: 151_000,
+      cacheCreationTokens: 1_000,
+      cacheHitTokens: 151_000,
+      cacheHitInputTokens: 152_600,
+      cacheHitRate: 151_000 / 152_600,
+    });
+    expect(computeRowCacheHitRate(row)).toBeCloseTo(151_000 / 152_600, 6);
+    expect(computeRowCacheHitRate(rankRow({ models: [row] }))).toBeCloseTo(151_000 / 152_600, 6);
+  });
+
+  it('builds the reverse key distribution for a model from API key breakdowns', () => {
+    const apiKeyRows = [
+      rankRow({
+        id: 'hash-a',
+        label: 'sk-****aaaa',
+        models: [
+          rankRow({ id: 'gpt-5.5', label: 'gpt-5.5', totalTokens: 900 }),
+          rankRow({ id: 'glm-5', label: 'glm-5', totalTokens: 50 }),
+        ],
+      }),
+      rankRow({
+        id: 'hash-b',
+        label: 'sk-****bbbb',
+        models: [rankRow({ id: 'gpt-5.5', label: 'gpt-5.5', totalTokens: 100 })],
+      }),
+      rankRow({ id: 'hash-c', label: 'sk-****cccc', models: [] }),
+    ];
+
+    const distribution = buildModelKeyDistribution('gpt-5.5', apiKeyRows);
+
+    expect(distribution).toEqual([
+      { id: 'hash-a', label: 'sk-****aaaa', totalTokens: 900, share: 0.9 },
+      { id: 'hash-b', label: 'sk-****bbbb', totalTokens: 100, share: 0.1 },
+    ]);
+    expect(buildModelKeyDistribution('unknown-model', apiKeyRows)).toEqual([]);
+  });
+
+  it('caps the reverse key distribution at the requested limit', () => {
+    const apiKeyRows = Array.from({ length: 6 }, (_, index) =>
+      rankRow({
+        id: `hash-${index}`,
+        label: `sk-****${index}`,
+        models: [rankRow({ id: 'gpt-5.5', totalTokens: 100 - index })],
+      })
+    );
+    expect(buildModelKeyDistribution('gpt-5.5', apiKeyRows)).toHaveLength(4);
+  });
   it('derives per-row cache hit rate for non-Anthropic models without double counting cacheRead', () => {
     const row = rankRow({
       requestCount: 1,
@@ -1383,44 +1936,6 @@ describe('model rank derivations', () => {
     expect(series).toHaveLength(1);
     expect(series[0].id).toBe('abcdef1234567890');
     expect(series[0].points[0].value).toBe(40);
-  });
-
-  it('builds the reverse key distribution for a model from API key breakdowns', () => {
-    const apiKeyRows = [
-      rankRow({
-        id: 'hash-a',
-        label: 'sk-****aaaa',
-        models: [
-          rankRow({ id: 'gpt-5.5', label: 'gpt-5.5', totalTokens: 900 }),
-          rankRow({ id: 'glm-5', label: 'glm-5', totalTokens: 50 }),
-        ],
-      }),
-      rankRow({
-        id: 'hash-b',
-        label: 'sk-****bbbb',
-        models: [rankRow({ id: 'gpt-5.5', label: 'gpt-5.5', totalTokens: 100 })],
-      }),
-      rankRow({ id: 'hash-c', label: 'sk-****cccc', models: [] }),
-    ];
-
-    const distribution = buildModelKeyDistribution('gpt-5.5', apiKeyRows);
-
-    expect(distribution).toEqual([
-      { id: 'hash-a', label: 'sk-****aaaa', totalTokens: 900, share: 0.9 },
-      { id: 'hash-b', label: 'sk-****bbbb', totalTokens: 100, share: 0.1 },
-    ]);
-    expect(buildModelKeyDistribution('unknown-model', apiKeyRows)).toEqual([]);
-  });
-
-  it('caps the reverse key distribution at the requested limit', () => {
-    const apiKeyRows = Array.from({ length: 6 }, (_, index) =>
-      rankRow({
-        id: `hash-${index}`,
-        label: `sk-****${index}`,
-        models: [rankRow({ id: 'gpt-5.5', totalTokens: 100 - index })],
-      })
-    );
-    expect(buildModelKeyDistribution('gpt-5.5', apiKeyRows)).toHaveLength(4);
   });
 });
 
@@ -1472,6 +1987,69 @@ describe('usage anomaly drilldown', () => {
     ]);
   });
 
+  it('does not treat zero-request buckets as health anomaly samples', () => {
+    const timeline = buildUsageTimeline(
+      [
+        {
+          bucket_ms: NOW_MS,
+          label: '',
+          calls: 10,
+          tokens: 100,
+          success: 9,
+          failure: 1,
+          input_tokens: 100,
+          cache_read_tokens: 80,
+          cost: 1,
+          average_latency_ms: 500,
+        },
+        {
+          bucket_ms: NOW_MS + HOUR_MS,
+          label: '',
+          calls: 0,
+          tokens: 0,
+          success: 0,
+          failure: 0,
+          input_tokens: 0,
+          cache_read_tokens: 0,
+          cost: 0,
+        },
+        {
+          bucket_ms: NOW_MS + 2 * HOUR_MS,
+          label: '',
+          calls: 10,
+          tokens: 100,
+          success: 5,
+          failure: 5,
+          input_tokens: 100,
+          cache_read_tokens: 80,
+          cost: 1,
+          average_latency_ms: 400,
+        },
+      ],
+      'hour'
+    );
+
+    const emptyAnalysis = analyzeUsageBucket(timeline, NOW_MS + HOUR_MS);
+    expect(emptyAnalysis?.changes).toMatchObject({
+      requestCount: -1,
+      cacheHitRate: 0,
+      averageTokensPerRequest: 0,
+      failureRate: 0,
+      averageLatencyMs: 0,
+    });
+    expect(emptyAnalysis?.anomalies).toEqual([]);
+
+    const recoveryAnalysis = analyzeUsageBucket(timeline, NOW_MS + 2 * HOUR_MS);
+    expect(recoveryAnalysis?.changes).toMatchObject({
+      requestCount: 1,
+      cacheHitRate: 0,
+      averageTokensPerRequest: 0,
+      failureRate: 0,
+      averageLatencyMs: 0,
+    });
+    expect(recoveryAnalysis?.anomalies).toEqual([]);
+  });
+
   it('uses direction-aware anomaly cause copy', () => {
     expect(
       buildUsageAnomalyCauseKeys({
@@ -1486,6 +2064,41 @@ describe('usage anomaly drilldown', () => {
         averageTokensPerRequest: 0,
       })
     ).toEqual(['usage_analytics.cause_request_drop', 'usage_analytics.cause_cost_drop']);
+  });
+
+  it('detects cache growth from fine-grained cache buckets', () => {
+    const timeline = buildUsageTimeline(
+      [
+        {
+          bucket_ms: NOW_MS,
+          label: '',
+          calls: 1,
+          tokens: 100,
+          success: 1,
+          failure: 0,
+          input_tokens: 100,
+          cache_read_tokens: 10,
+          cache_creation_tokens: 0,
+        },
+        {
+          bucket_ms: NOW_MS + HOUR_MS,
+          label: '',
+          calls: 1,
+          tokens: 100,
+          success: 1,
+          failure: 0,
+          input_tokens: 100,
+          cache_read_tokens: 25,
+          cache_creation_tokens: 5,
+        },
+      ],
+      'hour'
+    );
+
+    const analysis = analyzeUsageBucket(timeline, NOW_MS + HOUR_MS);
+
+    expect(analysis?.changes.cachedTokens).toBe(2);
+    expect(analysis?.causeKeys).toContain('usage_analytics.cause_cache_growth');
   });
 
   it('builds stable monitoring detail query parameters', () => {
@@ -1523,6 +2136,171 @@ describe('usage anomaly drilldown', () => {
 });
 
 it('uses an exact unresolved-model scope for legacy fast groups', () => {
- expect(buildUsageAnalyticsFilters({performanceView:'fast',model:'unresolved:legacy-alias',authIndex:'a'})).toEqual({auth_indices:['a'],unresolved_models:['legacy-alias']});
- expect(buildUsageAnalyticsFilters({model:'unresolved:regular-alias'})).toEqual({models:['unresolved:regular-alias']});
+  expect(
+    buildUsageAnalyticsFilters({
+      performanceView: 'fast',
+      model: 'unresolved:legacy-alias',
+      authIndex: 'a',
+    })
+  ).toEqual({ auth_indices: ['a'], unresolved_models: ['legacy-alias'] });
+  expect(buildUsageAnalyticsFilters({ model: 'unresolved:regular-alias' })).toEqual({
+    models: ['unresolved:regular-alias'],
+  });
+});
+
+it('labels unattributed API key rows without faking a sk-**** key', () => {
+  const data: Pick<MonitoringAnalyticsResponse, 'api_key_stats'> = {
+    api_key_stats: [
+      {
+        // 没有真实 api_key_hash（未启用 Key 鉴权/直连请求），后端只给了分组桶 id。
+        id: 'unattributed-bucket',
+        api_key_hash: '',
+        calls: 4,
+        success_calls: 4,
+        failure_calls: 0,
+        success_rate: 1,
+        input_tokens: 40,
+        output_tokens: 10,
+        cached_tokens: 0,
+        cache_read_tokens: 0,
+        cache_creation_tokens: 0,
+        total_tokens: 50,
+        cost: 0.4,
+        average_latency_ms: null,
+        last_seen_ms: NOW_MS,
+      },
+      {
+        // 上游把来源邮箱当兜底值塞进了 id，绝不能被截断渲染成 `sk-****` key。
+        id: 'user@gmail.com',
+        api_key_hash: '',
+        calls: 2,
+        success_calls: 2,
+        failure_calls: 0,
+        success_rate: 1,
+        input_tokens: 20,
+        output_tokens: 5,
+        cached_tokens: 0,
+        cache_read_tokens: 0,
+        cache_creation_tokens: 0,
+        total_tokens: 25,
+        cost: 0.2,
+        average_latency_ms: null,
+        last_seen_ms: NOW_MS,
+      },
+    ],
+  };
+
+  const rows = buildApiKeyRows(data.api_key_stats);
+
+  expect(rows).toHaveLength(2);
+  rows.forEach((row) => {
+    expect(row.label).toBe(UNATTRIBUTED_API_KEY_LABEL);
+    expect(row.label).not.toMatch(/^sk-\*{2,}/);
+    expect(row.label).not.toContain('@gmail.com');
+    expect(row.apiKeyHash).toBe('');
+  });
+});
+
+it('resolveUsageApiKeyLabel never masks a non-hash fallback as a real key', () => {
+  expect(resolveUsageApiKeyLabel('')).toBe(UNATTRIBUTED_API_KEY_LABEL);
+  expect(resolveUsageApiKeyLabel(null, undefined, '')).toBe(UNATTRIBUTED_API_KEY_LABEL);
+  // 邮箱既是 hash 又是 fallback（上游同一个值传了两次）时，必须归为未归属，
+  // 不能把邮箱尾巴（如 `.com`）当成 key 材料截断展示。
+  expect(resolveUsageApiKeyLabel('user@gmail.com', undefined, 'user@gmail.com')).toBe(
+    UNATTRIBUTED_API_KEY_LABEL
+  );
+  // 真实 hash 依然按原逻辑掩码展示。
+  expect(resolveUsageApiKeyLabel('abcdef1234567890')).toBe('sk-****7890');
+});
+
+describe('explicit server-normalized versus raw cache contracts', () => {
+  it('keeps residual raw buckets distinct from the server display total', () => {
+    expect(
+      getUsageCacheTokens({ cachedTokens: 5, cacheReadTokens: 4, cacheCreationTokens: 1 })
+    ).toBe(10);
+    expect(
+      getNormalizedUsageCacheTokens({ cachedTokens: 5, cacheReadTokens: 4, cacheCreationTokens: 1 })
+    ).toBe(5);
+    expect(getNormalizedUsageCacheTokens({ cacheReadTokens: 4, cacheCreationTokens: 1 })).toBe(5);
+    expect(
+      getNormalizedUsageCacheTokens({ cachedTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 })
+    ).toBe(0);
+    // 不自洽partial DTO保已声明的total，不用max掩盖partial质量。
+    expect(
+      getNormalizedUsageCacheTokens({ cachedTokens: 2, cacheReadTokens: 4, cacheCreationTokens: 1 })
+    ).toBe(2);
+  });
+  it('does not infer raw cache inclusion from a model on normalized v2 or compat DTOs', () => {
+    expect(
+      computeCacheHitRate({
+        inputTokens: 30,
+        cacheReadTokens: 7,
+        cacheCreationTokens: 13,
+        cachedTokens: 0,
+        model: 'provider/claude',
+      })
+    ).toBeCloseTo(7 / 50);
+    expect(
+      computeNormalizedCacheHitRate({
+        inputTokens: 50,
+        cacheReadTokens: 7,
+        cacheCreationTokens: 13,
+        cachedTokens: 20,
+        model: 'provider/claude',
+      })
+    ).toBeCloseTo(7 / 50);
+    expect(
+      computeNormalizedCacheHitRate({
+        inputTokens: 100,
+        cacheReadTokens: 40,
+        cacheCreationTokens: 10,
+        cachedTokens: 50,
+        model: 'anthropic/compat',
+      })
+    ).toBeCloseTo(0.4);
+    expect(
+      computeNormalizedCacheHitRate({
+        inputTokens: 450,
+        cacheReadTokens: 300,
+        cacheCreationTokens: 50,
+        cachedTokens: 350,
+        model: 'claude',
+      })
+    ).toBeCloseTo(2 / 3);
+    expect(
+      computeNormalizedCacheHitRate({
+        inputTokens: 450,
+        cacheReadTokens: 300,
+        cacheCreationTokens: 50,
+        cachedTokens: 350,
+        cacheHitRate: 0.25,
+      })
+    ).toBe(0.25);
+  });
+});
+
+describe('partial server cache evidence priority', () => {
+  const row = (patch: Partial<UsageRankRow> = {}) =>
+    ({
+      inputTokens: 450,
+      cacheReadTokens: 300,
+      cacheCreationTokens: 50,
+      cachedTokens: 350,
+      models: [],
+      ...patch,
+    }) as UsageRankRow;
+  it('respects explicit zero totals on a leaf instead of reconstructing two thirds', () => {
+    expect(computeRowCacheHitRate(row({ cacheHitTokens: 0, cacheHitInputTokens: 0 }))).toBe(0);
+  });
+  it('weights an explicit child server ratio of zero without falling back to buckets', () => {
+    expect(computeRowCacheHitRate(row({ models: [row({ cacheHitRate: 0 })] }))).toBe(0);
+  });
+  it('mixes explicit totals, explicit ratio and normalized bucket children by real input weight', () => {
+    const children = [
+      row({ cacheHitTokens: 10, cacheHitInputTokens: 100, cacheHitRate: 1 }),
+      row({ inputTokens: 100, cacheHitRate: 0 }),
+      row({ inputTokens: 100, cacheReadTokens: 30 }),
+    ];
+    expect(computeRowCacheHitRate(row({ models: children }))).toBeCloseTo(40 / 300);
+  });
 });

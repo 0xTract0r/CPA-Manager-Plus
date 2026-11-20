@@ -3,8 +3,9 @@ import { create, type ReactTestInstance, type ReactTestRenderer } from 'react-te
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthFileItem } from '@/types';
 import type { CoreQuotaSnapshotEntry } from '@/services/api/quotaSnapshots';
+import { isCredentialIdentityVerified } from '@/utils/authFileCredentialIdentity';
 import { buildCoreQuotaSnapshotLookup } from '@/utils/quota/coreQuotaSnapshots';
-import type { QuotaConfig } from './quotaConfigs';
+import type { LegacyQuotaConfig as QuotaConfig } from './quotaConfigs';
 import { QuotaSection } from './QuotaSection';
 import { useQuotaLoader } from './useQuotaLoader';
 
@@ -37,6 +38,14 @@ const { mocks } = vi.hoisted(() => {
 
   return {
     mocks: {
+      authState: { apiBase: 'https://first.example.test', managementKey: 'synthetic-first' },
+      authListeners: new Set<
+        (
+          state: { apiBase: string; managementKey: string },
+          previous: { apiBase: string; managementKey: string }
+        ) => void
+      >(),
+      lookup: vi.fn(),
       fetchQuota: vi.fn(),
       quotaStoreState,
       resetQuota: vi.fn(),
@@ -58,13 +67,36 @@ vi.mock('@/hooks/useHeaderRefresh', () => ({
   triggerHeaderRefresh: vi.fn(),
 }));
 
+vi.mock('@/stores/useAuthStore', () => ({
+  useAuthStore: {
+    getState: () => mocks.authState,
+    subscribe: (
+      listener: (state: typeof mocks.authState, previous: typeof mocks.authState) => void
+    ) => {
+      mocks.authListeners.add(listener);
+      return () => mocks.authListeners.delete(listener);
+    },
+  },
+}));
+vi.mock('@/services/api/authFiles', () => ({
+  authFilesApi: { lookup: (...args: unknown[]) => mocks.lookup(...args) },
+}));
+const switchConnection = () => {
+  const previous = { ...mocks.authState };
+  mocks.authState = { apiBase: 'https://second.example.test', managementKey: 'synthetic-second' };
+  mocks.authListeners.forEach((listener) => listener(mocks.authState, previous));
+};
+
 vi.mock('@/stores', () => ({
   useNotificationStore: (selector: (state: unknown) => unknown) =>
     selector({
       showConfirmation: mocks.showConfirmation,
       showNotification: mocks.showNotification,
     }),
-  useQuotaStore: (selector: (state: unknown) => unknown) => selector(mocks.quotaStoreState),
+  useQuotaStore: Object.assign(
+    (selector: (state: unknown) => unknown) => selector(mocks.quotaStoreState),
+    { getState: () => mocks.quotaStoreState }
+  ),
   useThemeStore: (selector: (state: unknown) => unknown) => selector({ resolvedTheme: 'light' }),
 }));
 
@@ -73,6 +105,9 @@ const MASKED_FILE_NAME = 'ver***@example.com';
 
 const testFile: AuthFileItem = {
   name: FULL_FILE_NAME,
+  id: 'runtime-original',
+  account_id: 'account-original',
+  authIndex: 'original-index',
   type: 'codex',
 };
 
@@ -93,7 +128,8 @@ const testConfig: QuotaConfig<TestQuotaState, TestQuotaData> = {
   type: 'codex',
   i18nPrefix: 'codex_quota',
   filterFn: () => true,
-  fetchQuota: (file, t) => mocks.fetchQuota(file, t) as Promise<TestQuotaData>,
+  fetchQuota: (file, t, scope, context) =>
+    mocks.fetchQuota(file, t, scope, context) as Promise<TestQuotaData>,
   storeSelector: (state) => state.codexQuota,
   storeSetter: 'setCodexQuota',
   buildLoadingState: () => ({ status: 'loading', windows: [] }),
@@ -120,7 +156,8 @@ const testConfig: QuotaConfig<TestQuotaState, TestQuotaData> = {
   controlsClassName: 'codex-controls',
   controlClassName: 'codex-control',
   gridClassName: 'codex-grid',
-  resetQuota: (file, t) => mocks.resetQuota(file, t) as Promise<TestQuotaData>,
+  resetQuota: (file, t, scope, context) =>
+    mocks.resetQuota(file, t, scope, context) as Promise<TestQuotaData>,
   canResetQuota: (_file, quota) =>
     quota?.status === 'success' && (quota.rateLimitResetCreditsAvailableCount ?? 0) > 0,
   renderQuotaItems: () => <div>quota loaded</div>,
@@ -203,12 +240,14 @@ let runLoadQuota:
 
 function QuotaLoaderHarness({
   config,
+  files,
   onLoadQuota,
 }: {
   config: QuotaConfig<TestQuotaState, TestQuotaData>;
+  files: AuthFileItem[];
   onLoadQuota: (loadQuota: typeof runLoadQuota) => void;
 }) {
-  const { loadQuota } = useQuotaLoader(config);
+  const { loadQuota } = useQuotaLoader(config, files);
   useEffect(() => {
     onLoadQuota((targets, setLoading = vi.fn()) => loadQuota(targets, 'all', setLoading));
     return () => onLoadQuota(undefined);
@@ -218,6 +257,8 @@ function QuotaLoaderHarness({
 
 describe('QuotaSection account display mode', () => {
   beforeEach(() => {
+    mocks.authState = { apiBase: 'https://first.example.test', managementKey: 'synthetic-first' };
+    mocks.lookup.mockReset().mockResolvedValue([testFile]);
     mocks.fetchQuota.mockReset();
     mocks.resetQuota.mockReset();
     mocks.showConfirmation.mockReset();
@@ -362,6 +403,225 @@ describe('QuotaSection account display mode', () => {
     });
   });
 
+  it('drops late refresh responses and notifications after a connection switch', async () => {
+    let resolve!: (data: TestQuotaData) => void;
+    mocks.fetchQuota.mockReturnValue(
+      new Promise<TestQuotaData>((done) => {
+        resolve = done;
+      })
+    );
+    const renderer = renderSection();
+    act(() => {
+      findButtonByText(renderer, 'codex_quota.refresh_button').props.onClick();
+    });
+    expect(mocks.fetchQuota.mock.calls[0]?.[2]).toEqual({
+      apiBase: 'https://first.example.test',
+      managementKey: 'synthetic-first',
+    });
+    act(() => {
+      switchConnection();
+    });
+    mocks.quotaStoreState.codexQuota = {
+      [FULL_FILE_NAME]: { ...successQuota, windows: ['new-connection'] },
+    };
+    await act(async () => {
+      resolve({ resetCredits: 99 });
+      await flushMicrotasks();
+    });
+    expect(mocks.quotaStoreState.codexQuota).toMatchObject({
+      [FULL_FILE_NAME]: { windows: ['new-connection'] },
+    });
+    expect(mocks.showNotification).not.toHaveBeenCalled();
+    act(() => renderer.unmount());
+  });
+
+  it('drops late refresh after the same file name is replaced by another credential', async () => {
+    let resolve!: (data: TestQuotaData) => void;
+    mocks.fetchQuota.mockReturnValue(
+      new Promise<TestQuotaData>((done) => {
+        resolve = done;
+      })
+    );
+    const renderer = renderSection();
+    act(() => {
+      findButtonByText(renderer, 'codex_quota.refresh_button').props.onClick();
+    });
+    act(() =>
+      renderer.update(
+        <QuotaSection
+          config={testConfig}
+          files={[{ ...testFile, id: 'replacement-runtime', account_id: 'replacement-account' }]}
+          loading={false}
+          disabled={false}
+        />
+      )
+    );
+    expect(
+      (mocks.quotaStoreState.codexQuota as Record<string, unknown>)[FULL_FILE_NAME]
+    ).toBeUndefined();
+    mocks.quotaStoreState.codexQuota = {
+      [FULL_FILE_NAME]: { ...successQuota, windows: ['replacement'] },
+    };
+    await act(async () => {
+      resolve({ resetCredits: 99 });
+      await flushMicrotasks();
+    });
+    expect(mocks.quotaStoreState.codexQuota).toMatchObject({
+      [FULL_FILE_NAME]: { windows: ['replacement'] },
+    });
+    expect(mocks.showNotification).not.toHaveBeenCalled();
+    act(() => renderer.unmount());
+  });
+
+  it('does not redeem a credit when an old confirmation outlives its connection', async () => {
+    const renderer = renderSection();
+    act(() => {
+      findButtonByText(renderer, 'codex_quota.reset_action_button').props.onClick();
+    });
+    const confirmation = mocks.showConfirmation.mock.calls[0][0];
+    act(() => {
+      switchConnection();
+    });
+    await act(async () => {
+      await confirmation.onConfirm();
+    });
+    expect(mocks.lookup).not.toHaveBeenCalled();
+    expect(mocks.resetQuota).not.toHaveBeenCalled();
+    expect(mocks.showNotification).not.toHaveBeenCalled();
+    act(() => renderer.unmount());
+  });
+
+  it('does not redeem when the connection switches during the identity lookup', async () => {
+    let resolve!: (files: AuthFileItem[]) => void;
+    mocks.lookup.mockReturnValue(
+      new Promise<AuthFileItem[]>((done) => {
+        resolve = done;
+      })
+    );
+    const renderer = renderSection();
+    act(() => {
+      findButtonByText(renderer, 'codex_quota.reset_action_button').props.onClick();
+    });
+    const operation = mocks.showConfirmation.mock.calls[0][0].onConfirm();
+    act(() => {
+      switchConnection();
+    });
+    await act(async () => {
+      resolve([testFile]);
+      await operation;
+    });
+    expect(mocks.resetQuota).not.toHaveBeenCalled();
+    expect(mocks.showNotification).not.toHaveBeenCalled();
+    act(() => renderer.unmount());
+  });
+
+  it('refuses to redeem a credit when fresh lookup finds a replaced credential', async () => {
+    mocks.lookup.mockResolvedValue([
+      { ...testFile, id: 'replacement-runtime', account_id: 'replacement-account' },
+    ]);
+    const renderer = renderSection();
+    act(() => {
+      findButtonByText(renderer, 'codex_quota.reset_action_button').props.onClick();
+    });
+    await act(async () => {
+      await mocks.showConfirmation.mock.calls[0][0].onConfirm();
+    });
+    expect(mocks.lookup).toHaveBeenCalledWith(
+      { name: FULL_FILE_NAME, authIndex: 'original-index' },
+      { apiBase: 'https://first.example.test', managementKey: 'synthetic-first' }
+    );
+    expect(mocks.resetQuota).not.toHaveBeenCalled();
+    expect(mocks.showNotification.mock.calls[0]?.[1]).toBe('error');
+    act(() => renderer.unmount());
+  });
+
+  it.each([undefined, '', '   '])(
+    'rejects unverified name-only evidence with authIndex %s before lookup',
+    async (authIndex) => {
+      const weak: AuthFileItem = { name: FULL_FILE_NAME, type: 'codex', authIndex };
+      expect(isCredentialIdentityVerified(weak)).toBe(false);
+      const renderer = renderSection({ files: [weak] });
+      act(() => findButtonByText(renderer, 'codex_quota.reset_action_button').props.onClick());
+      await act(async () => {
+        await mocks.showConfirmation.mock.calls[0][0].onConfirm();
+      });
+      expect(mocks.lookup).not.toHaveBeenCalled();
+      expect(mocks.resetQuota).not.toHaveBeenCalled();
+      act(() => renderer.unmount());
+    }
+  );
+
+  it.each([
+    ['runtime replacement', [{ ...testFile, id: 'different-runtime' }]],
+    ['account replacement', [{ ...testFile, account_id: 'different-account' }]],
+    ['ambiguous identical snapshots', [testFile, { ...testFile }]],
+    ['missing snapshot', []],
+  ] as const)('rejects %s before consuming a reset credit', async (_label, snapshots) => {
+    mocks.lookup.mockResolvedValue([...snapshots]);
+    const renderer = renderSection();
+    act(() => findButtonByText(renderer, 'codex_quota.reset_action_button').props.onClick());
+    await act(async () => {
+      await mocks.showConfirmation.mock.calls[0][0].onConfirm();
+    });
+    expect(mocks.lookup).toHaveBeenCalledTimes(1);
+    expect(mocks.resetQuota).not.toHaveBeenCalled();
+    act(() => renderer.unmount());
+  });
+
+  it.each([
+    ['complete identity', testFile],
+    ['runtime-only identity', { name: FULL_FILE_NAME, type: 'codex', id: 'runtime-only' }],
+    [
+      'index-only identity accepted by the real helper',
+      { name: FULL_FILE_NAME, type: 'codex', authIndex: 'verified-index' },
+    ],
+  ])(
+    'consumes exactly once after unique lookup of %s with captured scope',
+    async (_label, file) => {
+      expect(isCredentialIdentityVerified(file)).toBe(true);
+      mocks.lookup.mockResolvedValue([file]);
+      mocks.resetQuota.mockResolvedValue({ resetCredits: 1 });
+      const renderer = renderSection({ files: [file] });
+      act(() => findButtonByText(renderer, 'codex_quota.reset_action_button').props.onClick());
+      await act(async () => {
+        await mocks.showConfirmation.mock.calls[0][0].onConfirm();
+      });
+      expect(mocks.lookup).toHaveBeenCalledTimes(1);
+      expect(mocks.resetQuota).toHaveBeenCalledTimes(1);
+      expect(mocks.resetQuota.mock.calls[0][0]).toEqual(file);
+      expect(mocks.resetQuota.mock.calls[0][2]).toEqual({
+        apiBase: 'https://first.example.test',
+        managementKey: 'synthetic-first',
+      });
+      act(() => renderer.unmount());
+    }
+  );
+
+  it('does not redeem without confirmation and drops refresh results after unmount', async () => {
+    let resolve!: (data: TestQuotaData) => void;
+    mocks.fetchQuota.mockReturnValue(
+      new Promise<TestQuotaData>((done) => {
+        resolve = done;
+      })
+    );
+    const renderer = renderSection();
+    act(() => {
+      findButtonByText(renderer, 'codex_quota.reset_action_button').props.onClick();
+    });
+    expect(mocks.resetQuota).not.toHaveBeenCalled();
+    act(() => {
+      findButtonByText(renderer, 'codex_quota.refresh_button').props.onClick();
+    });
+    act(() => renderer.unmount());
+    const before = mocks.quotaStoreState.codexQuota;
+    await act(async () => {
+      resolve({ resetCredits: 99 });
+      await flushMicrotasks();
+    });
+    expect(mocks.quotaStoreState.codexQuota).toBe(before);
+    expect(mocks.showNotification).not.toHaveBeenCalled();
+  });
+
   it('scopes same-name quota cache by auth file identity', () => {
     const scopedConfig = createScopedTestConfig();
     const files: AuthFileItem[] = [
@@ -396,6 +656,7 @@ describe('QuotaSection account display mode', () => {
     act(() => {
       renderer = create(
         <QuotaLoaderHarness
+          files={files}
           config={scopedConfig}
           onLoadQuota={(nextLoadQuota) => {
             runLoadQuota = nextLoadQuota;
@@ -457,6 +718,7 @@ describe('QuotaSection account display mode', () => {
     act(() => {
       renderer = create(
         <QuotaLoaderHarness
+          files={files}
           config={scopedConfig}
           onLoadQuota={(nextLoadQuota) => {
             runLoadQuota = nextLoadQuota;
@@ -510,6 +772,7 @@ describe('QuotaSection account display mode', () => {
     act(() => {
       renderer = create(
         <QuotaLoaderHarness
+          files={files}
           config={scopedConfig}
           onLoadQuota={(nextLoadQuota) => {
             runLoadQuota = nextLoadQuota;
@@ -540,6 +803,8 @@ describe('QuotaSection account display mode', () => {
 
 describe('QuotaSection core-snapshot observed state on mount', () => {
   beforeEach(() => {
+    mocks.authState = { apiBase: 'https://first.example.test', managementKey: 'synthetic-first' };
+    mocks.lookup.mockReset().mockResolvedValue([testFile]);
     mocks.fetchQuota.mockReset();
     mocks.resetQuota.mockReset();
     mocks.showConfirmation.mockReset();

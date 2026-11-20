@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"errors"
+	"log"
 	"net/http"
 
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/http/response"
@@ -20,7 +21,7 @@ type PanelVerifier interface {
 func AuthorizeAdmin(w http.ResponseWriter, r *http.Request, verifier AdminVerifier) bool {
 	ok, err := verifier.VerifyHeader(r.Context(), r.Header.Get("Authorization"))
 	if err != nil {
-		response.Error(w, authErrorStatus(err), err)
+		writeAuthorizationFailure(w, "admin", err)
 		return false
 	}
 	if ok {
@@ -33,7 +34,7 @@ func AuthorizeAdmin(w http.ResponseWriter, r *http.Request, verifier AdminVerifi
 func AuthorizePanel(w http.ResponseWriter, r *http.Request, verifier PanelVerifier) bool {
 	ok, err := verifier.VerifyPanelHeader(r.Context(), r.Header.Get("Authorization"))
 	if err != nil {
-		response.Error(w, authErrorStatus(err), err)
+		writeAuthorizationFailure(w, "panel", err)
 		return false
 	}
 	if ok {
@@ -41,7 +42,7 @@ func AuthorizePanel(w http.ResponseWriter, r *http.Request, verifier PanelVerifi
 	}
 	external, err := verifier.PanelUsesExternalManagementKey(r.Context())
 	if err != nil {
-		response.Error(w, authErrorStatus(err), err)
+		writeAuthorizationFailure(w, "panel mode", err)
 		return false
 	}
 	if external {
@@ -61,4 +62,16 @@ func authErrorStatus(err error) int {
 		return status
 	}
 	return http.StatusInternalServerError
+}
+
+func writeAuthorizationFailure(w http.ResponseWriter, scope string, err error) {
+	if status := response.ContextErrorStatus(err); status != 0 {
+		response.Error(w, status, err)
+		return
+	}
+	log.Printf("%s authorization failed: %v", scope, err)
+	response.JSON(w, authErrorStatus(err), map[string]any{
+		"error": "authorization failed",
+		"code":  "request_failed",
+	})
 }

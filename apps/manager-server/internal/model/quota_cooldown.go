@@ -1,7 +1,8 @@
 package model
 
 const (
-	QuotaCooldownOwnerUsage429 = "cpamp_usage_429"
+	QuotaCooldownOwnerUsage429     = "cpamp_usage_429"
+	QuotaCooldownOwnerXAIFreeUsage = "cpamp_xai_free_usage"
 
 	QuotaCooldownStatusActive    = "active"
 	QuotaCooldownStatusRecovered = "recovered"
@@ -14,6 +15,9 @@ type QuotaCooldown struct {
 	AuthIndex        string
 	AccountSnapshot  string
 	Provider         string
+	ReasonCode       string
+	WindowKind       string
+	EvidenceJSON     string
 	RecoverAtMS      int64
 	Owner            string
 	EventHash        string
@@ -27,13 +31,17 @@ type QuotaCooldown struct {
 }
 
 type QuotaCooldownUpsert struct {
-	AuthFileName     string
-	AuthIndex        string
-	AccountSnapshot  string
-	Provider         string
-	RecoverAtMS      int64
-	Owner            string
-	EventHash        string
-	PreDisabledState bool
-	DisabledAtMS     int64
+	AuthFileName        string
+	AuthIndex           string
+	AccountSnapshot     string
+	Provider            string
+	ReasonCode          string
+	WindowKind          string
+	EvidenceJSON        string
+	RecoverAtMS         int64
+	Owner               string
+	EventHash           string
+	PreDisabledState    bool
+	ObservedEnabledAtMS int64
+	DisabledAtMS        int64
 }

@@ -1,5 +1,6 @@
 import type { AuthFileItem } from '@/types/authFile';
 import { normalizeAuthIndex } from '@/utils/usage';
+import { resolveAuthFilePlanType } from '@/utils/plans';
 import { buildLegacyAuthIndexAliases } from '../legacyAuthIndexAliases';
 import { extractHost, isRecord, parseBoolean, readString } from './base';
 import type { MonitoringAuthMeta, MonitoringChannelMeta } from './types';
@@ -70,9 +71,7 @@ const normalizeAuthMeta = (entry: AuthFileItem): MonitoringAuthMeta | null => {
     identity.email ||
     authIndex;
 
-  const planType = readString(
-    isRecord(entry.id_token) ? entry.id_token.plan_type : entry['plan_type']
-  );
+  const planType = resolveAuthFilePlanType(entry);
 
   return {
     authIndex,

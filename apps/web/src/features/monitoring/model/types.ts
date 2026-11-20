@@ -1,9 +1,13 @@
 import type { RequestTelemetry } from '@/features/performance/types';
-import type { ApiKeyAlias } from '@/services/api/usageService';
-import type { ResponseHeaderMetadata } from '@/services/api/usageService';
+import type {
+  ApiKeyAlias,
+  MonitoringAnalyticsCoverage,
+  ResponseHeaderMetadata,
+} from '@/services/api/usageService';
 import type { AuthFileItem } from '@/types/authFile';
 import type { Config } from '@/types/config';
 import type { ModelPrice } from '@/utils/usage';
+import type { MonitoringDataTab } from '../monitoringCenterUiState';
 
 export type MonitoringChannelMeta = {
   key: string;
@@ -161,24 +165,42 @@ export type MonitoringEventRow = {
   dayKey: string;
   hourLabel: string;
   model: string;
+  requestedModel?: string;
   resolvedModel?: string;
+  responseModel?: string;
+  sessionId?: string;
+  parentSessionId?: string;
+  accessTokenSha256?: string;
+  generate?: boolean;
+  stream?: boolean;
   endpoint: string;
   endpointMethod: string;
   endpointPath: string;
+  clientIp?: string;
+  xForwardedFor?: string;
+  userAgent?: string;
   sourceKey: string;
   source: string;
+  sourceIdentity?: string;
+  sourceHashIdentity?: string;
   sourceMasked: string;
   account: string;
+  accountIdentity?: string;
   accountMasked: string;
   accountNote?: string;
   authIndex: string;
+  authIndexIdentity?: string;
   authIndexMasked: string;
   authLabel: string;
+  authLabelIdentity?: string;
+  accountId?: string;
   projectId: string;
   apiKeyHash: string;
   apiKeyLabel: string;
   apiKeyMasked: string;
   provider: string;
+  providerIdentity?: string;
+  authProviderSnapshot?: string;
   planType: string;
   channel: string;
   channelHost: string;
@@ -198,6 +220,8 @@ export type MonitoringEventRow = {
   totalCost: number;
   reasoningEffort?: string;
   serviceTier?: string;
+  requestServiceTier?: string;
+  responseServiceTier?: string;
   executorType?: string;
   failStatusCode?: number | null;
   failSummary?: string;
@@ -225,6 +249,7 @@ export type MonitoringSummary = {
   cachedTokens: number;
   cacheReadTokens: number;
   cacheCreationTokens: number;
+  cacheHitRate?: number;
   totalTokens: number;
   totalCost: number;
   averageLatencyMs: number | null;
@@ -258,13 +283,20 @@ export type MonitoringAccountModelSpendRow = {
 export type MonitoringAccountRow = {
   id: string;
   account: string;
+  provider?: string;
   filterValue?: string;
+  /** focus/group token 行对应的旧口径选择器，仅用于选项去重。 */
+  legacyFilterValue?: string;
+  /** 服务端本轮返回的 opaque 聚焦 token（原样）。 */
+  accountFocusId?: string;
   displayAccount: string;
   accountMasked: string;
   authLabels: string[];
   authIndices: string[];
   sourceKeys?: string[];
   channels: string[];
+  /** Raw provider plan values; presentation is resolved at the UI boundary. */
+  planTypes?: string[];
   totalCalls: number;
   successCalls: number;
   failureCalls: number;
@@ -289,6 +321,7 @@ export type MonitoringApiKeyRow = {
   apiKeyHash: string;
   apiKeyLabel: string;
   apiKeyMasked: string;
+  apiKeyCopyValue?: string;
   isUnknown: boolean;
   authLabels: string[];
   sourceLabels: string[];
@@ -312,6 +345,8 @@ export type MonitoringApiKeyRow = {
 export type MonitoringFilterOptions = {
   accountRows: MonitoringAccountRow[];
   apiKeyRows: MonitoringApiKeyRow[];
+  accountCount?: number;
+  apiKeyCount?: number;
   providers: string[];
   models: string[];
   channels: string[];
@@ -382,6 +417,7 @@ export interface MonitoringScopeFilters {
 export interface UseMonitoringDataParams {
   usage?: unknown;
   config: Config | null | undefined;
+  connectionScopeKey?: string | null;
   modelPrices: Record<string, ModelPrice>;
   apiKeyAliases?: ApiKeyAlias[];
   timeRange: MonitoringTimeRange;
@@ -389,14 +425,18 @@ export interface UseMonitoringDataParams {
   searchQuery: string;
   searchApiKeyHash?: string;
   scopeFilters?: MonitoringScopeFilters;
+  activeDataTab?: MonitoringDataTab;
 }
 
 export interface UseMonitoringDataReturn {
   loading: boolean;
   error: string;
   authFiles: AuthFileItem[];
+  authFilesLoaded: boolean;
   channels: MonitoringChannelMeta[];
+  channelsLoaded: boolean;
   summary: MonitoringSummary;
+  coverage?: MonitoringAnalyticsCoverage;
   metadata: MonitoringMetadata;
   statusChips: MonitoringStatusChip[];
   timeline: MonitoringTimelinePoint[];
@@ -419,15 +459,25 @@ export interface UseMonitoringDataReturn {
   eventsLoadedCount: number;
   lastRefreshedAt: Date | null;
   isTransitioningScope: boolean;
+  /**
+   * 服务端精确聚焦 token 状态：none=未选 focus token；pending=能力/选项加载中；
+   * active=本轮服务端确认并已下发；unavailable=旧服务/过期/被拒，需刷新账号列表重新选择。
+   */
+  accountFocusState?: 'none' | 'pending' | 'active' | 'unavailable' | 'unsupported';
   // 仅在「切时间窗」转场时为 true(同窗后台刷新恒 false)，供 KPI 卡片「更新中」遮罩判定。
   overviewDataStale: boolean;
   hasPresentationSnapshot: boolean;
-  refreshMeta: (showLoading?: boolean, options?: { forceOverview?: boolean }) => Promise<void>;
+  refreshMeta: (
+    showLoading?: boolean,
+    options?: { forceOverview?: boolean }
+  ) => Promise<MonitoringMetaPayload | null>;
   loadMoreEvents: () => void;
 }
 
 export type MonitoringMetaPayload = {
   authFiles: AuthFileItem[];
+  authFilesLoaded: boolean;
   channels: MonitoringChannelMeta[];
+  channelsLoaded: boolean;
   error: string;
 };

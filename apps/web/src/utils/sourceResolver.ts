@@ -1,11 +1,17 @@
 import type { GeminiKeyConfig, OpenAIProviderConfig, ProviderKeyConfig } from '@/types';
 import type { CredentialInfo, SourceInfo, SourceProviderEnabledState } from '@/types/sourceInfo';
-import { buildCandidateUsageSourceIds, normalizeAuthIndex, normalizeUsageSourceId } from '@/utils/usage';
+import {
+  buildCandidateUsageSourceIds,
+  normalizeAuthIndex,
+  normalizeUsageSourceId,
+} from '@/utils/usage';
 
 export interface SourceInfoMapInput {
   geminiApiKeys?: GeminiKeyConfig[];
   claudeApiKeys?: ProviderKeyConfig[];
   codexApiKeys?: ProviderKeyConfig[];
+  xaiApiKeys?: ProviderKeyConfig[];
+  metaApiKeys?: ProviderKeyConfig[];
   vertexApiKeys?: ProviderKeyConfig[];
   openaiCompatibility?: OpenAIProviderConfig[];
 }
@@ -16,10 +22,13 @@ type SourceInfoEntry = Required<Pick<SourceInfo, 'displayName' | 'type' | 'ident
 export interface SourceInfoMap {
   byAuthIndex: Map<string, SourceInfoEntry | null>;
   bySource: Map<string, SourceInfoEntry | null>;
+  bySourceAndProvider?: Map<string, SourceInfoEntry | null>;
   byIdentityKey: Map<string, SourceInfoEntry>;
 }
 
 const buildProviderIdentityKey = (type: string, index: number | string) => `${type}:${index}`;
+const buildProviderSourceKey = (provider: string, source: string) =>
+  JSON.stringify([provider, source]);
 
 const hasDisableAllModelsRule = (models?: string[]) =>
   Array.isArray(models) && models.some((model) => String(model ?? '').trim() === '*');
@@ -151,6 +160,7 @@ const buildOpenAIKeyDisplayNameMap = (providers: OpenAIProviderConfig[]) => {
 export function buildSourceInfoMap(input: SourceInfoMapInput): SourceInfoMap {
   const byAuthIndex = new Map<string, SourceInfoEntry | null>();
   const bySource = new Map<string, SourceInfoEntry | null>();
+  const bySourceAndProvider = new Map<string, SourceInfoEntry | null>();
   const byIdentityKey = new Map<string, SourceInfoEntry>();
 
   const registerProvider = (
@@ -164,17 +174,25 @@ export function buildSourceInfoMap(input: SourceInfoMapInput): SourceInfoMap {
 
     Array.from(candidates).forEach((candidate) => {
       registerIdentity(bySource, candidate, entry);
+      registerIdentity(bySourceAndProvider, buildProviderSourceKey(entry.type, candidate), entry);
     });
   };
 
   const providers: Array<{
-    items: Array<{ apiKey?: string; prefix?: string; authIndex?: string; excludedModels?: string[] }>;
+    items: Array<{
+      apiKey?: string;
+      prefix?: string;
+      authIndex?: string;
+      excludedModels?: string[];
+    }>;
     type: string;
     label: string;
   }> = [
     { items: input.geminiApiKeys || [], type: 'gemini', label: 'Gemini' },
     { items: input.claudeApiKeys || [], type: 'claude', label: 'Claude' },
     { items: input.codexApiKeys || [], type: 'codex', label: 'Codex' },
+    { items: input.xaiApiKeys || [], type: 'xai', label: 'xAI' },
+    { items: input.metaApiKeys || [], type: 'meta', label: 'Muse (Meta)' },
     { items: input.vertexApiKeys || [], type: 'vertex', label: 'Vertex' },
   ];
 
@@ -236,7 +254,7 @@ export function buildSourceInfoMap(input: SourceInfoMapInput): SourceInfoMap {
     });
   });
 
-  [byAuthIndex, bySource].forEach((map) => {
+  [byAuthIndex, bySource, bySourceAndProvider].forEach((map) => {
     map.forEach((entry) => {
       if (entry) {
         byIdentityKey.set(entry.identityKey, entry);
@@ -244,7 +262,7 @@ export function buildSourceInfoMap(input: SourceInfoMapInput): SourceInfoMap {
     });
   });
 
-  return { byAuthIndex, bySource, byIdentityKey };
+  return { byAuthIndex, bySource, bySourceAndProvider, byIdentityKey };
 }
 
 export const buildSourceProviderStateMap = (sourceInfoMap: SourceInfoMap) => {
@@ -261,7 +279,8 @@ export function resolveSourceDisplay(
   sourceRaw: string,
   authIndex: unknown,
   sourceInfoMap: SourceInfoMap,
-  authFileMap: Map<string, CredentialInfo>
+  authFileMap: Map<string, CredentialInfo>,
+  providerRaw: unknown = ''
 ): SourceInfo {
   const source = normalizeUsageSourceId(sourceRaw);
   const authIndexKey = normalizeAuthIndex(authIndex);
@@ -281,6 +300,19 @@ export function resolveSourceDisplay(
   }
 
   const matchedBySource = source ? sourceInfoMap.bySource.get(source) : null;
+  const sharedAcrossProviders =
+    matchedBySource?.identityKey.startsWith('shared:') && !matchedBySource.type;
+  if (matchedBySource && !sharedAcrossProviders) return matchedBySource;
+
+  // A source shared across providers may have one display name but distinct
+  // provider identities. Keep same-provider ambiguity unchanged.
+  if (source && (matchedBySource === null || sharedAcrossProviders)) {
+    const provider = typeof providerRaw === 'string' ? providerRaw.trim().toLowerCase() : '';
+    const matchedByProvider = provider
+      ? sourceInfoMap.bySourceAndProvider?.get(buildProviderSourceKey(provider, source))
+      : null;
+    if (matchedByProvider) return matchedByProvider;
+  }
   if (matchedBySource) return matchedBySource;
 
   if (source) {

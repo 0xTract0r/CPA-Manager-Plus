@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthFileItem, CodexQuotaState } from '@/types';
 import {
   buildCodexCreditsHistoryLookup,
+  getCodexCreditsHistoryForAuthFile,
   type CodexCreditsHistoryLookup,
 } from '@/utils/quota/codexCreditsBurn';
 import {
@@ -81,7 +82,7 @@ describe('useCodexCreditsHistoryLookup', () => {
       days: 7,
       max_points: 200,
     });
-    expect(last.byFileAuthIndex.has('codex-a.json::7')).toBe(true);
+    expect(Boolean(getCodexCreditsHistoryForAuthFile(last, codexFile))).toBe(true);
 
     await advance(60_000);
     expect(getCreditsHistory).toHaveBeenCalledTimes(1);
@@ -93,13 +94,13 @@ describe('useCodexCreditsHistoryLookup', () => {
   it('拉取失败保留上一次结果', async () => {
     getCreditsHistory.mockResolvedValueOnce({ items: [historyItem(500)] });
     await mount('http://mgr');
-    const first = last.byFileAuthIndex.get('codex-a.json::7');
+    const first = getCodexCreditsHistoryForAuthFile(last, codexFile);
     expect(first).toBeDefined();
 
     getCreditsHistory.mockRejectedValueOnce(new Error('boom'));
     await advance(CODEX_CREDITS_HISTORY_REFRESH_INTERVAL_MS);
     expect(getCreditsHistory).toHaveBeenCalledTimes(2);
-    expect(last.byFileAuthIndex.get('codex-a.json::7')).toEqual(first);
+    expect(getCodexCreditsHistoryForAuthFile(last, codexFile)).toEqual(first);
   });
 
   it('managerServiceBase 为空（CPA panel 模式）时不发请求', async () => {
@@ -117,6 +118,15 @@ describe('withCodexCreditsHistory', () => {
     const next = withCodexCreditsHistory(baseQuota, lookup, codexFile);
     expect(next?.creditsHistory?.points).toHaveLength(2);
     expect(next?.creditsHistory?.quotaResetAtMs).toBe(Date.parse('2026-11-20T00:00:00Z'));
+  });
+
+  it('同名同索引重新认证后只使用新身份的历史点', () => {
+    const start = Date.parse('2026-11-13T00:00:00Z');
+    const end = Date.parse('2026-11-14T00:00:00Z');
+    const previous = withCodexCreditsHistory(baseQuota, lookup, codexFile)!;
+    const next = withCodexCreditsHistory(previous, lookup, codexFile, start);
+    expect(next?.creditsHistory?.points.map((point) => point.timestampMs)).toEqual([end]);
+    expect(withCodexCreditsHistory(previous, lookup, codexFile, end)?.creditsHistory).toBeUndefined();
   });
 
   it('非 Codex 卡片、身份不匹配或无 quota 时原样返回', () => {

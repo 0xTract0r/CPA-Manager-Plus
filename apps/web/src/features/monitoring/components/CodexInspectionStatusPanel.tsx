@@ -1,20 +1,15 @@
 import { Link } from 'react-router-dom';
-import type { ComponentType } from 'react';
+import type { ReactNode } from 'react';
 import type { TFunction } from 'i18next';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
-import {
-  IconChartLine,
-  IconCheck,
-  IconExternalLink,
-  IconInbox,
-  IconRefreshCw,
-  IconShield,
-  IconTrash2,
-  type IconProps,
-} from '@/components/ui/icons';
+import { IconExternalLink } from '@/components/ui/icons';
 import { type CodexInspectionProgressSnapshot } from '@/features/monitoring/codexInspection';
 import { CodexInspectionConfigOverview } from '@/features/monitoring/components/CodexInspectionConfigOverview';
+import {
+  SummaryCard as MonitoringSummaryCard,
+  type SummaryCardProps as MonitoringSummaryCardProps,
+} from '@/features/monitoring/components/MonitoringShared';
 import {
   type ConfigOverviewItem,
   type RunStatus,
@@ -23,28 +18,10 @@ import {
 } from '@/features/monitoring/model/codexInspectionPresentation';
 import styles from '../CodexInspectionPage.module.scss';
 
-const summaryIconMap: Record<NonNullable<SummaryCard['icon']>, ComponentType<IconProps>> = {
-  probe: IconInbox,
-  sampled: IconChartLine,
-  delete: IconTrash2,
-  disable: IconShield,
-  enable: IconCheck,
-  reauth: IconRefreshCw,
-};
-
-const summaryAccentClassMap: Record<NonNullable<SummaryCard['accent']>, string> = {
-  blue: styles.summaryAccentBlue,
-  cyan: styles.summaryAccentCyan,
-  red: styles.summaryAccentRed,
-  amber: styles.summaryAccentAmber,
-  green: styles.summaryAccentGreen,
-  violet: styles.summaryAccentViolet,
-};
-
 type CodexInspectionStatusPanelProps = {
   statusTone: StatusTone;
   statusLabel: string;
-  lastFinishedLabel: string | null;
+  lastFinishedValue: string | null;
   pendingActionCount: number;
   summaryCards: SummaryCard[];
   progress: CodexInspectionProgressSnapshot;
@@ -58,6 +35,8 @@ type CodexInspectionStatusPanelProps = {
   configOverviewItems: ConfigOverviewItem[];
   configOverviewTitle: string;
   configOverviewEditLabel: string;
+  modeControl?: ReactNode;
+  showBackLink?: boolean;
   t: TFunction;
   onEditConfig: (field?: string) => void;
   onRunInspection: () => void;
@@ -68,7 +47,7 @@ type CodexInspectionStatusPanelProps = {
 export function CodexInspectionStatusPanel({
   statusTone,
   statusLabel,
-  lastFinishedLabel,
+  lastFinishedValue,
   pendingActionCount,
   summaryCards,
   progress,
@@ -82,6 +61,8 @@ export function CodexInspectionStatusPanel({
   configOverviewItems,
   configOverviewTitle,
   configOverviewEditLabel,
+  modeControl,
+  showBackLink = true,
   t,
   onEditConfig,
   onRunInspection,
@@ -91,29 +72,21 @@ export function CodexInspectionStatusPanel({
   return (
     <>
       <Card className={`${styles.panel} ${styles.statusPanel}`}>
-        <div className={styles.statusBar}>
-          <div className={styles.statusInfo}>
-            <span className={`${styles.statusBadge} ${styles[`tone-${statusTone}`]}`}>
-              <span className={styles.statusDot} aria-hidden="true" />
-              {statusLabel}
-            </span>
-            <div className={styles.statusMeta}>
-              {lastFinishedLabel ? <span>{lastFinishedLabel}</span> : null}
-              {pendingActionCount > 0 ? (
-                <span
-                  className={styles.statusMetaWarn}
-                >{`${t('monitoring.codex_inspection_pending_total')} ${pendingActionCount}`}</span>
-              ) : null}
-            </div>
-          </div>
-
-          <div className={styles.statusActions}>
-            <Link to="/auth-files" className={styles.quickLink}>
-              <IconExternalLink size={14} />
-              <span>{t('monitoring.codex_inspection_back')}</span>
-            </Link>
+        <div className={styles.statusPanelHeader}>
+          {modeControl ? <div className={styles.statusPanelTabs}>{modeControl}</div> : <div />}
+          <div className={styles.statusPanelActions}>
+            {showBackLink ? (
+              <Link to="/accounts" className={styles.quickLink}>
+                <IconExternalLink size={14} />
+                <span>{t('monitoring.codex_inspection_back')}</span>
+              </Link>
+            ) : null}
+            <Button variant="secondary" size="sm" onClick={() => onEditConfig()}>
+              {configOverviewEditLabel}
+            </Button>
             <Button
               variant="primary"
+              size="sm"
               onClick={onRunInspection}
               loading={runStatus === 'running'}
               disabled={runDisabled}
@@ -124,12 +97,13 @@ export function CodexInspectionStatusPanel({
               <>
                 <Button
                   variant="secondary"
+                  size="sm"
                   onClick={onPauseInspection}
                   disabled={runStatus !== 'running' || executing}
                 >
                   {t('monitoring.codex_inspection_pause')}
                 </Button>
-                <Button variant="danger" onClick={onStopInspection} disabled={executing}>
+                <Button variant="danger" size="sm" onClick={onStopInspection} disabled={executing}>
                   {t('monitoring.codex_inspection_stop')}
                 </Button>
               </>
@@ -137,69 +111,99 @@ export function CodexInspectionStatusPanel({
           </div>
         </div>
 
-        {showProgressBar ? (
-          <div className={styles.progressSection}>
-            <div className={styles.progressHeader}>
-              <strong>{t('monitoring.codex_inspection_progress_title')}</strong>
-              <span>{`${progress.percent}%`}</span>
+        <div className={styles.statusPanelBody}>
+          <div className={styles.statusMetricsRow}>
+            <div className={styles.statusMetric}>
+              <span className={styles.statusMetricLabel}>{t('common.status')}</span>
+              <span className={styles.statusMetricValue}>
+                <span
+                  className={styles.statusDot}
+                  aria-hidden="true"
+                  style={{
+                    color: `var(--inspect-${statusTone === 'good' ? 'green' : statusTone === 'bad' ? 'red' : statusTone === 'warn' ? 'amber' : statusTone === 'info' ? 'accent' : 'muted'})`,
+                    background: 'currentColor',
+                  }}
+                />
+                {statusLabel}
+              </span>
             </div>
-            <div className={styles.progressTrack}>
-              <span
-                className={styles.progressBar}
-                style={{ width: `${Math.max(0, Math.min(100, progress.percent))}%` }}
-              />
-            </div>
-            <div className={styles.progressMeta}>
-              <span>{progressLabel}</span>
-              {runStatus === 'paused' ? <strong>{t('monitoring.codex_inspection_paused')}</strong> : null}
-            </div>
-          </div>
-        ) : null}
-      </Card>
-
-      <CodexInspectionConfigOverview
-        title={configOverviewTitle}
-        editLabel={configOverviewEditLabel}
-        items={configOverviewItems}
-        onEdit={onEditConfig}
-      />
-
-      <div className={styles.summaryShell}>
-        <section className={styles.summaryGrid}>
-          {summaryCards.map((card) => {
-            const SummaryIcon = card.icon ? summaryIconMap[card.icon] : null;
-            return (
-              <div
-                key={card.key}
-                className={[
-                  styles.summaryCard,
-                  card.accent ? summaryAccentClassMap[card.accent] : '',
-                  card.tone ? styles[`tone-${card.tone}`] : '',
-                ]
-                  .filter(Boolean)
-                  .join(' ')}
-              >
-                <div className={styles.summaryHeader}>
-                  {SummaryIcon ? (
-                    <span className={styles.summaryIcon}>
-                      <SummaryIcon size={18} />
-                    </span>
-                  ) : null}
-                  <span className={styles.summaryLabel} title={card.label}>
-                    {card.label}
-                  </span>
-                </div>
-                <div className={styles.summaryBody}>
-                  <strong className={styles.summaryValue}>{card.value}</strong>
-                  <span className={styles.summaryMeta} title={card.meta}>
-                    {card.meta}
-                  </span>
-                </div>
+            {lastFinishedValue ? (
+              <div className={styles.statusMetric}>
+                <span className={styles.statusMetricLabel}>
+                  {t('monitoring.codex_inspection_last_finished_at')}
+                </span>
+                <span className={styles.statusMetricValue}>{lastFinishedValue}</span>
               </div>
-            );
-          })}
-        </section>
-      </div>
+            ) : null}
+            {pendingActionCount > 0 ? (
+              <div className={styles.statusMetric}>
+                <span className={styles.statusMetricLabel}>
+                  {t('monitoring.codex_inspection_pending_total')}
+                </span>
+                <span
+                  className={styles.statusMetricValue}
+                  style={{ color: 'var(--inspect-amber)' }}
+                >
+                  {pendingActionCount}
+                </span>
+              </div>
+            ) : null}
+          </div>
+
+          {showProgressBar ? (
+            <div className={styles.progressSection}>
+              <div className={styles.progressHeader}>
+                <strong>{t('monitoring.codex_inspection_progress_title')}</strong>
+                <span>{`${progress.percent}%`}</span>
+              </div>
+              <div className={styles.progressTrack}>
+                <span
+                  className={styles.progressBar}
+                  style={{ width: `${Math.max(0, Math.min(100, progress.percent))}%` }}
+                />
+              </div>
+              <div className={styles.progressMeta}>
+                <span>{progressLabel}</span>
+                {runStatus === 'paused' ? (
+                  <strong>{t('monitoring.codex_inspection_paused')}</strong>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
+          <CodexInspectionConfigOverview
+            title={configOverviewTitle}
+            editLabel={configOverviewEditLabel}
+            copyLabel={t('monitoring.codex_inspection_settings_copy_prompt')}
+            copiedLabel={t('common.copied')}
+            items={configOverviewItems}
+            onEdit={onEditConfig}
+            compact
+            embedded
+            hideHeader
+          />
+
+          <section className={styles.summaryGrid}>
+            {summaryCards.map((card) => {
+              const tone: MonitoringSummaryCardProps['tone'] =
+                card.tone === 'good' || card.tone === 'warn' || card.tone === 'bad'
+                  ? card.tone
+                  : undefined;
+              return (
+                <MonitoringSummaryCard
+                  key={card.key}
+                  label={card.label}
+                  value={card.value}
+                  meta={card.meta}
+                  icon={card.icon}
+                  accent={card.accent}
+                  tone={tone}
+                />
+              );
+            })}
+          </section>
+        </div>
+      </Card>
     </>
   );
 }

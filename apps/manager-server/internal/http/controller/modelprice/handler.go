@@ -24,6 +24,13 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	path := strings.TrimRight(r.URL.Path, "/")
 	switch {
+	case path == "/v0/management/model-prices/runtime-models" && r.Method == http.MethodGet:
+		status, err := h.App.ModelPriceService.RuntimeModelPricingStatus(r.Context())
+		if err != nil {
+			response.Error(w, http.StatusInternalServerError, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, status)
 	case path == "/v0/management/model-prices/usage-summary" && r.Method == http.MethodGet:
 		summary, err := h.App.ModelPriceService.UsageSummary(r.Context(), h.App.Config.QueryLimit)
 		if err != nil {
@@ -46,7 +53,7 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 		}
 		prices, err := h.App.ModelPriceService.Replace(r.Context(), req.Prices)
 		if err != nil {
-			response.Error(w, http.StatusBadRequest, err)
+			response.Error(w, modelPriceMutationStatus(err, http.StatusBadRequest), err)
 			return
 		}
 		response.JSON(w, http.StatusOK, map[string]any{"prices": prices})
@@ -58,11 +65,18 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 		}
 		result, err := h.App.ModelPriceService.Sync(r.Context(), req)
 		if err != nil {
-			response.Error(w, response.ModelPriceErrorStatus(err), err)
+			response.Error(w, modelPriceMutationStatus(err, response.ModelPriceErrorStatus(err)), err)
 			return
 		}
 		response.JSON(w, http.StatusOK, result)
 	default:
 		response.MethodNotAllowed(w)
 	}
+}
+
+func modelPriceMutationStatus(err error, fallback int) int {
+	if errors.Is(err, modelpricesvc.ErrStructureChangeAfterRawDeletion) {
+		return http.StatusConflict
+	}
+	return fallback
 }

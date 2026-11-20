@@ -148,6 +148,20 @@ export const resolveAuthFileAccountIdentity = (file: AuthFileItem): AccountIdent
     fallback: file.name || file.label || file.account || file.email,
   });
 
+/** 巡检展示沿用备注/邮箱优先，缺失时保留服务端账号快照，最后才用文件名。 */
+export const resolveAuthFileInspectionDisplayAccount = (file: AuthFileItem): string => {
+  const identity = resolveAuthFileAccountIdentity(file);
+  if (identity.hasNote || identity.email) return identity.primary;
+  return (
+    readText(file.account_snapshot) ||
+    readText(file.display_account) ||
+    readText(file.displayAccount) ||
+    readText(file.account) ||
+    readText(file.label) ||
+    identity.primary
+  );
+};
+
 export const getAuthFileIdentitySearchValues = (file: AuthFileItem): string[] => {
   const identity = resolveAuthFileAccountIdentity(file);
   return Array.from(

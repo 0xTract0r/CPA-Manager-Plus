@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useTimezone } from '@/hooks/useTimezone';
 import { Link } from 'react-router-dom';
@@ -80,15 +80,28 @@ const resolveCandidateAccountIdentity = (
   return resolveAccountIdentity({
     note: current?.note,
     email: current?.email || candidate.accountSnapshot || candidate.authLabel,
-    fallback: current?.fallback || candidate.authLabel || candidate.authFileName,
+    fallback:
+      candidate.accountSnapshot ||
+      candidate.authLabel ||
+      current?.fallback ||
+      candidate.authFileName,
   });
 };
 
 export function AccountActionCandidatesPage() {
+  const connectionScope = useAuthStore((state) =>
+    JSON.stringify([state.apiBase, state.managementKey])
+  );
+  const { managerServiceBase } = usePanelFeatureAvailability();
+  return <AccountActionCandidatesPageContent key={`${connectionScope}:${managerServiceBase}`} />;
+}
+
+function AccountActionCandidatesPageContent() {
   const { t } = useTranslation();
   // 订阅全局时区：切换时区时候选项的时间戳随之重渲染，无需刷新。
   useTimezone();
   const managementKey = useAuthStore((state) => state.managementKey);
+  const apiBase = useAuthStore((state) => state.apiBase);
   const { showNotification, showConfirmation } = useNotificationStore();
   const featureAvailability = usePanelFeatureAvailability();
   const [items, setItems] = useState<AccountActionCandidate[]>([]);
@@ -97,14 +110,38 @@ export function AccountActionCandidatesPage() {
   const [filter, setFilter] = useState<StatusFilter>('pending');
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState('');
   const [actingId, setActingId] = useState<number | null>(null);
   const [evidenceCandidate, setEvidenceCandidate] = useState<AccountActionCandidate | null>(null);
 
   const managerBase = featureAvailability.managerServiceBase;
+  const requestIdRef = useRef(0);
+  const scopeActiveRef = useRef(false);
+  useLayoutEffect(() => {
+    scopeActiveRef.current = true;
+    return () => {
+      scopeActiveRef.current = false;
+    };
+  }, []);
+  useLayoutEffect(() => {
+    requestIdRef.current += 1;
+    setItems([]);
+    setLoaded(false);
+    setPendingCount(0);
+    setError('');
+    setLoading(true);
+    return () => {
+      requestIdRef.current += 1;
+    };
+  }, [managerBase, managementKey, filter]);
 
   const loadCandidates = useCallback(async () => {
-    if (!managerBase || !managementKey) return;
+    const requestId = ++requestIdRef.current;
+    if (!managerBase || !managementKey) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError('');
     try {
@@ -115,12 +152,17 @@ export function AccountActionCandidatesPage() {
           filter === 'all' ? '' : filter,
           200
         ),
-        authFilesApi.list().catch(() => ({ files: [] as AuthFileItem[] })),
+        authFilesApi
+          .list({ apiBase, managementKey })
+          .catch(() => ({ files: [] as AuthFileItem[] })),
       ]);
+      if (requestId !== requestIdRef.current) return;
       setItems(response.items);
+      setLoaded(true);
       setPendingCount(response.pendingCount);
       setAuthFiles(authFilesResponse.files ?? []);
     } catch (err) {
+      if (requestId !== requestIdRef.current) return;
       const message = err instanceof Error ? err.message : String(err || 'request failed');
       setError(message);
       showNotification(
@@ -128,9 +170,12 @@ export function AccountActionCandidatesPage() {
         'error'
       );
     } finally {
-      setLoading(false);
+      if (requestId === requestIdRef.current) setLoading(false);
     }
-  }, [filter, managementKey, managerBase, showNotification, t]);
+  }, [apiBase, filter, managementKey, managerBase, showNotification, t]);
+
+  const loadCandidatesRef = useRef(loadCandidates);
+  loadCandidatesRef.current = loadCandidates;
 
   useEffect(() => {
     if (featureAvailability.checking) return;
@@ -174,7 +219,7 @@ export function AccountActionCandidatesPage() {
 
   const runAction = useCallback(
     async (candidate: AccountActionCandidate, action: CandidateAction) => {
-      if (!managerBase || !managementKey) return;
+      if (!scopeActiveRef.current || !managerBase || !managementKey) return;
       setActingId(candidate.id);
       try {
         switch (action) {
@@ -184,7 +229,6 @@ export function AccountActionCandidatesPage() {
               managementKey,
               candidate.id
             );
-            showNotification(t('account_actions.ignore_success'), 'success');
             break;
           case 'resolve':
             await usageServiceApi.resolveAccountActionCandidate(
@@ -192,7 +236,6 @@ export function AccountActionCandidatesPage() {
               managementKey,
               candidate.id
             );
-            showNotification(t('account_actions.resolve_success'), 'success');
             break;
           case 'enable':
             await usageServiceApi.enableAccountActionCandidate(
@@ -200,7 +243,6 @@ export function AccountActionCandidatesPage() {
               managementKey,
               candidate.id
             );
-            showNotification(t('account_actions.enable_success'), 'success');
             break;
           case 'delete':
             await usageServiceApi.deleteAccountActionCandidateAuthFile(
@@ -208,11 +250,13 @@ export function AccountActionCandidatesPage() {
               managementKey,
               candidate.id
             );
-            showNotification(t('account_actions.delete_success'), 'success');
             break;
         }
-        await loadCandidates();
+        if (!scopeActiveRef.current) return;
+        showNotification(t(`account_actions.${action}_success`), 'success');
+        await loadCandidatesRef.current();
       } catch (err) {
+        if (!scopeActiveRef.current) return;
         const message = err instanceof Error ? err.message : String(err || 'request failed');
         showNotification(
           t('account_actions.action_failed', {
@@ -225,7 +269,7 @@ export function AccountActionCandidatesPage() {
         setActingId(null);
       }
     },
-    [loadCandidates, managementKey, managerBase, showNotification, t]
+    [managementKey, managerBase, showNotification, t]
   );
 
   const confirmDelete = useCallback(
@@ -275,11 +319,11 @@ export function AccountActionCandidatesPage() {
         </div>
         <div className={styles.heroStats}>
           <div className={styles.statCard}>
-            <span className={styles.statValue}>{pendingCount}</span>
+            <span className={styles.statValue}>{loaded ? pendingCount : '-'}</span>
             <span className={styles.statLabel}>{t('account_actions.pending_count')}</span>
           </div>
           <div className={styles.statCard}>
-            <span className={styles.statValue}>{visibleItems.length}</span>
+            <span className={styles.statValue}>{loaded ? visibleItems.length : '-'}</span>
             <span className={styles.statLabel}>{t('account_actions.visible_count')}</span>
           </div>
         </div>
@@ -297,7 +341,7 @@ export function AccountActionCandidatesPage() {
               onClick={() => setFilter(key)}
             >
               {t(`account_actions.filter_${key}`)}
-              {key !== 'all' && typeof statusCounts[key] === 'number'
+              {loaded && key !== 'all' && typeof statusCounts[key] === 'number'
                 ? ` · ${statusCounts[key]}`
                 : ''}
             </button>
@@ -328,12 +372,13 @@ export function AccountActionCandidatesPage() {
             <strong>{t('account_actions.load_failed_title')}</strong>
             <span>{error}</span>
           </div>
-        ) : visibleItems.length === 0 && !loading ? (
+        ) : null}
+        {visibleItems.length === 0 && loaded ? (
           <div className={styles.emptyState}>
             <strong>{t('account_actions.empty_title')}</strong>
             <span>{t('account_actions.empty_desc')}</span>
           </div>
-        ) : (
+        ) : visibleItems.length === 0 ? null : (
           <div className={styles.tableWrap}>
             <table className={styles.table}>
               <thead>

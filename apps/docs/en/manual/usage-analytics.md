@@ -1,4 +1,9 @@
-# Usage Analytics
+---
+title: CPA Usage And Cost Analytics
+description: Analyze requests, tokens, cache, cost, latency, and failures by model, account, API key, provider, project, and time range.
+---
+
+# CPA Usage And Cost Analytics
 
 ## Model Performance
 
@@ -15,6 +20,8 @@ Overall TPS is output tokens / executor attempt duration for successful valid ev
 Trace lookup covers the selected event plus/minus 24 hours and at most 100 events, combining records with the same attempt ID. Reporter-internal retries may remain unobserved. Concurrency is reconstructed only from completed telemetry intervals, not live queues. Historical missing stages cannot be recovered. Exact percentile queries reject more than 100000 matched events; narrow the filters rather than silently sampling. Cost remains an estimate, and these metrics do not assess answer quality.
 
 Usage Analytics answers "where did the money go?" and "which requests caused the abnormal pattern?" It uses request-monitoring events and [Model Prices](./model-prices.md). It does not change provider billing.
+
+Open the [Usage Analytics Demo](https://seakee.github.io/CPA-Manager-Plus/#/demo/usage-analytics) to browse fictional Overview, trends, models, API keys, credentials, and heatmap data.
 
 ## Pick The Range First
 
@@ -48,6 +55,18 @@ Filters include model, API key, provider, status, auth file, latency, and cache 
 
 If the model name is an alias or internal name, add the matching entry in [Model Prices](./model-prices.md), or cost will be underestimated or empty.
 
+## Export And Historical Boundaries
+
+The complete JSONL export in Usage Maintenance is a stable, ordered snapshot of raw `usage_events` and is independent of `USAGE_QUERY_LIMIT`. It is not a complete CPAMP backup, and history already deleted from the raw table is not automatically merged back from archive segments. For migration or disaster recovery, follow [Backup And Restore](../operations/backup.md) and back up SQLite, WAL/SHM, `data.key`, and `usage-archives/` together.
+
+## Long Histories And Query Behavior
+
+- Each tab requests only the data it needs; stable filter selectors load separately from main analytics.
+- Strictly unfiltered long-range statistics can use incremental hourly rollups, while search, provider, account, latency, cache, and other complex filters continue to read raw events.
+- Credential timelines load only after a credential is selected.
+- When a rollup checkpoint is pending, a timezone cannot be represented losslessly, or a rollup read fails, the query falls back to raw events to preserve correctness.
+- Historical cost may be recalculated with current model prices.
+
 ## Accuracy Boundary
 
 - Provider bills are the source of truth.
@@ -57,3 +76,5 @@ If the model name is an alias or internal name, add the matching entry in [Model
 - Requests lost while Manager Server was stopped or queue data expired cannot be reconstructed.
 
 Model tables support name search and alert-status filters. Account tables search email, note, name or ID and filter providers. Click headers for ascending/descending sorting; missing values stay last. Reset table clears local filters and restores event-count descending order. Table filters do not change summary cards or trends. TPS is end-to-end output tokens per second, including waiting time; short outputs can have low TPS without slow generation.
+
+- Performance depends on data volume, filter complexity, disk, and SQLite state. See the [Performance Report](../operations/performance-optimization-2026-07-10.md) for diagnostic details.

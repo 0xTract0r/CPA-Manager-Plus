@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - main
+      - dev
     types:
       - opened
       - edited
@@ -21,6 +22,7 @@ concurrency:
 jobs:
   pr-template:
     name: PR Template
+    if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
 
     steps:

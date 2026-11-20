@@ -8,6 +8,11 @@ import {
   type UseMonitoringAnalyticsReturn,
 } from '@/features/monitoring/hooks/useMonitoringAnalytics';
 import type { MonitoringAnalyticsSummary } from '@/services/api/usageService';
+import type {
+  MonitoringAnalyticsApiKeyStatRow,
+  MonitoringAnalyticsCoverage,
+  MonitoringAnalyticsResponse,
+} from '@/services/api/usageService';
 import { useUsageAnalytics } from './useUsageAnalytics';
 
 vi.mock('@/features/monitoring/hooks/useMonitoringAnalytics', () => ({
@@ -22,8 +27,12 @@ const monitoringMetaMock = vi.hoisted(() => ({
   payload: { authFiles: [] as Array<Record<string, unknown>>, channels: [] },
 }));
 
+const monitoringMetaMocks = vi.hoisted(() => ({
+  load: vi.fn(),
+}));
+
 vi.mock('@/features/monitoring/services/monitoringMetaService', () => ({
-  loadMonitoringMetaPayload: () => Promise.resolve(monitoringMetaMock.payload),
+  loadMonitoringMetaPayload: monitoringMetaMocks.load,
 }));
 
 vi.mock('@/stores', () => ({
@@ -34,9 +43,50 @@ const useMonitoringAnalyticsMock = vi.mocked(useMonitoringAnalytics);
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const emptyAnalyticsResponse = {
+const archivedCoverage: MonitoringAnalyticsCoverage = {
+  scope: 'time_range',
+  mode: 'mixed',
+  raw_complete: false,
+  core_aggregate_used: true,
+  raw_event_count: 4,
+  raw_deleted_event_count: 2,
+  min_deleted_timestamp_ms: 1,
+  max_deleted_timestamp_ms: 2,
+  fidelity_limitations: ['event_details_require_raw_events'],
+};
+
+const emptyAnalyticsResponse: MonitoringAnalyticsResponse = {
   generated_at_ms: 1,
   granularity: 'hour',
+  coverage: archivedCoverage,
+};
+const HOUR_MS = 60 * 60 * 1000;
+
+const createApiKeyStatRow = (
+  overrides: Partial<MonitoringAnalyticsApiKeyStatRow> = {}
+): MonitoringAnalyticsApiKeyStatRow => ({
+  id: 'key-a',
+  api_key_hash: 'key-a',
+  calls: 6,
+  success_calls: 6,
+  failure_calls: 0,
+  success_rate: 1,
+  input_tokens: 600,
+  output_tokens: 0,
+  cached_tokens: 0,
+  cache_read_tokens: 0,
+  cache_creation_tokens: 0,
+  total_tokens: 600,
+  cost: 0.6,
+  average_latency_ms: null,
+  last_seen_ms: 1,
+  ...overrides,
+});
+
+const localHourStartMs = (timestampMs: number) => {
+  const date = new Date(timestampMs);
+  date.setMinutes(0, 0, 0);
+  return date.getTime();
 };
 
 const fullSummary: MonitoringAnalyticsSummary = {
@@ -71,38 +121,144 @@ describe('useUsageAnalytics request orchestration', () => {
   let renderer: ReactTestRenderer | null = null;
   let latestResult: ReturnType<typeof useUsageAnalytics> | null = null;
   let selectorError = '';
+  let credentialTimelineError = '';
+  let credentialTimelineLoading = false;
+  let emptyAuxiliarySnapshot = false;
+  let auxiliaryScopeStale = false;
+  let apiKeyTimelineAvailable = true;
+  let mainTimelineBucketCalls = 5;
+  let apiKeyStats: MonitoringAnalyticsApiKeyStatRow[] = [createApiKeyStatRow()];
   const mainRefresh = vi.fn();
   const selectorRefresh = vi.fn();
   const auxiliaryRefresh = vi.fn();
 
+  const stablePayloads = new Map<string, MonitoringAnalyticsResponse>();
   const resultFor = (params: UseMonitoringAnalyticsParams): UseMonitoringAnalyticsReturn => {
     const selectors = Boolean(params.include?.filter_selectors);
     const main = Boolean(params.include?.summary);
-    return {
-      enabled: Boolean(params.fromMs && params.toMs),
-      loading: false,
-      error: selectors ? selectorError : '',
-      data: selectors
-        ? selectorError
-          ? null
-          : {
-              ...emptyAnalyticsResponse,
-              filter_options: {
-                models: ['gpt-a'],
-                api_key_hashes: ['key-a'],
-                providers: ['codex'],
-                auth_files: ['account.json'],
+    const credentialTimeline = Boolean(params.include?.credential_timeline);
+    const apiKeyTimeline = Boolean(params.include?.api_key_timeline);
+    const mainTimelineStartMs =
+      typeof params.fromMs === 'number' ? localHourStartMs(params.fromMs) : 0;
+    const mainData = params.include?.credential_stats
+      ? {
+          ...emptyAnalyticsResponse,
+          credential_stats: [
+            {
+              id: 'credential-a.json',
+              auth_file_snapshot: 'credential-a.json',
+              auth_index: 'auth-a',
+              calls: 10,
+              success_calls: 9,
+              failure_calls: 1,
+              success_rate: 0.9,
+              input_tokens: 100,
+              output_tokens: 50,
+              cached_tokens: 0,
+              cache_read_tokens: 0,
+              cache_creation_tokens: 0,
+              total_tokens: 150,
+              cost: 1,
+              average_latency_ms: 100,
+              last_seen_ms: 1,
+            },
+          ],
+        }
+      : params.include?.api_key_stats
+        ? {
+            ...emptyAnalyticsResponse,
+            timeline: [
+              {
+                bucket_ms: mainTimelineStartMs,
+                label: '00:00',
+                calls: mainTimelineBucketCalls,
+                tokens: mainTimelineBucketCalls * 100,
+                success: mainTimelineBucketCalls,
+                failure: 0,
               },
-            }
-        : main
+              {
+                bucket_ms: mainTimelineStartMs + 2 * HOUR_MS,
+                label: '01:00',
+                calls: mainTimelineBucketCalls,
+                tokens: mainTimelineBucketCalls * 100,
+                success: mainTimelineBucketCalls,
+                failure: 0,
+              },
+            ],
+            api_key_stats: apiKeyStats,
+          }
+        : emptyAnalyticsResponse;
+    const result: UseMonitoringAnalyticsReturn = {
+      enabled: Boolean(params.fromMs && params.toMs),
+      loading: credentialTimeline ? credentialTimelineLoading : false,
+      error: selectors ? selectorError : credentialTimeline ? credentialTimelineError : '',
+      data:
+        emptyAuxiliarySnapshot && !main && !selectors
           ? emptyAnalyticsResponse
-          : null,
-      dataStale: false,
+          : selectors
+            ? selectorError
+              ? null
+              : {
+                  ...emptyAnalyticsResponse,
+                  filter_options: {
+                    models: ['gpt-a'],
+                    api_key_hashes: ['key-a'],
+                    providers: ['codex'],
+                    auth_files: ['account.json'],
+                  },
+                }
+            : main
+              ? mainData
+              : apiKeyTimeline && apiKeyTimelineAvailable
+                ? {
+                    ...emptyAnalyticsResponse,
+                    api_key_timeline: [
+                      {
+                        api_key_hash: 'key-a',
+                        bucket_ms: mainTimelineStartMs,
+                        calls: 2,
+                        tokens: 200,
+                        success: 2,
+                        failure: 0,
+                      },
+                      {
+                        api_key_hash: 'key-a',
+                        bucket_ms: mainTimelineStartMs + 2 * HOUR_MS,
+                        calls: 4,
+                        tokens: 400,
+                        success: 4,
+                        failure: 0,
+                      },
+                    ],
+                  }
+                : credentialTimeline && !credentialTimelineError && !credentialTimelineLoading
+                  ? {
+                      ...emptyAnalyticsResponse,
+                      credential_timeline: [
+                        {
+                          id: 'credential-a.json',
+                          auth_file_snapshot: 'credential-a.json',
+                          bucket_ms: 1,
+                          calls: 10,
+                          tokens: 150,
+                          success: 9,
+                          failure: 1,
+                        },
+                      ],
+                    }
+                  : null,
+      dataStale: !main && !selectors && auxiliaryScopeStale,
       lastRefreshedAt: null,
       serviceBase: 'http://manager.local',
       unavailableReason: '',
       refresh: selectors ? selectorRefresh : main ? mainRefresh : auxiliaryRefresh,
     };
+    if (result.data) {
+      const key = JSON.stringify(result.data);
+      if (!stablePayloads.has(key)) stablePayloads.set(key, result.data);
+      result.data = stablePayloads.get(key)!;
+    }
+    return result;
   };
 
   const lastParams = (predicate: (params: UseMonitoringAnalyticsParams) => boolean) => {
@@ -119,12 +275,36 @@ describe('useUsageAnalytics request orchestration', () => {
   }
 
   beforeEach(() => {
+    stablePayloads.clear();
     selectorError = '';
+    credentialTimelineError = '';
+    credentialTimelineLoading = false;
+    emptyAuxiliarySnapshot = false;
+    auxiliaryScopeStale = false;
+    apiKeyTimelineAvailable = true;
+    mainTimelineBucketCalls = 5;
+    apiKeyStats = [createApiKeyStatRow()];
     latestResult = null;
     mainRefresh.mockReset();
     selectorRefresh.mockReset();
     auxiliaryRefresh.mockReset();
     monitoringMetaMock.payload = { authFiles: [], channels: [] };
+    monitoringMetaMocks.load
+      .mockReset()
+      .mockImplementation(async () => ({
+        ...monitoringMetaMock.payload,
+        authFilesLoaded: true,
+        channelsLoaded: true,
+        error: '',
+      }));
+    /* defaults are resolved from the fork payload adapter */
+    void {
+      authFiles: [],
+      authFilesLoaded: true,
+      channels: [],
+      channelsLoaded: true,
+      error: '',
+    };
     useMonitoringAnalyticsMock.mockReset();
     useMonitoringAnalyticsMock.mockImplementation(resultFor);
   });
@@ -146,46 +326,65 @@ describe('useUsageAnalytics request orchestration', () => {
   };
 
   it('prefills Codex account and ignores unrelated global filters in fast analysis', async () => {
-    await renderHook('/usage-analytics?tab=codexFast&auth_index=codex-a&provider=claude&status=failed&search=unrelated&model=other&from_ms=1000&to_ms=9000');
-    const fast = lastParams(params => Boolean(params.include?.fast_impact));
+    await renderHook(
+      '/usage-analytics?tab=codexFast&auth_index=codex-a&provider=claude&status=failed&search=unrelated&model=other&from_ms=1000&to_ms=9000'
+    );
+    const fast = lastParams((params) => Boolean(params.include?.fast_impact));
     expect(latestResult?.activeTab).toBe('codexFast');
     expect(fast?.filters).toEqual({ auth_indices: ['codex-a'], providers: ['codex'] });
     expect(fast?.searchQuery).toBe('');
     expect(fast?.fromMs).toBe(1000);
     expect(fast?.toMs).toBe(9000);
     expect(fast?.fastImpactOptions).toEqual({ mode: 'tier', metric: 'end_to_end_tps' });
-    expect(lastParams(params => Boolean(params.include?.filter_selectors))?.fromMs).toBeNull();
+    expect(lastParams((params) => Boolean(params.include?.filter_selectors))?.fromMs).toBeNull();
     expect(latestResult?.fastFilters.model).toBe('all');
     expect(latestResult?.fastFilters.status).toBe('all');
   });
 
   it('requires a single Codex account and clears another provider when entering the tab', async () => {
-    monitoringMetaMock.payload.authFiles = [{ name: 'claude.json', provider: 'claude', auth_index: 'claude-a' }];
+    monitoringMetaMock.payload.authFiles = [
+      { name: 'claude.json', provider: 'claude', auth_index: 'claude-a' },
+    ];
     await renderHook('/usage-analytics?tab=performance&auth_index=claude-a');
-    await act(async () => { latestResult?.setActiveTab('codexFast'); });
+    await act(async () => {
+      latestResult?.setActiveTab('codexFast');
+    });
     expect(latestResult?.fastFilters.authIndex).toBe('all');
-    expect(lastParams(params => params.include?.fast_impact === false)?.fromMs).toBeNull();
-    await act(async () => { latestResult?.setFilters({ authIndex: 'codex-b' }); });
-    expect(lastParams(params => Boolean(params.include?.fast_impact))?.filters).toEqual({ auth_indices: ['codex-b'], providers: ['codex'] });
+    expect(lastParams((params) => params.include?.fast_impact === false)?.fromMs).toBeNull();
+    await act(async () => {
+      latestResult?.setFilters({ authIndex: 'codex-b' });
+    });
+    expect(lastParams((params) => Boolean(params.include?.fast_impact))?.filters).toEqual({
+      auth_indices: ['codex-b'],
+      providers: ['codex'],
+    });
   });
 
   it('scopes the Fast account to its tab and restores it only when returning', async () => {
     await renderHook('/usage-analytics?tab=codexFast&auth_index=codex-a');
-    expect(lastParams(params => Boolean(params.include?.fast_impact))?.filters).toEqual({
+    expect(lastParams((params) => Boolean(params.include?.fast_impact))?.filters).toEqual({
       auth_indices: ['codex-a'],
       providers: ['codex'],
     });
 
-    await act(async () => { latestResult?.setActiveTab('models'); });
+    await act(async () => {
+      latestResult?.setActiveTab('models');
+    });
     expect(latestResult?.activeTab).toBe('models');
     expect(latestResult?.filters.authIndex).toBeUndefined();
     expect(latestResult?.filters.provider).toBe('all');
-    expect(lastParams(params => Boolean(params.include?.model_stats))?.filters).not.toHaveProperty('auth_indices');
-    expect(lastParams(params => Boolean(params.include?.model_stats))?.filters).not.toHaveProperty('providers');
+    expect(
+      lastParams((params) => Boolean(params.include?.model_stats))?.filters
+    ).not.toHaveProperty('auth_indices');
+    expect(
+      lastParams((params) => Boolean(params.include?.model_stats))?.filters
+    ).not.toHaveProperty('providers');
 
-    await act(async () => { latestResult?.setActiveTab('codexFast'); });
+    await act(async () => {
+      latestResult?.setActiveTab('codexFast');
+    });
     expect(latestResult?.fastFilters.authIndex).toBe('codex-a');
-    expect(lastParams(params => Boolean(params.include?.fast_impact))?.filters).toEqual({
+    expect(lastParams((params) => Boolean(params.include?.fast_impact))?.filters).toEqual({
       auth_indices: ['codex-a'],
       providers: ['codex'],
     });
@@ -225,6 +424,8 @@ describe('useUsageAnalytics request orchestration', () => {
     const selectors = lastParams((params) => Boolean(params.include?.filter_selectors));
     expect(overview?.include).toEqual({
       summary: true,
+      summary_profile: 'compact',
+      summary_percentiles: true,
       summary_comparison: true,
       timeline: true,
       model_stats: true,
@@ -240,6 +441,7 @@ describe('useUsageAnalytics request orchestration', () => {
       models: ['gpt-a'],
       api_key_hashes: ['key-a'],
     });
+    expect(latestResult?.coverage).toEqual(archivedCoverage);
 
     const selectorScope = selectors?.dataScopeKey;
     await act(async () => {
@@ -250,11 +452,204 @@ describe('useUsageAnalytics request orchestration', () => {
     const selectorsAfterTab = lastParams((params) => Boolean(params.include?.filter_selectors));
     expect(heatmap?.include).toEqual({
       summary: true,
+      summary_profile: 'compact',
       heatmap: true,
       granularity: 'hour',
     });
     expect(JSON.parse(heatmap?.dataScopeKey ?? '{}')).toMatchObject({ activeTab: 'heatmap' });
     expect(selectorsAfterTab?.dataScopeKey).toBe(selectorScope);
+  });
+
+  it('fills missing buckets in the main usage timeline from the active range', async () => {
+    await renderHook();
+
+    const overview = lastParams((params) => Boolean(params.include?.summary));
+    expect(typeof overview?.fromMs).toBe('number');
+    const firstBucketMs = localHourStartMs(overview?.fromMs as number);
+
+    expect(latestResult?.timeline.slice(0, 3).map((point) => point.bucketMs)).toEqual([
+      firstBucketMs,
+      firstBucketMs + HOUR_MS,
+      firstBucketMs + 2 * HOUR_MS,
+    ]);
+    expect(latestResult?.timeline[1]).toMatchObject({
+      requestCount: 0,
+      totalTokens: 0,
+      successCount: 0,
+      failureCount: 0,
+      averageLatencyMs: null,
+      p95LatencyMs: null,
+      p95TtftMs: null,
+    });
+  });
+
+  it('loads exact timeline buckets for the visible client keys on overview and trends', async () => {
+    await renderHook();
+
+    const apiKeyTimeline = lastParams((params) => Boolean(params.include?.api_key_timeline));
+    expect(apiKeyTimeline?.include).toEqual({ granularity: 'hour', api_key_timeline: true });
+    expect(apiKeyTimeline?.filters).toMatchObject({ api_key_hashes: ['key-a'] });
+    expect(JSON.parse(apiKeyTimeline?.dataScopeKey ?? '{}')).toMatchObject({
+      activeTab: 'overview',
+      apiKeyHashes: ['key-a'],
+    });
+    expect(
+      latestResult?.apiKeyTrendSeries[0].points.slice(0, 3).map((point) => point.value)
+    ).toEqual([2, 0, 4]);
+
+    await act(async () => {
+      latestResult?.setActiveTab('trends');
+      await Promise.resolve();
+    });
+
+    const trendsTimeline = lastParams((params) => Boolean(params.include?.api_key_timeline));
+    expect(JSON.parse(trendsTimeline?.dataScopeKey ?? '{}')).toMatchObject({
+      activeTab: 'trends',
+      apiKeyHashes: ['key-a'],
+    });
+  });
+
+  it('never uses fallback API key IDs for default selections or timeline requests', async () => {
+    apiKeyStats = [
+      createApiKeyStatRow({
+        id: 'unknown-client-api-key:missing-client-key',
+        api_key_hash: '',
+      }),
+      createApiKeyStatRow({ id: 'real-key-row', api_key_hash: ' real-key-hash ' }),
+    ];
+    await renderHook();
+
+    const overviewTimeline = lastParams((params) => Boolean(params.include?.api_key_timeline));
+    expect(overviewTimeline?.filters).toMatchObject({ api_key_hashes: ['real-key-hash'] });
+    expect(latestResult?.selectedApiKey?.apiKeyHash).toBe('real-key-hash');
+
+    await act(async () => {
+      latestResult?.setActiveTab('apiKeys');
+      await Promise.resolve();
+    });
+
+    const selectedTimeline = lastParams(
+      (params) => Boolean(params.include?.timeline) && !params.include?.summary
+    );
+    expect(selectedTimeline?.filters).toMatchObject({ api_key_hashes: ['real-key-hash'] });
+
+    await act(async () => {
+      latestResult?.setSelectedApiKeyHash('unknown-client-api-key:missing-client-key');
+      await Promise.resolve();
+    });
+
+    const fallbackSelectionTimeline = lastParams(
+      (params) => Boolean(params.include?.timeline) && !params.include?.summary
+    );
+    expect(fallbackSelectionTimeline?.filters).toMatchObject({ api_key_hashes: ['real-key-hash'] });
+    expect(latestResult?.selectedApiKey?.apiKeyHash).toBe('real-key-hash');
+  });
+
+  it('uses only real API keys for exact trend series while keeping a leading fallback rank row', async () => {
+    apiKeyStats = [
+      createApiKeyStatRow({
+        id: 'unknown-client-api-key:missing-client-key',
+        api_key_hash: '',
+        calls: 100,
+        cost: 100,
+      }),
+      ...['key-a', 'key-b', 'key-c', 'key-d'].map((apiKeyHash, index) =>
+        createApiKeyStatRow({
+          id: apiKeyHash,
+          api_key_hash: apiKeyHash,
+          calls: 10 - index,
+          cost: 10 - index,
+        })
+      ),
+    ];
+
+    await renderHook();
+
+    const apiKeyTimeline = lastParams((params) => Boolean(params.include?.api_key_timeline));
+    expect(latestResult?.apiKeyRows[0].id).toBe('unknown-client-api-key:missing-client-key');
+    expect(apiKeyTimeline?.filters).toMatchObject({
+      api_key_hashes: ['key-a', 'key-b', 'key-c', 'key-d'],
+    });
+    expect(latestResult?.apiKeyTrendSeries.map((series) => series.id)).toEqual([
+      'key-a',
+      'key-b',
+      'key-c',
+      'key-d',
+    ]);
+    expect(
+      latestResult?.apiKeyTrendSeries[0].points.slice(0, 3).map((point) => point.value)
+    ).toEqual([2, 0, 4]);
+  });
+
+  it('does not approximate fallback-only API key rows as trend series', async () => {
+    apiKeyStats = [
+      createApiKeyStatRow({
+        id: 'unknown-client-api-key:missing-client-key',
+        api_key_hash: '',
+        calls: 100,
+        cost: 100,
+      }),
+    ];
+    apiKeyTimelineAvailable = false;
+
+    await renderHook();
+
+    expect(latestResult?.apiKeyRows).toHaveLength(1);
+    expect(latestResult?.apiKeyRows[0].id).toBe('unknown-client-api-key:missing-client-key');
+    expect(latestResult?.apiKeyTrendSeries).toEqual([]);
+  });
+
+  it('uses complete API key totals for approximate trend shares while hiding fallback rows', async () => {
+    apiKeyStats = [
+      createApiKeyStatRow({
+        id: 'unknown-client-api-key:missing-client-key',
+        api_key_hash: '',
+        calls: 90,
+      }),
+      createApiKeyStatRow({
+        id: 'real-key-row',
+        api_key_hash: 'real-key-hash',
+        calls: 10,
+      }),
+    ];
+    mainTimelineBucketCalls = 50;
+    apiKeyTimelineAvailable = false;
+
+    await renderHook();
+
+    expect(latestResult?.apiKeyRows.map((row) => row.id)).toEqual([
+      'unknown-client-api-key:missing-client-key',
+      'real-key-hash',
+    ]);
+    expect(latestResult?.apiKeyTrendSeries.map((series) => series.id)).toEqual(['real-key-hash']);
+    expect(
+      latestResult?.apiKeyTrendSeries[0].points.slice(0, 3).map((point) => point.value)
+    ).toEqual([5, 0, 5]);
+  });
+
+  it('omits an initial fallback API key filter from analytics requests', async () => {
+    await renderHook('/usage-analytics?api_key_hash=unknown-client-api-key%3Alegacy-filter');
+
+    const main = lastParams((params) => Boolean(params.include?.summary));
+    expect(main?.filters).not.toHaveProperty('api_key_hashes');
+  });
+
+  it('keeps a fallback-only aggregate visible without enabling a key timeline request', async () => {
+    apiKeyStats = [
+      createApiKeyStatRow({
+        id: 'unknown-client-api-key:missing-client-key',
+        api_key_hash: '',
+      }),
+    ];
+    await renderHook();
+
+    const selectedTimeline = lastParams(
+      (params) => Boolean(params.include?.timeline) && !params.include?.summary
+    );
+    expect(latestResult?.selectedApiKey?.id).toBe('unknown-client-api-key:missing-client-key');
+    expect(selectedTimeline?.fromMs).toBeUndefined();
+    expect(selectedTimeline?.toMs).toBeUndefined();
+    expect(selectedTimeline?.filters).not.toHaveProperty('api_key_hashes');
   });
 
   it('does not couple selector failures to the main page error and refreshes both requests', async () => {
@@ -271,6 +666,140 @@ describe('useUsageAnalytics request orchestration', () => {
     expect(selectorRefresh).toHaveBeenCalledTimes(1);
   });
 
+  it('loads only the selected credential timeline after the credential ranking', async () => {
+    await renderHook();
+
+    await act(async () => {
+      latestResult?.setActiveTab('credentials');
+      await Promise.resolve();
+    });
+
+    const credentials = lastParams((params) => Boolean(params.include?.credential_stats));
+    expect(credentials?.include).toEqual({
+      summary: true,
+      summary_profile: 'compact',
+      credential_stats: true,
+      granularity: 'hour',
+    });
+
+    const timeline = lastParams((params) => Boolean(params.include?.credential_timeline));
+    expect(timeline?.include).toEqual({ granularity: 'hour', credential_timeline: true });
+    expect(timeline?.filters).toMatchObject({ credential_ids: ['credential-a.json'] });
+    expect(JSON.parse(timeline?.dataScopeKey ?? '{}')).toMatchObject({
+      activeTab: 'credentials',
+      selectedCredentialID: 'credential-a.json',
+    });
+    expect(latestResult?.credentialTrendSeries).toHaveLength(1);
+    expect(latestResult?.timeline).toEqual([]);
+  });
+
+  it('exposes selected credential timeline loading and error states', async () => {
+    credentialTimelineLoading = true;
+    await renderHook();
+
+    await act(async () => {
+      latestResult?.setActiveTab('credentials');
+      await Promise.resolve();
+    });
+    expect(latestResult?.credentialTrendLoading).toBe(true);
+    expect(latestResult?.credentialTrendError).toBe('');
+
+    credentialTimelineLoading = false;
+    credentialTimelineError = 'timeline failed';
+    await act(async () => {
+      renderer?.update(
+        <MemoryRouter initialEntries={['/usage-analytics']}>
+          <Harness />
+        </MemoryRouter>
+      );
+      await Promise.resolve();
+    });
+    expect(latestResult?.credentialTrendLoading).toBe(false);
+    expect(latestResult?.credentialTrendError).toBe('timeline failed');
+    expect(latestResult?.credentialRows).toHaveLength(1);
+  });
+
+  it('retains last-good metadata when a manual metadata refresh partially fails', async () => {
+    monitoringMetaMocks.load.mockResolvedValueOnce({
+      authFiles: [
+        {
+          name: 'credential-a.json',
+          auth_index: 'auth-a',
+          account: 'retained@example.com',
+          provider: 'codex',
+        },
+      ],
+      authFilesLoaded: true,
+      channels: [
+        {
+          key: 'retained:0',
+          name: 'retained-channel',
+          baseUrl: 'https://retained.test',
+          host: 'retained.test',
+          disabled: false,
+          authIndices: ['auth-a'],
+          modelNames: [],
+        },
+      ],
+      channelsLoaded: true,
+      error: '',
+    });
+
+    await renderHook();
+    await act(async () => {
+      latestResult?.setActiveTab('credentials');
+      await Promise.resolve();
+    });
+    expect(latestResult?.credentialRows[0]).toMatchObject({
+      label: 'retained@example.com',
+      account: 'retained@example.com',
+      provider: 'codex',
+      authIndex: 'auth-a',
+    });
+
+    monitoringMetaMocks.load.mockResolvedValueOnce({
+      authFiles: [],
+      authFilesLoaded: false,
+      channels: [],
+      channelsLoaded: false,
+      error: 'meta offline',
+    });
+    await act(async () => {
+      latestResult?.refresh();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(latestResult?.credentialRows[0]).toMatchObject({
+      label: 'retained@example.com',
+      account: 'retained@example.com',
+      provider: 'codex',
+      authIndex: 'auth-a',
+    });
+    expect(latestResult?.error).toBe('meta offline');
+  });
+
+  it('recognizes successful empty auxiliary snapshots but rejects them after scope invalidation', async () => {
+    emptyAuxiliarySnapshot = true;
+    await renderHook();
+    await act(async () => {
+      latestResult!.setActiveTab('credentials');
+    });
+    expect(latestResult!.credentialTrendSeries).toEqual([]);
+    expect(latestResult!.credentialTrendLoaded).toBe(true);
+    expect(latestResult!.heatmapDateLoaded).toBe(true);
+    credentialTimelineLoading = true;
+    await act(async () => {
+      latestResult!.setSelectedCredentialId('credential-a.json');
+    });
+    expect(latestResult!.credentialTrendLoaded).toBe(true);
+    auxiliaryScopeStale = true;
+    await act(async () => {
+      latestResult!.setSelectedCredentialId('credential-b.json');
+    });
+    expect(latestResult!.credentialTrendLoaded).toBe(false);
+    expect(latestResult!.heatmapDateLoaded).toBe(false);
+  });
   it('does not issue selected-key detail requests for unattributed fallback groups', async () => {
     const unattributedResponse = {
       ...emptyAnalyticsResponse,

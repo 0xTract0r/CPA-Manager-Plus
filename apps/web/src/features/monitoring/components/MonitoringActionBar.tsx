@@ -8,10 +8,10 @@ import {
   IconFileText,
   IconInbox,
   IconRefreshCw,
-  IconSettings,
   IconX,
 } from '@/components/ui/icons';
 import type { SyncCoreHistoryCursorProgress } from '@/features/monitoring/hooks/useUsageData';
+import { ModelPriceAttentionLink } from '@/features/model-price-attention';
 import styles from '../MonitoringCenterPage.module.scss';
 
 type MonitoringActionBarProps = {
@@ -63,11 +63,6 @@ export function MonitoringActionBar({
   onSyncCoreHistoryCancel,
   statusSummary,
 }: MonitoringActionBarProps) {
-  const modelPriceSettingsLabel = shortLabel(
-    t,
-    'usage_stats.model_price_settings_short',
-    'usage_stats.model_price_settings'
-  );
   const accountActionsLabel = shortLabel(t, 'nav.account_actions_short', 'nav.account_actions');
 
   const syncDisabledBase = !usageTransferAvailable || usageExporting || usageImporting;
@@ -193,14 +188,7 @@ export function MonitoringActionBar({
           />
         )}
         {modelPricesAvailable ? (
-          <Link
-            to="/model-prices"
-            className={styles.actionButton}
-            title={t('usage_stats.model_price_settings')}
-          >
-            <IconSettings size={16} />
-            <span>{modelPriceSettingsLabel}</span>
-          </Link>
+          <ModelPriceAttentionLink variant="action-bar" className={styles.actionButton} />
         ) : null}
         <Link
           to="/monitoring/account-actions"

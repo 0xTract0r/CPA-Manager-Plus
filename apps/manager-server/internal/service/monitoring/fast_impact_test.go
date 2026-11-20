@@ -93,7 +93,7 @@ func TestFastImpactUnresolvedModelIdentityAndExactDrilldown(t *testing.T) {
 	legacy.Provider = "codex"
 	legacy.AuthIndex = "a"
 	known := legacy
-	known.EventHash = "known-model"
+	known.EventHash = "5cd7ecfbac1ab56c3edb4f970f167e00433e6482112a2c02ed7421d6b647bfcb"
 	known.ResolvedModel = "gpt-test"
 	if _, err := db.InsertEvents(ctx, []usage.Event{legacy, known}); err != nil {
 		t.Fatal(err)

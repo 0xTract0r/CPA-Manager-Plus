@@ -14,6 +14,7 @@ import { useTimezone } from '@/hooks/useTimezone';
 import { useNavigate } from 'react-router-dom';
 import { animate } from 'motion/mini';
 import type { AnimationPlaybackControlsWithThen } from 'motion-dom';
+import { getAuthFileSourceMemberKey } from '@/features/authFiles/model/authFileMutationSnapshot';
 import { useInterval } from '@/hooks/useInterval';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { usePanelFeatureAvailability } from '@/hooks/usePanelFeatureAvailability';
@@ -77,6 +78,7 @@ import {
   buildUsageHeaderSnapshotLookup,
   getHighConfidenceUsageHeaderSnapshotForAuthFile,
   isUsageHeaderQuotaSnapshotExpired,
+  hasExpiredUsageHeaderQuotaWindow,
 } from '@/utils/usageHeaderSnapshots';
 import { quotaSnapshotsApi, type CoreQuotaSnapshotEntry } from '@/services/api/quotaSnapshots';
 import {
@@ -227,6 +229,11 @@ export function AuthFilesPage() {
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const apiBase = useAuthStore((state) => state.apiBase);
   const managementKey = useAuthStore((state) => state.managementKey);
+  const authFilesRequestScope = useMemo(
+    () => ({ apiBase, managementKey }),
+    [apiBase, managementKey]
+  );
+  const headerSnapshotScopeRef = useRef(authFilesRequestScope);
   const resolvedTheme: ResolvedTheme = useThemeStore((state) => state.resolvedTheme);
   const codexQuota = useQuotaStore((state) => state.codexQuota);
   const setCodexQuota = useQuotaStore((state) => state.setCodexQuota);
@@ -287,7 +294,9 @@ export function AuthFilesPage() {
     items: new Map(),
   });
   const pendingRecoveredCodexQuotaRefreshRef = useRef<Set<string>>(new Set());
-  const autoRefreshingCodexQuotaRef = useRef<Set<string>>(new Set());
+  const autoRefreshingCodexQuotaRef = useRef<Map<string, { scope: typeof authFilesRequestScope }>>(
+    new Map()
+  );
   const expiredHeaderCodexQuotaRefreshRef = useRef<Set<string>>(new Set());
   const skipNextRecoveredCooldownRefreshRef = useRef(false);
   // Generation token for in-flight cooldown fetches. Every fetch and every
@@ -329,7 +338,7 @@ export function AuthFilesPage() {
     loadFiles,
     handleUploadClick,
     handleFileChange,
-    savePastedAuthJson,
+    savePastedAuthJsonSingle: savePastedAuthJson,
     handleDelete,
     handleDeleteAll,
     handleDownload,
@@ -342,11 +351,30 @@ export function AuthFilesPage() {
     deselectAll,
     batchDownload,
     batchSetStatus,
-    batchPatchFields,
+    batchPatchFieldsLegacy: batchPatchFields,
     batchDelete,
   } = useAuthFilesData({
+    connectionFingerprint: `${apiBase}\u0000${managementKey}`,
+    requestScope: authFilesRequestScope,
     onStatusHistoryChanged: (fileName: string) => bumpAuditReloadKeyRef.current(fileName),
   });
+
+  const quotaRefreshContext = useRef<{
+    scope: typeof authFilesRequestScope;
+    files: AuthFileItem[];
+    connected: boolean;
+  } | null>(null);
+  quotaRefreshContext.current = {
+    scope: authFilesRequestScope,
+    files,
+    connected: connectionStatus === 'connected',
+  };
+  useEffect(
+    () => () => {
+      quotaRefreshContext.current = null;
+    },
+    []
+  );
 
   // farm-account-standby-control R1：停用 farm_enrolled 账号时先弹语义澄清对话框
   // （停用只停服务、容器仍温着发遥测；可选"一并移出农场"调 standby 待机）。
@@ -383,7 +411,9 @@ export function AuthFilesPage() {
   } = useAuthFilesTestMessage({
     messageTesting,
     setMessageTesting,
-    loadFiles,
+    loadFiles: async () => {
+      await loadFiles();
+    },
   });
 
   const statusBarCache = useAuthFilesStatusBarCache(files);
@@ -440,7 +470,7 @@ export function AuthFilesPage() {
     handleToggleFork,
     handleRenameAlias,
     handleDeleteAlias,
-  } = useAuthFilesOauth({ viewMode, files });
+  } = useAuthFilesOauth({ viewMode, files, requestScope: authFilesRequestScope });
 
   const {
     modelsModalOpen,
@@ -463,8 +493,11 @@ export function AuthFilesPage() {
     handleAccountSettingsProxyBlur,
     handleAccountSettingsSave,
   } = useAuthFilesAccountSettings({
+    requestScope: authFilesRequestScope,
     disableControls: connectionStatus !== 'connected',
-    loadFiles,
+    loadFiles: async () => {
+      await loadFiles();
+    },
     // cpamp 当前没有独立的「key/用量统计」重载入口；account settings 保存后
     // `loadFiles()` 已经足以刷新该 auth 文件（含 account_settings 投影），
     // 这里传空实现只是满足 hook 的双回调契约，不引入未在本次范围内的新状态源。
@@ -494,7 +527,9 @@ export function AuthFilesPage() {
     updateReauthCallbackUrl,
     submitReauthCallback,
   } = useAuthFilesReauth({
-    loadFiles,
+    loadFiles: async () => {
+      await loadFiles();
+    },
     onReauthHistoryChanged: bumpAuditReloadKey,
   });
 
@@ -734,8 +769,8 @@ export function AuthFilesPage() {
 
   const handleSavePastedAuthJson = useCallback(
     async (type: AuthJsonInputType, fileName: string, jsonText: string) => {
-      await savePastedAuthJson(type, fileName, jsonText);
-      setAuthJsonPasteOpen(false);
+      const savedName = await savePastedAuthJson(type, fileName, jsonText);
+      if (savedName) setAuthJsonPasteOpen(false);
     },
     [savePastedAuthJson]
   );
@@ -909,6 +944,7 @@ export function AuthFilesPage() {
         (response as { generatedAtMs?: number }).generatedAtMs ??
         Date.now();
       expiredHeaderCodexQuotaRefreshRef.current.clear();
+      headerSnapshotScopeRef.current = authFilesRequestScope;
       setHeaderSnapshots(response.items ?? []);
       setHeaderSnapshotGeneratedAtMs(generatedAtMs);
     } catch {
@@ -937,8 +973,19 @@ export function AuthFilesPage() {
       if (isRuntimeOnlyAuthFile(file) || file.disabled) return false;
 
       const authFileKey = getAuthFileCodexInspectionKeyForFile(file);
-      if (autoRefreshingCodexQuotaRef.current.has(authFileKey)) return false;
-      autoRefreshingCodexQuotaRef.current.add(authFileKey);
+      if (autoRefreshingCodexQuotaRef.current.get(authFileKey)?.scope === authFilesRequestScope)
+        return false;
+      const operation = { scope: authFilesRequestScope };
+      const capturedScope = authFilesRequestScope;
+      const capturedIdentity = getAuthFileSourceMemberKey(file);
+      const isCurrent = () =>
+        quotaRefreshContext.current?.scope === capturedScope &&
+        quotaRefreshContext.current.connected &&
+        quotaRefreshContext.current.files.some(
+          (current) => getAuthFileSourceMemberKey(current) === capturedIdentity
+        );
+      if (!isCurrent()) return false;
+      autoRefreshingCodexQuotaRef.current.set(authFileKey, operation);
 
       const storeKey = getQuotaStoreKey(CODEX_CONFIG, file);
       const previousQuota =
@@ -950,13 +997,15 @@ export function AuthFilesPage() {
       }));
 
       try {
-        const data = await CODEX_CONFIG.fetchQuota(file, t);
+        const data = await CODEX_CONFIG.fetchQuota(file, t, capturedScope);
+        if (!isCurrent()) return false;
         setCodexQuota((prev) => ({
           ...prev,
           [storeKey]: CODEX_CONFIG.buildSuccessState(data, file),
         }));
         return true;
       } catch (err: unknown) {
+        if (!isCurrent()) return false;
         const message = err instanceof Error ? err.message : t('common.unknown_error');
         const status = getStatusFromError(err);
         setCodexQuota((prev) => ({
@@ -967,10 +1016,11 @@ export function AuthFilesPage() {
         }));
         return false;
       } finally {
-        autoRefreshingCodexQuotaRef.current.delete(authFileKey);
+        if (autoRefreshingCodexQuotaRef.current.get(authFileKey) === operation)
+          autoRefreshingCodexQuotaRef.current.delete(authFileKey);
       }
     },
-    [codexQuota, setCodexQuota, t]
+    [authFilesRequestScope, codexQuota, setCodexQuota, t]
   );
 
   const refreshPendingRecoveredCodexQuotas = useCallback(() => {
@@ -1115,8 +1165,11 @@ export function AuthFilesPage() {
   );
 
   const headerSnapshotLookup = useMemo(
-    () => buildUsageHeaderSnapshotLookup(headerSnapshots),
-    [headerSnapshots]
+    () =>
+      buildUsageHeaderSnapshotLookup(
+        headerSnapshotScopeRef.current === authFilesRequestScope ? headerSnapshots : []
+      ),
+    [authFilesRequestScope, headerSnapshots]
   );
 
   // core `GET /quota/snapshots` observed 源的多键 lookup（auth_id/auth_index/name），
@@ -1146,7 +1199,7 @@ export function AuthFilesPage() {
         headerSnapshotLookup,
         file
       );
-      if (!isUsageHeaderQuotaSnapshotExpired(headerSnapshot, nowMs)) continue;
+      if (!hasExpiredUsageHeaderQuotaWindow(headerSnapshot, nowMs)) continue;
 
       const activeQuota = getActiveCodexQuota(file);
       const fetchedAtMs =
@@ -1216,7 +1269,8 @@ export function AuthFilesPage() {
       const headerObservedQuota = buildObservedCodexQuotaState(
         file,
         codexStatusSourcesByAuthFileKey.get(statusKey)?.headerSnapshot,
-        t
+        t,
+        headerSnapshotGeneratedAtMs || Date.now()
       );
       const coreObservedQuota = buildObservedCodexQuotaStateFromCoreSnapshot(
         file,
@@ -1241,6 +1295,7 @@ export function AuthFilesPage() {
       coreQuotaSnapshotLookup,
       creditsHistoryLookup,
       getActiveCodexQuota,
+      headerSnapshotGeneratedAtMs,
       t,
     ]
   );
@@ -2096,7 +2151,7 @@ export function AuthFilesPage() {
                       onTestMessage={handleTestMessage}
                       onDownload={handleDownload}
                       onOpenAccountSettings={openAccountSettingsEditor}
-                      onDelete={handleDelete}
+                      onDelete={() => handleDelete(file)}
                       onToggleStatus={guardedStatusToggle}
                       onToggleSelect={() => toggleSelect(getAuthFileSelectionKey(file))}
                     />
@@ -2138,7 +2193,8 @@ export function AuthFilesPage() {
 
       <OAuthExcludedCard
         disableControls={disableControls}
-        excludedError={excludedError}
+        loadState={excludedError}
+        onRetry={loadExcluded}
         excluded={excluded}
         onAdd={() => openExcludedEditor()}
         onEdit={openExcludedEditor}
@@ -2152,7 +2208,8 @@ export function AuthFilesPage() {
         onAdd={() => openModelAliasEditor()}
         onEditProvider={openModelAliasEditor}
         onDeleteProvider={deleteModelAlias}
-        modelAliasError={modelAliasError}
+        loadState={modelAliasError}
+        onRetry={loadModelAlias}
         modelAlias={modelAlias}
         allProviderModels={allProviderModels}
         onUpdate={handleMappingUpdate}
@@ -2356,7 +2413,7 @@ export function AuthFilesPage() {
                   </Button>
                   <Button
                     size="sm"
-                    onClick={() => void batchSetStatus(selectedFileNames, true)}
+                    onClick={() => void batchSetStatus(selectedPatchTargets, true)}
                     disabled={batchStatusButtonsDisabled}
                   >
                     {t('auth_files.batch_enable')}
@@ -2364,7 +2421,7 @@ export function AuthFilesPage() {
                   <Button
                     variant="secondary"
                     size="sm"
-                    onClick={() => void batchSetStatus(selectedFileNames, false)}
+                    onClick={() => void batchSetStatus(selectedPatchTargets, false)}
                     disabled={batchStatusButtonsDisabled}
                   >
                     {t('auth_files.batch_disable')}
@@ -2399,7 +2456,7 @@ export function AuthFilesPage() {
                   <Button
                     variant="danger"
                     size="sm"
-                    onClick={() => batchDelete(selectedFileNames)}
+                    onClick={() => batchDelete(selectedTargetFiles)}
                     disabled={batchDeleteButtonsDisabled}
                   >
                     {t('common.delete')}

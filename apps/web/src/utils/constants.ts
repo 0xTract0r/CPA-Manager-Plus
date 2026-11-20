@@ -29,6 +29,7 @@ export const FARM_CONTAINERS_POLL_INTERVAL_MS = 15 * 1000;
 export const FARM_OVERVIEW_POLL_INTERVAL_MS = 30 * 1000;
 export const FARM_ALERTS_POLL_INTERVAL_MS = 30 * 1000;
 export const VERSION_HEADER_KEYS = ['x-cpa-version', 'x-server-version'];
+export const COMMIT_HEADER_KEYS = ['x-cpa-commit', 'x-server-commit'];
 export const BUILD_DATE_HEADER_KEYS = ['x-cpa-build-date', 'x-server-build-date'];
 export const CPA_SUPPORT_PLUGIN_HEADER_KEYS = ['x-cpa-support-plugin'];
 export const STATUS_UPDATE_INTERVAL_MS = 1000;
@@ -39,10 +40,6 @@ export const MAX_LOG_LINES = 2000;
 export const LOG_FETCH_LIMIT = 2500;
 export const LOGS_TIMEOUT_MS = 60 * 1000;
 
-// 认证文件分页
-export const DEFAULT_AUTH_FILES_PAGE_SIZE = 20;
-export const MIN_AUTH_FILES_PAGE_SIZE = 10;
-export const MAX_AUTH_FILES_PAGE_SIZE = 100;
 export const MAX_AUTH_FILE_SIZE = 10 * 1024 * 1024;
 
 // 本地存储键名
@@ -52,7 +49,6 @@ export const STORAGE_KEY_VISUAL_EFFECTS = 'cli-proxy-visual-effects';
 export const STORAGE_KEY_ACCOUNT_PRIVACY = 'cli-proxy-account-privacy';
 export const STORAGE_KEY_LANGUAGE = 'cli-proxy-language';
 export const STORAGE_KEY_SIDEBAR = 'cli-proxy-sidebar-collapsed';
-export const STORAGE_KEY_AUTH_FILES_PAGE_SIZE = 'cli-proxy-auth-files-page-size';
 export const STORAGE_KEY_QUOTA_CACHE = 'cli-proxy-quota-cache';
 
 // 语言配置
@@ -90,7 +86,6 @@ export const API_ENDPOINTS = {
   LOGIN: '/login',
   API_KEYS: '/api-keys',
   PROVIDERS: '/providers',
-  AUTH_FILES: '/auth-files',
   OAUTH: '/oauth',
   LOGS: '/logs',
 } as const;

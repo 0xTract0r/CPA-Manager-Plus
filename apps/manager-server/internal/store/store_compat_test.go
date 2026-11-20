@@ -2,15 +2,175 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/model"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/usage"
 )
+
+func TestStoreCompatModelPricesAcceptsNumericConfiguredFlagStorage(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "model-prices.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	if err := db.SaveModelPrices(context.Background(), map[string]ModelPrice{
+		"legacy-model": {
+			Prompt: 1, Completion: 2, Cache: 0.5, CacheRead: 0.25, CacheCreation: 1.5,
+			PromptConfigured: true, CompletionConfigured: true, CacheReadConfigured: true, CacheCreationConfigured: true,
+			ContextTiers: []ModelPriceContextTier{
+				{ThresholdTokens: 32_000, Prompt: 3, Completion: 4, CacheRead: 1, PromptConfigured: true, CompletionConfigured: true, CacheReadConfigured: true},
+			},
+			ServiceTiers: []ModelPriceServiceTier{
+				{Mode: "fast", ServiceTier: "priority", Prompt: 3, Completion: 4, CacheRead: 1, PromptConfigured: true, CompletionConfigured: true, CacheReadConfigured: true},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("save model prices: %v", err)
+	}
+
+	if _, err := db.db.Exec(`update model_prices set cache_read_configured = 12.5 where model = 'legacy-model'`); err != nil {
+		t.Fatalf("seed base REAL configured flag: %v", err)
+	}
+	if _, err := db.db.Exec(`update model_price_context_tiers set cache_read_configured = 6.25 where model = 'legacy-model'`); err != nil {
+		t.Fatalf("seed context tier REAL configured flag: %v", err)
+	}
+	if _, err := db.db.Exec(`update model_price_service_tiers set cache_read_configured = 1.84375 where model = 'legacy-model'`); err != nil {
+		t.Fatalf("seed service tier REAL configured flag: %v", err)
+	}
+
+	for name, query := range map[string]string{
+		"base":         `select typeof(cache_read_configured) from model_prices where model = 'legacy-model'`,
+		"context tier": `select typeof(cache_read_configured) from model_price_context_tiers where model = 'legacy-model'`,
+		"service tier": `select typeof(cache_read_configured) from model_price_service_tiers where model = 'legacy-model'`,
+	} {
+		var storageType string
+		if err := db.db.QueryRow(query).Scan(&storageType); err != nil {
+			t.Fatalf("read %s configured flag storage type: %v", name, err)
+		}
+		if storageType != "real" {
+			t.Fatalf("%s configured flag storage type = %q, want real", name, storageType)
+		}
+	}
+
+	prices, err := db.LoadModelPrices(context.Background())
+	if err != nil {
+		t.Fatalf("load model prices with REAL configured flags: %v", err)
+	}
+	price := prices["legacy-model"]
+	if !price.CacheReadConfigured {
+		t.Fatalf("base REAL configured flag should be true: %#v", price)
+	}
+	if len(price.ContextTiers) != 1 || !price.ContextTiers[0].CacheReadConfigured {
+		t.Fatalf("context tier REAL configured flag should be true: %#v", price.ContextTiers)
+	}
+	if len(price.ServiceTiers) != 1 || !price.ServiceTiers[0].CacheReadConfigured {
+		t.Fatalf("service tier REAL configured flag should be true: %#v", price.ServiceTiers)
+	}
+}
+
+func TestStoreCompatModelPricesRejectsInvalidConfiguredFlagStorage(t *testing.T) {
+	tests := []struct {
+		name        string
+		value       any
+		storageType string
+	}{
+		{name: "text", value: "NaN", storageType: "text"},
+		{name: "blob", value: []byte("12.5"), storageType: "blob"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, err := Open(filepath.Join(t.TempDir(), "model-prices.sqlite"))
+			if err != nil {
+				t.Fatalf("open store: %v", err)
+			}
+			t.Cleanup(func() { _ = db.Close() })
+
+			if err := db.SaveModelPrices(context.Background(), map[string]ModelPrice{
+				"corrupt-model": {
+					Prompt: 1, Completion: 2, CacheRead: 0.25,
+					PromptConfigured: true, CompletionConfigured: true, CacheReadConfigured: true,
+				},
+			}); err != nil {
+				t.Fatalf("save model prices: %v", err)
+			}
+			if _, err := db.db.Exec(`update model_prices set cache_read_configured = ? where model = 'corrupt-model'`, tt.value); err != nil {
+				t.Fatalf("seed invalid configured flag: %v", err)
+			}
+
+			var storageType string
+			if err := db.db.QueryRow(`select typeof(cache_read_configured) from model_prices where model = 'corrupt-model'`).Scan(&storageType); err != nil {
+				t.Fatalf("read configured flag storage type: %v", err)
+			}
+			if storageType != tt.storageType {
+				t.Fatalf("configured flag storage type = %q, want %q", storageType, tt.storageType)
+			}
+
+			if _, err := db.LoadModelPrices(context.Background()); err == nil {
+				t.Fatalf("expected load error for %s configured flag storage", tt.storageType)
+			}
+		})
+	}
+}
+
+func TestStoreCompatMigratesLegacyCodexInspectionOwnershipIdentity(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "ownership.sqlite")
+	raw, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open raw sqlite: %v", err)
+	}
+	if _, err := raw.Exec(`create table codex_inspection_disable_ownership (
+		file_name text primary key,
+		provider text not null default 'codex',
+		auth_index text,
+		account_id text,
+		disabled_at_ms integer not null,
+		updated_at_ms integer not null
+	)`); err != nil {
+		_ = raw.Close()
+		t.Fatalf("create legacy ownership table: %v", err)
+	}
+	if _, err := raw.Exec(`insert into codex_inspection_disable_ownership (
+		file_name, provider, auth_index, account_id, disabled_at_ms, updated_at_ms
+	) values ('shared.json', 'codex', 'auth-1', 'account-1', 10, 20)`); err != nil {
+		_ = raw.Close()
+		t.Fatalf("insert legacy ownership: %v", err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatalf("close raw sqlite: %v", err)
+	}
+
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open migrated store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if err := st.UpsertCodexInspectionDisableOwnership(context.Background(), model.CodexInspectionDisableOwnership{
+		FileName:        "shared.json",
+		Provider:        "codex",
+		AuthIndex:       "auth-2",
+		AccountID:       "account-2",
+		AccountSnapshot: "bob@example.com",
+	}); err != nil {
+		t.Fatalf("insert second ownership: %v", err)
+	}
+	items, err := st.ListCodexInspectionDisableOwnership(context.Background())
+	if err != nil {
+		t.Fatalf("list migrated ownership: %v", err)
+	}
+	if len(items) != 2 || items[0].AuthIndex != "auth-1" || items[0].AccountSnapshot != "" || items[1].AuthIndex != "auth-2" || items[1].AccountSnapshot != "bob@example.com" {
+		t.Fatalf("migrated ownership = %#v", items)
+	}
+}
 
 func TestStoreCompatMigratesLegacyUsageEventSchema(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "usage.sqlite")
@@ -112,7 +272,7 @@ func TestStoreCompatMigratesLegacyUsageEventSchema(t *testing.T) {
 	ttft := int64(320)
 	_, err = store.InsertEvents(context.Background(), []usage.Event{
 		{
-			EventHash:            "legacy-schema-event",
+			EventHash:            compatTestHash("legacy-schema-event"),
 			TimestampMS:          1_778_000_000_000,
 			Timestamp:            "2026-05-06T00:00:00Z",
 			Model:                "gpt-test",
@@ -147,7 +307,7 @@ func TestStoreCompatMigratesLegacyUsageEventSchema(t *testing.T) {
 	}
 	var migrated usage.Event
 	for _, event := range events {
-		if event.EventHash == "legacy-schema-event" {
+		if event.EventHash == compatTestHash("legacy-schema-event") {
 			migrated = event
 			break
 		}
@@ -259,8 +419,9 @@ func TestStoreCompatSettingsUsageAndExport(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[0]), &first); err != nil {
 		t.Fatalf("decode first export line: %v", err)
 	}
-	if first.EventHash != "event-a" {
-		t.Fatalf("first exported hash = %q, want event-a", first.EventHash)
+	wantHash := compatTestHash("event-a")
+	if first.EventHash != wantHash {
+		t.Fatalf("first exported hash = %q, want %q", first.EventHash, wantHash)
 	}
 	if first.FailBody != "" || first.RawJSON != "" {
 		t.Fatalf("export should omit raw sensitive fields: %#v", first)
@@ -356,6 +517,13 @@ func TestStoreCompatModelPricesAndAPIKeyAliases(t *testing.T) {
 		"gpt-a": {
 			Prompt: 1, Completion: 2, Cache: 0.5, CacheRead: 0.25, CacheCreation: 1.5,
 			PromptConfigured: true, CompletionConfigured: true, CacheReadConfigured: true, CacheCreationConfigured: true,
+			ContextTiers: []ModelPriceContextTier{
+				{ThresholdTokens: 200_000, Prompt: 0, Completion: 8, PromptConfigured: true, CompletionConfigured: true},
+				{ThresholdTokens: 32_000, Prompt: 3, Completion: 4, CacheRead: 0, PromptConfigured: true, CompletionConfigured: true, CacheReadConfigured: true},
+			},
+			ServiceTiers: []ModelPriceServiceTier{
+				{Mode: "fast", ServiceTier: "priority", Prompt: 2.5, Completion: 5, PromptConfigured: true, CompletionConfigured: true},
+			},
 		},
 		"gpt-b": {Prompt: 0, Completion: 0, Cache: 0, PromptConfigured: true, CompletionConfigured: true},
 	})
@@ -369,7 +537,11 @@ func TestStoreCompatModelPricesAndAPIKeyAliases(t *testing.T) {
 	if len(prices) != 2 || prices["gpt-a"].Prompt != 1 || prices["gpt-a"].CacheRead != 0.25 ||
 		prices["gpt-a"].CacheCreation != 1.5 || !prices["gpt-a"].CacheReadConfigured ||
 		!prices["gpt-a"].CacheCreationConfigured || prices["gpt-b"].Completion != 0 ||
-		!prices["gpt-b"].PromptConfigured || !prices["gpt-b"].CompletionConfigured {
+		!prices["gpt-b"].PromptConfigured || !prices["gpt-b"].CompletionConfigured ||
+		len(prices["gpt-a"].ContextTiers) != 2 || prices["gpt-a"].ContextTiers[0].ThresholdTokens != 32_000 ||
+		prices["gpt-a"].ContextTiers[1].Prompt != 0 || !prices["gpt-a"].ContextTiers[1].PromptConfigured ||
+		len(prices["gpt-a"].ServiceTiers) != 1 || prices["gpt-a"].ServiceTiers[0].Mode != "fast" ||
+		prices["gpt-a"].ServiceTiers[0].ServiceTier != "priority" {
 		t.Fatalf("prices = %#v", prices)
 	}
 
@@ -378,8 +550,20 @@ func TestStoreCompatModelPricesAndAPIKeyAliases(t *testing.T) {
 			Prompt: 5, Completion: 6, Cache: 1, CacheRead: 0.75, CacheCreation: 4,
 			PromptConfigured: true, CompletionConfigured: true, CacheReadConfigured: true, CacheCreationConfigured: true,
 			Source: "litellm",
+			ContextTiers: []ModelPriceContextTier{
+				{ThresholdTokens: 128_000, Prompt: 7, Completion: 9, PromptConfigured: true, CompletionConfigured: true},
+			},
+			ServiceTiers: []ModelPriceServiceTier{
+				{Mode: "FAST", ServiceTier: "PRIORITY", Prompt: 11, PromptConfigured: true},
+			},
 		},
-		"bad": {Prompt: -1, Completion: 0, Cache: 0},
+		"bad": {
+			Prompt: 1,
+			ContextTiers: []ModelPriceContextTier{
+				{ThresholdTokens: 32_000, Prompt: 2, PromptConfigured: true},
+				{ThresholdTokens: 32_000, Prompt: 3, PromptConfigured: true},
+			},
+		},
 	})
 	if err != nil {
 		t.Fatalf("upsert synced prices: %v", err)
@@ -393,8 +577,24 @@ func TestStoreCompatModelPricesAndAPIKeyAliases(t *testing.T) {
 	}
 	if prices["gpt-a"].Prompt != 5 || prices["gpt-a"].CacheRead != 0.75 ||
 		prices["gpt-a"].CacheCreation != 4 || prices["gpt-a"].SyncedAtMS == nil ||
-		prices["gpt-a"].Source != "litellm" {
+		prices["gpt-a"].Source != "litellm" || len(prices["gpt-a"].ContextTiers) != 1 ||
+		prices["gpt-a"].ContextTiers[0].ThresholdTokens != 128_000 || len(prices["gpt-a"].ServiceTiers) != 1 ||
+		prices["gpt-a"].ServiceTiers[0].Mode != "fast" || prices["gpt-a"].ServiceTiers[0].Prompt != 11 {
 		t.Fatalf("synced price = %#v", prices["gpt-a"])
+	}
+
+	if err := db.SaveModelPrices(context.Background(), map[string]ModelPrice{
+		"gpt-a": {Prompt: 6, Completion: 12, Source: "manual"},
+	}); err != nil {
+		t.Fatalf("save manual replacement: %v", err)
+	}
+	prices, err = db.LoadModelPrices(context.Background())
+	if err != nil {
+		t.Fatalf("reload manual replacement: %v", err)
+	}
+	if len(prices) != 1 || prices["gpt-a"].Source != "manual" || len(prices["gpt-a"].ContextTiers) != 0 ||
+		len(prices["gpt-a"].ServiceTiers) != 0 {
+		t.Fatalf("manual replacement retained synchronized rules: %#v", prices)
 	}
 
 	const hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -447,9 +647,14 @@ func usageEventColumns(t *testing.T, db *sql.DB) map[string]bool {
 	return columns
 }
 
+func compatTestHash(hash string) string {
+	sum := sha256.Sum256([]byte(hash))
+	return hex.EncodeToString(sum[:])
+}
+
 func compatStoreEvent(hash string, offset int64) usage.Event {
 	return usage.Event{
-		EventHash:    hash,
+		EventHash:    compatTestHash(hash),
 		TimestampMS:  1_778_000_000_000 + offset,
 		Timestamp:    "2026-05-06T00:00:00Z",
 		Model:        "gpt-test",
