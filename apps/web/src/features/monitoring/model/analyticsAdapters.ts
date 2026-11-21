@@ -574,10 +574,12 @@ export const buildAnalyticsFilters = (
   }
   if (isActiveFilterValue(scopeFilters.channel)) {
     const channel = scopeFilters.channel!.trim();
-    const channelAuthIndices = channels
-      .filter((item) => item.name === channel)
-      .flatMap((item) => item.authIndices);
-    const matchedChannelIndices = normalizeAuthFilterValues(channelAuthIndices);
+    const namedChannels = channels.filter((item) => item.name === channel);
+    const matchedChannelIndices = normalizeAuthFilterValues(namedChannels.flatMap((item) => item.authIndices));
+    const repeatsProvider =
+      namedChannels.length === 0 &&
+      isActiveFilterValue(scopeFilters.provider) &&
+      normalizeFilterText(channel) === normalizeFilterText(scopeFilters.provider);
     if (matchedChannelIndices.length > 0) {
       authIndices = addAuthIndexConstraint(authIndices, matchedChannelIndices);
     } else if (
@@ -587,8 +589,8 @@ export const buildAnalyticsFilters = (
     ) {
       // Preserve the legacy stand-alone channel provider alias.
       filters.providers = [channel];
-    } else {
-      // Without a known channel membership we cannot combine these dimensions.
+    } else if (!repeatsProvider) {
+      // Only a matching historical provider alias can use the existing provider constraint.
       authIndices = new Set();
     }
   }
