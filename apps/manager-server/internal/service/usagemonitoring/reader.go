@@ -38,23 +38,19 @@ func PrefersEventProjection(filter store.AnalyticsFilter) bool {
 	return monitoringrepo.PrefersEventProjection(filter)
 }
 
-func (r *Reader) AccountStats(ctx context.Context, filter store.AnalyticsFilter) ([]store.AccountModelStat, bool) {
+func (r *Reader) AccountStats(ctx context.Context, filter store.AnalyticsFilter) ([]store.AccountModelStat, bool, error) {
 	if r == nil || r.store == nil {
-		return nil, false
-	}
-	if !monitoringrepo.SupportsEventProjectionFilter(filter) {
-		return nil, false
+		return nil, false, nil
 	}
 	rows, state, available, err := r.store.UsageMonitoringAccountStats(ctx, filter)
 	if err != nil {
-		r.logFallback(fmt.Sprintf("account daily rollup query failed: %v", err))
-		return nil, false
+		return nil, false, err
 	}
 	if !available {
 		r.logFallback(fmt.Sprintf("account daily rollup unavailable: schema_version=%d status=%s", state.SchemaVersion, state.Status))
-		return nil, false
+		return nil, false, nil
 	}
-	return rows, true
+	return rows, true, nil
 }
 
 func (r *Reader) AccountWindowStats(ctx context.Context, windows []store.AccountWindowUsageQuery) ([]store.AccountWindowModelStat, bool) {
@@ -73,23 +69,19 @@ func (r *Reader) AccountWindowStats(ctx context.Context, windows []store.Account
 	return rows, true
 }
 
-func (r *Reader) APIKeyStats(ctx context.Context, filter store.AnalyticsFilter) ([]store.APIKeyModelStat, bool) {
+func (r *Reader) APIKeyStats(ctx context.Context, filter store.AnalyticsFilter) ([]store.APIKeyModelStat, bool, error) {
 	if r == nil || r.store == nil {
-		return nil, false
-	}
-	if !monitoringrepo.SupportsEventProjectionFilter(filter) {
-		return nil, false
+		return nil, false, nil
 	}
 	rows, state, available, err := r.store.UsageMonitoringAPIKeyStats(ctx, filter)
 	if err != nil {
-		r.logFallback(fmt.Sprintf("api key daily rollup query failed: %v", err))
-		return nil, false
+		return nil, false, err
 	}
 	if !available {
 		r.logFallback(fmt.Sprintf("api key daily rollup unavailable: schema_version=%d status=%s", state.SchemaVersion, state.Status))
-		return nil, false
+		return nil, false, nil
 	}
-	return rows, true
+	return rows, true, nil
 }
 
 func (r *Reader) FilterOptions(ctx context.Context, filter store.AnalyticsFilter) (store.FilterOptionValues, bool) {

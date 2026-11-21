@@ -87,69 +87,97 @@ func monitoringBandedProjectedEventsCTE(source string) string {
 }
 
 func (r *repository) LoadAccountStats(ctx context.Context, filter AnalyticsFilter) ([]AccountModelStat, State, bool, error) {
-	if !SupportsEventProjectionFilter(filter) {
-		return nil, State{}, false, nil
-	}
 	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, State{}, false, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	projectionState, projectionAvailable, projectionComplete, err := projectionReadState(ctx, tx)
-	if err != nil || !projectionAvailable {
-		return nil, projectionState, projectionAvailable, err
-	}
-	state, revision, dailyAvailable, err := statsReadState(ctx, tx)
-	if err != nil {
-		return nil, projectionState, false, err
+	read, available, err := prepareIdentityStatsRead(ctx, tx, filter, true)
+	if err != nil || !available {
+		return nil, read.projection, false, err
 	}
 
 	grouped := map[accountStatKey]*accountStatAccumulator{}
-	if dailyAvailable && SupportsStatsFilter(filter) {
-		err = loadAccountRange(ctx, tx, state, projectionState.CoverageEventID, projectionComplete, revision, filter, grouped)
+	if read.useDaily {
+		err = loadAccountRange(ctx, tx, read.daily, read.projectedThrough, read.projectionComplete, read.revision, filter, grouped)
 	} else {
-		err = mergeProjectedAccountStats(ctx, tx, projectionState.CoverageEventID, projectionComplete, filter, eventSourceOptions{}, grouped)
+		err = mergeProjectedAccountStats(ctx, tx, read.projectedThrough, read.projectionComplete, filter, eventSourceOptions{}, grouped)
 	}
 	if err != nil {
-		return nil, projectionState, false, err
+		return nil, read.projection, false, err
 	}
 	if err := tx.Commit(); err != nil {
-		return nil, projectionState, false, err
+		return nil, read.projection, false, err
 	}
-	return sortedAccountStats(grouped), projectionState, true, nil
+	return sortedAccountStats(grouped), read.projection, true, nil
 }
 
 func (r *repository) LoadAPIKeyStats(ctx context.Context, filter AnalyticsFilter) ([]APIKeyModelStat, State, bool, error) {
-	if !SupportsEventProjectionFilter(filter) {
-		return nil, State{}, false, nil
-	}
 	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, State{}, false, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	projectionState, projectionAvailable, projectionComplete, err := projectionReadState(ctx, tx)
-	if err != nil || !projectionAvailable {
-		return nil, projectionState, projectionAvailable, err
-	}
-	state, revision, dailyAvailable, err := statsReadState(ctx, tx)
-	if err != nil {
-		return nil, projectionState, false, err
+	read, available, err := prepareIdentityStatsRead(ctx, tx, filter, false)
+	if err != nil || !available {
+		return nil, read.projection, false, err
 	}
 
 	grouped := map[apiKeyStatKey]*apiKeyStatAccumulator{}
-	if dailyAvailable && SupportsStatsFilter(filter) {
-		err = loadAPIKeyRange(ctx, tx, state, projectionState.CoverageEventID, projectionComplete, revision, filter, grouped)
+	if read.useDaily {
+		err = loadAPIKeyRange(ctx, tx, read.daily, read.projectedThrough, read.projectionComplete, read.revision, filter, grouped)
 	} else {
-		err = mergeProjectedAPIKeyStats(ctx, tx, projectionState.CoverageEventID, projectionComplete, filter, 0, false, grouped)
+		err = mergeProjectedAPIKeyStats(ctx, tx, read.projectedThrough, read.projectionComplete, filter, 0, false, grouped)
 	}
 	if err != nil {
-		return nil, projectionState, false, err
+		return nil, read.projection, false, err
 	}
 	if err := tx.Commit(); err != nil {
-		return nil, projectionState, false, err
+		return nil, read.projection, false, err
 	}
-	return sortedAPIKeyStats(grouped), projectionState, true, nil
+	return sortedAPIKeyStats(grouped), read.projection, true, nil
+}
+
+type identityStatsRead struct {
+	projection         State
+	projectedThrough   int64
+	projectionComplete bool
+	daily              State
+	revision           string
+	useDaily           bool
+}
+
+// Resolve and verify the sources in the same snapshot the stats query reads.
+func prepareIdentityStatsRead(ctx context.Context, tx *sql.Tx, filter AnalyticsFilter, account bool) (identityStatsRead, bool, error) {
+	projection, projectionAvailable, projectionComplete, err := projectionReadState(ctx, tx)
+	read := identityStatsRead{projection: projection}
+	if err != nil {
+		return read, false, err
+	}
+	archived, err := archivedStatsReadRange(ctx, tx, filter)
+	if err != nil {
+		return read, false, err
+	}
+	usesProjection := projectionAvailable && SupportsEventProjectionFilter(filter)
+	if !usesProjection && !archived {
+		return read, false, nil
+	}
+	if usesProjection {
+		read.projectedThrough = projection.CoverageEventID
+		read.projectionComplete = projectionComplete
+	}
+	daily, revision, dailyAvailable, err := statsReadState(ctx, tx)
+	if err != nil {
+		return read, false, err
+	}
+	read.daily, read.revision = daily, revision
+	read.useDaily = dailyAvailable && SupportsStatsFilter(filter)
+	if archived {
+		if err := validateStatsReadSources(ctx, tx, filter, daily.CoverageEventID, read.projectedThrough, revision, read.useDaily, account); err != nil {
+			return read, false, err
+		}
+	}
+	return read, true, nil
 }
 
 func statsReadState(ctx context.Context, tx *sql.Tx) (State, string, bool, error) {

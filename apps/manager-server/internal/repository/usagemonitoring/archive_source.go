@@ -131,6 +131,123 @@ func statsBatchSource(afterID, throughID int64, archived bool) (string, string, 
 	return source, "1 = 1", []any{afterID, throughID, afterID, throughID}
 }
 
+// archivedStatsReadRange checks both sides of the deletion ledger. In the
+// common case both indexed range probes are empty and no event rows are scanned.
+func archivedStatsReadRange(ctx context.Context, tx *sql.Tx, filter AnalyticsFilter) (bool, error) {
+	if filter.FromMS >= filter.ToMS {
+		return false, nil
+	}
+	from := floorDayMS(filter.FromMS)
+	to := ceilDayMS(filter.ToMS)
+	var archived bool
+	if err := tx.QueryRowContext(ctx, `select exists (
+		select 1 from usage_archive_deleted_coverage_daily where utc_day >= ? and utc_day < ?
+	) or exists (
+		select 1 from usage_archive_event_refs
+		where timestamp_ms >= ? and timestamp_ms < ? and raw_deleted_at_ms is not null
+	)`, from/dayMS, to/dayMS, from, to).Scan(&archived); err != nil || !archived {
+		return archived, err
+	}
+	var mismatch bool
+	if err := tx.QueryRowContext(ctx, `with refs as (
+		select timestamp_ms / ? as utc_day, count(*) as event_count,
+			min(timestamp_ms) as min_ms, max(timestamp_ms) as max_ms
+		from usage_archive_event_refs
+		where timestamp_ms >= ? and timestamp_ms < ? and raw_deleted_at_ms is not null
+		group by timestamp_ms / ?
+	), coverage as (
+		select utc_day, deleted_event_count, min_timestamp_ms, max_timestamp_ms
+		from usage_archive_deleted_coverage_daily where utc_day >= ? and utc_day < ?
+	)
+	select exists(select * from refs except select * from coverage)
+		or exists(select * from coverage except select * from refs)`,
+		dayMS, from, to, dayMS, from/dayMS, to/dayMS).Scan(&mismatch); err != nil {
+		return false, err
+	}
+	if mismatch {
+		return false, fmt.Errorf("%w: UTC daily deleted-event coverage and archive references disagree", ErrArchivedStatsSourceUnavailable)
+	}
+	return true, nil
+}
+
+func validateStatsReadSources(ctx context.Context, tx *sql.Tx, filter AnalyticsFilter, dailyThrough, projectedThrough int64, revision string, useDaily, account bool) error {
+	fullStart, fullEnd := ceilDayMS(filter.FromMS), floorDayMS(filter.ToMS)
+	scope := "r.timestamp_ms >= ? and r.timestamp_ms < ?"
+	args := []any{filter.FromMS, filter.ToMS}
+	if useDaily && fullStart < fullEnd {
+		scope += " and (r.timestamp_ms < ? or r.timestamp_ms >= ? or r.raw_event_id > ?)"
+		args = append(args, fullStart, fullEnd, dailyThrough)
+	}
+	if err := validateArchivedStatsReadRefs(ctx, tx, scope, args, projectedThrough); err != nil {
+		return err
+	}
+	if account && useDaily && fullStart < fullEnd {
+		return validateArchivedAccountDailyResidual(ctx, tx, fullStart, fullEnd, dailyThrough, projectedThrough, revision)
+	}
+	return nil
+}
+
+func validateArchivedStatsReadRefs(ctx context.Context, tx *sql.Tx, scope string, args []any, projectedThrough int64) error {
+	if projectedThrough > 0 {
+		if err := validateArchivedStatsRefs(ctx, tx, scope+" and r.raw_event_id <= ?", true, append(args, projectedThrough)...); err != nil {
+			return err
+		}
+	}
+	// Above the projection watermark only the genuine raw row can be read.
+	var missing bool
+	if err := tx.QueryRowContext(ctx, `select exists (
+		select 1 from usage_archive_event_refs r
+		left join usage_events e on e.id = r.raw_event_id and e.timestamp_ms = r.timestamp_ms and e.event_hash = r.event_hash
+		where r.raw_deleted_at_ms is not null and (`+scope+`)
+			and (r.raw_event_id > ? or r.raw_event_id <= 0) and e.id is null
+	)`, append(args, projectedThrough)...).Scan(&missing); err != nil {
+		return err
+	}
+	if missing {
+		return fmt.Errorf("%w: archive references exceed available projection and raw sources", ErrArchivedStatsSourceUnavailable)
+	}
+	return nil
+}
+
+// Account buckets omit legacy Codex Workspace markers. The companion API
+// key buckets include them and use the same drain watermark. Their difference
+// must be accounted for by the same marker residual the account read will use.
+func validateArchivedAccountDailyResidual(ctx context.Context, tx *sql.Tx, from, to, through, projectedThrough int64, revision string) error {
+	var missing bool
+	if err := tx.QueryRowContext(ctx, `with archived_days as (
+		select distinct (timestamp_ms / ?) * ? as bucket_ms
+		from usage_archive_event_refs
+		where timestamp_ms >= ? and timestamp_ms < ? and raw_deleted_at_ms is not null and raw_event_id <= ?
+	)
+	select exists (
+		select 1 from archived_days d where
+			coalesce((select sum(calls) from usage_monitoring_api_key_daily_rollups_v1 k
+				where k.structure_revision = ? and k.bucket_ms = d.bucket_ms), 0)
+			!= coalesce((select sum(calls) from usage_monitoring_account_daily_rollups_v1 a
+				where a.structure_revision = ? and a.bucket_ms = d.bucket_ms), 0)
+			+ (select count(*) from usage_monitoring_event_projection_v1 p
+				where p.timestamp_ms >= d.bucket_ms and p.timestamp_ms < d.bucket_ms + ?
+					and p.event_id <= ? and p.event_id <= ? and (`+codexAccountDailyExcludedSQL("p")+`))
+			+ (select count(*) from usage_events e
+				where e.timestamp_ms >= d.bucket_ms and e.timestamp_ms < d.bucket_ms + ?
+					and e.id <= ? and e.id > ? and (`+codexAccountDailyExcludedSQL("e")+`))
+	)`, dayMS, dayMS, from, to, through, revision, revision,
+		dayMS, through, projectedThrough, dayMS, through, projectedThrough).Scan(&missing); err != nil {
+		return err
+	}
+	if missing {
+		return fmt.Errorf("%w: account daily rollup lacks its verified event residual", ErrArchivedStatsSourceUnavailable)
+	}
+	if projectedThrough == 0 {
+		return nil
+	}
+	return validateArchivedStatsRefs(ctx, tx,
+		`r.timestamp_ms >= ? and r.timestamp_ms < ? and r.raw_event_id <= ? and r.raw_event_id <= ? and exists (
+			select 1 from usage_monitoring_event_projection_v1 marker
+			where marker.event_id = r.raw_event_id and (`+codexAccountDailyExcludedSQL("marker")+`)
+		)`, true, from, to, through, projectedThrough)
+}
+
 func (r *repository) CheckArchivedStatsRead(ctx context.Context, fromMS, toMS, count int64) error {
 	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {

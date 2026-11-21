@@ -936,7 +936,7 @@ func (s *Service) analytics(ctx context.Context, req Request) (Response, error) 
 	filter := buildFilter(req)
 	compactSummary := req.Include.Summary && req.Include.SummaryProfile == "compact"
 	needsArchivedStats := req.Include.Summary || req.Include.ModelShare || req.Include.ModelStats ||
-		req.Include.AccountStats || req.Include.CredentialStats || req.Include.APIKeyStats
+		req.Include.CredentialStats
 	coverageForRange := func(from, to int64) (store.UsageArchiveRawCoverage, error) {
 		coverage, err := s.store.UsageArchives.RawCoverage(ctx, from, to)
 		if err == nil && needsArchivedStats && coverage.RawDeletedEventCount > 0 {
@@ -2333,8 +2333,8 @@ func (s *Service) accountModelStats(ctx context.Context, filter store.AnalyticsF
 }
 
 func (s *Service) accountModelStatsWithSource(ctx context.Context, filter store.AnalyticsFilter) ([]store.AccountModelStat, bool, error) {
-	if rows, available := s.monitoringReader.AccountStats(ctx, filter); available {
-		return rows, true, nil
+	if rows, available, err := s.monitoringReader.AccountStats(ctx, filter); available || err != nil {
+		return rows, available, err
 	}
 	rows, err := s.store.AccountModelStatsWithFilter(ctx, filter)
 	return rows, false, err
@@ -2346,8 +2346,8 @@ func (s *Service) apiKeyModelStats(ctx context.Context, filter store.AnalyticsFi
 }
 
 func (s *Service) apiKeyModelStatsWithSource(ctx context.Context, filter store.AnalyticsFilter) ([]store.APIKeyModelStat, bool, error) {
-	if rows, available := s.monitoringReader.APIKeyStats(ctx, filter); available {
-		return rows, true, nil
+	if rows, available, err := s.monitoringReader.APIKeyStats(ctx, filter); available || err != nil {
+		return rows, available, err
 	}
 	rows, err := s.store.APIKeyModelStatsWithFilter(ctx, filter)
 	return rows, false, err
@@ -2359,8 +2359,8 @@ func (s *Service) channelModelStats(ctx context.Context, filter store.AnalyticsF
 }
 
 func (s *Service) channelModelStatsWithSource(ctx context.Context, filter store.AnalyticsFilter) ([]store.ChannelModelStat, bool, error) {
-	if rows, available := s.monitoringReader.AccountStats(ctx, filter); available {
-		return channelModelStatsFromAccountStats(rows), true, nil
+	if rows, available, err := s.monitoringReader.AccountStats(ctx, filter); available || err != nil {
+		return channelModelStatsFromAccountStats(rows), available, err
 	}
 	rows, err := s.store.ChannelModelStatsWithFilter(ctx, filter)
 	return rows, false, err
