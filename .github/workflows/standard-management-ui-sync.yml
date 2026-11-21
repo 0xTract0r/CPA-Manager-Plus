@@ -1,0 +1,30 @@
+name: 上游凭证编辑与监控回归
+
+on:
+  pull_request:
+    branches:
+      - codex/official-cpamp-dcfa8bc0
+
+permissions:
+  contents: read
+
+jobs:
+  management-ui:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: 验证凭证编辑、卡片详情及历史筛选
+        run: >-
+          npm --workspace apps/web run test --
+          src/features/authFiles/components/OAuthEditorModals.test.tsx
+          src/components/ui/Drawer.test.tsx
+          src/features/monitoring/model/analyticsAdapters.test.ts
+      - run: npm run build
