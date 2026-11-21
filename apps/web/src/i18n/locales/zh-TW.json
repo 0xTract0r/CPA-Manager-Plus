@@ -121,6 +121,7 @@
     "model_alias_placeholder": "模型別名（選填）",
     "invalid_provider_index": "無效的供應商索引。",
     "unsaved_changes_title": "未儲存的變更",
+    "model_editor_external_change": "伺服器設定已變更。請關閉並重新開啟編輯器後再儲存。",
     "unsaved_changes_message": "你有未儲存的變更，離開後將遺失這些變更。確定要離開嗎？",
     "clear": "清空",
     "copied": "已複製"

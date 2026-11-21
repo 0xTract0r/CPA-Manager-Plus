@@ -461,3 +461,175 @@ describe('OAuthEditorModals provider model isolation', () => {
     expect(mocks.showConfirmation).not.toHaveBeenCalled();
   });
 });
+
+describe('OAuth draft refresh ownership', () => {
+  it.each(['alias', 'excluded'])('preserves the %s draft across an equal refresh', async (mode) => {
+    mocks.saveOauthExcludedModels.mockClear();
+    mocks.saveOauthModelAlias.mockClear();
+    mocks.getModelDefinitions.mockResolvedValue([]);
+    const Component = mode === 'alias' ? OAuthModelAliasEditorModal : OAuthExcludedEditorModal;
+    const onClose = vi.fn();
+    const onSaved = vi.fn();
+    const view = (changed = false, requestScope = REQUEST_SCOPE, open = true) => (
+      <Component
+        open={open}
+        provider="claude"
+        files={[]}
+        excluded={{ claude: [changed ? 'external' : 'sample'] }}
+        modelAlias={{
+          claude: [{ name: 'sample', alias: changed ? 'external' : 'existing', fork: false }],
+        }}
+        requestScope={requestScope}
+        onClose={onClose}
+        onSaved={onSaved}
+      />
+    );
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(view());
+      await flushPromises();
+    });
+    const findInput = () =>
+      mode === 'alias'
+        ? renderer.root.find(
+            (node) =>
+              node.type === 'input' &&
+              node.props.placeholder === 'oauth_model_alias.alias_placeholder'
+          )
+        : renderer.root.findByType(Input);
+    await act(async () => {
+      findInput().props.onChange({ target: { value: 'unsaved' } });
+    });
+    expect(findInput().props.value).toBe('unsaved');
+    await act(async () => {
+      renderer.update(view());
+      await flushPromises();
+    });
+    expect(findInput().props.value).toBe('unsaved');
+    await act(async () => {
+      renderer.update(view(true));
+      await flushPromises();
+    });
+    expect(findInput().props.value).toBe('unsaved');
+    const save = renderer.root
+      .findAllByType(Button)
+      .find((node) => typeof node.props.loading === 'boolean');
+    expect(save?.props.disabled).toBe(true);
+    await act(async () => {
+      save?.props.onClick();
+      await flushPromises();
+    });
+    expect(mocks.saveOauthExcludedModels).not.toHaveBeenCalled();
+    expect(mocks.saveOauthModelAlias).not.toHaveBeenCalled();
+    await act(async () => {
+      renderer.update(view(true, NEXT_REQUEST_SCOPE));
+      await flushPromises();
+    });
+    expect(findInput().props.value).toBe(mode === 'alias' ? 'external' : '');
+    await act(async () => {
+      findInput().props.onChange({ target: { value: 'draft-before-close' } });
+      await flushPromises();
+    });
+    await act(async () => {
+      renderer.update(view(false, NEXT_REQUEST_SCOPE));
+      await flushPromises();
+    });
+    expect(findInput().props.value).toBe('draft-before-close');
+    await act(async () => {
+      renderer.update(view(false, NEXT_REQUEST_SCOPE, false));
+      await flushPromises();
+    });
+    await act(async () => {
+      renderer.update(view(false, NEXT_REQUEST_SCOPE));
+      await flushPromises();
+    });
+    expect(findInput().props.value).toBe(mode === 'alias' ? 'existing' : '');
+    if (mode === 'excluded') expect(readText(renderer.root)).toContain('sample');
+    await act(async () => {
+      findInput().props.onChange({ target: { value: 'after-reopen' } });
+      await flushPromises();
+    });
+    const reopenedSave = renderer.root
+      .findAllByType(Button)
+      .find((node) => typeof node.props.loading === 'boolean');
+    expect(reopenedSave?.props.disabled).toBe(false);
+    await act(async () => {
+      reopenedSave?.props.onClick();
+      await flushPromises();
+    });
+    if (mode === 'alias') {
+      expect(mocks.saveOauthModelAlias).toHaveBeenCalledExactlyOnceWith(
+        'claude',
+        [{ name: 'sample', alias: 'after-reopen' }],
+        NEXT_REQUEST_SCOPE
+      );
+    } else {
+      expect(mocks.saveOauthExcludedModels).toHaveBeenCalledExactlyOnceWith(
+        'claude',
+        ['after-reopen', 'sample'],
+        NEXT_REQUEST_SCOPE
+      );
+    }
+    act(() => renderer.unmount());
+  });
+
+  it.each(['alias', 'excluded'])('ignores a late %s save after switching connections', async (mode) => {
+    const response = deferred<void>();
+    const saveRequest = mode === 'alias'
+      ? mocks.saveOauthModelAlias
+      : mocks.saveOauthExcludedModels;
+    saveRequest.mockClear();
+    saveRequest.mockImplementationOnce(() => response.promise);
+    mocks.getModelDefinitions.mockResolvedValue([]);
+    const Component = mode === 'alias' ? OAuthModelAliasEditorModal : OAuthExcludedEditorModal;
+    const onClose = vi.fn();
+    const onSaved = vi.fn();
+    const view = (requestScope = REQUEST_SCOPE) => (
+      <Component
+        open
+        provider="claude"
+        files={[]}
+        excluded={{ claude: ['sample'] }}
+        modelAlias={{ claude: [{ name: 'sample', alias: 'existing', fork: false }] }}
+        requestScope={requestScope}
+        onClose={onClose}
+        onSaved={onSaved}
+      />
+    );
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(view());
+      await flushPromises();
+    });
+    const field = () => mode === 'alias'
+      ? renderer.root.find((node) => node.type === 'input' &&
+          node.props.placeholder === 'oauth_model_alias.alias_placeholder')
+      : renderer.root.findByType(Input);
+    const saveButton = () => renderer.root.findAllByType(Button)
+      .find((node) => typeof node.props.loading === 'boolean')!;
+    await act(async () => {
+      field().props.onChange({ target: { value: 'old-draft' } });
+    });
+    await act(async () => {
+      void saveButton().props.onClick();
+      await flushPromises();
+    });
+    expect(saveRequest).toHaveBeenCalledOnce();
+    expect(saveRequest.mock.calls[0][2]).toEqual(REQUEST_SCOPE);
+    await act(async () => {
+      renderer.update(view(NEXT_REQUEST_SCOPE));
+      await flushPromises();
+    });
+    await act(async () => {
+      field().props.onChange({ target: { value: 'new-draft' } });
+      response.resolve();
+      await flushPromises();
+    });
+    expect(onSaved).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(field().props.value).toBe('new-draft');
+    expect(saveButton().props.disabled).toBe(false);
+    act(() => renderer.unmount());
+  });
+
+});
