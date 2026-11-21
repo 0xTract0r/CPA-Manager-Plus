@@ -1098,6 +1098,7 @@ export function RealtimeEventsPanel({
             <col />
             <col />
             <col />
+            <col />
           </colgroup>
           <thead>
             <tr>
@@ -1109,7 +1110,12 @@ export function RealtimeEventsPanel({
               <th className={styles.realtimeCenteredColumn}>{successRateLabel}</th>
               <th className={styles.realtimeCenteredColumn}>{totalCallsLabel}</th>
               <th className={styles.realtimeTpsColumn}>{t('monitoring.column_output_tps')}</th>
-              <th className={styles.realtimeLatencyColumn}>{t('monitoring.elapsed_short')}</th>
+              <th scope="col" className={styles.realtimeLatencyColumn}>
+                {t('monitoring.ttft_short')}
+              </th>
+              <th scope="col" className={styles.realtimeLatencyColumn}>
+                {t('monitoring.elapsed_short')}
+              </th>
               <th className={styles.realtimeTimeColumn}>{t('monitoring.column_time')}</th>
               <th>{usageLabel}</th>
               <th>{costLabel}</th>
@@ -1291,32 +1297,20 @@ export function RealtimeEventsPanel({
                     </span>
                   </td>
                   <td className={styles.realtimeLatencyColumn}>
-                    <div className={styles.realtimeMetricCell}>
-                      <span className={styles.realtimeMetricLine}>
-                        <span className={styles.realtimeMetricLabel}>
-                          {t('monitoring.ttft_short')}
-                        </span>
-                        <span
-                          className={[styles.realtimeMetricText, ttftToneClass]
-                            .filter(Boolean)
-                            .join(' ')}
-                        >
-                          {hasTtftMs ? formatRealtimeCompactDuration(row.ttftMs, locale) : '--'}
-                        </span>
-                      </span>
-                      <span className={styles.realtimeMetricLine}>
-                        <span className={styles.realtimeMetricLabel}>
-                          {t('monitoring.elapsed_short')}
-                        </span>
-                        <span
-                          className={[styles.realtimeMetricText, latencyToneClass]
-                            .filter(Boolean)
-                            .join(' ')}
-                        >
-                          {formatRealtimeCompactDuration(row.latencyMs, locale)}
-                        </span>
-                      </span>
-                    </div>
+                    <span
+                      className={[styles.realtimeMetricText, ttftToneClass].filter(Boolean).join(' ')}
+                    >
+                      {hasTtftMs ? formatRealtimeCompactDuration(row.ttftMs, locale) : '--'}
+                    </span>
+                  </td>
+                  <td className={styles.realtimeLatencyColumn}>
+                    <span
+                      className={[styles.realtimeMetricText, latencyToneClass]
+                        .filter(Boolean)
+                        .join(' ')}
+                    >
+                      {formatRealtimeCompactDuration(row.latencyMs, locale)}
+                    </span>
                   </td>
                   <td className={styles.realtimeTimeColumn}>
                     <div className={styles.realtimeTimeCell}>
@@ -1336,7 +1330,7 @@ export function RealtimeEventsPanel({
             })}
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={12}>{emptyState}</td>
+                <td colSpan={13}>{emptyState}</td>
               </tr>
             ) : null}
           </tbody>

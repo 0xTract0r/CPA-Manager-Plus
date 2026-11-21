@@ -1582,8 +1582,7 @@
   display: contents;
 }
 
-.realtimeSettingLabel,
-.realtimeMetricLabel {
+.realtimeSettingLabel {
   color: var(--monitor-muted);
   font-weight: 400;
 }
@@ -1600,7 +1599,6 @@
   color: var(--monitor-muted);
 }
 
-.realtimeMetricCell,
 .realtimeTimeCell {
   display: inline-grid;
   align-items: center;
@@ -1612,12 +1610,6 @@
   font-variant-numeric: tabular-nums;
   line-height: 1.25;
   white-space: nowrap;
-}
-
-.realtimeMetricCell {
-  grid-template-columns: max-content max-content;
-  column-gap: 6px;
-  row-gap: 3px;
 }
 
 .realtimeTpsCell {
@@ -1637,10 +1629,6 @@
   text-align: center;
 }
 
-.realtimeMetricLine {
-  display: contents;
-}
-
 .realtimeTimeLine {
   font-size: 12px;
   font-weight: 600;
@@ -1651,18 +1639,10 @@
 
 .realtimeMetricText {
   color: inherit;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
   line-height: 1.25;
-}
-
-.realtimeMetricLabel {
-  min-width: 0;
-  text-align: left;
-}
-
-.realtimeMetricText {
-  min-width: 0;
-  text-align: left;
+  white-space: nowrap;
 }
 
 .realtimeMetricText.goodText {
