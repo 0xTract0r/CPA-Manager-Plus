@@ -907,7 +907,7 @@
     "delete_filtered_result_button": "Delete filtered results",
     "delete_filtered_result_confirm": "Are you sure you want to delete login files in the current filtered results? This operation cannot be undone!",
     "delete_filtered_result_confirm_file_scope": "Delete the login files behind the current filtered results? Deletion is by file name; if multiple account rows come from the same login file, the whole file will be removed. This cannot be undone!",
-    "delete_outside_filter_notice": "{{total}} files will be deleted, including {{outside}} outside the current filter results.",
+    "delete_outside_filter_notice": "The current filter hides {{outside}} of the {{total}} selected for deletion.",
     "upload_error_json": "Only JSON files are allowed",
     "upload_error_size": "File size cannot exceed {{maxSize}}",
     "upload_success": "File uploaded successfully",
