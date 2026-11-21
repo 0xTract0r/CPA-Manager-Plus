@@ -393,6 +393,13 @@ import type {
 import { getServerCredentialMutationSyncKey } from '@/features/monitoring/model/credentialInspectionSnapshot';
 import styles from './AccountsPage.module.scss';
 
+type InlineAccountEdit = { rowKey: string };
+
+function focusInlineAccountInput(input: HTMLInputElement | null) {
+  input?.focus();
+  input?.select();
+}
+
 const renderAccountDetailTrigger = ({
   isSelectionMode,
   className,
@@ -1487,35 +1494,31 @@ export function AccountsPage() {
   const [batchPriorityOpen, setBatchPriorityOpen] = useState(false);
   const [batchPriorityValue, setBatchPriorityValue] = useState('');
   const [editingPriorityState, setEditingPriorityState] = useState<{
-    rowKey: string;
+    edit: InlineAccountEdit;
     value: string;
   } | null>(null);
   const [inlinePrioritySaving, setInlinePrioritySaving] = useState(false);
-  const inlinePriorityCancelledRef = useRef(false);
-  const inlinePrioritySavingRef = useRef(false);
-  const inlinePriorityInputRef = useRef<HTMLInputElement | null>(null);
+  const inlinePriorityEditRef = useRef<{ session: InlineAccountEdit; saving: boolean } | null>(null);
   const [editingNoteState, setEditingNoteState] = useState<{
-    rowKey: string;
+    edit: InlineAccountEdit;
     value: string;
   } | null>(null);
   const [inlineNoteSaving, setInlineNoteSaving] = useState(false);
-  const inlineNoteCancelledRef = useRef(false);
-  const inlineNoteSavingRef = useRef(false);
-  const inlineNoteInputRef = useRef<HTMLInputElement | null>(null);
+  const inlineNoteEditRef = useRef<{ session: InlineAccountEdit; saving: boolean } | null>(null);
 
-  useEffect(() => {
-    if (editingPriorityState && inlinePriorityInputRef.current) {
-      inlinePriorityInputRef.current.focus();
-      inlinePriorityInputRef.current.select();
-    }
-  }, [editingPriorityState]);
+  const cancelInlinePriorityEdit = useCallback((session?: InlineAccountEdit) => {
+    if (session && inlinePriorityEditRef.current?.session !== session) return;
+    inlinePriorityEditRef.current = null;
+    setEditingPriorityState(null);
+    setInlinePrioritySaving(false);
+  }, []);
 
-  useEffect(() => {
-    if (editingNoteState && inlineNoteInputRef.current) {
-      inlineNoteInputRef.current.focus();
-      inlineNoteInputRef.current.select();
-    }
-  }, [editingNoteState]);
+  const cancelInlineNoteEdit = useCallback((session?: InlineAccountEdit) => {
+    if (session && inlineNoteEditRef.current?.session !== session) return;
+    inlineNoteEditRef.current = null;
+    setEditingNoteState(null);
+    setInlineNoteSaving(false);
+  }, []);
 
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(() => initialWorkspaceUrlState.current.pageSize);
@@ -1810,6 +1813,8 @@ export function AccountsPage() {
     const previousConnectionFingerprint = oauthEditorConnectionFingerprintRef.current;
     oauthEditorConnectionFingerprintRef.current = connectionFingerprint;
     if (previousConnectionFingerprint === connectionFingerprint) return;
+    cancelInlineNoteEdit();
+    cancelInlinePriorityEdit();
     setOauthExcludedEditorProvider(null);
     setOauthModelAliasEditorProvider(null);
     setAuthJsonPasteOpen(false);
@@ -1828,7 +1833,7 @@ export function AccountsPage() {
       quotaRequestVersionsRef.current.set(key, version + 1);
     });
     setQuotaRefreshing(false);
-  }, [connectionFingerprint]);
+  }, [connectionFingerprint, cancelInlineNoteEdit, cancelInlinePriorityEdit]);
 
   useLayoutEffect(() => {
     setCredentialEvidenceBoundarySessionState((current) =>
@@ -7562,30 +7567,19 @@ export function AccountsPage() {
 
   const startInlinePriorityEdit = useCallback((row: AccountRow) => {
     if (row.runtimeOnly) return;
-    inlinePriorityCancelledRef.current = false;
-    inlinePrioritySavingRef.current = false;
+    const session = { rowKey: row.selectionKey };
+    inlinePriorityEditRef.current = { session, saving: false };
     setInlinePrioritySaving(false);
     setEditingPriorityState({
-      rowKey: row.selectionKey,
+      edit: session,
       value: String(row.priority ?? 0),
     });
   }, []);
 
-  const cancelInlinePriorityEdit = useCallback(() => {
-    inlinePriorityCancelledRef.current = true;
-    setEditingPriorityState(null);
-    setInlinePrioritySaving(false);
-  }, []);
-
   const handleInlinePriorityBlur = useCallback(
-    async (row: AccountRow, rawValue: string) => {
-      if (inlinePriorityCancelledRef.current) {
-        inlinePriorityCancelledRef.current = false;
-        return;
-      }
-      if (inlinePrioritySavingRef.current) {
-        return;
-      }
+    async (row: AccountRow, rawValue: string, session: InlineAccountEdit) => {
+      const edit = inlinePriorityEditRef.current;
+      if (!edit || edit.session !== session || edit.saving) return;
 
       const trimmed = rawValue.trim();
       const currentPriority = row.priority ?? 0;
@@ -7593,39 +7587,45 @@ export function AccountsPage() {
       const parsed = parsePriorityValue(trimmed);
       if (parsed === null) {
         showNotification(t('accounts.priority_invalid'), 'error');
-        setEditingPriorityState(null);
+        cancelInlinePriorityEdit(session);
         return;
       }
 
       if (parsed === currentPriority) {
-        setEditingPriorityState(null);
+        cancelInlinePriorityEdit(session);
         return;
       }
 
-      inlinePrioritySavingRef.current = true;
+      edit.saving = true;
       setInlinePrioritySaving(true);
       try {
         const result = await patchPriorityRows([row], parsed);
-        if (result && result.failed > 0) {
+        if (result && result.success > 0 && result.failed === 0) {
+          cancelInlinePriorityEdit(session);
+          return;
+        }
+        if (inlinePriorityEditRef.current === edit) {
           showNotification(
             t('accounts.priority_update_failed', { defaultValue: '更新优先级失败' }),
             'error'
           );
         }
       } catch (error) {
-        showNotification(
-          error instanceof Error
-            ? error.message
-            : t('accounts.priority_update_failed', { defaultValue: '更新优先级失败' }),
-          'error'
-        );
-      } finally {
-        inlinePrioritySavingRef.current = false;
+        if (inlinePriorityEditRef.current === edit) {
+          showNotification(
+            error instanceof Error
+              ? error.message
+              : t('accounts.priority_update_failed', { defaultValue: '更新优先级失败' }),
+            'error'
+          );
+        }
+      }
+      if (inlinePriorityEditRef.current === edit) {
+        edit.saving = false;
         setInlinePrioritySaving(false);
-        setEditingPriorityState(null);
       }
     },
-    [patchPriorityRows, showNotification, t]
+    [cancelInlinePriorityEdit, patchPriorityRows, showNotification, t]
   );
 
   const patchNoteRows = useCallback(
@@ -7640,63 +7640,58 @@ export function AccountsPage() {
 
   const startInlineNoteEdit = useCallback((row: AccountRow) => {
     if (row.runtimeOnly) return;
-    inlineNoteCancelledRef.current = false;
-    inlineNoteSavingRef.current = false;
+    const session = { rowKey: row.selectionKey };
+    inlineNoteEditRef.current = { session, saving: false };
     setInlineNoteSaving(false);
     setEditingNoteState({
-      rowKey: row.selectionKey,
+      edit: session,
       value: row.note?.trim() ?? '',
     });
   }, []);
 
-  const cancelInlineNoteEdit = useCallback(() => {
-    inlineNoteCancelledRef.current = true;
-    setEditingNoteState(null);
-    setInlineNoteSaving(false);
-  }, []);
-
   const handleInlineNoteBlur = useCallback(
-    async (row: AccountRow, rawValue: string) => {
-      if (inlineNoteCancelledRef.current) {
-        inlineNoteCancelledRef.current = false;
-        return;
-      }
-      if (inlineNoteSavingRef.current) {
-        return;
-      }
+    async (row: AccountRow, rawValue: string, session: InlineAccountEdit) => {
+      const edit = inlineNoteEditRef.current;
+      if (!edit || edit.session !== session || edit.saving) return;
 
       const trimmed = rawValue.trim();
       const currentNote = row.note?.trim() ?? '';
 
       if (trimmed === currentNote) {
-        setEditingNoteState(null);
+        cancelInlineNoteEdit(session);
         return;
       }
 
-      inlineNoteSavingRef.current = true;
+      edit.saving = true;
       setInlineNoteSaving(true);
       try {
         const result = await patchNoteRows([row], trimmed);
-        if (result && result.failed > 0) {
+        if (result && result.success > 0 && result.failed === 0) {
+          cancelInlineNoteEdit(session);
+          return;
+        }
+        if (inlineNoteEditRef.current === edit) {
           showNotification(
             t('accounts.note_update_failed', { defaultValue: '更新备注失败' }),
             'error'
           );
         }
       } catch (error) {
-        showNotification(
-          error instanceof Error
-            ? error.message
-            : t('accounts.note_update_failed', { defaultValue: '更新备注失败' }),
-          'error'
-        );
-      } finally {
-        inlineNoteSavingRef.current = false;
+        if (inlineNoteEditRef.current === edit) {
+          showNotification(
+            error instanceof Error
+              ? error.message
+              : t('accounts.note_update_failed', { defaultValue: '更新备注失败' }),
+            'error'
+          );
+        }
+      }
+      if (inlineNoteEditRef.current === edit) {
+        edit.saving = false;
         setInlineNoteSaving(false);
-        setEditingNoteState(null);
       }
     },
-    [patchNoteRows, showNotification, t]
+    [cancelInlineNoteEdit, patchNoteRows, showNotification, t]
   );
 
   const handleBatchPrioritySave = useCallback(async () => {
@@ -9406,9 +9401,9 @@ export function AccountsPage() {
                           </span>
                         </span>
                       ) : null}
-                      {editingPriorityState?.rowKey === row.selectionKey ? (
+                      {editingPriorityState?.edit.rowKey === row.selectionKey ? (
                         <input
-                          ref={inlinePriorityInputRef}
+                          ref={focusInlineAccountInput}
                           type="text"
                           inputMode="numeric"
                           pattern="[0-9\-]*"
@@ -9419,11 +9414,12 @@ export function AccountsPage() {
                           disabled={inlinePrioritySaving}
                           onClick={(e) => e.stopPropagation()}
                           onDoubleClick={(e) => e.stopPropagation()}
-                          onChange={(e) =>
-                            setEditingPriorityState((prev) =>
-                              prev ? { ...prev, value: e.target.value } : null
-                            )
-                          }
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setEditingPriorityState((current) =>
+                              current?.edit === editingPriorityState.edit ? { ...current, value } : current
+                            );
+                          }}
                           onKeyDown={(e) => {
                             e.stopPropagation();
                             if (e.key === 'Enter') {
@@ -9431,11 +9427,15 @@ export function AccountsPage() {
                               e.currentTarget.blur();
                             } else if (e.key === 'Escape') {
                               e.preventDefault();
-                              cancelInlinePriorityEdit();
+                              cancelInlinePriorityEdit(editingPriorityState.edit);
                             }
                           }}
                           onBlur={(e) => {
-                            void handleInlinePriorityBlur(row, e.currentTarget.value);
+                            void handleInlinePriorityBlur(
+                              row,
+                              e.currentTarget.value,
+                              editingPriorityState.edit
+                            );
                           }}
                         />
                       ) : (
@@ -9467,14 +9467,14 @@ export function AccountsPage() {
                     </div>
                   </div>
 
-                  {editingNoteState?.rowKey === row.selectionKey ? (
+                  {editingNoteState?.edit.rowKey === row.selectionKey ? (
                     <div
                       className={styles.accountGridCardNoteEditRow}
                       onClick={(e) => e.stopPropagation()}
                     >
                       <IconFileText size={12} className={styles.accountGridCardNoteIcon} />
                       <input
-                        ref={inlineNoteInputRef}
+                        ref={focusInlineAccountInput}
                         type="text"
                         data-account-note-input={row.selectionKey}
                         className={styles.accountGridCardNoteInput}
@@ -9484,11 +9484,12 @@ export function AccountsPage() {
                         disabled={inlineNoteSaving}
                         onClick={(e) => e.stopPropagation()}
                         onDoubleClick={(e) => e.stopPropagation()}
-                        onChange={(e) =>
-                          setEditingNoteState((prev) =>
-                            prev ? { ...prev, value: e.target.value } : null
-                          )
-                        }
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setEditingNoteState((current) =>
+                            current?.edit === editingNoteState.edit ? { ...current, value } : current
+                          );
+                        }}
                         onKeyDown={(e) => {
                           e.stopPropagation();
                           if (e.key === 'Enter') {
@@ -9496,11 +9497,15 @@ export function AccountsPage() {
                             e.currentTarget.blur();
                           } else if (e.key === 'Escape') {
                             e.preventDefault();
-                            cancelInlineNoteEdit();
+                            cancelInlineNoteEdit(editingNoteState.edit);
                           }
                         }}
                         onBlur={(e) => {
-                          void handleInlineNoteBlur(row, e.currentTarget.value);
+                          void handleInlineNoteBlur(
+                            row,
+                            e.currentTarget.value,
+                            editingNoteState.edit
+                          );
                         }}
                       />
                     </div>
@@ -9833,9 +9838,9 @@ export function AccountsPage() {
                       </span>
                     </div>
                     <div className={styles.accountHealthMetaRow}>
-                      {editingPriorityState?.rowKey === row.selectionKey ? (
+                      {editingPriorityState?.edit.rowKey === row.selectionKey ? (
                         <input
-                          ref={inlinePriorityInputRef}
+                          ref={focusInlineAccountInput}
                           type="text"
                           inputMode="numeric"
                           pattern="[0-9\-]*"
@@ -9846,11 +9851,12 @@ export function AccountsPage() {
                           disabled={inlinePrioritySaving}
                           onClick={(e) => e.stopPropagation()}
                           onDoubleClick={(e) => e.stopPropagation()}
-                          onChange={(e) =>
-                            setEditingPriorityState((prev) =>
-                              prev ? { ...prev, value: e.target.value } : null
-                            )
-                          }
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setEditingPriorityState((current) =>
+                              current?.edit === editingPriorityState.edit ? { ...current, value } : current
+                            );
+                          }}
                           onKeyDown={(e) => {
                             e.stopPropagation();
                             if (e.key === 'Enter') {
@@ -9858,11 +9864,15 @@ export function AccountsPage() {
                               e.currentTarget.blur();
                             } else if (e.key === 'Escape') {
                               e.preventDefault();
-                              cancelInlinePriorityEdit();
+                              cancelInlinePriorityEdit(editingPriorityState.edit);
                             }
                           }}
                           onBlur={(e) => {
-                            void handleInlinePriorityBlur(row, e.currentTarget.value);
+                            void handleInlinePriorityBlur(
+                              row,
+                              e.currentTarget.value,
+                              editingPriorityState.edit
+                            );
                           }}
                         />
                       ) : (

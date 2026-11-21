@@ -41,7 +41,7 @@ import {
   getAuthFilePatchTarget,
   getAuthFileSelectionKey,
 } from '@/features/authFiles/model/credentialStatus';
-import type { AuthFilesCredentialMutation } from '@/features/authFiles/hooks/useAuthFilesData';
+import type { AuthFilesBatchPatchResult, AuthFilesCredentialMutation } from '@/features/authFiles/hooks/useAuthFilesData';
 import {
   clearAccountCredentialEvidenceBoundaryStateCache,
   saveAccountCredentialEvidenceBoundaryState,
@@ -427,7 +427,7 @@ const { mocks } = vi.hoisted(() => {
       selectAllVisible: vi.fn(),
       invertVisibleSelection: vi.fn(),
       deselectAll: vi.fn(),
-      batchPatchFields: vi.fn(async () => ({ success: 1, failed: 0, failedNames: [] })),
+      batchPatchFields: vi.fn(async (): Promise<AuthFilesBatchPatchResult | null> => ({ success: 1, failed: 0, failedNames: [] })),
       batchSetStatus: vi.fn(async () => undefined),
       consumeResetCredit: vi.fn(
         async (): Promise<ApiCallResult> => ({
@@ -1103,10 +1103,10 @@ const findInputByAriaLabel = (renderer: ReactTestRenderer, label: string) => {
 
 const mountedAccountsRenderers = new Set<ReactTestRenderer>();
 
-const renderAccountsPage = async () => {
+const renderAccountsPage = async (options?: Parameters<typeof create>[1]) => {
   let renderer: ReactTestRenderer | null = null;
   await act(async () => {
-    renderer = create(<AccountsPage />);
+    renderer = create(<AccountsPage />, options);
     await Promise.resolve();
   });
   mountedAccountsRenderers.add(renderer!);
@@ -1477,6 +1477,189 @@ describe('AccountsPage replacement flows', () => {
     mocks.lastCodexReauthProps = null;
     mocks.lastHealthWorkspaceProps = null;
     mocks.localInspection = null;
+  });
+
+  describe('inline credential fields', () => {
+    it.each(['note', 'priority'] as const)(
+      'keeps the inline %s ready to retry while another row is saving',
+      async (field) => {
+        const first = makeCodexFile('first.json', 'first', 'first@example.com');
+        const second = makeCodexFile('second.json', 'second', 'second@example.com');
+        mocks.files = [first, second];
+        const renderer = await renderAccountsPage();
+        await act(async () => {
+          renderer.root.findByProps({ 'aria-label': 'accounts.view_mode_grid' }).props.onClick();
+        });
+        const input = (row: AuthFileItem) =>
+          renderer.root.findByProps({
+            [`data-account-${field}-input`]: getAuthFileSelectionKey(row),
+          });
+        const open = async (row: AuthFileItem) => {
+          await act(async () => {
+            renderer.root
+              .findByProps({ [`data-account-${field}-trigger`]: getAuthFileSelectionKey(row) })
+              .props.onClick({ stopPropagation: vi.fn() });
+          });
+        };
+        const accepted = { success: 1, failed: 0, failedNames: [] };
+        let finish!: () => void;
+        mocks.batchPatchFields.mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              finish = () => resolve(accepted);
+            })
+        );
+        // The real data hook returns null when a previous field update is still in flight.
+        mocks.batchPatchFields.mockResolvedValueOnce(null);
+        await open(first);
+        await act(async () => {
+          input(first).props.onBlur({ currentTarget: { value: '17' } });
+        });
+        await open(second);
+        await act(async () => {
+          input(second).props.onChange({ target: { value: '29' } });
+        });
+        await act(async () => {
+          input(second).props.onBlur({ currentTarget: { value: '29' } });
+        });
+        expect(input(second).props.value).toBe('29');
+        expect(input(second).props.disabled).toBe(false);
+        await act(async () => {
+          finish();
+        });
+        expect(input(second).props.value).toBe('29');
+        await act(async () => {
+          input(second).props.onBlur({ currentTarget: { value: '29' } });
+        });
+        expect(mocks.batchPatchFields).toHaveBeenLastCalledWith([getAuthFilePatchTarget(second)], {
+          [field]: field === 'priority' ? 29 : '29',
+        });
+        expect(
+          renderer.root.findAllByProps({
+            [`data-account-${field}-input`]: getAuthFileSelectionKey(second),
+          })
+        ).toHaveLength(0);
+      }
+    );
+
+    it.each(['note', 'priority'] as const)(
+      'selects the inline %s only when the editor opens',
+      async (field) => {
+        const row = makeCodexFile('edit.json', 'edit', 'edit@example.com');
+        mocks.files = [row];
+        const inputNode = { focus: vi.fn(), select: vi.fn() };
+        const renderer = await renderAccountsPage({
+          createNodeMock: (element) => {
+            const props = element.props as Record<string, unknown>;
+            return props[`data-account-${field}-input`] ? inputNode : null;
+          },
+        });
+        await act(async () => {
+          renderer.root.findByProps({ 'aria-label': 'accounts.view_mode_grid' }).props.onClick();
+        });
+        const key = getAuthFileSelectionKey(row);
+        await act(async () => {
+          renderer.root
+            .findByProps({ [`data-account-${field}-trigger`]: key })
+            .props.onClick({ stopPropagation: vi.fn() });
+        });
+        expect(inputNode.select).toHaveBeenCalledTimes(1);
+        for (const value of ['1', '12', '123']) {
+          await act(async () => {
+            renderer.root
+              .findByProps({ [`data-account-${field}-input`]: key })
+              .props.onChange({ target: { value } });
+          });
+        }
+        expect(inputNode.focus).toHaveBeenCalledTimes(1);
+        expect(inputNode.select).toHaveBeenCalledTimes(1);
+      }
+    );
+
+    it.each(['note', 'priority'] as const)(
+      'preserves the next inline %s draft when an earlier save completes',
+      async (field) => {
+        const first = makeCodexFile('first.json', 'first', 'first@example.com');
+        const next = makeCodexFile('next.json', 'next', 'next@example.com');
+        mocks.files = [first, next];
+        const renderer = await renderAccountsPage();
+        await act(async () => {
+          renderer.root.findByProps({ 'aria-label': 'accounts.view_mode_grid' }).props.onClick();
+        });
+        const trigger = (row: AuthFileItem) =>
+          renderer.root.findByProps({
+            [`data-account-${field}-trigger`]: getAuthFileSelectionKey(row),
+          });
+        const editor = (row: AuthFileItem) =>
+          renderer.root.findByProps({
+            [`data-account-${field}-input`]: getAuthFileSelectionKey(row),
+          });
+        const event = { stopPropagation: vi.fn() };
+        let finishSave!: () => void;
+        mocks.batchPatchFields.mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              finishSave = () => resolve({ success: 1, failed: 0, failedNames: [] });
+            })
+        );
+        await act(async () => {
+          trigger(first).props.onClick(event);
+        });
+        await act(async () => {
+          editor(first).props.onBlur({ currentTarget: { value: '17' } });
+        });
+        await act(async () => {
+          trigger(next).props.onClick(event);
+        });
+        await act(async () => {
+          editor(next).props.onChange({ target: { value: '29' } });
+        });
+        await act(async () => {
+          finishSave();
+        });
+        expect(editor(next).props.value).toBe('29');
+        expect(editor(next).props.disabled).toBe(false);
+        expect(mocks.batchPatchFields).toHaveBeenCalledTimes(1);
+      }
+    );
+
+    it.each(['note', 'priority'] as const)(
+      'discards the inline %s when the management connection changes',
+      async (field) => {
+        const row = makeCodexFile('shared.json', 'shared', 'shared@example.com');
+        mocks.files = [row];
+        const renderer = await renderAccountsPage();
+        await act(async () => {
+          renderer.root.findByProps({ 'aria-label': 'accounts.view_mode_grid' }).props.onClick();
+        });
+        const key = getAuthFileSelectionKey(row);
+        const open = () =>
+          renderer.root
+            .findByProps({ [`data-account-${field}-trigger`]: key })
+            .props.onClick({ stopPropagation: vi.fn() });
+        const selector = { [`data-account-${field}-input`]: key };
+        await act(async () => {
+          open();
+        });
+        const { onBlur: staleBlur, onChange: staleChange } =
+          renderer.root.findByProps(selector).props;
+        mocks.apiBase = 'http://cpa-b.local:8317';
+        await act(async () => {
+          renderer.update(<AccountsPage />);
+        });
+        expect(renderer.root.findAllByProps(selector)).toHaveLength(0);
+        await act(async () => {
+          open();
+        });
+        await act(async () => {
+          staleChange({ target: { value: '31' } });
+          staleBlur({ currentTarget: { value: '31' } });
+        });
+        expect(mocks.batchPatchFields).not.toHaveBeenCalled();
+        expect(renderer.root.findByProps(selector).props.value).not.toBe('31');
+        expect(renderer.root.findByProps(selector).props.disabled).toBe(false);
+      }
+    );
   });
 
   it('keeps credential cards mounted during a refresh with existing files', async () => {
