@@ -77,6 +77,7 @@
     "model_alias_placeholder": "模型别名 (可选)",
     "invalid_provider_index": "无效的提供商索引。",
     "unsaved_changes_title": "未保存的更改",
+    "model_editor_external_change": "服务器设置已更改。请关闭并重新打开编辑器后再保存。",
     "unsaved_changes_message": "你有未保存的更改，离开后将丢失这些更改。确定要离开吗？",
     "readonly": "只读",
     "execute": "执行",

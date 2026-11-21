@@ -18,7 +18,10 @@ import {
   normalizeProviderKey,
   type AuthFileModelItem,
 } from '@/features/authFiles/constants';
-import { isOAuthAliasDraftDirty } from '@/features/authFiles/oauthEditorState';
+import {
+  isOAuthAliasDraftDirty,
+  serializeOAuthAliasDraft,
+} from '@/features/authFiles/oauthEditorState';
 import { normalizeOAuthAliasEntries } from '@/features/authFiles/oauthAliasValidation';
 import {
   addOAuthExcludedRule,
@@ -92,6 +95,27 @@ const normalizeMappingEntries = (
     forceMapping: Boolean(entry.forceMapping),
   }));
 };
+
+// Keep comparing edits to the last baseline loaded into this editor. If the
+// same target changes externally while dirty, retain the draft and refuse save.
+function useEditorBaseline<T>(
+  open: boolean,
+  scope: string,
+  latest: T,
+  key: string,
+  isDirty: (value: T) => boolean,
+  load: (value: T) => void
+) {
+  const [baseline, setBaseline] = useState<{ scope: string; key: string; value: T }>();
+  const matching = baseline?.scope === scope ? baseline : undefined;
+  if (!open && baseline) {
+    setBaseline(undefined);
+  } else if (open && (!matching || (matching.key !== key && !isDirty(matching.value)))) {
+    load(latest);
+    setBaseline({ scope, key, value: latest });
+  }
+  return { value: matching?.value ?? latest, blocked: !matching || matching.key !== key };
+}
 
 const findProviderEntries = <T,>(record: Record<string, T>, providerKey: string): T | undefined => {
   const entry = Object.entries(record).find(
@@ -257,12 +281,6 @@ export function OAuthExcludedEditorModal({
     unsupported,
   });
 
-  useEffect(() => {
-    if (!open) return;
-    setSelectedModels(new Set(existingRules));
-    setCustomRule('');
-  }, [existingRules, open]);
-
   const modelOptions = useMemo(
     () => buildOAuthExcludedModelOptions(models, existingRules),
     [existingRules, models]
@@ -271,6 +289,22 @@ export function OAuthExcludedEditorModal({
   const draftRules = useMemo(
     () => serializeOAuthExcludedRules(addOAuthExcludedRule(selectedModels, customRule)),
     [customRule, selectedModels]
+  );
+  const { value: baselineRules, blocked: staleDraft } = useEditorBaseline(
+    open,
+    JSON.stringify([
+      requestScope.apiBase,
+      requestScope.managementKey,
+      initialProvider,
+      resolvedProviderKey,
+    ]),
+    existingRules,
+    JSON.stringify(existingRules),
+    (before) => JSON.stringify(draftRules) !== JSON.stringify(before),
+    (rules) => {
+      setSelectedModels(new Set(rules));
+      setCustomRule('');
+    }
   );
   const unlistedRules = useMemo(() => {
     const optionIds = new Set(modelOptions.map((model) => model.id));
@@ -291,12 +325,12 @@ export function OAuthExcludedEditorModal({
 
   const hasSelectionChanged = useMemo(() => {
     const current = draftRules;
-    const existing = existingRules;
+    const existing = baselineRules;
     return (
       current.length !== existing.length ||
       current.some((value, index) => value !== existing[index])
     );
-  }, [draftRules, existingRules]);
+  }, [draftRules, baselineRules]);
 
   const handleProviderChange = useCallback(
     (value: string) => {
@@ -328,6 +362,7 @@ export function OAuthExcludedEditorModal({
   }, [hasSelectionChanged, onClose, showConfirmation, t]);
 
   const handleSave = useCallback(async () => {
+    if (staleDraft) return;
     const providerKey = normalizeProviderKey(provider);
     if (!providerKey) {
       showNotification(t('oauth_excluded.provider_required'), 'error');
@@ -351,10 +386,15 @@ export function OAuthExcludedEditorModal({
     } finally {
       setSaving(false);
     }
-  }, [draftRules, onClose, onSaved, provider, requestScope, showNotification, t]);
+  }, [draftRules, onClose, onSaved, provider, requestScope, showNotification, staleDraft, t]);
 
   const canSave =
-    !disabled && !saving && !unsupported && Boolean(resolvedProviderKey) && hasSelectionChanged;
+    !disabled &&
+    !saving &&
+    !unsupported &&
+    !staleDraft &&
+    Boolean(resolvedProviderKey) &&
+    hasSelectionChanged;
   const title = isEditing
     ? t('oauth_excluded.edit_title', { provider: provider.trim() || resolvedProviderKey })
     : t('oauth_excluded.add_title');
@@ -368,6 +408,7 @@ export function OAuthExcludedEditorModal({
       width={820}
       footer={
         <>
+          {staleDraft && <span role="status">{t('common.model_editor_external_change')}</span>}
           <Button variant="secondary" onClick={requestClose} disabled={saving}>
             {t('common.cancel')}
           </Button>
@@ -578,10 +619,19 @@ export function OAuthModelAliasEditorModal({
     [existingMappings, models]
   );
 
-  useEffect(() => {
-    if (!open) return;
-    setMappings(normalizeMappingEntries(existingMappings));
-  }, [existingMappings, open]);
+  const { value: baselineMappings, blocked: staleDraft } = useEditorBaseline(
+    open,
+    JSON.stringify([
+      requestScope.apiBase,
+      requestScope.managementKey,
+      initialProvider,
+      resolvedProviderKey,
+    ]),
+    existingMappings,
+    serializeOAuthAliasDraft(existingMappings),
+    (before) => isOAuthAliasDraftDirty(mappings, before),
+    (entries) => setMappings(normalizeMappingEntries(entries))
+  );
 
   const headerHint = useMemo(() => {
     if (!provider.trim()) {
@@ -599,8 +649,8 @@ export function OAuthModelAliasEditorModal({
   }, [error, loading, models.length, provider, t]);
 
   const hasMappingsChanged = useMemo(
-    () => isOAuthAliasDraftDirty(mappings, existingMappings),
-    [existingMappings, mappings]
+    () => isOAuthAliasDraftDirty(mappings, baselineMappings),
+    [baselineMappings, mappings]
   );
 
   const handleProviderChange = useCallback(
@@ -650,6 +700,7 @@ export function OAuthModelAliasEditorModal({
   }, []);
 
   const handleSave = useCallback(async () => {
+    if (staleDraft) return;
     const providerKey = normalizeProviderKey(provider);
     if (!providerKey) {
       showNotification(t('oauth_model_alias.provider_required'), 'error');
@@ -699,10 +750,15 @@ export function OAuthModelAliasEditorModal({
     } finally {
       setSaving(false);
     }
-  }, [mappings, onClose, onSaved, provider, requestScope, showNotification, t]);
+  }, [mappings, onClose, onSaved, provider, requestScope, showNotification, staleDraft, t]);
 
   const canSave =
-    !disabled && !saving && !unsupported && Boolean(resolvedProviderKey) && hasMappingsChanged;
+    !disabled &&
+    !saving &&
+    !unsupported &&
+    !staleDraft &&
+    Boolean(resolvedProviderKey) &&
+    hasMappingsChanged;
 
   return (
     <Modal
@@ -713,6 +769,7 @@ export function OAuthModelAliasEditorModal({
       width={940}
       footer={
         <>
+          {staleDraft && <span role="status">{t('common.model_editor_external_change')}</span>}
           <Button variant="secondary" onClick={requestClose} disabled={saving}>
             {t('common.cancel')}
           </Button>
