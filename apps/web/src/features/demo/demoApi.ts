@@ -1,5 +1,5 @@
 import type { AxiosRequestConfig, AxiosResponse } from 'axios';
-import { isMap, isScalar, parse as parseYaml, parseDocument } from 'yaml';
+import { isAlias, isMap, isScalar, isSeq, parseDocument, Scalar, visit, YAMLMap } from 'yaml';
 import {
   advanceDemoCredentialRefresh,
   getDemoApiCallResult,
@@ -14,6 +14,7 @@ import {
   getDemoRawConfig,
   requestDemoCredentialRefresh,
 } from '@/features/demo/demoFixtures';
+import { isV8VisualConfigLayout } from '@/hooks/useVisualConfig';
 import type { AuthFileItem, AuthFilesResponse } from '@/types';
 import {
   DEMO_API_BASE,
@@ -201,11 +202,85 @@ const isDemoConfigurationRecord = (value: unknown): value is Record<string, unkn
 
 const getCurrentDemoConfigYaml = () => demoConfigYamlOverride ?? getDemoConfigYaml();
 
+const demoLegacyRequestLogPath = ['request-log'];
+const demoV8RequestLogPath = ['observability', 'logs', 'request-log'];
+
+const readDemoRequestLog = (value: unknown): boolean => {
+  if (value == null || typeof value === 'boolean') return value === true;
+  // Match the legacy spellings accepted by go-yaml when decoding this typed bool.
+  if (typeof value === 'string') {
+    if (/^(y|Y|yes|Yes|YES|on|On|ON)$/.test(value)) return true;
+    if (/^(n|N|no|No|NO|off|Off|OFF)$/.test(value)) return false;
+  }
+  throw createDemoApiError(400, 'request-log must be a boolean');
+};
+
+// Inspect the effective YAML node because Core requires the literal integer 8.
+const getDemoConfigVersion = (document: ReturnType<typeof parseDocument>) => {
+  const seen = new Set<object>();
+  const resolve = (node: unknown): unknown => isAlias(node) ? node.resolve(document) : node;
+  const find = (entry: unknown): unknown => {
+    const mapping = resolve(entry);
+    if (!isMap(mapping) || seen.has(mapping)) return undefined;
+    seen.add(mapping);
+    const local = mapping.get('config-version', true);
+    if (local !== undefined) return resolve(local);
+    for (const { key, value } of mapping.items) {
+      if (!isScalar(key) || typeof key.value !== 'symbol' || key.value.description !== '<<') continue;
+      const inherited = resolve(value);
+      for (const parent of isSeq(inherited) ? inherited.items : [inherited]) {
+        const found = find(parent);
+        if (found !== undefined) return found;
+      }
+    }
+    return undefined;
+  };
+  return find(document.contents);
+};
+
+const parseDemoConfigDocument = (text: string) => {
+  const document = parseDocument(text, { merge: true });
+  const root = document.contents;
+  const empty = root === null || (isScalar(root) && root.value === null);
+  if (document.errors.length > 0 || (!empty && !isMap(root))) {
+    throw createDemoApiError(400, 'configuration must be a valid YAML mapping');
+  }
+  let values: Record<string, unknown>;
+  try {
+    values = empty ? {} : document.toJS();
+  } catch {
+    throw createDemoApiError(400, 'configuration contains an invalid YAML alias or merge');
+  }
+  const version = getDemoConfigVersion(document);
+  if (version !== undefined && (!isScalar(version) || version.value !== 8 || version.source !== '8')) {
+    throw createDemoApiError(400, 'unsupported config-version (expected 8)');
+  }
+
+  const observability = values.observability;
+  if (observability !== undefined && !isDemoConfigurationRecord(observability)) {
+    throw createDemoApiError(400, 'observability must be a mapping');
+  }
+  const logs = observability?.logs;
+  if (logs !== undefined && !isDemoConfigurationRecord(logs)) {
+    throw createDemoApiError(400, 'observability.logs must be a mapping');
+  }
+  const canonicalRequestLog = logs?.['request-log'];
+  const requestLog = readDemoRequestLog(
+    canonicalRequestLog === undefined ? values['request-log'] : canonicalRequestLog
+  );
+
+  const isV8 =
+    version !== undefined ||
+    Object.prototype.hasOwnProperty.call(values, 'models') ||
+    isV8VisualConfigLayout(values);
+  return { document, values, observability, logs, requestLog, isV8 };
+};
+
 const getCurrentDemoRawConfig = (): Record<string, unknown> => {
   const rawConfig = getDemoRawConfig();
   try {
-    const parsed = parseYaml(getCurrentDemoConfigYaml());
-    return isDemoConfigurationRecord(parsed) ? { ...rawConfig, ...parsed } : rawConfig;
+    const { values, requestLog } = parseDemoConfigDocument(getCurrentDemoConfigYaml());
+    return { ...rawConfig, ...values, 'request-log': requestLog };
   } catch {
     return rawConfig;
   }
@@ -217,25 +292,84 @@ const getCurrentDemoRoutingStrategy = (): string => {
   return typeof routing.strategy === 'string' ? routing.strategy : 'round-robin';
 };
 
-const parseDemoConfigDocument = (text: string) => {
-  const document = parseDocument(text);
-  const root = document.contents;
-  const empty = root === null || (isScalar(root) && root.value === null);
-  if (document.errors.length > 0 || (!empty && !isMap(root))) {
-    throw createDemoApiError(400, 'configuration must be a valid YAML mapping');
+const isAnchoredDemoScalar = (node: unknown): boolean => isScalar(node) && Boolean(node.anchor);
+
+const localizeDemoRequestLogParent = (
+  document: ReturnType<typeof parseDemoConfigDocument>['document'],
+  path: string[],
+  inherited: unknown
+) => {
+  const node = document.getIn(path, true);
+  const isLogMapping = path.length === demoV8RequestLogPath.length - 1;
+  if (isMap(node) && !node.anchor && !(isLogMapping && isAnchoredDemoScalar(node.get('request-log', true)))) {
+    return;
   }
-  return document;
+  if (isAlias(node) || isMap(node)) {
+    const local = new YAMLMap(document.schema);
+    // Keep the old anchor and its consumers. Only this mapping overrides the merged value.
+    local.add(document.createPair(new Scalar(Symbol('<<')), node));
+    document.setIn(path, local);
+  } else if (node === undefined && isDemoConfigurationRecord(inherited)) {
+    // An enclosing merge can supply this mapping without an explicit node at this path.
+    document.setIn(path, document.createNode(inherited, { aliasDuplicateObjects: false }));
+  }
+};
+
+const replaceDemoRequestLog = (
+  document: ReturnType<typeof parseDemoConfigDocument>['document'],
+  path: string[],
+  value: string | boolean
+) => {
+  const previous = document.getIn(path, true);
+  const next = new Scalar(value);
+  if (isScalar(previous) || isAlias(previous)) {
+    next.comment = previous.comment;
+    next.commentBefore = previous.commentBefore;
+    next.spaceBefore = previous.spaceBefore;
+    if (isScalar(previous) && previous.anchor) {
+      // Move the old value and its anchor to its first actual consumer. Later
+      // consumers keep resolving to it, including when another anchor has the same name.
+      let moved = false;
+      visit(document, {
+        Alias(_key, alias) {
+          if (moved || alias.resolve(document) !== previous) return;
+          const retained = previous.clone() as Scalar;
+          retained.comment = alias.comment;
+          retained.commentBefore = alias.commentBefore;
+          retained.spaceBefore = alias.spaceBefore;
+          moved = true;
+          return retained;
+        },
+      });
+      if (!moved) next.anchor = previous.anchor;
+    }
+  }
+  document.setIn(path, next);
 };
 
 const updateDemoConfigValue = (path: string[], value: string | boolean) => {
-  const document = parseDemoConfigDocument(getCurrentDemoConfigYaml());
+  const { document, observability, logs, isV8 } = parseDemoConfigDocument(getCurrentDemoConfigYaml());
   if (isScalar(document.contents)) document.contents = null;
   try {
-    document.setIn(path, value);
+    if (path === demoLegacyRequestLogPath) {
+      const legacyIsAnchored = isAnchoredDemoScalar(document.getIn(path, true));
+      if (isV8) {
+        localizeDemoRequestLogParent(document, ['observability'], observability);
+        localizeDemoRequestLogParent(document, ['observability', 'logs'], logs);
+        replaceDemoRequestLog(document, demoV8RequestLogPath, value);
+        if (!legacyIsAnchored) document.deleteIn(path);
+      } else {
+        replaceDemoRequestLog(document, demoLegacyRequestLogPath, value);
+      }
+    } else {
+      document.setIn(path, value);
+    }
+    const updated = document.toString();
+    if (path === demoLegacyRequestLogPath) parseDemoConfigDocument(updated);
+    demoConfigYamlOverride = updated;
   } catch {
     throw createDemoApiError(400, 'incompatible configuration field');
   }
-  demoConfigYamlOverride = document.toString();
 };
 
 const readDemoConfigurationRecordAuthIndex = (
@@ -676,7 +810,7 @@ export async function handleDemoApiRequest<T = unknown>(
       if (!isDemoConfigurationRecord(data) || typeof data.value !== 'boolean') {
         throw createDemoApiError(400, 'invalid request body');
       }
-      updateDemoConfigValue(['request-log'], data.value);
+      updateDemoConfigValue(demoLegacyRequestLogPath, data.value);
     }
     return ok as T;
   }

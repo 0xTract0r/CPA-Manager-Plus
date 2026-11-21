@@ -466,7 +466,7 @@ function readVisualConfigValue(
   return undefined;
 }
 
-function isV8VisualConfigLayout(parsed: Record<string, unknown>): boolean {
+export function isV8VisualConfigLayout(parsed: Record<string, unknown>): boolean {
   for (const root of [
     'server',
     'management',
