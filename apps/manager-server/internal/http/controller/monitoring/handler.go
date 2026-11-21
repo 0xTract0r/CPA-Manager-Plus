@@ -109,7 +109,11 @@ func (h *Handler) handleAccountWindowUsage(w http.ResponseWriter, r *http.Reques
 	}
 	result, err := h.App.MonitoringService.AccountWindowUsage(r.Context(), req)
 	if err != nil {
-		response.Error(w, http.StatusInternalServerError, err)
+		status := http.StatusInternalServerError
+		if errors.Is(err, usagemonitoring.ErrArchivedStatsSourceUnavailable) {
+			status = http.StatusUnprocessableEntity
+		}
+		response.Error(w, status, err)
 		return
 	}
 	response.JSON(w, http.StatusOK, result)

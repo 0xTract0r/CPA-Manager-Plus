@@ -88,14 +88,14 @@ func TestAccountWindowStatsReturnsUnavailableForProjectionSchemaMismatch(t *test
 		t.Fatalf("invalidate projection state: %v", err)
 	}
 
-	rows, available := New(db).AccountWindowStats(ctx, []store.AccountWindowUsageQuery{{
+	rows, available, err := New(db).AccountWindowStats(ctx, []store.AccountWindowUsageQuery{{
 		RequestIndex:     0,
 		FromMS:           1,
 		ToMS:             2,
 		AuthFileSnapshot: "first.json",
 		AuthIndex:        "auth-1",
 	}})
-	if available || rows != nil {
-		t.Fatalf("account window projection rows = %#v available=%v", rows, available)
+	if err != nil || available || rows != nil {
+		t.Fatalf("account window projection rows = %#v available=%v error=%v", rows, available, err)
 	}
 }

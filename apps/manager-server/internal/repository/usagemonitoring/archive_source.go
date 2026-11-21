@@ -131,23 +131,29 @@ func statsBatchSource(afterID, throughID int64, archived bool) (string, string, 
 	return source, "1 = 1", []any{afterID, throughID, afterID, throughID}
 }
 
-// archivedStatsReadRange checks both sides of the deletion ledger. In the
-// common case both indexed range probes are empty and no event rows are scanned.
-func archivedStatsReadRange(ctx context.Context, tx *sql.Tx, filter AnalyticsFilter) (bool, error) {
-	if filter.FromMS >= filter.ToMS {
+// The common case is two empty indexed probes, without scanning event rows.
+func hasArchivedStatsReadRange(ctx context.Context, tx *sql.Tx, fromMS, toMS int64) (bool, error) {
+	if fromMS >= toMS {
 		return false, nil
 	}
-	from := floorDayMS(filter.FromMS)
-	to := ceilDayMS(filter.ToMS)
+	from, to := floorDayMS(fromMS), ceilDayMS(toMS)
 	var archived bool
-	if err := tx.QueryRowContext(ctx, `select exists (
+	err := tx.QueryRowContext(ctx, `select exists (
 		select 1 from usage_archive_deleted_coverage_daily where utc_day >= ? and utc_day < ?
 	) or exists (
 		select 1 from usage_archive_event_refs
 		where timestamp_ms >= ? and timestamp_ms < ? and raw_deleted_at_ms is not null
-	)`, from/dayMS, to/dayMS, from, to).Scan(&archived); err != nil || !archived {
+	)`, from/dayMS, to/dayMS, from, to).Scan(&archived)
+	return archived, err
+}
+
+// archivedStatsReadRange checks both sides of the deletion ledger.
+func archivedStatsReadRange(ctx context.Context, tx *sql.Tx, filter AnalyticsFilter) (bool, error) {
+	archived, err := hasArchivedStatsReadRange(ctx, tx, filter.FromMS, filter.ToMS)
+	if err != nil || !archived {
 		return archived, err
 	}
+	from, to := floorDayMS(filter.FromMS), ceilDayMS(filter.ToMS)
 	var mismatch bool
 	if err := tx.QueryRowContext(ctx, `with refs as (
 		select timestamp_ms / ? as utc_day, count(*) as event_count,
