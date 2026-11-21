@@ -566,24 +566,30 @@ export const buildAnalyticsFilters = (
     }
   }
   if (isActiveFilterValue(scopeFilters.provider)) {
-    const provider = scopeFilters.provider!.trim();
-    const normalizedProvider = normalizeFilterText(provider);
-    const providerAuthIndices = Array.from(authMetaMap.entries())
-      .filter(([, meta]) => normalizeFilterText(meta.provider) === normalizedProvider)
-      .map(([authIndex]) => authIndex);
-    authIndices = addAuthIndexConstraint(authIndices, providerAuthIndices);
-    if (providerAuthIndices.length === 0) {
-      filters.providers = addFilterValueConstraint(filters.providers, [provider]);
-    }
+    // Provider describes the persisted event. Current credential metadata
+    // cannot cover historical requests from removed or rotated accounts.
+    filters.providers = addFilterValueConstraint(filters.providers?.map(normalizeFilterText), [
+      normalizeFilterText(scopeFilters.provider!),
+    ]);
   }
   if (isActiveFilterValue(scopeFilters.channel)) {
     const channel = scopeFilters.channel!.trim();
     const channelAuthIndices = channels
       .filter((item) => item.name === channel)
       .flatMap((item) => item.authIndices);
-    authIndices = addAuthIndexConstraint(authIndices, channelAuthIndices);
-    if (channelAuthIndices.length === 0 && !filters.providers?.includes(channel)) {
-      filters.providers = [...(filters.providers || []), channel];
+    const matchedChannelIndices = normalizeAuthFilterValues(channelAuthIndices);
+    if (matchedChannelIndices.length > 0) {
+      authIndices = addAuthIndexConstraint(authIndices, matchedChannelIndices);
+    } else if (
+      !isActiveFilterValue(scopeFilters.provider) &&
+      !isActiveFilterValue(scopeFilters.account) &&
+      authIndices === null
+    ) {
+      // Preserve the legacy stand-alone channel provider alias.
+      filters.providers = [channel];
+    } else {
+      // Without a known channel membership we cannot combine these dimensions.
+      authIndices = new Set();
     }
   }
   if (authIndices) {

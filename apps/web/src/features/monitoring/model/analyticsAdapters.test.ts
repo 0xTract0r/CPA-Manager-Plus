@@ -320,6 +320,88 @@ describe('buildAnalyticsFilters', () => {
     });
   });
 
+  it('filters historical events by provider independent of current credentials', () => {
+    const currentAuth = new Map([
+      [
+        'current-claude',
+        {
+          authIndex: 'current-claude',
+          label: 'Current',
+          account: 'current@example.invalid',
+          provider: 'claude',
+          status: 'active',
+          disabled: false,
+          unavailable: false,
+          runtimeOnly: false,
+          planType: 'pro',
+          updatedAt: '',
+        },
+      ],
+    ]);
+
+    // A historical provider must not inherit the indices of currently listed accounts.
+    expect(buildAnalyticsFilters({ provider: 'claude' }, currentAuth, [])).toEqual({
+      providers: ['claude'],
+    });
+    // An explicitly selected historic account remains an additional constraint.
+    expect(
+      buildAnalyticsFilters(
+        { provider: 'claude', account: 'provider:claude|auth:historic-claude' },
+        currentAuth,
+        []
+      )
+    ).toEqual({ auth_indices: ['historic-claude'], providers: ['claude'] });
+  });
+
+  it('combines a known custom channel with Provider through credential membership', () => {
+    const filters = buildAnalyticsFilters(
+      { provider: 'ClaUde', channel: 'Fixture channel' },
+      new Map(),
+      [
+        {
+          key: 'fixture-channel',
+          name: 'Fixture channel',
+          baseUrl: '',
+          host: '',
+          disabled: false,
+          authIndices: ['channel-only', 'both'],
+          modelNames: [],
+        },
+      ]
+    );
+    expect(filters).toEqual({ providers: ['claude'], auth_indices: ['both', 'channel-only'] });
+  });
+
+  it('preserves the historical channel-only alias and never ORs unresolved channel with Provider', () => {
+    expect(buildAnalyticsFilters({ channel: 'codex' }, new Map(), [])).toEqual({
+      providers: ['codex'],
+    });
+    expect(buildAnalyticsFilters({ provider: 'claude', channel: 'codex' }, new Map(), [])).toEqual({
+      providers: ['claude'],
+      auth_indices: ['__no_matching_auth_index__'],
+    });
+  });
+
+  it('keeps scoped account and source constraints separate from Provider', () => {
+    expect(
+      buildAnalyticsFilters(
+        { provider: 'ClaUde', account: 'account-provider:claude|person%40example.invalid' },
+        new Map(),
+        []
+      )
+    ).toEqual({ providers: ['claude'], accounts: ['person@example.invalid'] });
+    expect(
+      buildAnalyticsFilters(
+        {
+          provider: 'Claude',
+          account: buildMonitoringAccountFilterValue({ sourceHashes: ['fixture-source'] }),
+        },
+        new Map(),
+        []
+      )
+    ).toEqual({ providers: ['claude'], source_hashes: ['fixture-source'] });
+  });
+
   it('falls back to provider filters when auth metadata cannot resolve a provider', () => {
     const filters = buildAnalyticsFilters(
       {
