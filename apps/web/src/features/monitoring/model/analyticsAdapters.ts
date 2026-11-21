@@ -398,25 +398,29 @@ export const buildAnalyticsFilters = (
       }
     }
   }
-  if (isActiveFilterValue(scopeFilters.provider)) {
-    const provider = scopeFilters.provider!.trim();
-    const normalizedProvider = normalizeFilterText(provider);
-    const providerAuthIndices = Array.from(authMetaMap.entries())
-      .filter(([, meta]) => normalizeFilterText(meta.provider) === normalizedProvider)
-      .map(([authIndex]) => authIndex);
-    authIndices = addAuthIndexConstraint(authIndices, providerAuthIndices);
-    if (providerAuthIndices.length === 0) {
-      filters.providers = [provider];
-    }
+  const historicalProvider = isActiveFilterValue(scopeFilters.provider)
+    ? normalizeFilterText(scopeFilters.provider)
+    : '';
+  if (historicalProvider) {
+    // Provider is persisted on the event, including when its credential is gone.
+    const compatibleProvider = !filters.providers?.length ||
+      filters.providers.some((provider) => normalizeFilterText(provider) === historicalProvider);
+    filters.providers = [compatibleProvider ? historicalProvider : NO_MATCH_FILTER_VALUE];
   }
   if (isActiveFilterValue(scopeFilters.channel)) {
     const channel = scopeFilters.channel!.trim();
     const channelAuthIndices = channels
       .filter((item) => item.name === channel)
       .flatMap((item) => item.authIndices);
-    authIndices = addAuthIndexConstraint(authIndices, channelAuthIndices);
-    if (channelAuthIndices.length === 0 && !filters.providers?.includes(channel)) {
-      filters.providers = [...(filters.providers || []), channel];
+    if (historicalProvider) {
+      const members = normalizeAuthFilterValues(channelAuthIndices);
+      // The API has no stored custom channel predicate when members are unknown.
+      authIndices = members.length > 0 ? addAuthIndexConstraint(authIndices, members) : new Set();
+    } else {
+      authIndices = addAuthIndexConstraint(authIndices, channelAuthIndices);
+      if (channelAuthIndices.length === 0 && !filters.providers?.includes(channel)) {
+        filters.providers = [...(filters.providers || []), channel];
+      }
     }
   }
   if (authIndices) {

@@ -300,6 +300,55 @@ describe('buildAnalyticsFilters', () => {
     });
   });
 
+  it('uses the historical provider independently from the current credential list', () => {
+    const current = new Map([
+      ['current', {
+        authIndex: 'current',
+        label: 'Current',
+        account: 'current@example.invalid',
+        provider: 'claude',
+        status: 'active',
+        disabled: false,
+        unavailable: false,
+        runtimeOnly: false,
+        planType: 'pro',
+        updatedAt: '',
+      }],
+    ]);
+    expect(buildAnalyticsFilters({ provider: ' CLAUDE ' }, current, [])).toEqual({
+      providers: ['claude'],
+    });
+    expect(buildAnalyticsFilters({ provider: 'all' }, current, [])).toEqual({});
+    expect(buildAnalyticsFilters({ provider: ' ' }, current, [])).toEqual({});
+  });
+
+  it('keeps the historical provider intersected with explicit account and channel constraints', () => {
+    const historicalAccount = buildMonitoringAccountFilterValue({ authIndices: ['historic-both'] });
+    const channel = {
+      key: 'fixture-channel',
+      name: 'Fixture channel',
+      baseUrl: '',
+      host: '',
+      disabled: false,
+      authIndices: ['channel-only', 'historic-both'],
+      modelNames: [],
+    };
+    expect(buildAnalyticsFilters(
+      { provider: 'claude', account: historicalAccount, channel: channel.name },
+      new Map(),
+      [channel]
+    )).toEqual({ providers: ['claude'], auth_indices: ['historic-both'] });
+    expect(buildAnalyticsFilters(
+      { provider: 'claude', channel: 'codex' }, new Map(), []
+    )).toEqual({ providers: ['claude'], auth_indices: ['__no_matching_auth_index__'] });
+    expect(buildAnalyticsFilters(
+      { provider: 'claude', account: 'account-provider:codex|fixture' }, new Map(), []
+    )).toEqual({ providers: ['__no_matching_filter_value__'], accounts: ['fixture'] });
+    expect(buildAnalyticsFilters({ channel: 'codex' }, new Map(), [])).toEqual({
+      providers: ['codex'],
+    });
+  });
+
   it('falls back to provider filters when auth metadata cannot resolve a provider', () => {
     const filters = buildAnalyticsFilters(
       {
