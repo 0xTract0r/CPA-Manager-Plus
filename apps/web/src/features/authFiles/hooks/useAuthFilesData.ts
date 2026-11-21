@@ -4,6 +4,7 @@ type DeleteAllOptions = {
   disabledOnly: boolean;
   healthyOnly: boolean;
   filteredFiles?: AuthFileItem[];
+  filterResultsForNotice?: AuthFileItem[];
   onResetFilterToAll: () => void;
   onResetProblemOnly: () => void;
   onResetDisabledOnly: () => void;
@@ -68,6 +69,7 @@ import {
 } from '@/features/monitoring/model/codexInspectionOwnership';
 import {
   authFileStatusMutationLockSetsOverlap,
+  countAuthFilesOutsideFilter,
   getAuthFileStatusSelectionKey,
   getAuthFileStatusMutationLockKeys,
   readAuthFileStatusPhysicalName,
@@ -2420,9 +2422,21 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions = {}): UseAuth
       const matching = files.filter(file => file.name === target.name);
       return matching.length === 1 ? matching[0] : target;
     });
+    const scope = options.filterResultsForNotice
+      ? countAuthFilesOutsideFilter(capturedTargets, options.filterResultsForNotice)
+      : null;
+    const filteredConfirmation = options.filteredFiles
+      ? t('auth_files.delete_filtered_result_confirm_file_scope')
+      : undefined;
+    const outsideNotice = scope && scope.outside > 0
+      ? t('auth_files.delete_outside_filter_notice', scope)
+      : undefined;
+    const message = filteredConfirmation && outsideNotice
+      ? `${filteredConfirmation} ${outsideNotice}`
+      : filteredConfirmation ?? outsideNotice;
     batchDelete(capturedTargets, {
       title: t('auth_files.delete_all_title', {defaultValue: 'Delete All Files'}),
-      message: options.filteredFiles ? t('auth_files.delete_filtered_result_confirm_file_scope') : t('auth_files.batch_delete_confirm', { count: targets.length }),
+      message,
       successMessage: options.filteredFiles ? t('auth_files.delete_filtered_result_success') : undefined,
       onDeleted: () => {
         if (provider !== 'all') options.onResetFilterToAll();

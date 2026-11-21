@@ -55,6 +55,10 @@ const { mocks } = vi.hoisted(() => {
         };
       } | null,
       t: (key: string, options?: Record<string, unknown>) => {
+        if (key === 'auth_files.delete_outside_filter_notice') {
+          return `${key}:${options?.total}:${options?.outside}`;
+        }
+        if (key === 'auth_files.batch_delete_confirm') return `${key}:${options?.count}`;
         if (options && typeof options.name === 'string') {
           return `${key}:${options.name}`;
         }
@@ -796,6 +800,80 @@ describe('AuthFilesPage real auth JSON paste flow', () => {
     await act(async () => {
       renderer!.unmount();
     });
+  });
+
+  it.each([true, false])('discloses hidden files in the toolbar confirmation (plan filter=%s)', async (planFiltered) => {
+    const files = [
+      { name: 'match-one.json', id: 'one', type: 'codex', authIndex: 'one', plan_type: 'team' },
+      { name: 'match-two.json', id: 'two', type: 'codex', authIndex: 'two', plan_type: 'team' },
+      { name: 'prior.json', id: 'prior', type: 'codex', authIndex: 'prior', plan_type: 'plus' },
+    ];
+    mocks.list.mockResolvedValue({ files });
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<AuthFilesPage />); });
+    try {
+      const search = renderer.root.find(
+        (node) => node.type === 'input' && node.props['aria-label'] === 'auth_files.search_label'
+      );
+      act(() => search.props.onChange({ target: { value: 'match-' } }));
+      if (planFiltered) {
+        const plan = renderer.root.findAllByType(Select).find(
+          (node) => node.props.ariaLabel === 'auth_files.codex_plan_filter_label'
+        );
+        if (!plan) throw new Error('Missing plan filter');
+        act(() => plan.props.onChange('team'));
+      }
+      await vi.waitFor(() => {
+        expect(renderer.root.findAll((node) => typeof node.props['data-auth-card'] === 'string')).toHaveLength(2);
+      });
+      const label = planFiltered ? 'auth_files.delete_filtered_result_button' : 'auth_files.delete_all_button';
+      act(() => findButtonByText(renderer, label).props.onClick?.());
+
+      const calls = mocks.showConfirmation.mock.calls;
+      const confirmation = calls[calls.length - 1]?.[0];
+      expect(confirmation).toMatchObject({
+        confirmText: 'common.next',
+        secondConfirmation: { confirmText: 'auth_files.delete_second_action' },
+      });
+      expect(confirmation.message).toBe(
+        planFiltered
+          ? 'auth_files.delete_filtered_result_confirm_file_scope'
+          : 'auth_files.delete_outside_filter_notice:3:1'
+      );
+      expect(mocks.deleteFileByName).not.toHaveBeenCalled();
+      expect(mocks.deleteAll).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => renderer.unmount());
+    }
+  });
+
+  it('counts one physical file when two visible rows share its name', async () => {
+    mocks.list.mockResolvedValue({
+      files: [
+        { name: 'match.json', id: 'first', type: 'codex', authIndex: 'first' },
+        { name: 'match.json', id: 'second', type: 'codex', authIndex: 'second' },
+      ],
+    });
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<AuthFilesPage />);
+    });
+    try {
+      await vi.waitFor(() => {
+        expect(
+          renderer.root.findAll((node) => typeof node.props['data-auth-card'] === 'string')
+        ).toHaveLength(2);
+      });
+      act(() => findButtonByText(renderer, 'auth_files.delete_all_button').props.onClick?.());
+      const calls = mocks.showConfirmation.mock.calls;
+      expect(calls[calls.length - 1]?.[0]).toMatchObject({
+        message: 'auth_files.batch_delete_confirm:1',
+        confirmText: 'common.next',
+      });
+      expect(mocks.deleteFileByName).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => renderer.unmount());
+    }
   });
 
   it('submits default session paste through modal and uploads converted codex payload', async () => {

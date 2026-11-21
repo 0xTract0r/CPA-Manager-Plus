@@ -69,6 +69,7 @@ import {
 import { getCodexCreditsBalanceLabel } from '@/components/quota/quotaConfigs';
 import { AccountCreditDetails } from './components/accountDetail/AccountCreditDetails';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
+import { countAuthFilesOutsideFilter } from '@/utils/authFileStatusMutation';
 import { useInterval } from '@/hooks/useInterval';
 import { usePanelFeatureAvailability } from '@/hooks/usePanelFeatureAvailability';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
@@ -8493,16 +8494,20 @@ export function AccountsPage() {
         icon: <IconTrash2 size={15} />,
         onClick: () => {
           if (selectedHasPartialSharedAuthFile) return;
+          const scope = countAuthFilesOutsideFilter(selectedTargetFiles, filteredAuthFiles);
+          const fileScope = t('accounts.batch_delete_preview_file_scope');
+          const warning = scope.outside > 0
+            ? `${fileScope} ${t('auth_files.delete_outside_filter_notice', scope)}`
+            : fileScope;
           batchDelete(selectedTargetFiles, {
             title: t('auth_files.batch_delete_title'),
-            confirmText: t('common.delete'),
             message: (
               <AccountsBatchDeletePreview
                 summary={t('accounts.batch_delete_preview_summary', {
                   rows: selectionCount,
                   files: selectedFileNames.length,
                 })}
-                warning={t('accounts.batch_delete_preview_file_scope')}
+                warning={warning}
                 providers={
                   selectedProviderSummary
                     ? t('accounts.batch_delete_preview_providers', {

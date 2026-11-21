@@ -583,6 +583,9 @@ const { mocks } = vi.hoisted(() => {
         setXaiQuota: vi.fn(),
       },
       t: (key: string, options?: Record<string, unknown>) => {
+        if (key === 'auth_files.delete_outside_filter_notice') {
+          return `${key}:${options?.total}:${options?.outside}`;
+        }
         if (key === 'auth_files.codex_plan_filter_unknown') return 'Unknown plan';
         if (!options) return key;
         const parts: string[] = [];
@@ -5130,7 +5133,7 @@ describe('AccountsPage replacement flows', () => {
     expect(mocks.batchDelete).not.toHaveBeenCalled();
   });
 
-  it('passes a file-scoped preview into the single batch delete confirmation', async () => {
+  it('passes a file-scoped preview and leaves the first confirmation label to the shared hook', async () => {
     mocks.selectedFiles = new Set(['codex.json\u0000auth-1']);
     mocks.selectionCount = 1;
 
@@ -5146,7 +5149,7 @@ describe('AccountsPage replacement flows', () => {
     const options = mocks.batchDelete.mock.calls[0]?.[1] as
       | { message?: unknown; confirmText?: string }
       | undefined;
-    expect(options?.confirmText).toBe('common.delete');
+    expect(options?.confirmText).toBeUndefined();
     expect(
       isValidElement<{
         summary: string;
@@ -5166,6 +5169,36 @@ describe('AccountsPage replacement flows', () => {
     expect(options.message.props.summary).toContain('accounts.batch_delete_preview_summary');
     expect(options.message.props.warning).toContain('accounts.batch_delete_preview_file_scope');
     expect(options.message.props.fileNames).toContain('codex.json');
+  });
+
+  it.each([
+    { size: 3, search: 'match-', notice: 'auth_files.delete_outside_filter_notice:3:1' },
+    { size: 35, search: '', notice: null },
+  ])('counts files beyond the filter, not beyond the current page ($size)', async ({ size, search, notice }) => {
+    mocks.files = Array.from({ length: size }, (_, index) => {
+      const name = size === 3 && index === 2 ? 'prior.json' : `match-${index}.json`;
+      return makeCodexFile(name, `auth-${index}`, `p${index}@example.invalid`);
+    });
+    mocks.selectedFiles = new Set(mocks.files.map(getAuthFileSelectionKey));
+    mocks.selectionCount = size;
+    const renderer = await renderAccountsPage();
+    if (search) {
+      await act(async () => {
+        findInputByAriaLabel(renderer, 'accounts.search_label').props.onChange({
+          target: { value: search },
+        });
+      });
+      expect(getAccountListItemTexts(renderer)).toHaveLength(2);
+    } else {
+      expect(getAccountListItemTexts(renderer).length).toBeLessThan(size);
+    }
+
+    await act(async () => findBatchMoreItem(renderer, 'delete').onClick());
+    expect(mocks.batchDelete).toHaveBeenCalledExactlyOnceWith(mocks.files, expect.any(Object));
+    const message: unknown = mocks.batchDelete.mock.calls[0]?.[1]?.message;
+    if (!isValidElement<{ warning: string }>(message)) throw new Error('Missing delete preview');
+    if (notice) expect(message.props.warning).toContain(notice);
+    else expect(message.props.warning).not.toContain('auth_files.delete_outside_filter_notice');
   });
 
   it('keeps runtime Aistudio model discovery available', async () => {

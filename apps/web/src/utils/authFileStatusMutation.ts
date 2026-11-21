@@ -26,6 +26,16 @@ export {
   normalizeCodexMemberSnapshot,
 } from '@/utils/authFileCredentialIdentity';
 
+export function countAuthFilesOutsideFilter(
+  targets: readonly AuthFileItem[],
+  filteredFiles: readonly AuthFileItem[]
+) {
+  const targetNames = new Set(targets.map(readAuthFileStatusPhysicalName).filter(Boolean));
+  const filteredNames = new Set(filteredFiles.map(readAuthFileStatusPhysicalName).filter(Boolean));
+  const outside = [...targetNames].filter((name) => !filteredNames.has(name)).length;
+  return { total: targetNames.size, outside };
+}
+
 const SELECTION_KEY_SEPARATOR = '\u0000';
 
 export type AuthFileStatusMutationTarget = {

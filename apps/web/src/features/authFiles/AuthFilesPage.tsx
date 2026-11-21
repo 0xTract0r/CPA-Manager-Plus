@@ -1928,6 +1928,7 @@ export function AuthFilesPage() {
                       disabledOnly,
                       healthyOnly,
                       filteredFiles: codexResultFilterActive ? filtered : undefined,
+                      filterResultsForNotice: filtered,
                       onResetFilterToAll: () => setFilter('all'),
                       onResetProblemOnly: () => setProblemOnly(false),
                       onResetDisabledOnly: () => setDisabledOnly(false),

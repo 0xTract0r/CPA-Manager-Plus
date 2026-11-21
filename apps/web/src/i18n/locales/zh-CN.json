@@ -907,6 +907,7 @@
     "delete_filtered_result_button": "删除筛选结果",
     "delete_filtered_result_confirm": "确定要删除当前筛选结果中的认证文件吗？此操作不可恢复！",
     "delete_filtered_result_confirm_file_scope": "确定要删除当前筛选结果对应的认证文件吗？删除按文件名执行；如果多个账号行来自同一个认证文件，会删除整个文件。此操作不可恢复！",
+    "delete_outside_filter_notice": "将删除 {{total}} 个文件，其中 {{outside}} 个不在当前筛选结果中。",
     "upload_error_json": "只能上传JSON文件",
     "upload_error_size": "文件大小不能超过 {{maxSize}}",
     "upload_success": "文件上传成功",
