@@ -27,6 +27,7 @@ jobs:
           src/features/authFiles/components/OAuthEditorModals.test.tsx
           src/components/ui/Drawer.test.tsx
           src/features/monitoring/model/analyticsAdapters.test.ts
+          src/features/monitoring/components/RealtimeEventsPanel.test.tsx
       - run: npm run build
 
   management-history:
@@ -47,4 +48,4 @@ jobs:
         run: >-
           go test -mod=readonly -count=1
           ./internal/repository/usagemonitoring ./internal/service/monitoring
-          ./internal/service/usage ./internal/http/controller/monitoring
+          ./internal/service/usage ./internal/service/usagemonitoring ./internal/http/controller/monitoring
