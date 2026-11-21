@@ -260,16 +260,14 @@ export function AiProvidersGeminiEditPage() {
   }, [discoveredModels, modelDiscoverySearch]);
   const configuredModelNames = useMemo(
     () =>
-      new Set(
-        normalizedModels.map((entry) => entry.name.trim().toLowerCase()).filter(Boolean)
-      ),
+      new Set(normalizedModels.map((entry) => entry.name).filter(Boolean)),
     [normalizedModels]
   );
   const visibleDiscoveredModelNames = useMemo(
     () =>
       discoveredModelsFiltered
         .map((model) => stripGeminiModelResourceName(model.name).trim())
-        .filter((name) => name && !configuredModelNames.has(name.toLowerCase())),
+        .filter((name) => name && !configuredModelNames.has(name)),
     [configuredModelNames, discoveredModelsFiltered]
   );
   const allVisibleDiscoveredSelected = useMemo(
@@ -287,16 +285,15 @@ export function AiProvidersGeminiEditPage() {
       setForm((prev) => {
         const mergedMap = new Map<string, { name: string; alias: string }>();
         prev.modelEntries.forEach((entry) => {
-          const name = stripGeminiModelResourceName(entry.name);
+          const name = stripGeminiModelResourceName(entry.name).trim();
           if (!name) return;
-          mergedMap.set(name.toLowerCase(), { ...entry, name, alias: entry.alias?.trim() || '' });
+          mergedMap.set(name, { ...entry, name, alias: entry.alias?.trim() || '' });
         });
 
         selectedModels.forEach((model) => {
-          const name = stripGeminiModelResourceName(model.name);
-          const key = name.toLowerCase();
-          if (!name || mergedMap.has(key)) return;
-          mergedMap.set(key, { name, alias: model.alias ?? '' });
+          const name = stripGeminiModelResourceName(model.name).trim();
+          if (!name || mergedMap.has(name)) return;
+          mergedMap.set(name, { name, alias: model.alias ?? '' });
           addedCount += 1;
         });
 
@@ -358,7 +355,8 @@ export function AiProvidersGeminiEditPage() {
         form.apiKey.trim() || undefined,
         headerObject,
         normalizeAuthIndex(form.authIndex) ?? undefined,
-        form.proxyUrl
+        form.proxyUrl,
+        { dedupe: 'exact' }
       );
       if (!isCurrentDiscovery()) return;
       setDiscoveredModels(list);
@@ -439,7 +437,7 @@ export function AiProvidersGeminiEditPage() {
       let changed = false;
       const next = new Set<string>();
       prev.forEach((name) => {
-        if (availableNames.has(name) && !configuredModelNames.has(name.toLowerCase())) {
+        if (availableNames.has(name) && !configuredModelNames.has(name)) {
           next.add(name);
         } else {
           changed = true;
@@ -451,7 +449,7 @@ export function AiProvidersGeminiEditPage() {
 
   const toggleModelDiscoverySelection = (name: string) => {
     const normalizedName = stripGeminiModelResourceName(name).trim();
-    if (configuredModelNames.has(normalizedName.toLowerCase())) return;
+    if (configuredModelNames.has(normalizedName)) return;
     setModelDiscoverySelected((prev) => {
       const next = new Set(prev);
       if (next.has(normalizedName)) {
@@ -891,9 +889,7 @@ export function AiProvidersGeminiEditPage() {
                       const normalizedName = stripGeminiModelResourceName(model.name).trim();
                       const checked = modelDiscoverySelected.has(normalizedName);
                       const discoveryLabel = modelDisplayLabel(model);
-                      const alreadyConfigured = configuredModelNames.has(
-                        normalizedName.toLowerCase()
-                      );
+                      const alreadyConfigured = configuredModelNames.has(normalizedName);
                       return (
                         <SelectionCheckbox
                           key={model.name}

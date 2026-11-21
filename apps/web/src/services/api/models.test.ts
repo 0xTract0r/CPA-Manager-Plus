@@ -110,6 +110,53 @@ describe('modelsApi request-level proxy', () => {
     );
   });
 
+  it.each([false, true])(
+    'shares Gemini pagination but keeps default and exact results separate (exact first = %s)',
+    async (exactFirst) => {
+      const firstPage = successfulResult({
+        models: [{ name: 'models/DemoAlias', displayName: 'first occurrence' }],
+        nextPageToken: 'fixture-page-2',
+      });
+      let finishFirstPage!: (result: typeof firstPage) => void;
+      mocks.request
+        .mockImplementationOnce(
+          () =>
+            new Promise<typeof firstPage>((resolve) => {
+              finishFirstPage = resolve;
+            })
+        )
+        .mockResolvedValueOnce(
+          successfulResult({
+            models: [
+              { name: 'models/DemoAlias', displayName: 'duplicates are ignored' },
+              { name: 'models/demoalias' },
+            ],
+          })
+        );
+
+      const catalog = 'https://catalog.invalid';
+      const discover = (exact: boolean) =>
+        exact
+          ? modelsApi.fetchGeminiModelsViaApiCall(catalog, undefined, {}, undefined, undefined, {
+              dedupe: 'exact',
+            })
+          : modelsApi.fetchGeminiModelsViaApiCall(catalog);
+      const first = discover(exactFirst);
+      const second = discover(!exactFirst);
+      expect(mocks.request).toHaveBeenCalledTimes(1);
+      finishFirstPage(firstPage);
+
+      const [firstResult, secondResult] = await Promise.all([first, second]);
+      const exact = exactFirst ? firstResult : secondResult;
+      const defaultMode = exactFirst ? secondResult : firstResult;
+      expect(mocks.request).toHaveBeenCalledTimes(2);
+      expect(mocks.request.mock.calls[1][0].url).toContain('pageToken=fixture-page-2');
+      expect(defaultMode.map(({ name }) => name)).toEqual(['DemoAlias']);
+      expect(exact.map(({ name }) => name)).toEqual(['DemoAlias', 'demoalias']);
+      expect(exact[0].displayName).toBe('first occurrence');
+    }
+  );
+
   it('passes the proxy to every Gemini model page', async () => {
     mocks.request
       .mockResolvedValueOnce(

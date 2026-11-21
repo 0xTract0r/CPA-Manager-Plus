@@ -239,7 +239,7 @@ export function GeminiEditDrawer({
     () =>
       new Set(
         form.modelEntries
-          .map((entry) => stripGeminiModelResourceName(entry.name).trim().toLowerCase())
+          .map((entry) => stripGeminiModelResourceName(entry.name).trim())
           .filter(Boolean)
       ),
     [form.modelEntries]
@@ -249,7 +249,7 @@ export function GeminiEditDrawer({
     () =>
       discoveredModelsFiltered
         .map((model) => stripGeminiModelResourceName(model.name).trim())
-        .filter((name) => name && !configuredModelNames.has(name.toLowerCase())),
+        .filter((name) => name && !configuredModelNames.has(name)),
     [configuredModelNames, discoveredModelsFiltered]
   );
 
@@ -267,15 +267,14 @@ export function GeminiEditDrawer({
       setForm((prev) => {
         const mergedMap = new Map<string, { name: string; alias: string }>();
         prev.modelEntries.forEach((entry) => {
-          const name = stripGeminiModelResourceName(entry.name);
+          const name = stripGeminiModelResourceName(entry.name).trim();
           if (!name) return;
-          mergedMap.set(name.toLowerCase(), { ...entry, name, alias: entry.alias?.trim() || '' });
+          mergedMap.set(name, { ...entry, name, alias: entry.alias?.trim() || '' });
         });
         selectedModels.forEach((model) => {
-          const name = stripGeminiModelResourceName(model.name);
-          const key = name.toLowerCase();
-          if (!name || mergedMap.has(key)) return;
-          mergedMap.set(key, { name, alias: model.alias ?? '' });
+          const name = stripGeminiModelResourceName(model.name).trim();
+          if (!name || mergedMap.has(name)) return;
+          mergedMap.set(name, { name, alias: model.alias ?? '' });
           addedCount += 1;
         });
         const mergedEntries = Array.from(mergedMap.values());
@@ -336,7 +335,8 @@ export function GeminiEditDrawer({
         form.apiKey.trim() || undefined,
         headerObject,
         normalizeAuthIndex(form.authIndex) ?? undefined,
-        form.proxyUrl
+        form.proxyUrl,
+        { dedupe: 'exact' }
       );
       if (!isCurrentDiscovery()) return;
       setDiscoveredModels(list);
@@ -487,7 +487,7 @@ export function GeminiEditDrawer({
       let changed = false;
       const next = new Set<string>();
       prev.forEach((name) => {
-        if (availableNames.has(name) && !configuredModelNames.has(name.toLowerCase())) {
+        if (availableNames.has(name) && !configuredModelNames.has(name)) {
           next.add(name);
         } else {
           changed = true;
@@ -499,7 +499,7 @@ export function GeminiEditDrawer({
 
   const toggleModelDiscoverySelection = (name: string) => {
     const normalizedName = stripGeminiModelResourceName(name).trim();
-    if (configuredModelNames.has(normalizedName.toLowerCase())) return;
+    if (configuredModelNames.has(normalizedName)) return;
     setModelDiscoverySelected((prev) => {
       const next = new Set(prev);
       if (next.has(normalizedName)) next.delete(normalizedName);
@@ -778,9 +778,7 @@ export function GeminiEditDrawer({
                       const normalizedName = stripGeminiModelResourceName(model.name).trim();
                       const checked = modelDiscoverySelected.has(normalizedName);
                       const discoveryLabel = modelDisplayLabel(model);
-                      const alreadyConfigured = configuredModelNames.has(
-                        normalizedName.toLowerCase()
-                      );
+                      const alreadyConfigured = configuredModelNames.has(normalizedName);
                       return (
                         <SelectionCheckbox
                           key={model.name}

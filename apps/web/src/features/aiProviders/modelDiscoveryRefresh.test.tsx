@@ -9,6 +9,7 @@ import { AiProvidersClaudeModelsPage } from './AiProvidersClaudeModelsPage';
 import { AiProvidersOpenAIModelsPage } from './AiProvidersOpenAIModelsPage';
 import { AiProvidersCodexEditPage } from './AiProvidersCodexEditPage';
 import { AiProvidersGeminiEditPage } from './AiProvidersGeminiEditPage';
+import { modelsApi } from '@/services/api/models';
 import type { ModelInfo } from '@/utils/models';
 
 const mocks = vi.hoisted(() => {
@@ -29,6 +30,8 @@ const mocks = vi.hoisted(() => {
     t: (key: string) => key,
     auth: { apiBase: 'https://a.test', managementKey: 'a', connectionStatus: 'connected' },
     fetch: vi.fn(),
+    fetchGemini: vi.fn(),
+    request: vi.fn(),
     fetchConfig: vi.fn(),
     noop: vi.fn(),
     config: {
@@ -90,11 +93,15 @@ vi.mock('@/stores', () => ({
     }),
   useNotificationStore: () => ({ showNotification: mocks.noop }),
 }));
+vi.mock('@/services/api/apiCall', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/services/api/apiCall')>();
+  return { ...actual, apiCallApi: { ...actual.apiCallApi, request: mocks.request } };
+});
 vi.mock('@/services/api', () => ({
   modelsApi: {
     fetchClaudeModelsViaApiCall: mocks.fetch,
     fetchV1ModelsViaApiCall: mocks.fetch,
-    fetchGeminiModelsViaApiCall: mocks.fetch,
+    fetchGeminiModelsViaApiCall: mocks.fetchGemini,
     fetchModelsViaApiCall: mocks.fetch,
     buildClaudeModelsEndpoint: () => 'https://provider.test/models',
     buildV1ModelsEndpoint: () => 'https://provider.test/models',
@@ -123,6 +130,8 @@ afterEach(() => {
 beforeEach(() => {
   vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() });
   mocks.fetch.mockReset();
+  mocks.fetchGemini.mockReset().mockImplementation(mocks.fetch);
+  mocks.request.mockReset();
   mocks.auth.managementKey = 'a';
   mocks.fetchConfig.mockImplementation(async (section: string) =>
     section
@@ -197,6 +206,57 @@ describe.each(cases)('%s revalidation', (_name, Component, provider, drawer) => 
         trigger.props.onClick();
       });
   };
+  if (provider === 'gemini') {
+    it('keeps case-distinct Gemini IDs selectable and merges each exact ID once', async () => {
+      const firstId = 'DemoAlias';
+      const secondId = 'demoalias';
+      const catalogPage = (names: string[], nextPageToken?: string) => ({
+        statusCode: 200,
+        body: { models: names.map((name) => ({ name: `models/${name}` })), nextPageToken },
+      });
+      const inputs = () => renderer.root.findAllByType('input');
+      const catalogRows = (id: string) => inputs().filter((node) => node.props['aria-label'] === id);
+      const configuredIds = () =>
+        inputs()
+          .filter((node) => node.props.placeholder === 'common.model_name_placeholder')
+          .map((node) => node.props.value);
+      const provideCatalog = () => {
+        mocks.request
+          .mockResolvedValueOnce(catalogPage([firstId], 'page-2'))
+          .mockResolvedValueOnce(catalogPage([firstId, secondId]));
+      };
+
+      mocks.fetchGemini.mockImplementation(modelsApi.fetchGeminiModelsViaApiCall);
+      provideCatalog();
+      await open();
+      expect(mocks.request).toHaveBeenCalledTimes(2);
+      expect(mocks.request.mock.calls[1][0].url).toContain('pageToken=page-2');
+      expect(catalogRows(firstId)).toHaveLength(1);
+      expect(catalogRows(secondId)).toHaveLength(1);
+
+      const search = inputs().find(
+        (node) => node.props.placeholder === 'ai_providers.gemini_models_search_placeholder'
+      )!;
+      act(() => search.props.onChange({ target: { value: 'DEMOALIAS' } }));
+      expect(catalogRows(firstId)).toHaveLength(1);
+      expect(catalogRows(secondId)).toHaveLength(1);
+
+      act(() => catalogRows(firstId)[0].props.onChange({ target: { checked: true } }));
+      expect(catalogRows(firstId)[0].props.checked).toBe(true);
+      expect(catalogRows(secondId)[0].props.checked).toBe(false);
+      act(() => button('apply').props.onClick());
+      expect(configuredIds()).toEqual([firstId]);
+
+      provideCatalog();
+      await act(async () => { button('button').props.onClick(); });
+      expect(catalogRows(firstId)[0].props.disabled).toBe(true);
+      expect(catalogRows(secondId)[0].props.disabled).toBe(false);
+      act(() => catalogRows(secondId)[0].props.onChange({ target: { checked: true } }));
+      act(() => button('apply').props.onClick());
+      expect(configuredIds()).toEqual([firstId, secondId]);
+    });
+  }
+
   it('keeps model choices during refresh and failure, then replaces them on success', async () => {
     const first = deferred();
     mocks.fetch.mockReturnValueOnce(first.promise);

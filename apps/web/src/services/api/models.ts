@@ -265,7 +265,8 @@ export const modelsApi = {
     apiKey?: string,
     headers: Record<string, string> = {},
     authIndex?: string,
-    proxyUrl?: string
+    proxyUrl?: string,
+    options: { dedupe?: 'case-insensitive' | 'exact' } = {}
   ) {
     const endpoint = buildGeminiModelsEndpoint(baseUrl);
     if (!endpoint) {
@@ -288,11 +289,7 @@ export const modelsApi = {
       trimmedAuthIndex,
       trimmedProxyUrl
     );
-    const existing = GEMINI_MODELS_IN_FLIGHT.get(signature);
-    if (existing) return existing;
-
-    const request = (async () => {
-      const seen = new Set<string>();
+    const fetchPages = async () => {
       const collected: ReturnType<typeof normalizeModelList> = [];
       let pageToken = '';
 
@@ -316,20 +313,7 @@ export const modelsApi = {
 
         const payload = result.body ?? result.bodyText;
         const normalized = normalizeModelList(payload, { dedupe: false });
-        normalized.forEach((model) => {
-          const name = stripGeminiModelResourceName(model.name);
-          const key = (name || '').toLowerCase();
-          if (!key || seen.has(key)) return;
-          seen.add(key);
-          const resolved = { ...model, name };
-          if (resolved.alias && resolved.alias.trim() === name) {
-            resolved.alias = undefined;
-          }
-          if (resolved.displayName && resolved.displayName.trim() === name) {
-            resolved.displayName = undefined;
-          }
-          collected.push(resolved);
-        });
+        for (const model of normalized) collected.push(model);
 
         const nextToken =
           isRecord(payload) && typeof payload.nextPageToken === 'string' ? payload.nextPageToken : '';
@@ -340,13 +324,33 @@ export const modelsApi = {
       }
 
       return collected;
-    })();
+    };
 
-    GEMINI_MODELS_IN_FLIGHT.set(signature, request);
-    try {
-      return await request;
-    } finally {
-      GEMINI_MODELS_IN_FLIGHT.delete(signature);
+    // Share the same pages across callers and apply each caller's ID policy afterwards.
+    let request = GEMINI_MODELS_IN_FLIGHT.get(signature);
+    if (!request) {
+      request = fetchPages().finally(() => GEMINI_MODELS_IN_FLIGHT.delete(signature));
+      GEMINI_MODELS_IN_FLIGHT.set(signature, request);
     }
+
+    const exact = options.dedupe === 'exact';
+    const seen = new Set<string>();
+    const models: ReturnType<typeof normalizeModelList> = [];
+    for (const model of await request) {
+      const strippedName = stripGeminiModelResourceName(model.name);
+      const name = exact ? strippedName.trim() : strippedName;
+      const key = exact ? name : name.toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      const resolved = { ...model, name };
+      if (resolved.alias && resolved.alias.trim() === name) {
+        resolved.alias = undefined;
+      }
+      if (resolved.displayName && resolved.displayName.trim() === name) {
+        resolved.displayName = undefined;
+      }
+      models.push(resolved);
+    }
+    return models;
   },
 };
