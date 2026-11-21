@@ -255,7 +255,7 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).toContain('Failed');
     expect(markup).toContain('Elapsed');
     expect(markup).toContain(styles.realtimeLatencyColumn);
-    expect(markup).toContain('>TTFT</span><span class=');
+    expect(markup).toContain('>TTFT</th>');
     expect(markup).toContain('500 ms');
     expect(markup).toContain('Elapsed');
     expect(markup).toContain('1.5 s');
@@ -354,7 +354,7 @@ describe('RealtimeEventsPanel', () => {
     const markup = renderPanel(baseRow({ reasoningTokens: 0 }));
 
     expect(markup).toContain('<colgroup>');
-    expect(markup.match(/<col\b/g)).toHaveLength(13);
+    expect(markup.match(/<col\b/g)).toHaveLength(14);
     expect(markup).toContain('Reasoning: —');
     expect(markup).toContain('Service: —');
     expect(markup).toContain('Reasoning / Tier');
@@ -363,7 +363,7 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).toContain('Success');
     expect(markup).toContain('Elapsed');
     expect(markup).toContain(styles.realtimeLatencyColumn);
-    expect(markup).toContain('>TTFT</span><span class=');
+    expect(markup).toContain('>TTFT</th>');
     expect(markup).toContain(expectedDate);
     expect(markup).toContain(expectedTime);
     expect(markup).toContain('>I 10<');
@@ -703,9 +703,9 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).toContain(styles.realtimeLatencyColumn);
     expect(markup).not.toContain('500 ms');
     expect(markup).toContain('1.5 s');
-    expect(markup).toContain('>TTFT</span><span class=');
+    expect(markup).toContain('>TTFT</th>');
     expect(markup).toContain('>--</span>');
-    expect(markup).toContain('>Elapsed</span>');
+    expect(markup).toContain('>Elapsed</th>');
     expect(markup).toContain('>1.5 s</span>');
   });
 

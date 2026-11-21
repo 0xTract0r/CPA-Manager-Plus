@@ -1680,10 +1680,7 @@
   --realtime-col-success: 7%; // 成功率（含 info 图标，6%→7% 修表头裁切）
   --realtime-col-calls: 4%; // 调用（3% 时表头「调用」被裁成「调…」，还回 4%=48px 容表头 42px）
   --realtime-col-tps: 4%; // TPS（3% 时表头被裁成「T…」，还回 4%=48px）
-  // "首字｜耗时"两个数值用 tabular-nums 等宽数字，取值上限固定："XXX ms"(<1000ms
-  // 才用 ms，故最多 3 位数字) 或 "XX.X s"(>=1000ms 换算成秒)，真机量测两者自然宽度
-  // 都约 55-56px。
-  --realtime-col-latency: 10%; // 首字 ｜ 耗时（→10% 匀 1% 给花费列容 16px；120px 仍容「820 ms 2.4 s」）
+  --realtime-col-latency: 5%; // 首字和耗时各占一列。
   --realtime-col-time: 8%; // 时间（两行）
   --realtime-col-usage: 8%; // 本次用量
   --realtime-col-cache: 7%; // 缓存命中率（含 info 图标；8%→7% 匀 1% 给花费列，值「17.8%」自然宽 ~55px、7%×1200=84px 仍宽松）
@@ -1692,7 +1689,7 @@
   width: 100%;
   // 中桌面死区修复：min-width:1200px 曾经只在 @container(max-width:1024px) 下生效，
   // 容器 ~1025-1230px（对应常见 1366×768 / 1440×900 视口）既不触发该地板、又不到
-  // 表格能零横滚放平 13 列的宽度，于是各列在原地被压缩到低于调优宽度（时间日期裁成
+  // 表格能零横滚放平 14 列的宽度，于是各列在原地被压缩到低于调优宽度（时间日期裁成
   // "2026-08-2…"、成功率表头裁切等，真机坐实）。现在把 1200px 地板提到无条件基础
   // 规则：容器 >=1200px 时 width:100% 优先生效（正常铺满，不留怪缝）；容器 <1200px
   // 时改由 min-width 撑出横向溢出，交给 .tableWrapper 的 overflow-x:auto 兜底横滚，
@@ -1703,8 +1700,8 @@
 
 // 来源/账号作为扫描主锚点放第 1 列，较窄的时间列放第 2 列。下方 nth-child 映射与
 // RealtimeEventsPanel 的 <colgroup>/<thead>/<tbody> 列序保持同步：1 来源 -> 2 时间 -> 3 模型 -> 4 强度/等级 ->
-// 5 近况 -> 6 请求状态 -> 7 成功率 -> 8 调用 -> 9 TPS -> 10 首字｜耗时 -> 11 本次用量 ->
-// 12 缓存命中率 -> 13 花费。
+// 5 近况 -> 6 请求状态 -> 7 成功率 -> 8 调用 -> 9 TPS -> 10 首字 -> 11 耗时 -> 12 本次用量 ->
+// 13 缓存命中率 -> 14 花费。
 .realtimeTable col:nth-child(1) {
   width: var(--realtime-col-source);
 }
@@ -1732,16 +1729,17 @@
 .realtimeTable col:nth-child(9) {
   width: var(--realtime-col-tps);
 }
-.realtimeTable col:nth-child(10) {
+.realtimeTable col:nth-child(10),
+.realtimeTable col:nth-child(11) {
   width: var(--realtime-col-latency);
 }
-.realtimeTable col:nth-child(11) {
+.realtimeTable col:nth-child(12) {
   width: var(--realtime-col-usage);
 }
-.realtimeTable col:nth-child(12) {
+.realtimeTable col:nth-child(13) {
   width: var(--realtime-col-cache);
 }
-.realtimeTable col:nth-child(13) {
+.realtimeTable col:nth-child(14) {
   width: var(--realtime-col-cost);
 }
 
@@ -2290,44 +2288,11 @@
   white-space: nowrap;
 }
 
-// "首字｜耗时"是成对布局的唯一例外，保持居中；其余数字列(成功率/调用/TPS/缓存命中率/
-// 花费)统一右对齐，见下方 .realtimeNumericColumn。!important 用于覆盖同优先级的
-// .table thead th { text-align:left } 基础规则（同为单类选择器时 important 优先）。
-.realtimeLatencyColumn {
-  text-align: center !important;
-}
-
-// 左右两个数值轨道给固定 54px 下限(而非 minmax(0,1fr))：
-// 1) 防止"塌陷" —— 纯 minmax(0,1fr) 的轨道在窄列/auto 表格布局下会向表格汇报出
-//    近似 0 的内在宽度（fr 轨道的最小尺寸解析为 0），导致该列被判定"几乎不需要空间"、
-//    分不到应有宽度，两个值因此被挤到只剩几像素、彼此贴死甚至覆盖分隔符（真机量测坐实，
-//    见 RealtimeEventsPanel 走查记录）。真机量测两个格式的自然宽度上限都约 55-56px：
-//    ms 格式固定 <1000(最多 3 位数字)，如 "999 ms"；秒格式如 "9.99 s"/"99.9 s"。
-//    54px 下限 + 剩余空间由 1fr 均分，覆盖绝大多数真实取值，不再被省略号裁掉数字；
-//    也让浏览器（含 table-layout:auto 的窄屏兜底）正确预留空间，必要时表格整体变宽
-//    走横向滚动，而不是在原地互相挤压。
-// 2) 极端超长数值(理论上限如三位数秒 "120.0 s")仍由下方 .realtimeMetricText 的省略号
-//    兜底裁切，不会溢出到相邻列。
-.realtimeLatencyHeader {
-  display: grid;
-  grid-template-columns: minmax(54px, 1fr) 6px minmax(54px, 1fr);
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  font-size: 12px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  line-height: 1.25;
-  white-space: nowrap;
-}
-
-.realtimeMetricCell {
-  display: grid;
-  grid-template-columns: minmax(54px, 1fr) 6px minmax(54px, 1fr);
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  min-width: 0;
+// 独立时延列在 1200px 表宽下各为 60px，缩小内边距以容纳完整数值。
+.table.realtimeTable thead th.realtimeLatencyColumn,
+.table.realtimeTable tbody td.realtimeLatencyColumn {
+  padding-inline: 2px;
+  text-align: center;
   font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
@@ -2408,26 +2373,13 @@
   text-align: center;
 }
 
-// 兜底：即使 .realtimeMetricCell 的 minmax(54px,...) 轨道下限在极端超长取值
-// （理论上限如 "199.9 s"）下仍不够，也用省略号原地裁切，绝不溢出到相邻列/分隔符上。
 .realtimeMetricText {
+  display: block;
   overflow: hidden;
   color: inherit;
   text-overflow: ellipsis;
   font-variant-numeric: tabular-nums;
   line-height: 1.25;
-}
-
-.realtimeMetricText {
-  min-width: 0;
-}
-
-.realtimeMetricLeft {
-  text-align: right;
-}
-
-.realtimeMetricRight {
-  text-align: left;
 }
 
 .realtimeMetricText.goodText {
@@ -2440,17 +2392,6 @@
 
 .realtimeMetricText.badText {
   color: var(--monitor-red);
-}
-
-// 分隔符原用 --monitor-line（表格描边同款极浅色），"首字(TTFT)｜耗时"配对几乎不可辨；
-// 提一档到 --monitor-muted（次级文字色），保持视觉弱化但可辨认。
-.realtimeMetricSeparator {
-  // 撤销 F5：曾把颜色从 --monitor-line 提到 --monitor-muted 想让首字/耗时更好区分，
-  // 但配上 600 字重显得又粗又重（用户走查），改回原来的浅色 --monitor-line 保持克制。
-  color: var(--monitor-line);
-  font-weight: 400;
-  line-height: 1.25;
-  text-align: center;
 }
 
 .logTypeCell {

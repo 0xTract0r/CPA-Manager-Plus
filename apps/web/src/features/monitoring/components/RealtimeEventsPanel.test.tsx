@@ -370,7 +370,7 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).not.toContain('POST /v1/chat/completions');
     expect(markup).toContain('Failed');
     expect(markup).toContain('Elapsed');
-    expect(markup).toContain('>TTFT</span><span class=');
+    expect(markup).toContain('>TTFT</th>');
     expect(markup).toContain('500 ms');
     expect(markup).toContain('Elapsed');
     expect(markup).toContain('1.5 s');
@@ -409,8 +409,8 @@ describe('RealtimeEventsPanel', () => {
     );
     // 有 request_id 时不应显示「不可溯源」占位。
     expect(markup).not.toContain('Not traceable');
-    // 触发按钮嵌在 source 单元格里，不新增列(推理/服务合并为单列后共 13 列)。
-    expect(markup.match(/<col\b/g)).toHaveLength(13);
+    // 触发按钮嵌在 source 单元格里，使用原有来源列（全表共 14 列）。
+    expect(markup.match(/<col\b/g)).toHaveLength(14);
   });
 
   it('marks the row as not traceable (not blank) when the request_id is missing', () => {
@@ -419,14 +419,14 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).toContain('Not traceable');
     expect(markup).toContain(styles.realtimeRequestLogUntraceable);
     expect(markup).not.toContain('View raw request');
-    expect(markup.match(/<col\b/g)).toHaveLength(13);
+    expect(markup.match(/<col\b/g)).toHaveLength(14);
   });
 
   it('renders safe defaults when optional usage fields are missing', () => {
     const markup = renderPanel(baseRow({ reasoningTokens: 0 }));
 
     expect(markup).toContain('<colgroup>');
-    expect(markup.match(/<col\b/g)).toHaveLength(13);
+    expect(markup.match(/<col\b/g)).toHaveLength(14);
     expect(markup).toMatch(
       /<th><span class="[^"]*tableHeaderWithInfo[^"]*"><span>Reasoning \/ Tier<\/span>/
     );
@@ -441,7 +441,7 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).toMatch(
       /<span class="[^"]*realtimeServiceValue[^"]*">Service: —<\/span><\/div>/
     );
-    expect(markup).toMatch(/TTFT<\/span><span class="[^"]+">｜<\/span><span class="[^"]+">Elapsed/);
+    expect(markup).toMatch(/>TTFT<\/th><th[^>]+>Elapsed<\/th>/);
     expect(markup).toContain(expectedDate);
     expect(markup).toContain(expectedTime);
     // 细分缓存字段(cacheReadTokens/cacheCreationTokens)全为 0 但 legacy cachedTokens=5 时，
@@ -701,8 +701,7 @@ describe('RealtimeEventsPanel', () => {
     const sourceCellIdx = markup.indexOf(styles.logTypeCell);
     expect(sourceCellIdx).toBeGreaterThanOrEqual(0);
     expect(timeCellIdx).toBeGreaterThan(sourceCellIdx);
-    // 列总数不变(仍是 13 列)。
-    expect(markup.match(/<col\b/g)).toHaveLength(13);
+    expect(markup.match(/<col\b/g)).toHaveLength(14);
     // 成功率/调用/TPS/缓存命中率/花费 5 个数字列统一右对齐：单行渲染下表头 + 数据格
     // 各贡献一次，共 10 次命中。
     expect(markup.match(new RegExp(styles.realtimeNumericColumn, 'g'))?.length).toBe(10);
@@ -996,9 +995,9 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).toContain('Elapsed');
     expect(markup).not.toContain('500 ms');
     expect(markup).toContain('1.5 s');
-    expect(markup).toContain('>TTFT</span><span class=');
+    expect(markup).toContain('>TTFT</th>');
     expect(markup).toContain('>--</span>');
-    expect(markup).toContain('>Elapsed</span>');
+    expect(markup).toContain('>Elapsed</th>');
     expect(markup).toContain('>1.5 s</span>');
   });
 
@@ -1006,20 +1005,17 @@ describe('RealtimeEventsPanel', () => {
     ['missing', null, '--'],
     ['zero', 0, '0 ms'],
     ['measured', 500, '500 ms'],
-  ])('keeps %s TTFT values label-free under the paired table header', (_case, ttftMs, value) => {
+  ])('renders %s TTFT in its own column beside elapsed', (_case, ttftMs, value) => {
     const markup = renderPanel(baseRow({ ttftMs }));
-    const cell = markup.match(
-      new RegExp(`<td class="${styles.realtimeLatencyColumn}">([\\s\\S]*?)</td>`)
-    )?.[1];
+    const headers = Array.from(markup.matchAll(/<th\b[^>]*>([\s\S]*?)<\/th>/g), ([, header]) => header);
+    const row = markup.match(/<tbody><tr[^>]*>([\s\S]*?)<\/tr>/)?.[1] ?? '';
+    const cells = Array.from(row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g), ([, cell]) => cell);
 
-    expect(cell).toBeDefined();
-    expect(markup).toContain('>TTFT</span>');
-    expect(markup).toContain('>Elapsed</span>');
-    expect(cell).not.toContain('TTFT');
-    expect(cell).not.toContain('Elapsed');
-    expect(cell).toContain(value);
-    expect(cell).toContain('1.5 s');
-    expect(cell).toContain('｜');
+    expect(headers).toHaveLength(14);
+    expect(cells).toHaveLength(headers.length);
+    expect(headers.slice(9, 11)).toEqual(['TTFT', 'Elapsed']);
+    expect(cells[9]).toMatch(new RegExp(`>${value}</span>$`));
+    expect(cells[10]).toContain('>1.5 s</span>');
   });
 
   it('keeps latency warning and error tone classes on plain text metrics', () => {
@@ -1190,7 +1186,7 @@ describe('RealtimeEventsPanel', () => {
     // 100% 命中率的行在开启低命中率过滤后应被隐藏（fallback 到空态），关闭时正常展示。
     expect(inactiveMarkup).toContain('100.0%');
     expect(activeMarkup).not.toContain('100.0%');
-    expect(activeMarkup).toContain('empty');
+    expect(activeMarkup).toContain('<td colSpan="14"><span>empty</span></td>');
   });
 
   it('shows the current threshold on the chip label and lets a lower threshold pass through more rows', () => {

@@ -1813,6 +1813,7 @@ export function RealtimeEventsPanel({
             <col />
             <col />
             <col />
+            <col />
           </colgroup>
           <thead>
             <tr>
@@ -1829,8 +1830,6 @@ export function RealtimeEventsPanel({
               </th>
               <th>{recentStatusLabel}</th>
               <th>{requestStatusLabel}</th>
-              {/* 数字列(成功率/调用/TPS/缓存命中率/花费)统一右对齐，配合 tabular-nums；
-                  "首字｜耗时"是成对布局，保持居中(唯一例外，见 .realtimeLatencyColumn)。 */}
               <th className={styles.realtimeNumericColumn}>
                 <TableHeaderInfo
                   label={successRateLabel}
@@ -1839,14 +1838,11 @@ export function RealtimeEventsPanel({
               </th>
               <th className={styles.realtimeNumericColumn}>{totalCallsLabel}</th>
               <th className={styles.realtimeNumericColumn}>{t('monitoring.column_output_tps')}</th>
-              <th className={styles.realtimeLatencyColumn}>
-                <span className={styles.realtimeLatencyHeader}>
-                  <span className={styles.realtimeMetricLeft}>{t('monitoring.ttft_short')}</span>
-                  <span className={styles.realtimeMetricSeparator}>｜</span>
-                  <span className={styles.realtimeMetricRight}>
-                    {t('monitoring.elapsed_short')}
-                  </span>
-                </span>
+              <th scope="col" className={styles.realtimeLatencyColumn}>
+                {t('monitoring.ttft_short')}
+              </th>
+              <th scope="col" className={styles.realtimeLatencyColumn}>
+                {t('monitoring.elapsed_short')}
               </th>
               <th>
                 <TableHeaderInfo label={usageLabel} info={t('monitoring.realtime_usage_hint')} />
@@ -2090,31 +2086,20 @@ export function RealtimeEventsPanel({
                     </span>
                   </td>
                   <td className={styles.realtimeLatencyColumn}>
-                    <div className={styles.realtimeMetricCell}>
-                      <span
-                        className={[
-                          styles.realtimeMetricText,
-                          styles.realtimeMetricLeft,
-                          ttftToneClass,
-                        ]
-                          .filter(Boolean)
-                          .join(' ')}
-                      >
-                        {hasTtftMs ? formatRealtimeCompactDuration(row.ttftMs, locale) : '--'}
-                      </span>
-                      <span className={styles.realtimeMetricSeparator}>｜</span>
-                      <span
-                        className={[
-                          styles.realtimeMetricText,
-                          styles.realtimeMetricRight,
-                          latencyToneClass,
-                        ]
-                          .filter(Boolean)
-                          .join(' ')}
-                      >
-                        {formatRealtimeCompactDuration(row.latencyMs, locale)}
-                      </span>
-                    </div>
+                    <span
+                      className={[styles.realtimeMetricText, ttftToneClass].filter(Boolean).join(' ')}
+                    >
+                      {hasTtftMs ? formatRealtimeCompactDuration(row.ttftMs, locale) : '--'}
+                    </span>
+                  </td>
+                  <td className={styles.realtimeLatencyColumn}>
+                    <span
+                      className={[styles.realtimeMetricText, latencyToneClass]
+                        .filter(Boolean)
+                        .join(' ')}
+                    >
+                      {formatRealtimeCompactDuration(row.latencyMs, locale)}
+                    </span>
                   </td>
                   <td>
                     <div className={styles.primaryCell}>
@@ -2152,12 +2137,12 @@ export function RealtimeEventsPanel({
             })}
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={13}>{emptyState}</td>
+                <td colSpan={14}>{emptyState}</td>
               </tr>
             ) : null}
             {rows.length > 0 && displayedRows.length === 0 ? (
               <tr>
-                <td colSpan={13}>{emptyState}</td>
+                <td colSpan={14}>{emptyState}</td>
               </tr>
             ) : null}
           </tbody>
