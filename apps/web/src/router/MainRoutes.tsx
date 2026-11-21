@@ -46,6 +46,14 @@ function LegacyAccountsRedirect({ healthMode }: { healthMode: 'local' | 'server'
   return <Navigate to={{ pathname: '/accounts', search: search ? `?${search}` : '' }} replace />;
 }
 
+function LegacyOAuthRuleRedirect({ editor }: { editor: 'alias' | 'excluded' }) {
+  const { search } = useLocation();
+  const provider = new URLSearchParams(search).get('provider')?.trim();
+  const params = new URLSearchParams({ view: 'oauth', editor });
+  if (provider) params.set('editorProvider', provider);
+  return <Navigate to={{ pathname: '/accounts', search: `?${params}` }} replace />;
+}
+
 function PluginGate({ children }: { children: ReactElement }) {
   const supportsPlugin = useAuthStore((state) => state.supportsPlugin);
   if (__DEMO_SITE__ && isDemoMode()) {
@@ -166,6 +174,19 @@ const mainRoutes: RouteObject[] = [
   { path: '/ai-providers', element: <AiProvidersPage /> },
   { path: '/ai-providers/*', element: <AiProvidersPage /> },
   { path: '/accounts', element: <AccountsPage /> },
+  { path: '/auth-files', element: <Navigate to="/accounts" replace /> },
+  {
+    path: '/auth-files/oauth-model-alias',
+    element: <LegacyOAuthRuleRedirect editor="alias" />,
+  },
+  {
+    path: '/auth-files/oauth-excluded',
+    element: <LegacyOAuthRuleRedirect editor="excluded" />,
+  },
+  {
+    path: '/auth-files/oauth-excluded-models',
+    element: <LegacyOAuthRuleRedirect editor="excluded" />,
+  },
   { path: '/oauth', element: <OAuthPage /> },
   {
     path: '/usage-analytics',
