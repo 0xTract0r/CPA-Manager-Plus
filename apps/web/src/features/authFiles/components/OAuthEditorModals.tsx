@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AutocompleteInput } from '@/components/ui/AutocompleteInput';
 import { Button } from '@/components/ui/Button';
@@ -115,6 +115,36 @@ function useEditorBaseline<T>(
     setBaseline({ scope, key, value: latest });
   }
   return { value: matching?.value ?? latest, blocked: !matching || matching.key !== key };
+}
+
+// Close/reopen or a scope change invalidates a pending save's UI effects.
+function useEditorSaveSession(open: boolean, scope: string) {
+  const active = useRef<{ saving: boolean } | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useLayoutEffect(() => {
+    active.current = open ? { saving: false } : null;
+    setSaving(false);
+    return () => {
+      active.current = null;
+    };
+  }, [open, scope]);
+
+  const beginSave = useCallback(() => {
+    const session = active.current;
+    if (!session || session.saving) return undefined;
+    session.saving = true;
+    setSaving(true);
+    return {
+      isCurrent: () => active.current === session,
+      finish: () => {
+        if (active.current !== session) return;
+        session.saving = false;
+        setSaving(false);
+      },
+    };
+  }, []);
+  return { saving, beginSave };
 }
 
 const findProviderEntries = <T,>(record: Record<string, T>, providerKey: string): T | undefined => {
@@ -255,7 +285,6 @@ export function OAuthExcludedEditorModal({
   const [provider, setProvider] = useState(initialProvider);
   const [selectedModels, setSelectedModels] = useState<Set<string>>(new Set());
   const [customRule, setCustomRule] = useState('');
-  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -290,14 +319,16 @@ export function OAuthExcludedEditorModal({
     () => serializeOAuthExcludedRules(addOAuthExcludedRule(selectedModels, customRule)),
     [customRule, selectedModels]
   );
+  const editorScope = JSON.stringify([
+    requestScope.apiBase,
+    requestScope.managementKey,
+    initialProvider,
+    resolvedProviderKey,
+  ]);
+  const { saving, beginSave } = useEditorSaveSession(open, editorScope);
   const { value: baselineRules, blocked: staleDraft } = useEditorBaseline(
     open,
-    JSON.stringify([
-      requestScope.apiBase,
-      requestScope.managementKey,
-      initialProvider,
-      resolvedProviderKey,
-    ]),
+    editorScope,
     existingRules,
     JSON.stringify(existingRules),
     (before) => JSON.stringify(draftRules) !== JSON.stringify(before),
@@ -369,7 +400,8 @@ export function OAuthExcludedEditorModal({
       return;
     }
 
-    setSaving(true);
+    const session = beginSave();
+    if (!session) return;
     try {
       const modelIds = draftRules;
       if (modelIds.length > 0) {
@@ -377,16 +409,29 @@ export function OAuthExcludedEditorModal({
       } else {
         await authFilesApi.deleteOauthExcludedEntry(providerKey, requestScope);
       }
+      if (!session.isCurrent()) return;
       await onSaved();
+      if (!session.isCurrent()) return;
       showNotification(t('oauth_excluded.save_success'), 'success');
       onClose();
     } catch (err: unknown) {
+      if (!session.isCurrent()) return;
       const message = err instanceof Error ? err.message : '';
       showNotification(`${t('oauth_excluded.save_failed')}: ${message}`, 'error');
     } finally {
-      setSaving(false);
+      session.finish();
     }
-  }, [draftRules, onClose, onSaved, provider, requestScope, showNotification, staleDraft, t]);
+  }, [
+    beginSave,
+    draftRules,
+    onClose,
+    onSaved,
+    provider,
+    requestScope,
+    showNotification,
+    staleDraft,
+    t,
+  ]);
 
   const canSave =
     !disabled &&
@@ -594,7 +639,6 @@ export function OAuthModelAliasEditorModal({
   const [mappings, setMappings] = useState<OAuthModelMappingFormEntry[]>([
     buildEmptyMappingEntry(),
   ]);
-  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -619,14 +663,16 @@ export function OAuthModelAliasEditorModal({
     [existingMappings, models]
   );
 
+  const editorScope = JSON.stringify([
+    requestScope.apiBase,
+    requestScope.managementKey,
+    initialProvider,
+    resolvedProviderKey,
+  ]);
+  const { saving, beginSave } = useEditorSaveSession(open, editorScope);
   const { value: baselineMappings, blocked: staleDraft } = useEditorBaseline(
     open,
-    JSON.stringify([
-      requestScope.apiBase,
-      requestScope.managementKey,
-      initialProvider,
-      resolvedProviderKey,
-    ]),
+    editorScope,
     existingMappings,
     serializeOAuthAliasDraft(existingMappings),
     (before) => isOAuthAliasDraftDirty(mappings, before),
@@ -734,23 +780,37 @@ export function OAuthModelAliasEditorModal({
       return;
     }
 
-    setSaving(true);
+    const session = beginSave();
+    if (!session) return;
     try {
       if (normalizedMappings.length > 0) {
         await authFilesApi.saveOauthModelAlias(providerKey, normalizedMappings, requestScope);
       } else {
         await authFilesApi.deleteOauthModelAlias(providerKey, requestScope);
       }
+      if (!session.isCurrent()) return;
       await onSaved();
+      if (!session.isCurrent()) return;
       showNotification(t('oauth_model_alias.save_success'), 'success');
       onClose();
     } catch (err: unknown) {
+      if (!session.isCurrent()) return;
       const message = err instanceof Error ? err.message : '';
       showNotification(`${t('oauth_model_alias.save_failed')}: ${message}`, 'error');
     } finally {
-      setSaving(false);
+      session.finish();
     }
-  }, [mappings, onClose, onSaved, provider, requestScope, showNotification, staleDraft, t]);
+  }, [
+    beginSave,
+    mappings,
+    onClose,
+    onSaved,
+    provider,
+    requestScope,
+    showNotification,
+    staleDraft,
+    t,
+  ]);
 
   const canSave =
     !disabled &&

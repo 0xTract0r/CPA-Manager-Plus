@@ -573,3 +573,135 @@ describe('OAuth draft refresh ownership', () => {
     act(() => renderer.unmount());
   });
 });
+
+describe.each(['alias', 'excluded'] as const)('OAuth %s save sessions', (mode) => {
+  it.each([
+    'old write succeeds',
+    'old write fails',
+    'old reload settles after reopening the same connection',
+  ])('isolates the new draft when %s', async (scenario) => {
+    mocks.showNotification.mockClear();
+    mocks.getModelDefinitions.mockResolvedValue([]);
+    const api = mode === 'alias' ? mocks.saveOauthModelAlias : mocks.saveOauthExcludedModels;
+    let finishOldWrite!: () => void;
+    let failOldWrite!: (error: Error) => void;
+    let finishNewWrite!: () => void;
+    let finishOldReload!: () => void;
+    api
+      .mockReset()
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve, reject) => {
+            finishOldWrite = resolve;
+            failOldWrite = reject;
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishNewWrite = resolve;
+          })
+      );
+
+    const sameConnection = scenario === 'old reload settles after reopening the same connection';
+    const oldScope = REQUEST_SCOPE;
+    const newScope = sameConnection ? REQUEST_SCOPE : NEXT_REQUEST_SCOPE;
+    const oldOnSaved = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishOldReload = resolve;
+        })
+    );
+    const newOnSaved = vi.fn();
+    const closeCurrentEditor = vi.fn();
+    const Component = mode === 'alias' ? OAuthModelAliasEditorModal : OAuthExcludedEditorModal;
+    const view = (open: boolean, next = false) => (
+      <Component
+        open={open}
+        provider="claude"
+        files={[]}
+        excluded={{ claude: ['sample'] }}
+        modelAlias={{ claude: [{ name: 'sample', alias: 'existing' }] }}
+        requestScope={next ? newScope : oldScope}
+        onClose={closeCurrentEditor}
+        onSaved={next ? newOnSaved : oldOnSaved}
+      />
+    );
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(view(true));
+      await flushPromises();
+    });
+    const findInput = () =>
+      mode === 'alias'
+        ? renderer.root.find(
+            (node) =>
+              node.type === 'input' &&
+              node.props.placeholder === 'oauth_model_alias.alias_placeholder'
+          )
+        : renderer.root.findByType(Input);
+    const findSave = () =>
+      renderer.root
+        .findAllByType(Button)
+        .find((button) => typeof button.props.loading === 'boolean');
+    const edit = async (value: string) => {
+      await act(async () => {
+        findInput().props.onChange({ target: { value } });
+      });
+    };
+    const save = async () => {
+      await act(async () => {
+        findSave()?.props.onClick();
+      });
+    };
+
+    await edit('old-draft');
+    await save();
+    expect(api.mock.calls[0]?.[2]).toEqual(oldScope);
+    expect(findSave()?.props.loading).toBe(true);
+    if (sameConnection) {
+      await act(async () => {
+        finishOldWrite();
+        await flushPromises();
+      });
+      expect(oldOnSaved).toHaveBeenCalledOnce();
+    }
+
+    await act(async () => {
+      renderer.update(view(false, true));
+      await flushPromises();
+    });
+    await act(async () => {
+      renderer.update(view(true, true));
+      await flushPromises();
+    });
+    await edit('new-draft');
+    expect.soft(findSave()?.props.disabled).toBe(false);
+    await save();
+    expect(api.mock.calls[1]?.[2]).toEqual(newScope);
+    expect(findSave()?.props.loading).toBe(true);
+
+    await act(async () => {
+      if (sameConnection) finishOldReload();
+      else if (scenario === 'old write fails') failOldWrite(new Error('old server failure'));
+      else finishOldWrite();
+      await flushPromises();
+    });
+    expect.soft(oldOnSaved).toHaveBeenCalledTimes(sameConnection ? 1 : 0);
+    expect.soft(newOnSaved).not.toHaveBeenCalled();
+    expect.soft(closeCurrentEditor).not.toHaveBeenCalled();
+    expect.soft(mocks.showNotification).not.toHaveBeenCalled();
+    expect.soft(findInput().props.value).toBe('new-draft');
+    expect.soft(findSave()?.props.loading).toBe(true);
+
+    await act(async () => {
+      finishNewWrite();
+      await flushPromises();
+    });
+    expect(newOnSaved).toHaveBeenCalledOnce();
+    expect.soft(closeCurrentEditor).toHaveBeenCalledOnce();
+    expect.soft(mocks.showNotification).toHaveBeenCalledOnce();
+    expect(findSave()?.props.loading).toBe(false);
+    act(() => renderer.unmount());
+  });
+});
