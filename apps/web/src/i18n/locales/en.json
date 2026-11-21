@@ -5225,6 +5225,7 @@
   "theme": {
     "switch": "Theme",
     "white": "Light",
+    "wool": "Wool Paper",
     "dark": "Dark",
     "auto": "Auto"
   },
