@@ -28,3 +28,23 @@ jobs:
           src/components/ui/Drawer.test.tsx
           src/features/monitoring/model/analyticsAdapters.test.ts
       - run: npm run build
+
+  management-history:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/manager-server
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/manager-server/go.mod
+          cache-dependency-path: apps/manager-server/go.sum
+      - name: 验证历史统计、归档重建与管理接口
+        run: >-
+          go test -mod=readonly -count=1
+          ./internal/repository/usagemonitoring ./internal/service/monitoring
+          ./internal/service/usage ./internal/http/controller/monitoring
