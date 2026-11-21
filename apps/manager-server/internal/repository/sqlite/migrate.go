@@ -669,6 +669,8 @@ func Migrate(db *sql.DB) error {
 		)`,
 		`create index if not exists idx_usage_archive_event_refs_run_deleted
 			on usage_archive_event_refs(run_id, raw_deleted_at_ms, raw_event_id)`,
+		`create index if not exists idx_usage_archive_event_refs_deleted_event_id
+			on usage_archive_event_refs(raw_event_id) where raw_deleted_at_ms is not null`,
 		`create index if not exists idx_usage_archive_event_refs_timestamp_deleted
 			on usage_archive_event_refs(timestamp_ms, raw_deleted_at_ms)`,
 		`create table if not exists usage_maintenance_locks (

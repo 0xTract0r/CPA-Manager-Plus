@@ -10,6 +10,7 @@ import (
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/app"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/http/middleware"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/http/response"
+	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/repository/usagemonitoring"
 	monitoringsvc "github.com/seakee/cpa-manager-plus/apps/manager-server/internal/service/monitoring"
 )
 
@@ -56,6 +57,10 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.App.MonitoringService.Analytics(r.Context(), req)
 	if err != nil {
+		if errors.Is(err, usagemonitoring.ErrArchivedStatsSourceUnavailable) {
+			response.Error(w, http.StatusUnprocessableEntity, err)
+			return
+		}
 		response.Error(w, http.StatusInternalServerError, err)
 		return
 	}

@@ -935,14 +935,23 @@ func (s *Service) analytics(ctx context.Context, req Request) (Response, error) 
 	}
 	filter := buildFilter(req)
 	compactSummary := req.Include.Summary && req.Include.SummaryProfile == "compact"
-	rawCoverage, err := s.store.UsageArchives.RawCoverage(ctx, req.FromMS, req.ToMS)
+	needsArchivedStats := req.Include.Summary || req.Include.ModelShare || req.Include.ModelStats ||
+		req.Include.AccountStats || req.Include.CredentialStats || req.Include.APIKeyStats
+	coverageForRange := func(from, to int64) (store.UsageArchiveRawCoverage, error) {
+		coverage, err := s.store.UsageArchives.RawCoverage(ctx, from, to)
+		if err == nil && needsArchivedStats && coverage.RawDeletedEventCount > 0 {
+			err = s.store.UsageMonitoring.CheckArchivedStatsRead(ctx, from, to, coverage.RawDeletedEventCount)
+		}
+		return coverage, err
+	}
+	rawCoverage, err := coverageForRange(req.FromMS, req.ToMS)
 	if err != nil {
 		return Response{}, err
 	}
 	comparisonFromMS, comparisonToMS, comparisonRequested := summaryComparisonRange(req)
 	var comparisonRawCoverage *store.UsageArchiveRawCoverage
 	if comparisonRequested {
-		coverage, coverageErr := s.store.UsageArchives.RawCoverage(ctx, comparisonFromMS, comparisonToMS)
+		coverage, coverageErr := coverageForRange(comparisonFromMS, comparisonToMS)
 		if coverageErr != nil {
 			return Response{}, coverageErr
 		}
@@ -953,7 +962,7 @@ func (s *Service) analytics(ctx context.Context, req Request) (Response, error) 
 	if req.Include.Summary && !compactSummary {
 		rollingFromMS := nowMS - recentWindowMS
 		if rollingFromMS > 0 {
-			coverage, coverageErr := s.store.UsageArchives.RawCoverage(ctx, rollingFromMS, nowMS)
+			coverage, coverageErr := coverageForRange(rollingFromMS, nowMS)
 			if coverageErr != nil {
 				return Response{}, coverageErr
 			}

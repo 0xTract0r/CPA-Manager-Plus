@@ -6,9 +6,9 @@ import (
 	"errors"
 	"fmt"
 
-	sqliteutil "github.com/seakee/cpa-manager-plus/apps/manager-server/internal/sqliteutil"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/repository/usageevent"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/repository/usageprojection"
+	sqliteutil "github.com/seakee/cpa-manager-plus/apps/manager-server/internal/sqliteutil"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/usageidentity"
 )
 
@@ -29,6 +29,7 @@ type Repository interface {
 	CatchUpCodexLegacyIdentityEvidence(ctx context.Context, limit int, nowMS int64) (CatchUpResult, error)
 	RecordFailure(ctx context.Context, rollupName string, rollupErr error, nowMS int64) error
 	State(ctx context.Context, rollupName string) (State, error)
+	CheckArchivedStatsRead(ctx context.Context, fromMS, toMS, count int64) error
 	LoadAggregate(ctx context.Context, filter AnalyticsFilter) (Aggregate, State, bool, error)
 	LoadModelStats(ctx context.Context, filter AnalyticsFilter) ([]ModelStat, State, bool, error)
 	LoadAccountStats(ctx context.Context, filter AnalyticsFilter) ([]AccountModelStat, State, bool, error)
@@ -76,22 +77,22 @@ func New(db *sql.DB) Repository {
 }
 
 func (r *repository) CatchUpProjection(ctx context.Context, limit int, nowMS int64) (CatchUpResult, error) {
-	return r.catchUp(ctx, ProjectionRollupName, limit, nowMS, func(ctx context.Context, tx *sql.Tx, _ string, afterID, throughID, updatedAtMS int64) error {
+	return r.catchUp(ctx, ProjectionRollupName, limit, nowMS, func(ctx context.Context, tx *sql.Tx, _ string, afterID, throughID, updatedAtMS int64, _ bool) error {
 		return usageprojection.UpsertEventRange(ctx, tx, afterID, throughID, updatedAtMS)
 	})
 }
 
 func (r *repository) CatchUpStats(ctx context.Context, limit int, nowMS int64) (CatchUpResult, error) {
-	return r.catchUp(ctx, StatsRollupName, limit, nowMS, func(ctx context.Context, tx *sql.Tx, revision string, afterID, throughID, updatedAtMS int64) error {
-		if err := upsertAccountDailyBatch(ctx, tx, revision, afterID, throughID, updatedAtMS); err != nil {
+	return r.catchUp(ctx, StatsRollupName, limit, nowMS, func(ctx context.Context, tx *sql.Tx, revision string, afterID, throughID, updatedAtMS int64, archived bool) error {
+		if err := upsertAccountDailyBatch(ctx, tx, revision, afterID, throughID, updatedAtMS, archived); err != nil {
 			return err
 		}
-		return upsertAPIKeyDailyBatch(ctx, tx, revision, afterID, throughID, updatedAtMS)
+		return upsertAPIKeyDailyBatch(ctx, tx, revision, afterID, throughID, updatedAtMS, archived)
 	})
 }
 
 func (r *repository) CatchUpMetadata(ctx context.Context, limit int, nowMS int64) (CatchUpResult, error) {
-	return r.catchUp(ctx, MetadataRollupName, limit, nowMS, func(ctx context.Context, tx *sql.Tx, _ string, afterID, throughID, updatedAtMS int64) error {
+	return r.catchUp(ctx, MetadataRollupName, limit, nowMS, func(ctx context.Context, tx *sql.Tx, _ string, afterID, throughID, updatedAtMS int64, _ bool) error {
 		if err := upsertSelectorDailyBatch(ctx, tx, afterID, throughID, updatedAtMS); err != nil {
 			return err
 		}
@@ -103,12 +104,12 @@ func (r *repository) CatchUpCodexLegacyIdentityEvidence(ctx context.Context, lim
 	if limit <= 0 || limit > defaultBatchLimit {
 		limit = defaultBatchLimit
 	}
-	return r.catchUp(ctx, usageevent.CodexLegacyIdentityRollupName, limit, nowMS, func(ctx context.Context, tx *sql.Tx, revision string, afterID, throughID, _ int64) error {
+	return r.catchUp(ctx, usageevent.CodexLegacyIdentityRollupName, limit, nowMS, func(ctx context.Context, tx *sql.Tx, revision string, afterID, throughID, _ int64, _ bool) error {
 		return usageevent.UpsertCodexLegacyIdentityEvidenceRange(ctx, tx, revision, afterID, throughID)
 	})
 }
 
-type batchUpserter func(context.Context, *sql.Tx, string, int64, int64, int64) error
+type batchUpserter func(context.Context, *sql.Tx, string, int64, int64, int64, bool) error
 
 func (r *repository) catchUp(
 	ctx context.Context,
@@ -151,6 +152,14 @@ func (r *repository) catchUp(
 		return CatchUpResult{}, err
 	}
 
+	var maxArchivedID int64
+	if rollupName == StatsRollupName {
+		if maxArchivedID, err = latestArchivedStatsID(ctx, tx); err != nil {
+			return CatchUpResult{}, err
+		}
+		latestID = max(latestID, maxArchivedID)
+	}
+
 	revision := state.StructureRevision
 	rebuilt := state.CoverageEventID < state.TargetEventID &&
 		(state.Status == "pending" || state.Status == "rebuilding" || state.Status == "clearing")
@@ -167,6 +176,11 @@ func (r *repository) catchUp(
 		return CatchUpResult{}, err
 	}
 	if state.StructureRevision != revision {
+		if rollupName == StatsRollupName {
+			if err := validateStatsArchiveRevision(ctx, tx, maxArchivedID); err != nil {
+				return CatchUpResult{}, err
+			}
+		}
 		if err := resetForRevision(ctx, tx, rollupName, revision, latestID, nowMS); err != nil {
 			return CatchUpResult{}, err
 		}
@@ -224,7 +238,13 @@ func (r *repository) catchUp(
 		}
 	}
 
-	ids, err := eventIDsThrough(ctx, tx, state.CoverageEventID, targetID, limit)
+	archivedBatch := maxArchivedID > state.CoverageEventID
+	var ids []int64
+	if archivedBatch {
+		ids, err = archivedStatsEventIDsThrough(ctx, tx, state.CoverageEventID, targetID, limit)
+	} else {
+		ids, err = eventIDsThrough(ctx, tx, state.CoverageEventID, targetID, limit)
+	}
 	if err != nil {
 		return CatchUpResult{}, err
 	}
@@ -265,7 +285,12 @@ func (r *repository) catchUp(
 	}
 
 	lastEventID := ids[len(ids)-1]
-	if err := upsertBatch(ctx, tx, revision, state.CoverageEventID, lastEventID, nowMS); err != nil {
+	if archivedBatch {
+		if err := validateArchivedStatsRefs(ctx, tx, "r.raw_event_id > ? and r.raw_event_id <= ?", false, state.CoverageEventID, lastEventID); err != nil {
+			return CatchUpResult{}, err
+		}
+	}
+	if err := upsertBatch(ctx, tx, revision, state.CoverageEventID, lastEventID, nowMS, archivedBatch); err != nil {
 		return CatchUpResult{}, err
 	}
 	pending := lastEventID < targetID || latestID > lastEventID
