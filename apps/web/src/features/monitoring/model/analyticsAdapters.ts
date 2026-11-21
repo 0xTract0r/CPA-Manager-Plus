@@ -409,13 +409,17 @@ export const buildAnalyticsFilters = (
   }
   if (isActiveFilterValue(scopeFilters.channel)) {
     const channel = scopeFilters.channel!.trim();
-    const channelAuthIndices = channels
-      .filter((item) => item.name === channel)
-      .flatMap((item) => item.authIndices);
+    const namedChannels = channels.filter((item) => item.name === channel);
+    const channelAuthIndices = namedChannels.flatMap((item) => item.authIndices);
     if (historicalProvider) {
       const members = normalizeAuthFilterValues(channelAuthIndices);
-      // The API has no stored custom channel predicate when members are unknown.
-      authIndices = members.length > 0 ? addAuthIndexConstraint(authIndices, members) : new Set();
+      if (members.length > 0) {
+        authIndices = addAuthIndexConstraint(authIndices, members);
+      } else if (namedChannels.length > 0 || normalizeFilterText(channel) !== historicalProvider) {
+        // A matching provider alias needs only the existing provider predicate.
+        // Empty custom channels and other labels have no persisted channel predicate.
+        authIndices = new Set();
+      }
     } else {
       authIndices = addAuthIndexConstraint(authIndices, channelAuthIndices);
       if (channelAuthIndices.length === 0 && !filters.providers?.includes(channel)) {

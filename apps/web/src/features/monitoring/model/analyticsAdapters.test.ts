@@ -349,6 +349,38 @@ describe('buildAnalyticsFilters', () => {
     });
   });
 
+  it('keeps removed credentials when Channel repeats the selected historical Provider', () => {
+    const account = buildMonitoringAccountFilterValue({ authIndices: ['removed-auth'] });
+    expect(buildAnalyticsFilters(
+      { provider: 'claude', channel: 'Claude', account }, new Map(), []
+    )).toEqual({ providers: ['claude'], auth_indices: ['removed-auth'] });
+    expect(buildAnalyticsFilters(
+      { provider: 'claude', channel: 'Claude' }, new Map(), []
+    )).toEqual({ providers: ['claude'] });
+    expect(buildAnalyticsFilters(
+      { provider: 'claude', channel: 'unknown-channel' }, new Map(), []
+    )).toEqual({ providers: ['claude'], auth_indices: ['__no_matching_auth_index__'] });
+  });
+
+  it('respects a configured channel whose name also appears as a historical provider', () => {
+    const channel = {
+      key: 'fixture-claude',
+      name: 'Claude',
+      baseUrl: '',
+      host: '',
+      disabled: false,
+      authIndices: ['custom-member'],
+      modelNames: [],
+    };
+    const filters = { provider: 'claude', channel: 'Claude' };
+    expect(buildAnalyticsFilters(filters, new Map(), [channel])).toEqual({
+      providers: ['claude'], auth_indices: ['custom-member'],
+    });
+    expect(buildAnalyticsFilters(
+      filters, new Map(), [{ ...channel, authIndices: [] }]
+    )).toEqual({ providers: ['claude'], auth_indices: ['__no_matching_auth_index__'] });
+  });
+
   it('falls back to provider filters when auth metadata cannot resolve a provider', () => {
     const filters = buildAnalyticsFilters(
       {
