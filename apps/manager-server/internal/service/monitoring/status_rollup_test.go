@@ -3,9 +3,12 @@ package monitoring
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"testing"
 	"time"
 
+	sqliterepo "github.com/seakee/cpa-manager-plus/apps/manager-server/internal/repository/sqlite"
+	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/repository/usagepricing"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/store"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/usage"
 )
@@ -89,4 +92,63 @@ func assertAnalyticsStatusRollup(t *testing.T, db *store.Store, from, to int64) 
 			}
 		})
 	}
+}
+
+func TestAnalyticsStatusRollupRebuildsLegacyRowsOnReopen(t *testing.T) {
+	ctx := context.Background()
+	const day = int64(24 * time.Hour / time.Millisecond)
+	from := int64(20671) * day
+	path := filepath.Join(t.TempDir(), "usage.sqlite")
+	raw, err := sqliterepo.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := store.New(raw)
+	events := []usage.Event{
+		monitoringEvent("status-one", from+1000, "gpt-test", "test", "test", false, 2, 3, 0, 0, 5, nil),
+		monitoringEvent("status-two", from+2000, "gpt-test", "test", "test", true, 2, 3, 0, 0, 5, nil),
+		monitoringEvent("status-three", from+3000, "gpt-test", "test", "test", false, 2, 3, 0, 0, 5, nil),
+	}
+	if _, err := db.InsertEvents(ctx, events); err != nil {
+		t.Fatal(err)
+	}
+	catchUpMonitoringArchiveDeleteReadiness(t, ctx, db)
+	legacyRevision, err := usagepricing.StructureRevision(ctx, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"usage_monitoring_account_daily_rollups_v1", "usage_monitoring_api_key_daily_rollups_v1"} {
+		if _, err := raw.Exec("delete from " + table + " where failed = 1"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := raw.Exec("update "+table+" set calls = 3, structure_revision = ?", legacyRevision); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := raw.Exec("update usage_monitoring_rollup_state set structure_revision = ? where rollup_name = 'stats_v1'", legacyRevision); err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err = store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	t.Run("projection before rebuild", func(t *testing.T) {
+		assertAnalyticsStatusRollup(t, db, from, from+day)
+	})
+	result, err := db.CatchUpUsageMonitoringStats(ctx, 1, time.Now().UnixMilli())
+	if err != nil || !result.Rebuilt || !result.Pending {
+		t.Fatalf("first rebuild batch: %#v, %v", result, err)
+	}
+	t.Run("partial rebuild", func(t *testing.T) {
+		assertAnalyticsStatusRollup(t, db, from, from+day)
+	})
+	catchUpMonitoringArchiveDeleteReadiness(t, ctx, db)
+	t.Run("rebuilt", func(t *testing.T) {
+		assertAnalyticsStatusRollup(t, db, from, from+day)
+	})
 }

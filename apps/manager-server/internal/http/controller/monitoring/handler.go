@@ -10,6 +10,7 @@ import (
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/app"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/http/middleware"
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/http/response"
+	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/repository/usagemonitoring"
 	monitoringsvc "github.com/seakee/cpa-manager-plus/apps/manager-server/internal/service/monitoring"
 )
 
@@ -82,7 +83,7 @@ func analyticsErrorStatus(err error) int {
 	if errors.Is(err, monitoringsvc.ErrAccountFocusExpired) {
 		return http.StatusConflict
 	}
-	if errors.Is(err, monitoringsvc.ErrAccountFocusUnavailable) {
+	if errors.Is(err, monitoringsvc.ErrAccountFocusUnavailable) || errors.Is(err, usagemonitoring.ErrArchivedStatsSourceUnavailable) {
 		return http.StatusUnprocessableEntity
 	}
 	if status := response.ContextErrorStatus(err); status != 0 {

@@ -10,7 +10,7 @@ import (
 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/usageidentity"
 )
 
-func monitoringBandedEventsCTE(whereClause string) string {
+func monitoringBandedEventsCTE(source, whereClause string) string {
 	requestedModelExpression := usageidentity.SQLEffectiveRequestedModelExpression("e.model", "e.requested_model")
 	analyticsModelExpression := usageidentity.SQLRequestAnalyticsModelExpression("e.model", "e.requested_model")
 	return fmt.Sprintf(`with base_events as (
@@ -26,7 +26,7 @@ func monitoringBandedEventsCTE(whereClause string) string {
 				max(coalesce(e.cache_creation_tokens, 0), 0),
 				0
 			) as compatible_cached_tokens_value
-		from usage_events e
+		from %s e
 		where %s
 	), priced_events as (
 		select
@@ -51,7 +51,7 @@ func monitoringBandedEventsCTE(whereClause string) string {
 					and priced_events.normalized_input_tokens_value > tier.threshold_tokens
 			), %d) as context_threshold_tokens_value
 		from priced_events
-	)`, requestedModelExpression, analyticsModelExpression, analyticsModelExpression, whereClause, model.ModelPriceBaseContextThreshold)
+	)`, requestedModelExpression, analyticsModelExpression, analyticsModelExpression, source, whereClause, model.ModelPriceBaseContextThreshold)
 }
 
 // codexAccountDailyExcludedSQL identifies Codex events whose legacy Workspace
@@ -73,8 +73,9 @@ func codexAccountDailyExcludedSQL(alias string) string {
 	return provider + " = 'codex' and substr(" + project + ", 1, length('codex-account-id:v1:')) = 'codex-account-id:v1:'"
 }
 
-func upsertAccountDailyBatch(ctx context.Context, tx *sql.Tx, revision string, afterID, throughID, nowMS int64) error {
-	query := monitoringBandedEventsCTE("e.id > ? and e.id <= ? and not ("+codexAccountDailyExcludedSQL("e")+")") + fmt.Sprintf(`
+func upsertAccountDailyBatch(ctx context.Context, tx *sql.Tx, revision string, afterID, throughID, nowMS int64, archived bool) error {
+	source, where, args := statsBatchSource(afterID, throughID, archived)
+	query := monitoringBandedEventsCTE(source, where+" and not ("+codexAccountDailyExcludedSQL("e")+")") + fmt.Sprintf(`
 	insert into usage_monitoring_account_daily_rollups_v1 (
 		structure_revision, bucket_ms, account_snapshot, auth_label_snapshot,
 		provider, auth_provider_snapshot, auth_account_id_snapshot, auth_index, source, source_hash,
@@ -157,12 +158,13 @@ func upsertAccountDailyBatch(ctx context.Context, tx *sql.Tx, revision string, a
 		usage.LongContextInputTokenThreshold,
 		usage.LongContextInputTokenThreshold,
 	)
-	_, err := tx.ExecContext(ctx, query, afterID, throughID, revision, nowMS)
+	_, err := tx.ExecContext(ctx, query, append(args, revision, nowMS)...)
 	return err
 }
 
-func upsertAPIKeyDailyBatch(ctx context.Context, tx *sql.Tx, revision string, afterID, throughID, nowMS int64) error {
-	query := monitoringBandedEventsCTE("e.id > ? and e.id <= ?") + fmt.Sprintf(`
+func upsertAPIKeyDailyBatch(ctx context.Context, tx *sql.Tx, revision string, afterID, throughID, nowMS int64, archived bool) error {
+	source, where, args := statsBatchSource(afterID, throughID, archived)
+	query := monitoringBandedEventsCTE(source, where) + fmt.Sprintf(`
 	insert into usage_monitoring_api_key_daily_rollups_v1 (
 		structure_revision, bucket_ms, api_key_hash, account_snapshot,
 		auth_label_snapshot, provider, auth_provider_snapshot, auth_account_id_snapshot, auth_index,
@@ -245,6 +247,6 @@ func upsertAPIKeyDailyBatch(ctx context.Context, tx *sql.Tx, revision string, af
 		usage.LongContextInputTokenThreshold,
 		usage.LongContextInputTokenThreshold,
 	)
-	_, err := tx.ExecContext(ctx, query, afterID, throughID, revision, nowMS)
+	_, err := tx.ExecContext(ctx, query, append(args, revision, nowMS)...)
 	return err
 }

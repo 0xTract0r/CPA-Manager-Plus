@@ -1901,7 +1901,7 @@ func validateCurrentDeleteReadiness(
 		{
 			name:             usagemonitoring.StatsRollupName,
 			expectedVersion:  usagemonitoring.SchemaVersion,
-			expectedRevision: pricingRevision,
+			expectedRevision: usagemonitoring.StatsStructureRevision(pricingRevision),
 		},
 		{
 			name:             usagemonitoring.MetadataRollupName,

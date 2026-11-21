@@ -960,6 +960,8 @@ func (s *Service) analytics(ctx context.Context, req Request) (Response, error) 
 		}
 	}
 	compactSummary := req.Include.Summary && req.Include.SummaryProfile == "compact"
+	needsArchivedStats := req.Include.Summary || req.Include.ModelShare || req.Include.ModelStats ||
+		req.Include.AccountStats || req.Include.CredentialStats || req.Include.APIKeyStats
 	// 聚焦查询的 SQL 总是与签发行的时间范围取交；覆盖检查也只核同一段。
 	// 保留 req 的原始时间范围，继续用于展示、分桶和推导比较窗口。
 	coverageForRange := func(from, to int64) (store.UsageArchiveRawCoverage, error) {
@@ -973,6 +975,9 @@ func (s *Service) analytics(ctx context.Context, req Request) (Response, error) 
 		coverage, err := s.store.UsageArchives.RawCoverage(ctx, from, to)
 		if err == nil && filter.Focus != nil && coverage.RawDeletedEventCount > 0 {
 			return coverage, ErrAccountFocusUnavailable
+		}
+		if err == nil && needsArchivedStats && coverage.RawDeletedEventCount > 0 {
+			err = s.store.UsageMonitoring.CheckArchivedStatsRead(ctx, from, to, coverage.RawDeletedEventCount)
 		}
 		return coverage, err
 	}
