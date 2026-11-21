@@ -163,6 +163,35 @@ describe('Drawer overlay close guard', () => {
   const findOverlay = (root: ReactTestRenderer) =>
     root.root.find((node) => String(node.props.className ?? '').includes('overlay'));
 
+  it.each([
+    ['#/accounts?provider=codex', true],
+    ['#/system', false],
+  ] as const)('returns to the trigger only on the original route after unmount: %s', async (hash, restore) => {
+    const trigger = Object.assign(new HTMLElement(), { isConnected: true, focus: vi.fn() });
+    Object.defineProperty(document, 'activeElement', { value: trigger, configurable: true });
+    const view = { scrollX: 0, scrollY: 720, scrollTo: vi.fn(), location: { hash: '#/accounts' } };
+    vi.stubGlobal('window', view);
+    try {
+      await act(async () => {
+        renderer = create(<Drawer open restoreTriggerPosition onClose={vi.fn()} />);
+      });
+      view.scrollY = 0;
+      view.location.hash = hash;
+      await act(async () => renderer?.unmount());
+      renderer = undefined;
+      expect(document.body.style.overflow).toBe('');
+      if (restore) {
+        expect(trigger.focus).toHaveBeenCalledWith({ preventScroll: true });
+        expect(view.scrollTo).toHaveBeenCalledWith({ left: 0, top: 720, behavior: 'instant' });
+      } else {
+        expect(trigger.focus).not.toHaveBeenCalled();
+        expect(view.scrollTo).not.toHaveBeenCalled();
+      }
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('closes when pointer starts and ends on overlay', async () => {
     const onClose = vi.fn();
     const mounted = await mountDrawer(onClose);

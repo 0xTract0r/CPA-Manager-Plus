@@ -10190,6 +10190,7 @@ export function AccountsPage() {
       <Drawer
         key={selectedRow.selectionKey}
         open
+        restoreTriggerPosition
         onClose={closeAccountDetail}
         onBeforeClose={confirmConfigurationDiscard}
         width="clamp(540px, 45vw, 720px)"
