@@ -156,6 +156,7 @@ func eventFilterConditions(filter AnalyticsFilter, prefix string, projected bool
 	}
 	addInCondition(modelExpression, normalizeModelFilterValues(filter.Models))
 	addProviderEventCondition(filter.Providers, prefix, &conditions, &args)
+	filter.ChannelScope.AppendSQL(prefix, &conditions, &args)
 	addAccountEventCondition(filter.Accounts, prefix, &conditions, &args)
 	credentialExpr := fmt.Sprintf("coalesce(nullif(%sauth_file_snapshot, ''), nullif(%sauth_index, ''), nullif(%ssource_hash, ''), nullif(%ssource, ''), '-')", prefix, prefix, prefix, prefix)
 	addInCondition(credentialExpr, filter.CredentialIDs)

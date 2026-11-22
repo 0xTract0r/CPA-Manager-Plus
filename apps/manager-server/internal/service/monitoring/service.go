@@ -126,24 +126,25 @@ type Request struct {
 }
 
 type Filters struct {
-	Models           []string `json:"models"`
-	Providers        []string `json:"providers"`
-	Accounts         []string `json:"accounts"`
-	CredentialIDs    []string `json:"credential_ids"`
-	AuthFiles        []string `json:"auth_files"`
-	AuthIndices      []string `json:"auth_indices"`
-	APIKeyHashes     []string `json:"api_key_hashes"`
-	SourceHashes     []string `json:"source_hashes"`
-	ProjectIDs       []string `json:"project_ids"`
-	RequestTypes     []string `json:"request_types"`
-	HeaderErrorKinds []string `json:"header_error_kinds"`
-	HeaderErrorCodes []string `json:"header_error_codes"`
-	HeaderQuotaPlans []string `json:"header_quota_plans"`
-	HeaderTraceIDs   []string `json:"header_trace_ids"`
-	IncludeFailed    *bool    `json:"include_failed"`
-	FailedOnly       bool     `json:"failed_only"`
-	MinLatencyMS     int64    `json:"min_latency_ms"`
-	CacheStatus      string   `json:"cache_status"`
+	ChannelScope     *store.AnalyticsChannelScope `json:"channel_scope"`
+	Models           []string                     `json:"models"`
+	Providers        []string                     `json:"providers"`
+	Accounts         []string                     `json:"accounts"`
+	CredentialIDs    []string                     `json:"credential_ids"`
+	AuthFiles        []string                     `json:"auth_files"`
+	AuthIndices      []string                     `json:"auth_indices"`
+	APIKeyHashes     []string                     `json:"api_key_hashes"`
+	SourceHashes     []string                     `json:"source_hashes"`
+	ProjectIDs       []string                     `json:"project_ids"`
+	RequestTypes     []string                     `json:"request_types"`
+	HeaderErrorKinds []string                     `json:"header_error_kinds"`
+	HeaderErrorCodes []string                     `json:"header_error_codes"`
+	HeaderQuotaPlans []string                     `json:"header_quota_plans"`
+	HeaderTraceIDs   []string                     `json:"header_trace_ids"`
+	IncludeFailed    *bool                        `json:"include_failed"`
+	FailedOnly       bool                         `json:"failed_only"`
+	MinLatencyMS     int64                        `json:"min_latency_ms"`
+	CacheStatus      string                       `json:"cache_status"`
 }
 
 type Include struct {
@@ -857,6 +858,7 @@ type EventsResponse struct {
 }
 
 type EventRow struct {
+	AttributionFiltered    bool                          `json:"attribution_filtered,omitempty"`
 	RequestID              string                        `json:"request_id,omitempty"`
 	EventHash              string                        `json:"event_hash"`
 	TimestampMS            int64                         `json:"timestamp_ms"`
@@ -935,14 +937,23 @@ func (s *Service) analytics(ctx context.Context, req Request) (Response, error) 
 	}
 	filter := buildFilter(req)
 	compactSummary := req.Include.Summary && req.Include.SummaryProfile == "compact"
-	rawCoverage, err := s.store.UsageArchives.RawCoverage(ctx, req.FromMS, req.ToMS)
+	needsArchivedStats := req.Include.Summary || req.Include.ModelShare || req.Include.ModelStats ||
+		req.Include.CredentialStats
+	coverageForRange := func(from, to int64) (store.UsageArchiveRawCoverage, error) {
+		coverage, err := s.store.UsageArchives.RawCoverage(ctx, from, to)
+		if err == nil && needsArchivedStats && coverage.RawDeletedEventCount > 0 {
+			err = s.store.UsageMonitoring.CheckArchivedStatsRead(ctx, from, to, coverage.RawDeletedEventCount)
+		}
+		return coverage, err
+	}
+	rawCoverage, err := coverageForRange(req.FromMS, req.ToMS)
 	if err != nil {
 		return Response{}, err
 	}
 	comparisonFromMS, comparisonToMS, comparisonRequested := summaryComparisonRange(req)
 	var comparisonRawCoverage *store.UsageArchiveRawCoverage
 	if comparisonRequested {
-		coverage, coverageErr := s.store.UsageArchives.RawCoverage(ctx, comparisonFromMS, comparisonToMS)
+		coverage, coverageErr := coverageForRange(comparisonFromMS, comparisonToMS)
 		if coverageErr != nil {
 			return Response{}, coverageErr
 		}
@@ -953,7 +964,7 @@ func (s *Service) analytics(ctx context.Context, req Request) (Response, error) 
 	if req.Include.Summary && !compactSummary {
 		rollingFromMS := nowMS - recentWindowMS
 		if rollingFromMS > 0 {
-			coverage, coverageErr := s.store.UsageArchives.RawCoverage(ctx, rollingFromMS, nowMS)
+			coverage, coverageErr := coverageForRange(rollingFromMS, nowMS)
 			if coverageErr != nil {
 				return Response{}, coverageErr
 			}
@@ -1509,6 +1520,11 @@ func (s *Service) analytics(ctx context.Context, req Request) (Response, error) 
 			return Response{}, err
 		}
 		response.Events = buildEvents(eventsPage, total)
+		// Mark only the requested event page, so old clients, preview data and
+		// unmarked pages keep their existing local attribution checks.
+		for index := range response.Events.Items {
+			response.Events.Items[index].AttributionFiltered = true
+		}
 	}
 	if req.Include.DrilldownPreview != nil {
 		preview := req.Include.DrilldownPreview
@@ -2049,9 +2065,11 @@ func (s *Service) accountWindowUsage(ctx context.Context, req AccountWindowUsage
 		})
 	}
 
-	stats, available := s.monitoringReader.AccountWindowStats(ctx, queries)
+	stats, available, err := s.monitoringReader.AccountWindowStats(ctx, queries)
+	if err != nil {
+		return AccountWindowUsageResponse{}, err
+	}
 	if !available {
-		var err error
 		stats, err = s.store.AccountWindowModelStats(ctx, queries)
 		if err != nil {
 			return AccountWindowUsageResponse{}, err
@@ -2149,6 +2167,7 @@ func buildFilter(req Request) store.AnalyticsFilter {
 		includeFailed = *req.Filters.IncludeFailed
 	}
 	return store.AnalyticsFilter{
+		ChannelScope:     req.Filters.ChannelScope,
 		FromMS:           req.FromMS,
 		ToMS:             req.ToMS,
 		SearchQuery:      req.SearchQuery,
@@ -2269,6 +2288,7 @@ func (s *Service) filterOptionsWithSource(
 func filterOptionsMatchMainScope(filter store.AnalyticsFilter) bool {
 	return len(filter.Models) == 0 &&
 		len(filter.Providers) == 0 &&
+		filter.ChannelScope == nil &&
 		len(filter.Accounts) == 0 &&
 		len(filter.CredentialIDs) == 0 &&
 		len(filter.AuthFiles) == 0 &&
@@ -2324,8 +2344,8 @@ func (s *Service) accountModelStats(ctx context.Context, filter store.AnalyticsF
 }
 
 func (s *Service) accountModelStatsWithSource(ctx context.Context, filter store.AnalyticsFilter) ([]store.AccountModelStat, bool, error) {
-	if rows, available := s.monitoringReader.AccountStats(ctx, filter); available {
-		return rows, true, nil
+	if rows, available, err := s.monitoringReader.AccountStats(ctx, filter); available || err != nil {
+		return rows, available, err
 	}
 	rows, err := s.store.AccountModelStatsWithFilter(ctx, filter)
 	return rows, false, err
@@ -2337,8 +2357,8 @@ func (s *Service) apiKeyModelStats(ctx context.Context, filter store.AnalyticsFi
 }
 
 func (s *Service) apiKeyModelStatsWithSource(ctx context.Context, filter store.AnalyticsFilter) ([]store.APIKeyModelStat, bool, error) {
-	if rows, available := s.monitoringReader.APIKeyStats(ctx, filter); available {
-		return rows, true, nil
+	if rows, available, err := s.monitoringReader.APIKeyStats(ctx, filter); available || err != nil {
+		return rows, available, err
 	}
 	rows, err := s.store.APIKeyModelStatsWithFilter(ctx, filter)
 	return rows, false, err
@@ -2350,8 +2370,8 @@ func (s *Service) channelModelStats(ctx context.Context, filter store.AnalyticsF
 }
 
 func (s *Service) channelModelStatsWithSource(ctx context.Context, filter store.AnalyticsFilter) ([]store.ChannelModelStat, bool, error) {
-	if rows, available := s.monitoringReader.AccountStats(ctx, filter); available {
-		return channelModelStatsFromAccountStats(rows), true, nil
+	if rows, available, err := s.monitoringReader.AccountStats(ctx, filter); available || err != nil {
+		return channelModelStatsFromAccountStats(rows), available, err
 	}
 	rows, err := s.store.ChannelModelStatsWithFilter(ctx, filter)
 	return rows, false, err
@@ -2586,6 +2606,7 @@ func filterOptionsBaseFilter(filter store.AnalyticsFilter) store.AnalyticsFilter
 	optionFilter := filter
 	optionFilter.Models = nil
 	optionFilter.Providers = nil
+	optionFilter.ChannelScope = nil
 	optionFilter.Accounts = nil
 	optionFilter.CredentialIDs = nil
 	optionFilter.AuthFiles = nil

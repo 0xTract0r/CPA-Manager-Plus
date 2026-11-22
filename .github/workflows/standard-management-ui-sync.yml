@@ -1,0 +1,56 @@
+name: 上游凭证编辑与监控回归
+
+on:
+  pull_request:
+    branches:
+      - codex/official-cpamp-dcfa8bc0
+
+permissions:
+  contents: read
+
+jobs:
+  management-ui:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: 验证凭证编辑、卡片详情及历史筛选
+        run: >-
+          npm --workspace apps/web run test --
+          src/features/authFiles/components/OAuthEditorModals.test.tsx
+          src/components/ui/Drawer.test.tsx
+          src/features/monitoring/model/analyticsAdapters.test.ts
+          src/features/monitoring/components/RealtimeEventsPanel.test.tsx
+      - name: 验证普通 OAuth 取消、切换管理连接和迟到回调
+        run: >-
+          npm --workspace apps/web run test --
+          src/features/oauth/OAuthPage.lifecycle.test.tsx
+          -t 'stops|ignores a (late auth-link|late polling success|late callback|cancelled)|records one scoped|keeps the provider attempt|confirms an already-completed'
+      - run: npm run build
+
+  management-history:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/manager-server
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/manager-server/go.mod
+          cache-dependency-path: apps/manager-server/go.sum
+      - name: 验证历史统计、归档重建与管理接口
+        run: >-
+          go test -mod=readonly -count=1
+          ./internal/repository/usagemonitoring ./internal/service/monitoring
+          ./internal/service/usage ./internal/service/usagemonitoring ./internal/http/controller/monitoring

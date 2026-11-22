@@ -121,6 +121,7 @@
     "model_alias_placeholder": "Model alias (optional)",
     "invalid_provider_index": "Invalid provider index.",
     "unsaved_changes_title": "Unsaved changes",
+    "model_editor_external_change": "Server settings changed. Close and reopen the editor before saving.",
     "unsaved_changes_message": "You have unsaved changes. Leaving now will discard them. Do you want to leave?",
     "clear": "Clear",
     "copied": "Copied"
@@ -2703,6 +2704,7 @@
     "codex_oauth_url_label": "Authorization URL:",
     "codex_open_link": "Open Link",
     "codex_copy_link": "Copy Link",
+    "oauth_status_cancelled": "Authorization cancelled. You can start again.",
     "codex_oauth_status_waiting": "Waiting for authentication...",
     "codex_oauth_status_success": "Authentication successful!",
     "codex_oauth_status_error": "Authentication failed:",
@@ -5224,6 +5226,7 @@
   "theme": {
     "switch": "Theme",
     "white": "Light",
+    "wool": "Wool Paper",
     "dark": "Dark",
     "auto": "Auto"
   },

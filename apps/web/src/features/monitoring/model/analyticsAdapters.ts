@@ -315,6 +315,11 @@ const addFilterValueConstraint = (
   return constrained.length > 0 ? constrained : [NO_MATCH_FILTER_VALUE];
 };
 
+export const buildMonitoringChannelIndex = (channels: MonitoringChannelMeta[]) =>
+  new Map<string, MonitoringChannelMeta>(
+    channels.flatMap((channel) => channel.authIndices.map((index) => [index, channel] as const))
+  );
+
 export const buildAnalyticsFilters = (
   scopeFilters: MonitoringScopeFilters | undefined,
   authMetaMap: Map<string, MonitoringAuthMeta>,
@@ -398,25 +403,39 @@ export const buildAnalyticsFilters = (
       }
     }
   }
-  if (isActiveFilterValue(scopeFilters.provider)) {
-    const provider = scopeFilters.provider!.trim();
-    const normalizedProvider = normalizeFilterText(provider);
-    const providerAuthIndices = Array.from(authMetaMap.entries())
-      .filter(([, meta]) => normalizeFilterText(meta.provider) === normalizedProvider)
-      .map(([authIndex]) => authIndex);
-    authIndices = addAuthIndexConstraint(authIndices, providerAuthIndices);
-    if (providerAuthIndices.length === 0) {
-      filters.providers = [provider];
-    }
+  const historicalProvider = isActiveFilterValue(scopeFilters.provider)
+    ? normalizeFilterText(scopeFilters.provider)
+    : '';
+  if (historicalProvider) {
+    // Provider is persisted on the event, including when its credential is gone.
+    const compatibleProvider = !filters.providers?.length ||
+      filters.providers.some((provider) => normalizeFilterText(provider) === historicalProvider);
+    filters.providers = [compatibleProvider ? historicalProvider : NO_MATCH_FILTER_VALUE];
   }
   if (isActiveFilterValue(scopeFilters.channel)) {
-    const channel = scopeFilters.channel!.trim();
-    const channelAuthIndices = channels
-      .filter((item) => item.name === channel)
-      .flatMap((item) => item.authIndices);
-    authIndices = addAuthIndexConstraint(authIndices, channelAuthIndices);
-    if (channelAuthIndices.length === 0 && !filters.providers?.includes(channel)) {
-      filters.providers = [...(filters.providers || []), channel];
+    const channel = normalizeFilterText(scopeFilters.channel);
+    const configured = channels.some(({ name }) => normalizeFilterText(name) === channel);
+    const channelByAuthIndex = buildMonitoringChannelIndex(channels);
+    const assignments = new Map<string, string>();
+    channelByAuthIndex.forEach(({ name }, index) => assignments.set(index, name));
+    authMetaMap.forEach((meta, index) => {
+      const owner = channelByAuthIndex.get(index) || channelByAuthIndex.get(meta.authIndex);
+      if (owner) assignments.set(index, owner.name);
+      else if (!configured && meta.provider) assignments.set(index, meta.provider);
+    });
+    const matching = Array.from(assignments.entries())
+      .filter(([, name]) => normalizeFilterText(name) === channel)
+      .map(([index]) => index)
+      .sort();
+
+    if (configured) {
+      authIndices = matching.length ? addAuthIndexConstraint(authIndices, matching) : new Set();
+    } else {
+      filters.channel_scope = {
+        recorded_provider: channel,
+        ...(matching.length ? { auth_indices: matching } : {}),
+        ...(assignments.size ? { assigned_auth_indices: Array.from(assignments.keys()).sort() } : {}),
+      };
     }
   }
   if (authIndices) {
@@ -1053,6 +1072,7 @@ export const buildUsageDetailsFromAnalyticsEvents = (
       auth_label_snapshot: readString(item.auth_label_snapshot),
       auth_file_snapshot: readString(item.auth_file_snapshot),
       auth_provider_snapshot: readString(item.auth_provider_snapshot),
+      __serverAttributionFiltered: item.attribution_filtered === true,
       auth_account_id_snapshot: readString(item.auth_account_id_snapshot),
       auth_project_id_snapshot: readString(item.auth_project_id_snapshot),
       client_ip: readString(item.client_ip),

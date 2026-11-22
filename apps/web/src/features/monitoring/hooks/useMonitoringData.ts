@@ -21,6 +21,7 @@ import {
 } from '../model/chartBuilders';
 import {
   buildAnalyticsFilters,
+  buildMonitoringChannelIndex,
   buildAccountRowsFromAnalytics,
   buildApiKeyRowsFromAnalytics,
   buildChannelRowsFromAnalytics,
@@ -481,15 +482,7 @@ export function useMonitoringData({
     [config]
   );
 
-  const channelByAuthIndex = useMemo(() => {
-    const map = new Map<string, MonitoringChannelMeta>();
-    channels.forEach((channel) => {
-      channel.authIndices.forEach((authIndex) => {
-        map.set(authIndex, channel);
-      });
-    });
-    return map;
-  }, [channels]);
+  const channelByAuthIndex = useMemo(() => buildMonitoringChannelIndex(channels), [channels]);
 
   const apiKeyDisplayMap = useMemo(() => {
     return buildApiKeyDisplayMap(config?.apiKeys || [], apiKeyAliases || []);
@@ -746,8 +739,10 @@ export function useMonitoringData({
     [allRows, customTimeRange, searchApiKeyHash, searchQuery, timeRange]
   );
   const filteredRows = useMemo(
-    () => buildScopeFilteredRows(rangeFilteredRows, scopeFilters),
-    [rangeFilteredRows, scopeFilters]
+    () => buildScopeFilteredRows(rangeFilteredRows, scopeFilters, {
+      useServerAttribution: !!currentAnalyticsData?.events,
+    }),
+    [currentAnalyticsData?.events, rangeFilteredRows, scopeFilters]
   );
   const statsRows = useMemo(() => filteredRows.filter(shouldIncludeInStats), [filteredRows]);
 

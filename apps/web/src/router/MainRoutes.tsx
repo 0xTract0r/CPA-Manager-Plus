@@ -1,3 +1,4 @@
+import { legacyCredentialRoutes } from './LegacyCredentialRoutes';
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import {
   Navigate,
@@ -166,6 +167,7 @@ const mainRoutes: RouteObject[] = [
   { path: '/ai-providers', element: <AiProvidersPage /> },
   { path: '/ai-providers/*', element: <AiProvidersPage /> },
   { path: '/accounts', element: <AccountsPage /> },
+  ...legacyCredentialRoutes,
   { path: '/oauth', element: <OAuthPage /> },
   {
     path: '/usage-analytics',

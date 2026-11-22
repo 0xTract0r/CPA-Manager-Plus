@@ -206,6 +206,42 @@ describe('buildUsageDetailsFromAnalyticsEvents', () => {
 });
 
 describe('buildAnalyticsFilters', () => {
+  it('applies configured ownership and its historical auth alias before recorded channel', () => {
+    const member = {
+      authIndex: 'member',
+      label: 'Channel member',
+      account: 'fixture@example.invalid',
+      provider: 'retired-fixture',
+      status: 'active',
+      disabled: false,
+      unavailable: false,
+      runtimeOnly: false,
+      planType: '',
+      updatedAt: '',
+    };
+    const auth = new Map([['member', member], ['legacy-alias', member]]);
+    const channels = [{
+      key: 'other',
+      name: 'Other channel',
+      baseUrl: '',
+      host: '',
+      disabled: false,
+      authIndices: ['member'],
+      modelNames: [],
+    }];
+    expect(buildAnalyticsFilters({ provider: 'retired-fixture', channel: 'retired-fixture' }, auth, channels)).toEqual({
+      providers: ['retired-fixture'],
+      channel_scope: {
+        recorded_provider: 'retired-fixture',
+        assigned_auth_indices: ['legacy-alias', 'member'],
+      },
+    });
+    expect(buildAnalyticsFilters({ provider: 'retired-fixture', channel: 'Other channel' }, auth, channels)).toEqual({
+      providers: ['retired-fixture'],
+      auth_indices: ['legacy-alias', 'member'],
+    });
+  });
+
   it('maps failed-only status and known accounts into backend filters', () => {
     const filters = buildAnalyticsFilters(
       {
@@ -298,6 +334,87 @@ describe('buildAnalyticsFilters', () => {
     ).toEqual({
       api_key_hashes: ['api-key-hash'],
     });
+  });
+
+  it('uses the historical provider independently from the current credential list', () => {
+    const current = new Map([
+      ['current', {
+        authIndex: 'current',
+        label: 'Current',
+        account: 'current@example.invalid',
+        provider: 'claude',
+        status: 'active',
+        disabled: false,
+        unavailable: false,
+        runtimeOnly: false,
+        planType: 'pro',
+        updatedAt: '',
+      }],
+    ]);
+    expect(buildAnalyticsFilters({ provider: ' CLAUDE ' }, current, [])).toEqual({
+      providers: ['claude'],
+    });
+    expect(buildAnalyticsFilters({ provider: 'all' }, current, [])).toEqual({});
+    expect(buildAnalyticsFilters({ provider: ' ' }, current, [])).toEqual({});
+  });
+
+  it('keeps the historical provider intersected with explicit account and channel constraints', () => {
+    const historicalAccount = buildMonitoringAccountFilterValue({ authIndices: ['historic-both'] });
+    const channel = {
+      key: 'fixture-channel',
+      name: 'Fixture channel',
+      baseUrl: '',
+      host: '',
+      disabled: false,
+      authIndices: ['channel-only', 'historic-both'],
+      modelNames: [],
+    };
+    expect(buildAnalyticsFilters(
+      { provider: 'claude', account: historicalAccount, channel: channel.name },
+      new Map(),
+      [channel]
+    )).toEqual({ providers: ['claude'], auth_indices: ['historic-both'] });
+    expect(buildAnalyticsFilters(
+      { provider: 'claude', channel: 'codex' }, new Map(), []
+    )).toEqual({ providers: ['claude'], channel_scope: { recorded_provider: 'codex' } });
+    expect(buildAnalyticsFilters(
+      { provider: 'claude', account: 'account-provider:codex|fixture' }, new Map(), []
+    )).toEqual({ providers: ['__no_matching_filter_value__'], accounts: ['fixture'] });
+    expect(buildAnalyticsFilters({ channel: 'codex' }, new Map(), [])).toEqual({
+      channel_scope: { recorded_provider: 'codex' },
+    });
+  });
+
+  it('keeps removed credentials when Channel repeats the selected historical Provider', () => {
+    const account = buildMonitoringAccountFilterValue({ authIndices: ['removed-auth'] });
+    expect(buildAnalyticsFilters(
+      { provider: 'claude', channel: 'Claude', account }, new Map(), []
+    )).toEqual({ providers: ['claude'], channel_scope: { recorded_provider: 'claude' }, auth_indices: ['removed-auth'] });
+    expect(buildAnalyticsFilters(
+      { provider: 'claude', channel: 'Claude' }, new Map(), []
+    )).toEqual({ providers: ['claude'], channel_scope: { recorded_provider: 'claude' } });
+    expect(buildAnalyticsFilters(
+      { provider: 'claude', channel: 'unknown-channel' }, new Map(), []
+    )).toEqual({ providers: ['claude'], channel_scope: { recorded_provider: 'unknown-channel' } });
+  });
+
+  it('respects a configured channel whose name also appears as a historical provider', () => {
+    const channel = {
+      key: 'fixture-claude',
+      name: 'Claude',
+      baseUrl: '',
+      host: '',
+      disabled: false,
+      authIndices: ['custom-member'],
+      modelNames: [],
+    };
+    const filters = { provider: 'claude', channel: 'Claude' };
+    expect(buildAnalyticsFilters(filters, new Map(), [channel])).toEqual({
+      providers: ['claude'], auth_indices: ['custom-member'],
+    });
+    expect(buildAnalyticsFilters(
+      filters, new Map(), [{ ...channel, authIndices: [] }]
+    )).toEqual({ providers: ['claude'], auth_indices: ['__no_matching_auth_index__'] });
   });
 
   it('falls back to provider filters when auth metadata cannot resolve a provider', () => {

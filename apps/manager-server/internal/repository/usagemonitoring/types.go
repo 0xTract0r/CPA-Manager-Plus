@@ -26,7 +26,17 @@ type AccountWindowUsageQuery = usageevent.AccountWindowUsageQuery
 type AccountWindowModelStat = usageevent.AccountWindowModelStat
 
 func currentStructureRevision(ctx context.Context, db usagepricing.RowQuerier) (string, error) {
-	return usagepricing.StructureRevision(ctx, db)
+	pricingRevision, err := usagepricing.StructureRevision(ctx, db)
+	if err != nil {
+		return "", err
+	}
+	// Older monitoring buckets combined successful and failed calls.
+	return StatsStructureRevision(pricingRevision), nil
+}
+
+// StatsStructureRevision keys the corrected status grouping independently of pricing.
+func StatsStructureRevision(pricingRevision string) string {
+	return pricingRevision + ":status-v2"
 }
 
 func floorDayMS(value int64) int64 {

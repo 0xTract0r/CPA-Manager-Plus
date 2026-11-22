@@ -113,6 +113,7 @@ func SupportsAnalyticsFilter(filter store.AnalyticsFilter) bool {
 	return strings.TrimSpace(filter.SearchQuery) == "" &&
 		strings.TrimSpace(filter.SearchAPIKeyHash) == "" &&
 		len(filter.Providers) == 0 &&
+		filter.ChannelScope == nil &&
 		len(filter.Accounts) == 0 &&
 		len(filter.CredentialIDs) == 0 &&
 		len(filter.AuthFiles) == 0 &&

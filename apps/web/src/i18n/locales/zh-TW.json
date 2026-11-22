@@ -121,6 +121,7 @@
     "model_alias_placeholder": "模型別名（選填）",
     "invalid_provider_index": "無效的供應商索引。",
     "unsaved_changes_title": "未儲存的變更",
+    "model_editor_external_change": "伺服器設定已變更。請關閉並重新開啟編輯器後再儲存。",
     "unsaved_changes_message": "你有未儲存的變更，離開後將遺失這些變更。確定要離開嗎？",
     "clear": "清空",
     "copied": "已複製"
@@ -2698,6 +2699,7 @@
     "codex_oauth_url_label": "授權連結:",
     "codex_open_link": "開啟連結",
     "codex_copy_link": "複製連結",
+    "oauth_status_cancelled": "授權已取消，可以重新開始。",
     "codex_oauth_status_waiting": "等待驗證中...",
     "codex_oauth_status_success": "驗證成功！",
     "codex_oauth_status_error": "驗證失敗:",
@@ -5219,6 +5221,7 @@
   "theme": {
     "switch": "主題",
     "white": "明亮",
+    "wool": "羊毛紙",
     "dark": "黑夜",
     "auto": "自動"
   },

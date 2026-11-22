@@ -259,7 +259,8 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).not.toContain('POST /v1/chat/completions');
     expect(markup).toContain('Failed');
     expect(markup).toContain('>Elapsed</th>');
-    expect(markup).toContain('>TTFT</span><span class=');
+    expect(markup).toMatch(/<th scope="col"[^>]*>TTFT<\/th>/);
+    expect(markup).not.toContain('>TTFT</span>');
     expect(markup).toContain('500 ms');
     expect(markup).toContain('Elapsed');
     expect(markup).toContain('1.5 s');
@@ -358,7 +359,7 @@ describe('RealtimeEventsPanel', () => {
     const markup = renderPanel(baseRow({ reasoningTokens: 0 }));
 
     expect(markup).toContain('<colgroup>');
-    expect(markup.match(/<col\b/g)).toHaveLength(12);
+    expect(markup.match(/<col\b/g)).toHaveLength(13);
     expect(
       markup.match(new RegExp(`class="[^"]*${styles.realtimeSettingValue}[^"]*">-</span>`, 'g'))
     ).toHaveLength(2);
@@ -368,7 +369,8 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).toContain('>TPS</th>');
     expect(markup).toContain('Success');
     expect(markup).toContain('>Elapsed</th>');
-    expect(markup).toContain('>TTFT</span><span class=');
+    expect(markup).toMatch(/<th scope="col"[^>]*>TTFT<\/th>/);
+    expect(markup).not.toContain('>TTFT</span>');
     expect(markup).toContain(expectedDate);
     expect(markup).toContain(expectedTime);
     expect(markup).toContain('>↑</span>10');
@@ -700,9 +702,10 @@ describe('RealtimeEventsPanel', () => {
     expect(markup).toContain('>Elapsed</th>');
     expect(markup).not.toContain('500 ms');
     expect(markup).toContain('1.5 s');
-    expect(markup).toContain('>TTFT</span><span class=');
+    expect(markup).toMatch(/<th scope="col"[^>]*>TTFT<\/th>/);
+    expect(markup).not.toContain('>TTFT</span>');
     expect(markup).toContain('>--</span>');
-    expect(markup).toContain('>Elapsed</span><span class=');
+    expect(markup).not.toContain('>Elapsed</span>');
     expect(markup).toContain('>1.5 s</span>');
   });
 

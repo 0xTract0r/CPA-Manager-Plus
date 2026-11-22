@@ -1,12 +1,14 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type ChangeEvent,
 } from 'react';
+import { flushSync } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Card } from '@/components/ui/Card';
@@ -66,14 +68,15 @@ interface ProviderState {
   url?: string;
   state?: string;
   userCode?: string;
-  status?: 'idle' | 'waiting' | 'success' | 'error';
+  status?: 'idle' | 'waiting' | 'success' | 'error' | 'cancelled';
   error?: string;
   polling?: boolean;
   cancelling?: boolean;
   cancelError?: string;
   callbackUrl?: string;
   callbackSubmitting?: boolean;
-  callbackStatus?: 'success' | 'error';
+  callbackRequired?: boolean;
+  callbackStatus?: 'success' | 'error' | 'submission-error';
   callbackError?: string;
 }
 
@@ -192,6 +195,9 @@ const CALLBACK_SUPPORTED = new Set<string>([
   'xai',
   'devin',
 ]);
+const usesStandardCallbackFeedback = (provider: string) =>
+  provider === 'codex' || provider === 'anthropic' || provider === 'antigravity';
+
 const XAI_CALLBACK_URL = 'http://127.0.0.1:56121/callback';
 const SUCCESS_RESET_DELAY_MS = 5000;
 const getProviderI18nPrefix = (provider: BuiltInOAuthProvider) => provider.replace('-', '_');
@@ -312,6 +318,7 @@ export function OAuthPage() {
     Partial<Record<string, { version: number; baseline: AccountCredentialMutationBaseline }>>
   >({});
   const callbackAttemptVersions = useRef<Partial<Record<string, number>>>({});
+  const callbackInputPrefix = useId();
   const oauthPollingScopeRef = useRef(oauthPollingScope);
   const connectionFingerprintRef = useRef(connectionFingerprint);
   const vertexImportGenerationRef = useRef(0);
@@ -438,8 +445,10 @@ export function OAuthPage() {
     }));
   };
 
+  const attemptSequence = useRef(0);
+
   const beginProviderAttempt = (provider: OAuthProvider): ScopedOAuthProviderAttempt => {
-    const version = (providerAttemptVersions.current[provider] ?? 0) + 1;
+    const version = ++attemptSequence.current;
     providerAttemptVersions.current[provider] = version;
     return { scope: oauthPollingScopeRef.current, version, requestScope };
   };
@@ -473,7 +482,7 @@ export function OAuthPage() {
   };
 
   const beginCallbackAttempt = (provider: OAuthProvider): ScopedOAuthProviderAttempt => {
-    const version = (callbackAttemptVersions.current[provider] ?? 0) + 1;
+    const version = ++attemptSequence.current;
     callbackAttemptVersions.current[provider] = version;
     return { scope: oauthPollingScopeRef.current, version, requestScope };
   };
@@ -603,12 +612,17 @@ export function OAuthPage() {
     response: Awaited<ReturnType<typeof oauthApi.getAuthStatus>>,
     attempt: ScopedOAuthProviderAttempt,
     successMessage: string
-  ): 'completed' | 'waiting' | 'error' | 'stale' => {
+  ): 'completed' | 'waiting' | 'error' | 'cancelled' | 'stale' => {
     if (!isProviderAttemptCurrent(provider, attempt)) return 'stale';
     if (response.status === 'ok') {
       if (!completeProviderAuth(provider, attempt)) return 'stale';
       showNotification(successMessage, 'success');
       return 'completed';
+    }
+    if (response.status === 'cancelled') {
+      resetProviderAttempt(provider);
+      updateProviderState(provider, { status: 'cancelled' });
+      return 'cancelled';
     }
     if (response.status === 'error') {
       finishProviderAttempt(provider, attempt);
@@ -675,7 +689,7 @@ export function OAuthPage() {
           attempt,
           getProviderActionText(provider, 'oauth_status_success')
         );
-        if (result === 'error' || result === 'completed') {
+        if (result === 'error' || result === 'completed' || result === 'cancelled') {
           stopAttempt();
         }
       } catch (err: unknown) {
@@ -727,6 +741,7 @@ export function OAuthPage() {
       callbackSubmitting: false,
       callbackStatus: undefined,
       callbackError: undefined,
+      callbackRequired: undefined,
       callbackUrl: '',
     });
     try {
@@ -877,6 +892,18 @@ export function OAuthPage() {
     const providerState = states[provider];
     const callbackInput = (providerState?.callbackUrl || '').trim();
     if (!callbackInput) {
+      if (usesStandardCallbackFeedback(provider)) {
+        const input = document.getElementById(`${callbackInputPrefix}-${provider}`);
+        flushSync(() => {
+          updateProviderState(provider, {
+            callbackRequired: true,
+            callbackStatus: undefined,
+            callbackError: undefined,
+          });
+        });
+        input?.focus();
+        return;
+      }
       showNotification(
         t(
           provider === 'xai'
@@ -930,6 +957,7 @@ export function OAuthPage() {
       callbackSubmitting: true,
       callbackStatus: undefined,
       callbackError: undefined,
+      callbackRequired: undefined,
     });
     const probeStatus = async () => {
       const response = await oauthApi.getAuthStatus(state, providerAttempt.requestScope);
@@ -980,7 +1008,7 @@ export function OAuthPage() {
           finishCallbackAttempt(provider, callbackAttempt);
           updateProviderState(provider, {
             callbackSubmitting: false,
-            callbackStatus: 'error',
+            callbackStatus: usesStandardCallbackFeedback(provider) ? 'submission-error' : 'error',
             callbackError: getErrorMessage(probeError) || undefined,
           });
         }
@@ -996,9 +1024,10 @@ export function OAuthPage() {
       finishCallbackAttempt(provider, callbackAttempt);
       updateProviderState(provider, {
         callbackSubmitting: false,
-        callbackStatus: 'error',
+        callbackStatus: usesStandardCallbackFeedback(provider) ? 'submission-error' : 'error',
         callbackError: errorMessage,
       });
+      if (usesStandardCallbackFeedback(provider)) return;
       const notificationMessage = errorMessage
         ? `${t('auth_login.oauth_callback_error')} ${errorMessage}`
         : t('auth_login.oauth_callback_error');
@@ -1090,6 +1119,7 @@ export function OAuthPage() {
         {providers.map((provider) => {
           const state = states[provider.id] || {};
           const canSubmitCallback = provider.supportsCallback && Boolean(state.url);
+          const standardCallbackFeedback = usesStandardCallbackFeedback(provider.id);
           const loginButtonLabel =
             state.status === 'success'
               ? t('auth_login.login_another_account')
@@ -1204,6 +1234,12 @@ export function OAuthPage() {
                               ? 'auth_login.xai_callback_hint'
                               : 'auth_login.oauth_callback_hint'
                         )}
+                        id={standardCallbackFeedback ? `${callbackInputPrefix}-${provider.id}` : undefined}
+                        error={
+                          standardCallbackFeedback && state.callbackRequired
+                            ? t('auth_login.oauth_callback_required')
+                            : undefined
+                        }
                         value={state.callbackUrl || ''}
                         disabled={
                           provider.id === 'devin' &&
@@ -1214,6 +1250,7 @@ export function OAuthPage() {
                             callbackUrl: e.target.value,
                             callbackStatus: undefined,
                             callbackError: undefined,
+                            callbackRequired: undefined,
                           })
                         }
                         placeholder={t(
@@ -1243,6 +1280,15 @@ export function OAuthPage() {
                           {t('auth_login.oauth_callback_status_success')}
                         </div>
                       )}
+                      {standardCallbackFeedback && (
+                        <div role="status" aria-atomic="true">
+                          {state.callbackStatus === 'submission-error' && (
+                            <div className="status-badge error">
+                              {t('auth_login.oauth_callback_status_error')} {state.callbackError || ''}
+                            </div>
+                          )}
+                        </div>
+                      )}
                       {state.callbackStatus === 'error' && (
                         <div className="status-badge error">
                           {t('auth_login.oauth_callback_status_error')} {state.callbackError || ''}
@@ -1256,7 +1302,9 @@ export function OAuthPage() {
                         ? getProviderActionText(provider.id, 'oauth_status_success')
                         : state.status === 'error'
                           ? `${getProviderActionText(provider.id, 'oauth_status_error')} ${state.error || ''}`
-                          : getProviderActionText(provider.id, 'oauth_status_waiting')}
+                          : state.status === 'cancelled'
+                            ? t('auth_login.oauth_status_cancelled')
+                            : getProviderActionText(provider.id, 'oauth_status_waiting')}
                     </div>
                   )}
                   {state.status === 'success' && (

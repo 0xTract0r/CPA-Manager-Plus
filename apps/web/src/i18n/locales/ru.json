@@ -121,6 +121,7 @@
     "model_alias_placeholder": "Псевдоним модели (необязательно)",
     "invalid_provider_index": "Неверный индекс провайдера.",
     "unsaved_changes_title": "Несохранённые изменения",
+    "model_editor_external_change": "Настройки на сервере изменились. Закройте и снова откройте редактор перед сохранением.",
     "unsaved_changes_message": "У вас есть несохранённые изменения. Если вы уйдёте, они будут потеряны. Выйти?",
     "clear": "Очистить",
     "copied": "Скопировано"
@@ -2702,6 +2703,7 @@
     "codex_oauth_url_label": "URL авторизации:",
     "codex_open_link": "Открыть ссылку",
     "codex_copy_link": "Скопировать ссылку",
+    "oauth_status_cancelled": "Авторизация отменена. Можно начать заново.",
     "codex_oauth_status_waiting": "Ожидание аутентификации...",
     "codex_oauth_status_success": "Аутентификация успешна!",
     "codex_oauth_status_error": "Ошибка аутентификации:",
@@ -5223,6 +5225,7 @@
   "theme": {
     "switch": "Тема",
     "white": "Светлая",
+    "wool": "Шерстяная бумага",
     "dark": "Тёмная",
     "auto": "Авто"
   },

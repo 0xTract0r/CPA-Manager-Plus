@@ -4088,13 +4088,18 @@ func TestAnalyticsReportsActualDerivedReaderFallbacksAfterArchivedDeletion(t *te
 		t.Fatalf("mark projection unavailable: %v", err)
 	}
 
+	for _, include := range []Include{{AccountStats: true}, {APIKeyStats: true}} {
+		if _, err := New(db, true).Analytics(ctx, Request{FromMS: fromMS, ToMS: toMS, Include: include}); !errors.Is(err, monitoringrepo.ErrArchivedStatsSourceUnavailable) {
+			t.Fatalf("incomplete archived identity stats returned successfully: %v", err)
+		}
+	}
+
 	response, err := New(db, true).Analytics(ctx, Request{
 		FromMS: fromMS,
 		ToMS:   toMS,
 		Include: Include{
 			Summary:         true,
 			SummaryProfile:  "compact",
-			AccountStats:    true,
 			FilterSelectors: true,
 			Granularity:     "hour",
 		},
@@ -4102,16 +4107,113 @@ func TestAnalyticsReportsActualDerivedReaderFallbacksAfterArchivedDeletion(t *te
 	if err != nil {
 		t.Fatalf("fallback coverage analytics: %v", err)
 	}
-	if response.Summary == nil || response.Summary.TotalCalls != 3 ||
-		len(response.AccountStats) != 1 || response.AccountStats[0].Calls != 1 {
-		t.Fatalf("fallback response summary=%#v accounts=%#v", response.Summary, response.AccountStats)
+	if response.Summary == nil || response.Summary.TotalCalls != 3 {
+		t.Fatalf("fallback response summary=%#v", response.Summary)
 	}
 	if response.Coverage == nil || !response.Coverage.CoreAggregateUsed ||
 		slices.Contains(response.Coverage.FidelityLimitations, "core_metrics_require_raw_events") ||
-		!slices.Contains(response.Coverage.FidelityLimitations, "identity_metrics_require_raw_events") ||
 		!slices.Contains(response.Coverage.FidelityLimitations, "filter_options_require_raw_events") {
 		t.Fatalf("fallback coverage = %#v", response.Coverage)
 	}
+}
+
+func TestAnalyticsArchivedIdentityStatsRequireTheirActualReadSources(t *testing.T) {
+	dbSQL, err := sqliterepo.Open(filepath.Join(t.TempDir(), "archive-read.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := store.New(dbSQL)
+	t.Cleanup(func() { _ = db.Close() })
+	ctx := context.Background()
+	const day = int64(86400000)
+	start := int64(20669) * day
+	events := []usage.Event{
+		monitoringEvent("removed", start+1000, "gpt-a", "auth-1", "source-a", false, 10, 2, 0, 0, 12, nil),
+		monitoringEvent("archived-marker", start+1500, "gpt-a", "auth-1", "source-a", false, 10, 2, 0, 0, 12, nil),
+		monitoringEvent("live", start+4000, "gpt-a", "auth-1", "source-a", false, 10, 2, 0, 0, 12, nil),
+	}
+	for i := range events {
+		events[i].AccountSnapshot = "account@example.invalid"
+		events[i].APIKeyHash = testCanonicalHash("fixture-api-key")
+	}
+	events[1].AuthProviderSnapshot = "codex"
+	events[1].AuthProjectIDSnapshot = usageidentity.CodexAccountIDSnapshot("fixture-workspace")
+	if _, err := db.InsertEvents(ctx, events); err != nil {
+		t.Fatal(err)
+	}
+	catchUpMonitoringArchiveDeleteReadiness(t, ctx, db)
+	archiveMonitoringEventsThrough(t, ctx, db, start+2000)
+
+	exec := func(query string, args ...any) {
+		t.Helper()
+		if _, err := dbSQL.ExecContext(ctx, query, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check := func(name string, from, to int64, filters Filters, want int64, unavailable bool) {
+		t.Helper()
+		t.Run(name, func(t *testing.T) {
+			for _, include := range []Include{{AccountStats: true}, {APIKeyStats: true}} {
+				result, err := New(db, true).Analytics(ctx, Request{
+					FromMS: from, ToMS: to, Filters: filters, Include: include,
+				})
+				if unavailable {
+					if !errors.Is(err, monitoringrepo.ErrArchivedStatsSourceUnavailable) {
+						t.Fatalf("account=%v expected source error, got %v", include.AccountStats, err)
+					}
+					continue
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				var calls int64
+				for _, row := range result.AccountStats {
+					calls += row.Calls
+				}
+				for _, row := range result.APIKeyStats {
+					calls += row.Calls
+				}
+				if calls != want {
+					t.Fatalf("account=%v calls=%d, want %d", include.AccountStats, calls, want)
+				}
+			}
+		})
+	}
+	exec("create table fixture_projection as select * from usage_monitoring_event_projection_v1 where timestamp_ms < ?", start+2000)
+	exec("create table fixture_coverage as select * from usage_archive_deleted_coverage_daily")
+	check("intact partial", start+500, start+1200, Filters{}, 1, false)
+	exec("delete from usage_monitoring_event_projection_v1 where timestamp_ms = ?", start+1000)
+	check("missing partial projection", start+500, start+2000, Filters{}, 0, true)
+	check("missing cross-day edge projection", start+500, start+2*day, Filters{}, 0, true)
+	check("covered complete day", start, start+day, Filters{}, 3, false)
+	exec("delete from usage_monitoring_event_projection_v1 where timestamp_ms = ?", start+1500)
+	if _, err := New(db, true).Analytics(ctx, Request{
+		FromMS: start, ToMS: start + day, Include: Include{AccountStats: true},
+	}); !errors.Is(err, monitoringrepo.ErrArchivedStatsSourceUnavailable) {
+		t.Fatalf("missing excluded daily marker was not detected: %v", err)
+	}
+	apiOnly, err := New(db, true).Analytics(ctx, Request{
+		FromMS: start, ToMS: start + day, Include: Include{APIKeyStats: true},
+	})
+	if err != nil || len(apiOnly.APIKeyStats) != 1 || apiOnly.APIKeyStats[0].Calls != 3 {
+		t.Fatalf("API key daily includes the marker: stats=%+v, err=%v", apiOnly.APIKeyStats, err)
+	}
+	check("empty window outside deletion", start+2000, start+3000, Filters{}, 0, false)
+	check("filter requiring event rows", start, start+day, Filters{ProjectIDs: []string{"fixture-project"}}, 0, true)
+	if _, err := New(db, true).Analytics(ctx, Request{
+		FromMS: start, ToMS: start + day, SearchQuery: "%raw%", Include: Include{AccountStats: true, APIKeyStats: true},
+	}); !errors.Is(err, monitoringrepo.ErrArchivedStatsSourceUnavailable) {
+		t.Fatalf("wildcard raw fallback returned incomplete stats: %v", err)
+	}
+	exec("insert into usage_monitoring_event_projection_v1 select * from fixture_projection")
+	exec("update usage_monitoring_rollup_state set coverage_event_id = 0 where rollup_name = ?", monitoringrepo.StatsRollupName)
+	exec("update usage_monitoring_rollup_state set coverage_event_id = 0 where rollup_name = ?", monitoringrepo.ProjectionRollupName)
+	check("projection watermark does not cover archive tail", start, start+day, Filters{}, 0, true)
+	exec("delete from usage_archive_deleted_coverage_daily")
+	check("daily coverage missing while references exist", start, start+day, Filters{}, 0, true)
+	exec("insert into usage_archive_deleted_coverage_daily select * from fixture_coverage")
+	exec("delete from usage_archive_event_refs where raw_deleted_at_ms is not null")
+	check("references missing while daily coverage exists", start+500, start+2000, Filters{}, 0, true)
 }
 
 func TestAnalyticsPartialArchivedEdgeRepairsMissingProjectionBeforeDelete(t *testing.T) {

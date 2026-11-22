@@ -213,6 +213,103 @@ describe('OAuthPage request lifecycle', () => {
     expect(pageMocks.getAuthStatus).not.toHaveBeenCalled();
   });
 
+  it('associates an empty standard callback with the field and announces request errors separately', async () => {
+    pageMocks.location.search = '';
+    pageMocks.startAuth.mockResolvedValueOnce({
+      url: 'https://oauth.example/fixture',
+      state: 'fixture-state',
+    });
+    const focus = vi.fn();
+    const getElementById = vi.fn(() => ({ focus }));
+    vi.stubGlobal('document', { getElementById });
+    await act(async () => {
+      renderer = create(<OAuthPage />);
+    });
+    await act(async () => {
+      await findCodexOAuthButton(renderer!).props.onClick();
+    });
+
+    const field = () => {
+      const node = renderer!.root.findAllByType(Input)
+        .find((input) => input.props.label === 'auth_login.oauth_callback_label');
+      if (!node) throw new Error('OAuth callback input not found');
+      return node.findByType('input');
+    };
+    const region = () => renderer!.root.findByProps({ role: 'status', 'aria-atomic': 'true' });
+
+    expect(readText(region())).toBe('');
+    await act(async () => {
+      await findCallbackButton(renderer!).props.onClick();
+    });
+    expect(pageMocks.submitCallback).not.toHaveBeenCalled();
+    expect(field().props['aria-invalid']).toBe(true);
+    const errorID = field().props['aria-describedby'].split(' ').find((id: string) => id.endsWith('-error'));
+    expect(readText(renderer!.root.findByProps({ id: errorID }))).toBe('auth_login.oauth_callback_required');
+    expect(getElementById).toHaveBeenCalledWith(field().props.id);
+    expect(focus).toHaveBeenCalledOnce();
+    expect(readText(region())).toBe('');
+
+    await act(async () => {
+      field().props.onChange({ target: { value: 'http://127.0.0.1/callback?code=synthetic&state=fixture-state' } });
+    });
+    expect(field().props['aria-invalid']).not.toBe(true);
+    pageMocks.submitCallback.mockRejectedValueOnce(new Error('Synthetic request failure'));
+    await act(async () => {
+      await findCallbackButton(renderer!).props.onClick();
+    });
+    expect(pageMocks.submitCallback).toHaveBeenCalledOnce();
+    expect(field().props['aria-invalid']).not.toBe(true);
+    expect(readText(region())).toContain('auth_login.oauth_callback_status_error');
+    expect(readText(region())).toContain('Synthetic request failure');
+    expect(pageMocks.showNotification).not.toHaveBeenCalled();
+    expect(focus).toHaveBeenCalledOnce();
+  });
+
+  it.each(['connection change', 'new attempt'])(
+    'does not leave focus pending for the next callback form after a %s',
+    async (transition) => {
+      pageMocks.location.search = '';
+      pageMocks.startAuth
+        .mockResolvedValueOnce({ url: 'https://oauth.example/first', state: 'first-state' })
+        .mockResolvedValueOnce({ url: 'https://oauth.example/second', state: 'second-state' });
+      const frames: FrameRequestCallback[] = [];
+      window.requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => frames.push(callback));
+      const oldFocus = vi.fn();
+      const newFocus = vi.fn();
+      let currentInput = { focus: oldFocus };
+      vi.stubGlobal('document', { getElementById: vi.fn(() => currentInput) });
+
+      await act(async () => {
+        renderer = create(<OAuthPage />);
+      });
+      await act(async () => {
+        await findCodexOAuthButton(renderer!).props.onClick();
+      });
+      await act(async () => {
+        await findCallbackButton(renderer!).props.onClick();
+      });
+
+      if (transition === 'connection change') {
+        pageMocks.apiBase = 'http://cpa-b.local:8317';
+        await act(async () => renderer!.update(<OAuthPage />));
+      }
+      await act(async () => {
+        await findCodexOAuthButton(renderer!).props.onClick();
+      });
+      expect(pageMocks.startAuth).toHaveBeenCalledTimes(2);
+      expect(renderer!.root.findAllByType('div').some(
+        (node) => node.props.children === 'https://oauth.example/second'
+      )).toBe(true);
+      expect(findCallbackButton(renderer!)).toBeDefined();
+      currentInput = { focus: newFocus };
+      for (const frame of frames) frame(1);
+
+      expect(newFocus).not.toHaveBeenCalled();
+      expect(oldFocus).toHaveBeenCalledOnce();
+      expect(pageMocks.submitCallback).not.toHaveBeenCalled();
+    }
+  );
+
   it('discards a late callback response after the connection changes', async () => {
     const callbackDeferred = createDeferred<void>();
     pageMocks.startAuth.mockResolvedValueOnce({

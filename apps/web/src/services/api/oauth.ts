@@ -46,7 +46,7 @@ export const oauthApi = {
   },
 
   getAuthStatus: (state: string, requestScope?: ApiClientRequestScope) =>
-    apiClient.get<{ status: 'ok' | 'wait' | 'error'; error?: string }>(`/get-auth-status`, {
+    apiClient.get<{ status: 'ok' | 'wait' | 'error' | 'cancelled'; error?: string }>(`/get-auth-status`, {
       ...(requestScope ? createScopedApiRequestConfig(requestScope) : {}),
       params: { state },
     }),

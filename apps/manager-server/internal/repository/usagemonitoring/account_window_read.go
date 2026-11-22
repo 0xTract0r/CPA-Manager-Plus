@@ -21,8 +21,22 @@ func (r *repository) LoadAccountWindowStats(ctx context.Context, windows []Accou
 	}
 	defer func() { _ = tx.Rollback() }()
 	state, available, projectionComplete, err := projectionReadState(ctx, tx)
-	if err != nil || !available {
-		return nil, state, available, err
+	if err != nil {
+		return nil, state, false, err
+	}
+	from, to := windows[0].FromMS, windows[0].ToMS
+	for _, window := range windows[1:] {
+		from = min(from, window.FromMS)
+		to = max(to, window.ToMS)
+	}
+	mayReadArchives, err := hasArchivedStatsReadRange(ctx, tx, from, to)
+	if err != nil || (!available && !mayReadArchives) {
+		return nil, state, false, err
+	}
+	projectedThrough := state.CoverageEventID
+	if !available {
+		projectedThrough = 0
+		projectionComplete = false
 	}
 	windows, err = usageevent.ResolveAccountWindowLegacyKeys(ctx, tx, windows)
 	if err != nil {
@@ -32,13 +46,28 @@ func (r *repository) LoadAccountWindowStats(ctx context.Context, windows []Accou
 	if err != nil {
 		return nil, state, false, err
 	}
+	if mayReadArchives {
+		for _, window := range windows {
+			filter := AnalyticsFilter{FromMS: window.FromMS, ToMS: window.ToMS}
+			archived, err := archivedStatsReadRange(ctx, tx, filter)
+			if err != nil {
+				return nil, state, false, err
+			}
+			if archived {
+				useDaily := dailyAvailable && accountWindowCanUseDaily(window)
+				if err := validateStatsReadSources(ctx, tx, filter, statsState.CoverageEventID, projectedThrough, revision, useDaily, true); err != nil {
+					return nil, state, false, err
+				}
+			}
+		}
+	}
 	grouped := make(map[accountWindowStatKey]*AccountWindowModelStat)
 	if dailyAvailable {
 		if err := mergeStoredAccountWindowStats(ctx, tx, revision, windows, grouped); err != nil {
 			return nil, state, false, err
 		}
 	}
-	if err := mergeProjectedAccountWindowStats(ctx, tx, windows, state.CoverageEventID, projectionComplete, statsState.CoverageEventID, dailyAvailable, grouped); err != nil {
+	if err := mergeProjectedAccountWindowStats(ctx, tx, windows, projectedThrough, projectionComplete, statsState.CoverageEventID, dailyAvailable, grouped); err != nil {
 		return nil, state, false, err
 	}
 	if err := tx.Commit(); err != nil {
