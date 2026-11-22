@@ -213,6 +213,58 @@ describe('OAuthPage request lifecycle', () => {
     expect(pageMocks.getAuthStatus).not.toHaveBeenCalled();
   });
 
+  it('associates an empty standard callback with the field and announces request errors separately', async () => {
+    pageMocks.location.search = '';
+    pageMocks.startAuth.mockResolvedValueOnce({
+      url: 'https://oauth.example/fixture',
+      state: 'fixture-state',
+    });
+    const focus = vi.fn();
+    const getElementById = vi.fn(() => ({ focus }));
+    vi.stubGlobal('document', { getElementById });
+    await act(async () => {
+      renderer = create(<OAuthPage />);
+    });
+    await act(async () => {
+      await findCodexOAuthButton(renderer!).props.onClick();
+    });
+
+    const field = () => {
+      const node = renderer!.root.findAllByType(Input)
+        .find((input) => input.props.label === 'auth_login.oauth_callback_label');
+      if (!node) throw new Error('OAuth callback input not found');
+      return node.findByType('input');
+    };
+    const region = () => renderer!.root.findByProps({ role: 'status', 'aria-atomic': 'true' });
+
+    expect(readText(region())).toBe('');
+    await act(async () => {
+      await findCallbackButton(renderer!).props.onClick();
+    });
+    expect(pageMocks.submitCallback).not.toHaveBeenCalled();
+    expect(field().props['aria-invalid']).toBe(true);
+    const errorID = field().props['aria-describedby'].split(' ').find((id: string) => id.endsWith('-error'));
+    expect(readText(renderer!.root.findByProps({ id: errorID }))).toBe('auth_login.oauth_callback_required');
+    expect(getElementById).toHaveBeenCalledWith(field().props.id);
+    expect(focus).toHaveBeenCalledOnce();
+    expect(readText(region())).toBe('');
+
+    await act(async () => {
+      field().props.onChange({ target: { value: 'http://127.0.0.1/callback?code=synthetic&state=fixture-state' } });
+    });
+    expect(field().props['aria-invalid']).not.toBe(true);
+    pageMocks.submitCallback.mockRejectedValueOnce(new Error('Synthetic request failure'));
+    await act(async () => {
+      await findCallbackButton(renderer!).props.onClick();
+    });
+    expect(pageMocks.submitCallback).toHaveBeenCalledOnce();
+    expect(field().props['aria-invalid']).not.toBe(true);
+    expect(readText(region())).toContain('auth_login.oauth_callback_status_error');
+    expect(readText(region())).toContain('Synthetic request failure');
+    expect(pageMocks.showNotification).not.toHaveBeenCalled();
+    expect(focus).toHaveBeenCalledOnce();
+  });
+
   it('discards a late callback response after the connection changes', async () => {
     const callbackDeferred = createDeferred<void>();
     pageMocks.startAuth.mockResolvedValueOnce({
