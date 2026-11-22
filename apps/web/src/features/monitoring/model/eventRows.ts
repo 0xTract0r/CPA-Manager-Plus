@@ -258,6 +258,7 @@ export const buildEventRows = (
         apiKeyHash,
         apiKeyLabel,
         apiKeyMasked,
+        serverAttributionFiltered: detail.__serverAttributionFiltered,
         provider: authMeta?.provider || snapshotProvider || eventProvider || sourceMeta.type || '-',
         providerIdentity: effectiveProvider,
         planType: authMeta?.planType || '-',

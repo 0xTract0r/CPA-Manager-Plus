@@ -103,7 +103,8 @@ const hasCacheActivity = (
 
 export const buildScopeFilteredRows = (
   rows: MonitoringEventRow[],
-  scopeFilters?: MonitoringScopeFilters
+  scopeFilters?: MonitoringScopeFilters,
+  options?: { useServerAttribution?: boolean }
 ) => {
   if (!scopeFilters) return rows;
 
@@ -129,6 +130,9 @@ export const buildScopeFilteredRows = (
   const headerTraceId = normalizeScopeValue(scopeFilters.headerTraceId);
 
   return rows.filter((row) => {
+    // Display names can follow the current account after a provider rename.
+    // Marked rows already passed the effective SQL predicates for this scope.
+    const hasServerAttribution = options?.useServerAttribution && row.serverAttributionFiltered;
     if (isActiveScopeFilterValue(scopeFilters.account)) {
       if (accountAuthIndices.size > 0) {
         if (!accountAuthIndices.has(normalizeScopeValue(row.authIndex))) return false;
@@ -161,6 +165,7 @@ export const buildScopeFilteredRows = (
     }
 
     if (
+      !hasServerAttribution &&
       isActiveScopeFilterValue(scopeFilters.provider) &&
       normalizeScopeValue(row.provider) !== provider
     ) {
@@ -195,6 +200,7 @@ export const buildScopeFilteredRows = (
     }
 
     if (
+      !hasServerAttribution &&
       isActiveScopeFilterValue(scopeFilters.channel) &&
       normalizeScopeValue(row.channel) !== channel
     ) {

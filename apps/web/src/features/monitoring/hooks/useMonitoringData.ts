@@ -739,8 +739,10 @@ export function useMonitoringData({
     [allRows, customTimeRange, searchApiKeyHash, searchQuery, timeRange]
   );
   const filteredRows = useMemo(
-    () => buildScopeFilteredRows(rangeFilteredRows, scopeFilters),
-    [rangeFilteredRows, scopeFilters]
+    () => buildScopeFilteredRows(rangeFilteredRows, scopeFilters, {
+      useServerAttribution: !!currentAnalyticsData?.events,
+    }),
+    [currentAnalyticsData?.events, rangeFilteredRows, scopeFilters]
   );
   const statsRows = useMemo(() => filteredRows.filter(shouldIncludeInStats), [filteredRows]);
 

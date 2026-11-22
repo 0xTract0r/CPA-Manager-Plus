@@ -2047,6 +2047,7 @@ export interface MonitoringAnalyticsRecentFailure {
 }
 
 export interface MonitoringAnalyticsEventRow {
+  attribution_filtered?: boolean;
   request_id?: string;
   event_hash: string;
   timestamp_ms: number;
