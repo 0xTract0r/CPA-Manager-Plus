@@ -128,16 +128,17 @@ type Request struct {
 }
 
 type Filters struct {
-	AccountFocusID   string   `json:"account_focus_id,omitempty"`
-	UnresolvedModels []string `json:"unresolved_models"`
-	ResolvedModels   []string `json:"resolved_models"`
-	RequestIDs       []string `json:"request_ids"`
-	Models           []string `json:"models"`
-	Providers        []string `json:"providers"`
-	Accounts         []string `json:"accounts"`
-	CredentialIDs    []string `json:"credential_ids"`
-	AuthFiles        []string `json:"auth_files"`
-	AuthIndices      []string `json:"auth_indices"`
+	ChannelScope     *store.AnalyticsChannelScope `json:"channel_scope"`
+	AccountFocusID   string                       `json:"account_focus_id,omitempty"`
+	UnresolvedModels []string                     `json:"unresolved_models"`
+	ResolvedModels   []string                     `json:"resolved_models"`
+	RequestIDs       []string                     `json:"request_ids"`
+	Models           []string                     `json:"models"`
+	Providers        []string                     `json:"providers"`
+	Accounts         []string                     `json:"accounts"`
+	CredentialIDs    []string                     `json:"credential_ids"`
+	AuthFiles        []string                     `json:"auth_files"`
+	AuthIndices      []string                     `json:"auth_indices"`
 	// SearchAuthIndices 与顶层 search_query 取 OR，不替代 AuthIndices 等显式筛选。
 	SearchAuthIndices []string `json:"search_auth_indices"`
 	APIKeyHashes      []string `json:"api_key_hashes"`
@@ -2228,6 +2229,7 @@ func buildFilter(req Request) store.AnalyticsFilter {
 		includeFailed = *req.Filters.IncludeFailed
 	}
 	return store.AnalyticsFilter{
+		ChannelScope:      req.Filters.ChannelScope,
 		RequestIDs:        req.Filters.RequestIDs,
 		FromMS:            req.FromMS,
 		ToMS:              req.ToMS,
@@ -2353,6 +2355,7 @@ func (s *Service) filterOptionsWithSource(
 func filterOptionsMatchMainScope(filter store.AnalyticsFilter) bool {
 	return len(filter.Models) == 0 &&
 		len(filter.Providers) == 0 &&
+		filter.ChannelScope == nil &&
 		len(filter.Accounts) == 0 &&
 		len(filter.CredentialIDs) == 0 &&
 		len(filter.AuthFiles) == 0 &&
@@ -2680,6 +2683,7 @@ func filterOptionsBaseFilter(filter store.AnalyticsFilter) store.AnalyticsFilter
 	optionFilter := filter
 	optionFilter.Models = nil
 	optionFilter.Providers = nil
+	optionFilter.ChannelScope = nil
 	optionFilter.Accounts = nil
 	optionFilter.CredentialIDs = nil
 	optionFilter.AuthFiles = nil

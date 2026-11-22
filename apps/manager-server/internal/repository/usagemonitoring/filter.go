@@ -43,6 +43,7 @@ func PrefersEventProjection(filter AnalyticsFilter) bool {
 		strings.TrimSpace(filter.SearchAPIKeyHash) != "" ||
 		len(filter.Models) > 0 ||
 		len(filter.Providers) > 0 ||
+		filter.ChannelScope != nil ||
 		len(filter.Accounts) > 0 ||
 		len(filter.CredentialIDs) > 0 ||
 		len(filter.AuthFiles) > 0 ||
@@ -69,6 +70,7 @@ func SupportsSelectorFilter(filter AnalyticsFilter) bool {
 		strings.TrimSpace(filter.SearchAPIKeyHash) == "" &&
 		len(filter.Models) == 0 &&
 		len(filter.Providers) == 0 &&
+		filter.ChannelScope == nil &&
 		len(filter.Accounts) == 0 &&
 		len(filter.CredentialIDs) == 0 &&
 		len(filter.AuthFiles) == 0 &&
@@ -127,6 +129,7 @@ func appendStatsScopeConditions(filter AnalyticsFilter, prefix string, condition
 	}
 	addInCondition(modelExpression, normalizeModelFilterValues(filter.Models))
 	addProviderStatsCondition(filter.Providers, prefix, conditions, args)
+	filter.ChannelScope.AppendSQL(prefix, conditions, args)
 	addAccountStatsCondition(filter.Accounts, prefix, conditions, args)
 	credentialExpr := fmt.Sprintf("coalesce(nullif(%sauth_file_snapshot, ''), nullif(%sauth_index, ''), nullif(%ssource_hash, ''), nullif(%ssource, ''), '-')", prefix, prefix, prefix, prefix)
 	addInCondition(credentialExpr, filter.CredentialIDs)

@@ -452,6 +452,11 @@ const addFilterValueConstraint = (
   return constrained.length > 0 ? constrained : [NO_MATCH_FILTER_VALUE];
 };
 
+export const buildMonitoringChannelIndex = (channels: MonitoringChannelMeta[]) =>
+  new Map<string, MonitoringChannelMeta>(
+    channels.flatMap((channel) => channel.authIndices.map((index) => [index, channel] as const))
+  );
+
 export const buildAnalyticsFilters = (
   scopeFilters: MonitoringScopeFilters | undefined,
   authMetaMap: Map<string, MonitoringAuthMeta>,
@@ -573,25 +578,29 @@ export const buildAnalyticsFilters = (
     ]);
   }
   if (isActiveFilterValue(scopeFilters.channel)) {
-    const channel = scopeFilters.channel!.trim();
-    const namedChannels = channels.filter((item) => item.name === channel);
-    const matchedChannelIndices = normalizeAuthFilterValues(namedChannels.flatMap((item) => item.authIndices));
-    const repeatsProvider =
-      namedChannels.length === 0 &&
-      isActiveFilterValue(scopeFilters.provider) &&
-      normalizeFilterText(channel) === normalizeFilterText(scopeFilters.provider);
-    if (matchedChannelIndices.length > 0) {
-      authIndices = addAuthIndexConstraint(authIndices, matchedChannelIndices);
-    } else if (
-      !isActiveFilterValue(scopeFilters.provider) &&
-      !isActiveFilterValue(scopeFilters.account) &&
-      authIndices === null
-    ) {
-      // Preserve the legacy stand-alone channel provider alias.
-      filters.providers = [channel];
-    } else if (!repeatsProvider) {
-      // Only a matching historical provider alias can use the existing provider constraint.
-      authIndices = new Set();
+    const channel = normalizeFilterText(scopeFilters.channel);
+    const configured = channels.some(({ name }) => normalizeFilterText(name) === channel);
+    const channelByAuthIndex = buildMonitoringChannelIndex(channels);
+    const assignments = new Map<string, string>();
+    channelByAuthIndex.forEach(({ name }, index) => assignments.set(index, name));
+    authMetaMap.forEach((meta, index) => {
+      const owner = channelByAuthIndex.get(index) || channelByAuthIndex.get(meta.authIndex);
+      if (owner) assignments.set(index, owner.name);
+      else if (!configured && meta.provider) assignments.set(index, meta.provider);
+    });
+    const matching = Array.from(assignments.entries())
+      .filter(([, name]) => normalizeFilterText(name) === channel)
+      .map(([index]) => index)
+      .sort();
+
+    if (configured) {
+      authIndices = matching.length ? addAuthIndexConstraint(authIndices, matching) : new Set();
+    } else {
+      filters.channel_scope = {
+        recorded_provider: channel,
+        ...(matching.length ? { auth_indices: matching } : {}),
+        ...(assignments.size ? { assigned_auth_indices: Array.from(assignments.keys()).sort() } : {}),
+      };
     }
   }
   if (authIndices) {

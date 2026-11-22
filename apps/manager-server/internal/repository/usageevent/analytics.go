@@ -39,7 +39,17 @@ type AccountFocusPredicate struct {
 	Origin  AnalyticsFilter
 	Members string
 }
+
+// AnalyticsChannelScope applies current ownership before falling back to
+// the recorded provider of events with no current assignment.
+type AnalyticsChannelScope struct {
+	AuthIndices         []string `json:"auth_indices"`
+	AssignedAuthIndices []string `json:"assigned_auth_indices"`
+	RecordedProvider    string   `json:"recorded_provider"`
+}
+
 type AnalyticsFilter struct {
+	ChannelScope     *AnalyticsChannelScope
 	Focus            *AccountFocusPredicate `json:"-"`
 	UnresolvedModels []string
 	ResolvedModels   []string
@@ -3032,6 +3042,7 @@ func analyticsWhere(filter AnalyticsFilter) (string, []any) {
 	addInCondition("resolved_model", filter.ResolvedModels)
 	addInCondition("case when nullif(resolved_model,'') is null then model else null end", filter.UnresolvedModels)
 	addProviderCondition(filter.Providers, &conditions, &args)
+	filter.ChannelScope.AppendSQL("", &conditions, &args)
 	addAccountCondition(filter.Accounts, &conditions, &args)
 	addInCondition(credentialIDExpr, filter.CredentialIDs)
 	addInCondition("auth_file_snapshot", filter.AuthFiles)
@@ -3100,6 +3111,34 @@ func analyticsWhere(filter AnalyticsFilter) (string, []any) {
 		args = append(args, focus.Members)
 	}
 	return "where " + strings.Join(conditions, " and "), args
+}
+
+// AppendSQL adds the same channel predicate to raw, projected, or aggregated monitoring rows.
+func (scope *AnalyticsChannelScope) AppendSQL(prefix string, conditions *[]string, args *[]any) {
+	if scope == nil {
+		return
+	}
+	authIndex := "trim(coalesce(" + prefix + "auth_index, ''))"
+	recordedProvider := "lower(trim(coalesce(nullif(" + prefix + "auth_provider_snapshot, ''), " + prefix + "provider, '')))"
+	matches := make([]string, 0, 2)
+	if indices := normalizeFilterValues(scope.AuthIndices); len(indices) > 0 {
+		matches = append(matches, authIndex+" in (select value from json_each(?))")
+		*args = append(*args, encodeJSONFilterValues(indices))
+	}
+	if provider := strings.ToLower(strings.TrimSpace(scope.RecordedProvider)); provider != "" {
+		recorded := recordedProvider + " = ?"
+		*args = append(*args, provider)
+		if assigned := normalizeFilterValues(scope.AssignedAuthIndices); len(assigned) > 0 {
+			recorded += " and " + authIndex + " not in (select value from json_each(?))"
+			*args = append(*args, encodeJSONFilterValues(assigned))
+		}
+		matches = append(matches, "("+recorded+")")
+	}
+	if len(matches) == 0 {
+		*conditions = append(*conditions, "1 = 0")
+		return
+	}
+	*conditions = append(*conditions, "("+strings.Join(matches, " or ")+")")
 }
 
 func addProviderCondition(values []string, conditions *[]string, args *[]any) {
