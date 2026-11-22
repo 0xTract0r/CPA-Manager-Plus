@@ -315,6 +315,11 @@ const addFilterValueConstraint = (
   return constrained.length > 0 ? constrained : [NO_MATCH_FILTER_VALUE];
 };
 
+export const buildMonitoringChannelIndex = (channels: MonitoringChannelMeta[]) =>
+  new Map<string, MonitoringChannelMeta>(
+    channels.flatMap((channel) => channel.authIndices.map((index) => [index, channel] as const))
+  );
+
 export const buildAnalyticsFilters = (
   scopeFilters: MonitoringScopeFilters | undefined,
   authMetaMap: Map<string, MonitoringAuthMeta>,
@@ -408,23 +413,29 @@ export const buildAnalyticsFilters = (
     filters.providers = [compatibleProvider ? historicalProvider : NO_MATCH_FILTER_VALUE];
   }
   if (isActiveFilterValue(scopeFilters.channel)) {
-    const channel = scopeFilters.channel!.trim();
-    const namedChannels = channels.filter((item) => item.name === channel);
-    const channelAuthIndices = namedChannels.flatMap((item) => item.authIndices);
-    if (historicalProvider) {
-      const members = normalizeAuthFilterValues(channelAuthIndices);
-      if (members.length > 0) {
-        authIndices = addAuthIndexConstraint(authIndices, members);
-      } else if (namedChannels.length > 0 || normalizeFilterText(channel) !== historicalProvider) {
-        // A matching provider alias needs only the existing provider predicate.
-        // Empty custom channels and other labels have no persisted channel predicate.
-        authIndices = new Set();
-      }
+    const channel = normalizeFilterText(scopeFilters.channel);
+    const configured = channels.some(({ name }) => normalizeFilterText(name) === channel);
+    const channelByAuthIndex = buildMonitoringChannelIndex(channels);
+    const assignments = new Map<string, string>();
+    channelByAuthIndex.forEach(({ name }, index) => assignments.set(index, name));
+    authMetaMap.forEach((meta, index) => {
+      const owner = channelByAuthIndex.get(index) || channelByAuthIndex.get(meta.authIndex);
+      if (owner) assignments.set(index, owner.name);
+      else if (!configured && meta.provider) assignments.set(index, meta.provider);
+    });
+    const matching = Array.from(assignments.entries())
+      .filter(([, name]) => normalizeFilterText(name) === channel)
+      .map(([index]) => index)
+      .sort();
+
+    if (configured) {
+      authIndices = matching.length ? addAuthIndexConstraint(authIndices, matching) : new Set();
     } else {
-      authIndices = addAuthIndexConstraint(authIndices, channelAuthIndices);
-      if (channelAuthIndices.length === 0 && !filters.providers?.includes(channel)) {
-        filters.providers = [...(filters.providers || []), channel];
-      }
+      filters.channel_scope = {
+        recorded_provider: channel,
+        ...(matching.length ? { auth_indices: matching } : {}),
+        ...(assignments.size ? { assigned_auth_indices: Array.from(assignments.keys()).sort() } : {}),
+      };
     }
   }
   if (authIndices) {

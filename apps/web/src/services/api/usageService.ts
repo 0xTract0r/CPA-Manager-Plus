@@ -999,7 +999,14 @@ export interface DashboardSummaryParams {
   recentFailures?: number;
 }
 
+export interface MonitoringAnalyticsChannelScope {
+  auth_indices?: string[];
+  assigned_auth_indices?: string[];
+  recorded_provider: string;
+}
+
 export interface MonitoringAnalyticsFilters {
+  channel_scope?: MonitoringAnalyticsChannelScope;
   models?: string[];
   providers?: string[];
   accounts?: string[];

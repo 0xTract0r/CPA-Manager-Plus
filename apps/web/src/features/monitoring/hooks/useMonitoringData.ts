@@ -21,6 +21,7 @@ import {
 } from '../model/chartBuilders';
 import {
   buildAnalyticsFilters,
+  buildMonitoringChannelIndex,
   buildAccountRowsFromAnalytics,
   buildApiKeyRowsFromAnalytics,
   buildChannelRowsFromAnalytics,
@@ -481,15 +482,7 @@ export function useMonitoringData({
     [config]
   );
 
-  const channelByAuthIndex = useMemo(() => {
-    const map = new Map<string, MonitoringChannelMeta>();
-    channels.forEach((channel) => {
-      channel.authIndices.forEach((authIndex) => {
-        map.set(authIndex, channel);
-      });
-    });
-    return map;
-  }, [channels]);
+  const channelByAuthIndex = useMemo(() => buildMonitoringChannelIndex(channels), [channels]);
 
   const apiKeyDisplayMap = useMemo(() => {
     return buildApiKeyDisplayMap(config?.apiKeys || [], apiKeyAliases || []);

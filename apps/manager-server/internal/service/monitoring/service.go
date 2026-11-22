@@ -126,24 +126,25 @@ type Request struct {
 }
 
 type Filters struct {
-	Models           []string `json:"models"`
-	Providers        []string `json:"providers"`
-	Accounts         []string `json:"accounts"`
-	CredentialIDs    []string `json:"credential_ids"`
-	AuthFiles        []string `json:"auth_files"`
-	AuthIndices      []string `json:"auth_indices"`
-	APIKeyHashes     []string `json:"api_key_hashes"`
-	SourceHashes     []string `json:"source_hashes"`
-	ProjectIDs       []string `json:"project_ids"`
-	RequestTypes     []string `json:"request_types"`
-	HeaderErrorKinds []string `json:"header_error_kinds"`
-	HeaderErrorCodes []string `json:"header_error_codes"`
-	HeaderQuotaPlans []string `json:"header_quota_plans"`
-	HeaderTraceIDs   []string `json:"header_trace_ids"`
-	IncludeFailed    *bool    `json:"include_failed"`
-	FailedOnly       bool     `json:"failed_only"`
-	MinLatencyMS     int64    `json:"min_latency_ms"`
-	CacheStatus      string   `json:"cache_status"`
+	ChannelScope     *store.AnalyticsChannelScope `json:"channel_scope"`
+	Models           []string                     `json:"models"`
+	Providers        []string                     `json:"providers"`
+	Accounts         []string                     `json:"accounts"`
+	CredentialIDs    []string                     `json:"credential_ids"`
+	AuthFiles        []string                     `json:"auth_files"`
+	AuthIndices      []string                     `json:"auth_indices"`
+	APIKeyHashes     []string                     `json:"api_key_hashes"`
+	SourceHashes     []string                     `json:"source_hashes"`
+	ProjectIDs       []string                     `json:"project_ids"`
+	RequestTypes     []string                     `json:"request_types"`
+	HeaderErrorKinds []string                     `json:"header_error_kinds"`
+	HeaderErrorCodes []string                     `json:"header_error_codes"`
+	HeaderQuotaPlans []string                     `json:"header_quota_plans"`
+	HeaderTraceIDs   []string                     `json:"header_trace_ids"`
+	IncludeFailed    *bool                        `json:"include_failed"`
+	FailedOnly       bool                         `json:"failed_only"`
+	MinLatencyMS     int64                        `json:"min_latency_ms"`
+	CacheStatus      string                       `json:"cache_status"`
 }
 
 type Include struct {
@@ -2160,6 +2161,7 @@ func buildFilter(req Request) store.AnalyticsFilter {
 		includeFailed = *req.Filters.IncludeFailed
 	}
 	return store.AnalyticsFilter{
+		ChannelScope:     req.Filters.ChannelScope,
 		FromMS:           req.FromMS,
 		ToMS:             req.ToMS,
 		SearchQuery:      req.SearchQuery,
@@ -2280,6 +2282,7 @@ func (s *Service) filterOptionsWithSource(
 func filterOptionsMatchMainScope(filter store.AnalyticsFilter) bool {
 	return len(filter.Models) == 0 &&
 		len(filter.Providers) == 0 &&
+		filter.ChannelScope == nil &&
 		len(filter.Accounts) == 0 &&
 		len(filter.CredentialIDs) == 0 &&
 		len(filter.AuthFiles) == 0 &&
@@ -2597,6 +2600,7 @@ func filterOptionsBaseFilter(filter store.AnalyticsFilter) store.AnalyticsFilter
 	optionFilter := filter
 	optionFilter.Models = nil
 	optionFilter.Providers = nil
+	optionFilter.ChannelScope = nil
 	optionFilter.Accounts = nil
 	optionFilter.CredentialIDs = nil
 	optionFilter.AuthFiles = nil
