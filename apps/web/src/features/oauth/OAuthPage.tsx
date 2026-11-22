@@ -8,6 +8,7 @@ import {
   useState,
   type ChangeEvent,
 } from 'react';
+import { flushSync } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Card } from '@/components/ui/Card';
@@ -885,14 +886,15 @@ export function OAuthPage() {
     const callbackInput = (providerState?.callbackUrl || '').trim();
     if (!callbackInput) {
       if (usesStandardCallbackFeedback(provider)) {
-        updateProviderState(provider, {
-          callbackRequired: true,
-          callbackStatus: undefined,
-          callbackError: undefined,
+        const input = document.getElementById(`${callbackInputPrefix}-${provider}`);
+        flushSync(() => {
+          updateProviderState(provider, {
+            callbackRequired: true,
+            callbackStatus: undefined,
+            callbackError: undefined,
+          });
         });
-        window.requestAnimationFrame(() => {
-          document.getElementById(`${callbackInputPrefix}-${provider}`)?.focus();
-        });
+        input?.focus();
         return;
       }
       showNotification(

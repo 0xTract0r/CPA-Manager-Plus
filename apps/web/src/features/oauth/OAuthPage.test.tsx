@@ -265,6 +265,51 @@ describe('OAuthPage request lifecycle', () => {
     expect(focus).toHaveBeenCalledOnce();
   });
 
+  it.each(['connection change', 'new attempt'])(
+    'does not leave focus pending for the next callback form after a %s',
+    async (transition) => {
+      pageMocks.location.search = '';
+      pageMocks.startAuth
+        .mockResolvedValueOnce({ url: 'https://oauth.example/first', state: 'first-state' })
+        .mockResolvedValueOnce({ url: 'https://oauth.example/second', state: 'second-state' });
+      const frames: FrameRequestCallback[] = [];
+      window.requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => frames.push(callback));
+      const oldFocus = vi.fn();
+      const newFocus = vi.fn();
+      let currentInput = { focus: oldFocus };
+      vi.stubGlobal('document', { getElementById: vi.fn(() => currentInput) });
+
+      await act(async () => {
+        renderer = create(<OAuthPage />);
+      });
+      await act(async () => {
+        await findCodexOAuthButton(renderer!).props.onClick();
+      });
+      await act(async () => {
+        await findCallbackButton(renderer!).props.onClick();
+      });
+
+      if (transition === 'connection change') {
+        pageMocks.apiBase = 'http://cpa-b.local:8317';
+        await act(async () => renderer!.update(<OAuthPage />));
+      }
+      await act(async () => {
+        await findCodexOAuthButton(renderer!).props.onClick();
+      });
+      expect(pageMocks.startAuth).toHaveBeenCalledTimes(2);
+      expect(renderer!.root.findAllByType('div').some(
+        (node) => node.props.children === 'https://oauth.example/second'
+      )).toBe(true);
+      expect(findCallbackButton(renderer!)).toBeDefined();
+      currentInput = { focus: newFocus };
+      for (const frame of frames) frame(1);
+
+      expect(newFocus).not.toHaveBeenCalled();
+      expect(oldFocus).toHaveBeenCalledOnce();
+      expect(pageMocks.submitCallback).not.toHaveBeenCalled();
+    }
+  );
+
   it('discards a late callback response after the connection changes', async () => {
     const callbackDeferred = createDeferred<void>();
     pageMocks.startAuth.mockResolvedValueOnce({
