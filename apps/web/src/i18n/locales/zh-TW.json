@@ -2699,6 +2699,7 @@
     "codex_oauth_url_label": "授權連結:",
     "codex_open_link": "開啟連結",
     "codex_copy_link": "複製連結",
+    "oauth_status_cancelled": "授權已取消，可以重新開始。",
     "codex_oauth_status_waiting": "等待驗證中...",
     "codex_oauth_status_success": "驗證成功！",
     "codex_oauth_status_error": "驗證失敗:",

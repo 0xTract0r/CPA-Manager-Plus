@@ -68,7 +68,7 @@ interface ProviderState {
   url?: string;
   state?: string;
   userCode?: string;
-  status?: 'idle' | 'waiting' | 'success' | 'error';
+  status?: 'idle' | 'waiting' | 'success' | 'error' | 'cancelled';
   error?: string;
   polling?: boolean;
   cancelling?: boolean;
@@ -445,8 +445,10 @@ export function OAuthPage() {
     }));
   };
 
+  const attemptSequence = useRef(0);
+
   const beginProviderAttempt = (provider: OAuthProvider): ScopedOAuthProviderAttempt => {
-    const version = (providerAttemptVersions.current[provider] ?? 0) + 1;
+    const version = ++attemptSequence.current;
     providerAttemptVersions.current[provider] = version;
     return { scope: oauthPollingScopeRef.current, version, requestScope };
   };
@@ -480,7 +482,7 @@ export function OAuthPage() {
   };
 
   const beginCallbackAttempt = (provider: OAuthProvider): ScopedOAuthProviderAttempt => {
-    const version = (callbackAttemptVersions.current[provider] ?? 0) + 1;
+    const version = ++attemptSequence.current;
     callbackAttemptVersions.current[provider] = version;
     return { scope: oauthPollingScopeRef.current, version, requestScope };
   };
@@ -610,12 +612,17 @@ export function OAuthPage() {
     response: Awaited<ReturnType<typeof oauthApi.getAuthStatus>>,
     attempt: ScopedOAuthProviderAttempt,
     successMessage: string
-  ): 'completed' | 'waiting' | 'error' | 'stale' => {
+  ): 'completed' | 'waiting' | 'error' | 'cancelled' | 'stale' => {
     if (!isProviderAttemptCurrent(provider, attempt)) return 'stale';
     if (response.status === 'ok') {
       if (!completeProviderAuth(provider, attempt)) return 'stale';
       showNotification(successMessage, 'success');
       return 'completed';
+    }
+    if (response.status === 'cancelled') {
+      resetProviderAttempt(provider);
+      updateProviderState(provider, { status: 'cancelled' });
+      return 'cancelled';
     }
     if (response.status === 'error') {
       finishProviderAttempt(provider, attempt);
@@ -682,7 +689,7 @@ export function OAuthPage() {
           attempt,
           getProviderActionText(provider, 'oauth_status_success')
         );
-        if (result === 'error' || result === 'completed') {
+        if (result === 'error' || result === 'completed' || result === 'cancelled') {
           stopAttempt();
         }
       } catch (err: unknown) {
@@ -1295,7 +1302,9 @@ export function OAuthPage() {
                         ? getProviderActionText(provider.id, 'oauth_status_success')
                         : state.status === 'error'
                           ? `${getProviderActionText(provider.id, 'oauth_status_error')} ${state.error || ''}`
-                          : getProviderActionText(provider.id, 'oauth_status_waiting')}
+                          : state.status === 'cancelled'
+                            ? t('auth_login.oauth_status_cancelled')
+                            : getProviderActionText(provider.id, 'oauth_status_waiting')}
                     </div>
                   )}
                   {state.status === 'success' && (

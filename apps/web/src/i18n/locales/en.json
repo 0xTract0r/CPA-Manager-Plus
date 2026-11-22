@@ -2704,6 +2704,7 @@
     "codex_oauth_url_label": "Authorization URL:",
     "codex_open_link": "Open Link",
     "codex_copy_link": "Copy Link",
+    "oauth_status_cancelled": "Authorization cancelled. You can start again.",
     "codex_oauth_status_waiting": "Waiting for authentication...",
     "codex_oauth_status_success": "Authentication successful!",
     "codex_oauth_status_error": "Authentication failed:",

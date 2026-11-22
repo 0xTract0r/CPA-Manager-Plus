@@ -2703,6 +2703,7 @@
     "codex_oauth_url_label": "URL авторизации:",
     "codex_open_link": "Открыть ссылку",
     "codex_copy_link": "Скопировать ссылку",
+    "oauth_status_cancelled": "Авторизация отменена. Можно начать заново.",
     "codex_oauth_status_waiting": "Ожидание аутентификации...",
     "codex_oauth_status_success": "Аутентификация успешна!",
     "codex_oauth_status_error": "Ошибка аутентификации:",

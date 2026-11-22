@@ -230,6 +230,43 @@ describe('OAuthPage connection lifecycle', () => {
     expect(mocks.intervalCallbacks).toHaveLength(1);
   });
 
+  it('shows a cancelled OAuth status and stops its polling before a new login', async () => {
+    mocks.startAuth.mockReset()
+      .mockResolvedValueOnce({ url: 'https://auth.example/old', state: 'old-state' })
+      .mockResolvedValueOnce({ url: 'https://auth.example/new', state: 'new-state' });
+    mocks.getAuthStatus.mockReset().mockResolvedValueOnce({ status: 'cancelled' });
+    const renderer = await renderOAuthPage();
+    await act(async () => { await startCodexAuth(renderer); });
+    await act(async () => { await mocks.intervalCallbacks[0]?.(); });
+    expect(treeText(renderer)).toContain('auth_login.oauth_status_cancelled');
+    expect(treeText(renderer)).not.toContain('https://auth.example/old');
+    expect(window.clearInterval).toHaveBeenCalledWith(1);
+    await act(async () => { await startCodexAuth(renderer); });
+    await act(async () => { await mocks.intervalCallbacks[0]?.(); });
+    expect(treeText(renderer)).toContain('https://auth.example/new');
+    expect(treeText(renderer)).not.toContain('auth_login.oauth_status_cancelled');
+    expect(mocks.getAuthStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores a cancelled poll from an old management connection after new login', async () => {
+    const polling = deferred<{ status: 'cancelled' }>();
+    mocks.startAuth.mockReset()
+      .mockResolvedValueOnce({ url: 'https://auth.example/old', state: 'old-state' })
+      .mockResolvedValueOnce({ url: 'https://auth.example/new', state: 'new-state' });
+    mocks.getAuthStatus.mockReset().mockReturnValueOnce(polling.promise);
+    const renderer = await renderOAuthPage();
+    await act(async () => { await startCodexAuth(renderer); });
+    let pending!: Promise<void>;
+    await act(async () => { pending = Promise.resolve(mocks.intervalCallbacks[0]?.()); });
+    mocks.apiBase = 'http://cpa-b.local:8317';
+    mocks.managementKey = 'key-b';
+    await act(async () => { renderer.update(<OAuthPage />); });
+    await act(async () => { await startCodexAuth(renderer); });
+    await act(async () => { polling.resolve({ status: 'cancelled' }); await pending; });
+    expect(treeText(renderer)).toContain('https://auth.example/new');
+    expect(treeText(renderer)).not.toContain('auth_login.oauth_status_cancelled');
+  });
+
   it('ignores a late polling success after the CPA connection changes', async () => {
     const polling = deferred<{ status: 'ok' }>();
     mocks.startAuth.mockResolvedValue({ url: 'https://auth.example/codex', state: 'state-a' });
