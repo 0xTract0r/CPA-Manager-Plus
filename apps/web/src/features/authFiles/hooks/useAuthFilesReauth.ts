@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { isOAuthCancelSuccessful, oauthApi, type OAuthProvider } from '@/services/api/oauth';
-import { useNotificationStore } from '@/stores';
+import { useAuthStore, useNotificationStore } from '@/stores';
 import { copyToClipboard } from '@/utils/clipboard';
 import type { AuthFileItem } from '@/types';
 
@@ -91,6 +91,20 @@ export const resolveAuthFileOAuthProvider = (file: AuthFileItem): OAuthProvider 
 export const supportsAuthFileReauthCallback = (provider: OAuthProvider | null | undefined) =>
   Boolean(provider && AUTH_FILE_CALLBACK_SUPPORTED_PROVIDERS.includes(provider));
 
+const currentScope = () => {
+  const { apiBase, managementKey } = useAuthStore.getState();
+  return { apiBase, managementKey };
+};
+type ReauthAttempt = {
+  scope: ReturnType<typeof currentScope>;
+  state?: string;
+};
+
+const isCurrentScope = (scope: ReturnType<typeof currentScope>) => {
+  const now = currentScope();
+  return now.apiBase === scope.apiBase && now.managementKey === scope.managementKey;
+};
+
 export function useAuthFilesReauth(options: UseAuthFilesReauthOptions) {
   const { loadFiles, onReauthHistoryChanged } = options;
   const { t } = useTranslation();
@@ -98,6 +112,13 @@ export function useAuthFilesReauth(options: UseAuthFilesReauthOptions) {
   const showConfirmation = useNotificationStore((state) => state.showConfirmation);
   const [states, setStates] = useState<Record<string, AuthFileReauthState>>({});
   const pollingTimersRef = useRef<Record<string, ReturnType<typeof setInterval>>>({});
+  const confirmationGeneration = useRef(0);
+  const attempts = useRef<Record<string, ReauthAttempt>>({});
+  const isCurrentAttempt = useCallback(
+    (name: string, attempt: ReauthAttempt) =>
+      attempts.current[name] === attempt && isCurrentScope(attempt.scope),
+    []
+  );
 
   const clearPollingTimer = useCallback((fileName: string) => {
     const timer = pollingTimersRef.current[fileName];
@@ -108,9 +129,21 @@ export function useAuthFilesReauth(options: UseAuthFilesReauthOptions) {
   }, []);
 
   useEffect(() => {
-    return () => {
+    const reset = () => {
+      confirmationGeneration.current += 1;
       Object.values(pollingTimersRef.current).forEach((timer) => clearInterval(timer));
       pollingTimersRef.current = {};
+      attempts.current = {};
+    };
+    const unsubscribe = useAuthStore.subscribe((next, previous) => {
+      if (next.apiBase !== previous.apiBase || next.managementKey !== previous.managementKey) {
+        reset();
+        setStates({});
+      }
+    });
+    return () => {
+      unsubscribe();
+      reset();
     };
   }, []);
 
@@ -146,20 +179,30 @@ export function useAuthFilesReauth(options: UseAuthFilesReauthOptions) {
   );
 
   const startPolling = useCallback(
-    (file: AuthFileItem, provider: OAuthProvider, state: string) => {
+    (file: AuthFileItem, provider: OAuthProvider, state: string, attempt: ReauthAttempt) => {
       clearPollingTimer(file.name);
 
+      const isCurrent = () => pollingTimersRef.current[file.name] === timer && isCurrentAttempt(file.name, attempt);
       const timer = setInterval(async () => {
+        if (!isCurrent()) {
+          if (pollingTimersRef.current[file.name] === timer) clearPollingTimer(file.name);
+          return;
+        }
         try {
-          const response = await oauthApi.getAuthStatus(state);
+          const response = await oauthApi.getAuthStatus(state, attempt.scope);
+          if (!isCurrent()) return;
           if (response.status === 'ok') {
+            delete attempts.current[file.name];
             clearPollingTimer(file.name);
             setStates((prev) => ({
               ...prev,
-              [file.name]: { ...(prev[file.name] ?? { provider }), provider, status: 'success' },
+              [file.name]: { ...(prev[file.name] ?? { provider }), provider, status: 'success', callbackSubmitting: false },
             }));
+            const generation = confirmationGeneration.current;
             await loadFiles();
+            if (generation !== confirmationGeneration.current) return;
             await onReauthHistoryChanged?.(file.name);
+            if (generation !== confirmationGeneration.current) return;
             showNotification(
               t('auth_files.reauth_success', {
                 defaultValue: 'Re-authenticated "{{name}}" successfully',
@@ -171,6 +214,7 @@ export function useAuthFilesReauth(options: UseAuthFilesReauthOptions) {
           }
 
           if (response.status === 'cancelled') {
+            delete attempts.current[file.name];
             clearPollingTimer(file.name);
             setStates((prev) => {
               const next = { ...prev };
@@ -188,6 +232,7 @@ export function useAuthFilesReauth(options: UseAuthFilesReauthOptions) {
           }
 
           if (response.status === 'error') {
+            delete attempts.current[file.name];
             clearPollingTimer(file.name);
             const failureMessage = response.error?.trim() || '';
             setStates((prev) => ({
@@ -196,6 +241,7 @@ export function useAuthFilesReauth(options: UseAuthFilesReauthOptions) {
                 ...(prev[file.name] ?? { provider }),
                 provider,
                 status: 'error',
+                callbackSubmitting: false,
                 error: failureMessage,
               },
             }));
@@ -209,6 +255,8 @@ export function useAuthFilesReauth(options: UseAuthFilesReauthOptions) {
             await onReauthHistoryChanged?.(file.name);
           }
         } catch (error: unknown) {
+          if (!isCurrent()) return;
+          delete attempts.current[file.name];
           clearPollingTimer(file.name);
           const errorMessage = error instanceof Error ? error.message : '';
           setStates((prev) => ({
@@ -217,6 +265,7 @@ export function useAuthFilesReauth(options: UseAuthFilesReauthOptions) {
               ...(prev[file.name] ?? { provider }),
               provider,
               status: 'error',
+              callbackSubmitting: false,
               error: errorMessage,
             },
           }));
@@ -233,16 +282,21 @@ export function useAuthFilesReauth(options: UseAuthFilesReauthOptions) {
 
       pollingTimersRef.current[file.name] = timer;
     },
-    [clearPollingTimer, loadFiles, onReauthHistoryChanged, showNotification, t]
+    [clearPollingTimer, isCurrentAttempt, loadFiles, onReauthHistoryChanged, showNotification, t]
   );
 
   const cancelReauth = useCallback(
     async (fileName: string) => {
-      clearPollingTimer(fileName);
-      const state = states[fileName]?.state;
+      const timer = pollingTimersRef.current[fileName];
+      const attempt = attempts.current[fileName];
+      const state = attempt?.state;
+      const isCurrent = () => attempt !== undefined &&
+        pollingTimersRef.current[fileName] === timer && isCurrentAttempt(fileName, attempt);
       if (state) {
         try {
-          const response = await oauthApi.cancelAuth(state);
+          if (!attempt || !isCurrent()) return;
+          const response = await oauthApi.cancelAuth(state, attempt.scope);
+          if (!isCurrent()) return;
           if (!isOAuthCancelSuccessful(response)) {
             const failureMessage = response.error?.trim() || '';
             showNotification(
@@ -254,6 +308,7 @@ export function useAuthFilesReauth(options: UseAuthFilesReauthOptions) {
             return;
           }
         } catch (error) {
+          if (!isCurrent()) return;
           const errorMessage = error instanceof Error ? error.message : '';
           showNotification(
             t('auth_files.reauth_cancel_failed', {
@@ -265,6 +320,8 @@ export function useAuthFilesReauth(options: UseAuthFilesReauthOptions) {
         }
       }
 
+      delete attempts.current[fileName];
+      clearPollingTimer(fileName);
       setStates((prev) => {
         const next = { ...prev };
         delete next[fileName];
@@ -277,7 +334,7 @@ export function useAuthFilesReauth(options: UseAuthFilesReauthOptions) {
         'info'
       );
     },
-    [clearPollingTimer, showNotification, states, t]
+    [clearPollingTimer, isCurrentAttempt, showNotification, t]
   );
 
   const updateReauthCallbackUrl = useCallback((fileName: string, callbackUrl: string) => {
@@ -299,7 +356,9 @@ export function useAuthFilesReauth(options: UseAuthFilesReauthOptions) {
   const submitReauthCallback = useCallback(
     async (fileName: string) => {
       const current = states[fileName];
-      if (!current || !supportsAuthFileReauthCallback(current.provider)) return;
+      const attempt = attempts.current[fileName];
+      if (!current || !attempt?.state || current.state !== attempt.state ||
+          !isCurrentAttempt(fileName, attempt) || !supportsAuthFileReauthCallback(current.provider)) return;
 
       const redirectUrl = (current.callbackUrl || '').trim();
       if (!redirectUrl) {
@@ -322,7 +381,8 @@ export function useAuthFilesReauth(options: UseAuthFilesReauthOptions) {
       });
 
       try {
-        await oauthApi.submitCallback(current.provider, redirectUrl);
+        await oauthApi.submitCallback(current.provider, redirectUrl, attempt.scope);
+        if (!isCurrentAttempt(fileName, attempt)) return;
         setStates((prev) => {
           const existing = prev[fileName];
           if (!existing) return prev;
@@ -338,6 +398,7 @@ export function useAuthFilesReauth(options: UseAuthFilesReauthOptions) {
         });
         showNotification(t('auth_login.oauth_callback_success'), 'success');
       } catch (error: unknown) {
+        if (!isCurrentAttempt(fileName, attempt)) return;
         const status = getErrorStatus(error);
         const message = getErrorMessage(error);
         const errorMessage =
@@ -367,7 +428,7 @@ export function useAuthFilesReauth(options: UseAuthFilesReauthOptions) {
         showNotification(notificationMessage, 'error');
       }
     },
-    [showNotification, states, t]
+    [isCurrentAttempt, showNotification, states, t]
   );
 
   const actuallyStartReauth = useCallback(
@@ -376,6 +437,9 @@ export function useAuthFilesReauth(options: UseAuthFilesReauthOptions) {
       if (!provider) return;
 
       clearPollingTimer(file.name);
+      const attempt: ReauthAttempt = { scope: currentScope() };
+      attempts.current[file.name] = attempt;
+      const isCurrent = () => isCurrentAttempt(file.name, attempt);
       setStates((prev) => ({
         ...prev,
         [file.name]: { provider, status: 'starting' },
@@ -387,9 +451,12 @@ export function useAuthFilesReauth(options: UseAuthFilesReauthOptions) {
         const projectId =
           provider === 'gemini-cli' ? readGeminiProjectId(file) || undefined : undefined;
         const response = await oauthApi.startAuth(provider, {
+          ...attempt.scope,
           authName: file.name,
           projectId,
         });
+        if (!isCurrent()) return;
+        attempt.state = response.state;
         setStates((prev) => ({
           ...prev,
           [file.name]: {
@@ -404,9 +471,10 @@ export function useAuthFilesReauth(options: UseAuthFilesReauthOptions) {
           },
         }));
         if (response.state) {
-          startPolling(file, provider, response.state);
+          startPolling(file, provider, response.state, attempt);
         }
       } catch (error: unknown) {
+        if (!isCurrent()) return;
         const errorMessage = error instanceof Error ? error.message : '';
         setStates((prev) => ({
           ...prev,
@@ -425,11 +493,13 @@ export function useAuthFilesReauth(options: UseAuthFilesReauthOptions) {
         );
       }
     },
-    [clearPollingTimer, showNotification, startPolling, t]
+    [clearPollingTimer, isCurrentAttempt, showNotification, startPolling, t]
   );
 
   const startReauth = useCallback(
     async (file: AuthFileItem) => {
+      const scope = currentScope();
+      const generation = confirmationGeneration.current;
       showConfirmation({
         title: t('auth_files.reauth_confirm_title', {
           defaultValue: 'Re-authenticate this account?',
@@ -443,6 +513,7 @@ export function useAuthFilesReauth(options: UseAuthFilesReauthOptions) {
         }),
         cancelText: t('common.cancel'),
         onConfirm: async () => {
+          if (generation !== confirmationGeneration.current || !isCurrentScope(scope)) return;
           await actuallyStartReauth(file);
         },
       });
