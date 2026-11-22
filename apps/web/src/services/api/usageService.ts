@@ -2140,6 +2140,7 @@ export interface MonitoringAnalyticsRecentFailure {
 }
 
 export interface MonitoringAnalyticsEventRow {
+  attribution_filtered?: boolean;
   telemetry?: RequestTelemetry;
   request_id?: string;
   event_hash: string;

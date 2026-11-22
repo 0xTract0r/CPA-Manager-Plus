@@ -90,6 +90,9 @@ func TestAnalyticsAttributionScopesKeepSummaryAndCursorAligned(t *testing.T) {
 					t.Fatalf("page %d count = %+v, want %d calls", page, resp.Events, want)
 				}
 				for _, event := range resp.Events.Items {
+					if !event.AttributionFiltered {
+						t.Fatal("cursor event missing server attribution confirmation")
+					}
 					got = append(got, event.Model)
 				}
 				if !resp.Events.HasMore {

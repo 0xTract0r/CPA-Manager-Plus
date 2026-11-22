@@ -275,6 +275,7 @@ export interface UsageDetail {
 }
 
 export interface UsageDetailWithEndpoint extends UsageDetail {
+  __serverAttributionFiltered?: boolean;
   __endpoint: string;
   __endpointMethod?: string;
   __endpointPath?: string;

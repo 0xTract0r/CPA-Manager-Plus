@@ -1288,6 +1288,7 @@ export const buildUsageDetailsFromAnalyticsEvents = (
       auth_label_snapshot: readString(item.auth_label_snapshot),
       auth_file_snapshot: readString(item.auth_file_snapshot),
       auth_provider_snapshot: readString(item.auth_provider_snapshot),
+      __serverAttributionFiltered: item.attribution_filtered === true,
       auth_account_id_snapshot: readString(item.auth_account_id_snapshot),
       auth_project_id_snapshot: readString(item.auth_project_id_snapshot),
       client_ip: readString(item.client_ip),

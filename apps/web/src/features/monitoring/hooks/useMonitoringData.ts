@@ -989,8 +989,9 @@ export function useMonitoringData({
     () =>
       buildScopeFilteredRows(rangeFilteredRows, scopeFilters, {
         acceptedFocusId: accountFocusState === 'active' ? accountFocusAcceptedId : '',
+        useServerAttribution: !!currentEventsAnalyticsData?.events,
       }),
-    [accountFocusAcceptedId, accountFocusState, rangeFilteredRows, scopeFilters]
+    [accountFocusAcceptedId, accountFocusState, currentEventsAnalyticsData?.events, rangeFilteredRows, scopeFilters]
   );
   const statsRows = useMemo(() => filteredRows.filter(shouldIncludeInStats), [filteredRows]);
 

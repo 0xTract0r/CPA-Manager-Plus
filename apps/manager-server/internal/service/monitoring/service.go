@@ -876,6 +876,7 @@ type EventsResponse struct {
 }
 
 type EventRow struct {
+	AttributionFiltered    bool                          `json:"attribution_filtered,omitempty"`
 	RequestID              string                        `json:"request_id,omitempty"`
 	EventHash              string                        `json:"event_hash"`
 	TimestampMS            int64                         `json:"timestamp_ms"`
@@ -1589,6 +1590,11 @@ func (s *Service) analytics(ctx context.Context, req Request) (Response, error) 
 			return Response{}, err
 		}
 		response.Events = buildEvents(eventsPage, total)
+		// Mark only the requested event page, so old clients, preview data and
+		// unmarked pages keep their existing local attribution checks.
+		for index := range response.Events.Items {
+			response.Events.Items[index].AttributionFiltered = true
+		}
 	}
 	if req.Include.DrilldownPreview != nil {
 		preview := req.Include.DrilldownPreview

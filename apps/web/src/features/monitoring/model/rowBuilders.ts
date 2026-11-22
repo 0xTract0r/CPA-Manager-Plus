@@ -107,7 +107,7 @@ const hasCacheActivity = (
 export const buildScopeFilteredRows = (
   rows: MonitoringEventRow[],
   scopeFilters?: MonitoringScopeFilters,
-  accountFocus?: { acceptedFocusId?: string | null }
+  options?: { acceptedFocusId?: string | null; useServerAttribution?: boolean }
 ): MonitoringEventRow[] => {
   if (!scopeFilters) return rows;
 
@@ -116,9 +116,9 @@ export const buildScopeFilteredRows = (
   if (isMonitoringUnsupportedFocusFilterValue(scopeFilters.account)) return [];
   const focusId = readMonitoringAccountFocusId(scopeFilters.account);
   if (focusId) {
-    const accepted = String(accountFocus?.acceptedFocusId ?? '').trim() === focusId;
+    const accepted = String(options?.acceptedFocusId ?? '').trim() === focusId;
     if (!accepted) return [];
-    return buildScopeFilteredRows(rows, { ...scopeFilters, account: 'all' });
+    return buildScopeFilteredRows(rows, { ...scopeFilters, account: 'all' }, options);
   }
   // 本地分组成员：选择器恰好由本批事件的某个列表分组产出时，按该分组真实成员过滤
   // （与 buildAccountRows 同一归属规则），不把全局 accounts/providers 交集硬套到多个索引。
@@ -133,7 +133,7 @@ export const buildScopeFilteredRows = (
         const groupId = groupIds.get(row) ?? '';
         return memberGroups.has(groupId) || absorbed(row, groupId);
       });
-      return buildScopeFilteredRows(members, { ...scopeFilters, account: 'all' });
+      return buildScopeFilteredRows(members, { ...scopeFilters, account: 'all' }, options);
     }
   }
 
@@ -164,6 +164,9 @@ export const buildScopeFilteredRows = (
   const headerTraceId = normalizeScopeValue(scopeFilters.headerTraceId);
 
   return rows.filter((row) => {
+    // Display names can follow the current account after a provider rename.
+    // Marked rows already passed the effective SQL predicates for this scope.
+    const hasServerAttribution = options?.useServerAttribution && row.serverAttributionFiltered;
     if (isActiveScopeFilterValue(scopeFilters.account)) {
       // 精确凭据索引覆盖缺少 provider 快照的历史事件；其余选择器保持 provider 隔离。
       if (
@@ -212,6 +215,7 @@ export const buildScopeFilteredRows = (
     }
 
     if (
+      !hasServerAttribution &&
       isActiveScopeFilterValue(scopeFilters.provider) &&
       normalizeScopeValue(row.provider) !== provider
     ) {
@@ -246,6 +250,7 @@ export const buildScopeFilteredRows = (
     }
 
     if (
+      !hasServerAttribution &&
       isActiveScopeFilterValue(scopeFilters.channel) &&
       normalizeScopeValue(row.channel) !== channel
     ) {

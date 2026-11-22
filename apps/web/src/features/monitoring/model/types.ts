@@ -199,6 +199,7 @@ export type MonitoringEventRow = {
   apiKeyLabel: string;
   apiKeyMasked: string;
   provider: string;
+  serverAttributionFiltered?: boolean;
   providerIdentity?: string;
   authProviderSnapshot?: string;
   planType: string;
