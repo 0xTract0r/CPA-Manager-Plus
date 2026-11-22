@@ -132,6 +132,14 @@ vi.mock('@/features/authFiles/uiState', () => ({
   writePersistedAuthFilesCompactMode: vi.fn(),
 }));
 
+function readAuthState() {
+  return {
+    connectionStatus: 'connected' as const,
+    apiBase: 'http://manager.local:18317',
+    managementKey: 'test-key',
+  };
+}
+
 vi.mock('@/stores', () => ({
   useNotificationStore: (
     selector?: (state: { showNotification: typeof mocks.showNotification }) => unknown
@@ -139,8 +147,10 @@ vi.mock('@/stores', () => ({
     const state = { showNotification: mocks.showNotification };
     return selector ? selector(state) : state;
   },
-  useAuthStore: (selector: (state: { connectionStatus: 'connected' }) => unknown) =>
-    selector({ connectionStatus: 'connected' }),
+  useAuthStore: Object.assign(
+    (select: (state: ReturnType<typeof readAuthState>) => unknown) => select(readAuthState()),
+    { getState: readAuthState, subscribe: () => () => undefined },
+  ),
   useThemeStore: (selector: (state: { resolvedTheme: 'dark' }) => unknown) =>
     selector({ resolvedTheme: 'dark' }),
   useQuotaStore: (selector: (state: { codexQuota: null }) => unknown) =>

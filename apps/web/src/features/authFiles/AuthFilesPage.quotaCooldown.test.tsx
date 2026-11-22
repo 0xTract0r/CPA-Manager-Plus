@@ -110,6 +110,14 @@ vi.mock('@/services/api/apiCall', () => ({
   getApiCallErrorMessage: () => 'api call failed',
 }));
 
+function readAuthState() {
+  return {
+    connectionStatus: mocks.connectionStatus,
+    apiBase: 'http://manager.local:18317',
+    managementKey: mocks.managementKey,
+  };
+}
+
 vi.mock('@/stores', () => ({
   useNotificationStore: (
     selector?: (state: {
@@ -123,18 +131,10 @@ vi.mock('@/stores', () => ({
     };
     return selector ? selector(state) : state;
   },
-  useAuthStore: (
-    selector: (state: {
-      connectionStatus: 'connected' | 'disconnected';
-      apiBase: string;
-      managementKey: string;
-    }) => unknown
-  ) =>
-    selector({
-      connectionStatus: mocks.connectionStatus,
-      apiBase: 'http://manager.local:18317',
-      managementKey: mocks.managementKey,
-    }),
+  useAuthStore: Object.assign(
+    (select: (state: ReturnType<typeof readAuthState>) => unknown) => select(readAuthState()),
+    { getState: readAuthState, subscribe: () => () => undefined },
+  ),
   useThemeStore: (selector: (state: { resolvedTheme: 'dark' }) => unknown) =>
     selector({ resolvedTheme: 'dark' }),
   useQuotaStore: (
