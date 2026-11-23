@@ -3980,6 +3980,8 @@
     "success": "重新登录成功",
     "error": "重新登录失败",
     "missing_state": "OAuth 登录链接缺少状态标识，请重新获取链接。",
+    "missing_target": "缺少目标账号的认证文件名，无法按该账号的代理重新认证。请刷新页面后重试。",
+    "proxy_rejected": "该账号未配置有效代理，无法重新认证，请先在账号设置里填写代理。",
     "callback_required": "请先粘贴回调地址。",
     "same_account_hint": "请使用目标账号完成 OAuth 登录。CPA 会按登录账号保存 Codex 凭据；同一账号通常会覆盖同名凭据。",
     "rerun_hint": "重新登录已完成，请重新运行巡检以更新账号状态。"

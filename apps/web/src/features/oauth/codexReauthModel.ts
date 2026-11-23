@@ -5,7 +5,9 @@ export type CodexReauthTarget = {
   account: string;
   note?: string;
   email?: string;
-  fileName?: string;
+  // 目标认证文件名：重新登录时作为 auth_name 传给 core，core 据此用该账号自己的
+  // proxy_url 换 token（反关联）。必填，保证所有打开弹窗的入口都带上目标账号。
+  fileName: string;
   authIndex?: string | number | null;
   accountId?: string | null;
 };
