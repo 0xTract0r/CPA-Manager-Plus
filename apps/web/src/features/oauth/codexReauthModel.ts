@@ -53,3 +53,26 @@ export const createCodexReauthTargetFromAuthFile = (file: AuthFileItem): CodexRe
     accountId,
   };
 };
+
+// 历史巡检记录（服务端巡检 run）→ 重新登录目标。
+// fileName 优先用当前匹配到的认证文件名，再退回历史记录里的文件名：
+// 账号改名后历史 fileName 已不存在，若用它作 auth_name，core 会返回 400 target not found。
+export const createCodexReauthTargetFromInspectionRecord = (
+  record: {
+    fileName: string;
+    displayAccount?: string;
+    authIndex?: string | null;
+    accountId?: string | null;
+  },
+  matchedFile: AuthFileItem | null | undefined
+): CodexReauthTarget => {
+  const identityTarget = matchedFile ? createCodexReauthTargetFromAuthFile(matchedFile) : null;
+  return {
+    ...identityTarget,
+    account:
+      identityTarget?.account || record.displayAccount || record.accountId || record.fileName,
+    fileName: identityTarget?.fileName || record.fileName,
+    authIndex: record.authIndex ?? null,
+    accountId: record.accountId ?? null,
+  };
+};

@@ -40,6 +40,19 @@ const getErrorMessage = (error: unknown): string => {
 const getErrorStatus = (error: unknown): number | undefined =>
   isRecord(error) && typeof error.status === 'number' ? error.status : undefined;
 
+// core 对带 auth_name 的取链接请求返回 400 时，错误体是 {"error": "<原因>"}，按原因分类提示：
+//  - 代理类：`auth_name target has no usable proxy_url (...)`
+//  - 目标不存在 / 类型不对：`auth_name target not found` / `auth_name must reference a codex auth file`
+//  - 其他（如 `invalid auth_name`）：通用「请求被拒绝」并附原文
+const resolveCodexReauthRejectionKey = (detail: string) => {
+  const lower = detail.toLowerCase();
+  if (lower.includes('proxy_url')) return 'codex_reauth.proxy_rejected';
+  if (lower.includes('not found') || lower.includes('must reference a codex auth file')) {
+    return 'codex_reauth.target_not_found';
+  }
+  return 'codex_reauth.request_rejected';
+};
+
 export function CodexReauthDialog({
   open,
   target,
@@ -190,10 +203,10 @@ export function CodexReauthDialog({
     } catch (err: unknown) {
       const detail = getErrorMessage(err);
       // core 对带 auth_name 的取链接请求，在目标账号不存在、代理为空或非法时返回 400
-      // （fail-closed，不回退全局出口）。给出明确中文指引，并附上后端原因便于排查。
+      // （fail-closed，不回退全局出口）。按原因给出明确指引，并附上后端原文便于排查。
       const message =
         getErrorStatus(err) === 400
-          ? [t('codex_reauth.proxy_rejected'), detail].filter(Boolean).join(' ')
+          ? [t(resolveCodexReauthRejectionKey(detail)), detail].filter(Boolean).join(' ')
           : detail || t('codex_reauth.error');
       setStatus('error');
       setError(message);

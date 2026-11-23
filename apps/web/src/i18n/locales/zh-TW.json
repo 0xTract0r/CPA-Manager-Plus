@@ -3981,6 +3981,8 @@
     "missing_state": "OAuth 登入連結缺少狀態標識，請重新取得連結。",
     "missing_target": "缺少目標帳號的認證檔名，無法依該帳號的代理重新認證。請重新整理頁面後再試。",
     "proxy_rejected": "該帳號未設定有效代理，無法重新認證，請先在帳號設定裡填寫代理。",
+    "target_not_found": "找不到這個 Codex 帳號（可能已改名或刪除），請重新整理列表後再試。",
+    "request_rejected": "重新認證請求被拒絕：",
     "callback_required": "請先貼上回呼地址。",
     "same_account_hint": "請使用目標帳號完成 OAuth 登入。CPA 會依登入帳號儲存 Codex 憑據；同一帳號通常會覆蓋同名憑據。",
     "rerun_hint": "重新登入已完成，請重新執行巡檢以更新帳號狀態。"

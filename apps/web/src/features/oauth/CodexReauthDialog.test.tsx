@@ -156,13 +156,34 @@ describe('CodexReauthDialog 按目标账号发起重新认证', () => {
     });
   });
 
-  it('后端 400（目标账号无有效代理）→ 显示明确中文错误，不显示成功、不可打开链接', async () => {
-    mocks.startAuth.mockRejectedValue(apiError(400, 'target auth proxy_url is empty'));
+  // core#156 对带 auth_name 的取链接请求返回 400，错误体 {"error": "<原因>"}；按原因分类提示并附原文。
+  const REJECTION_KEYS = [
+    'codex_reauth.proxy_rejected',
+    'codex_reauth.target_not_found',
+    'codex_reauth.request_rejected',
+  ];
+  it.each([
+    [
+      'auth_name target has no usable proxy_url (empty_proxy_url)',
+      'codex_reauth.proxy_rejected',
+    ],
+    [
+      'auth_name target has no usable proxy_url (invalid_proxy_url) scheme not allowed',
+      'codex_reauth.proxy_rejected',
+    ],
+    ['auth_name target not found', 'codex_reauth.target_not_found'],
+    ['auth_name must reference a codex auth file', 'codex_reauth.target_not_found'],
+    ['invalid auth_name', 'codex_reauth.request_rejected'],
+  ])('后端 400「%s」→ 显示 %s 并附原文，不显示成功、不可打开链接', async (detail, expectedKey) => {
+    mocks.startAuth.mockRejectedValue(apiError(400, detail));
 
     const renderer = await mountDialog(buildTarget());
     const text = textOf(renderer);
 
-    expect(text).toContain('codex_reauth.proxy_rejected');
+    expect(text).toContain(`${expectedKey} ${detail}`);
+    for (const key of REJECTION_KEYS.filter((key) => key !== expectedKey)) {
+      expect(text).not.toContain(key);
+    }
     expect(text).not.toContain('codex_reauth.success');
     expect(text).not.toContain('codex_reauth.waiting');
     expect(findButton(renderer, 'codex_reauth.open_link').props.disabled).toBe(true);
@@ -172,10 +193,56 @@ describe('CodexReauthDialog 按目标账号发起重新认证', () => {
       ([, type]) => type === 'error'
     );
     expect(errorNotifications).toHaveLength(1);
-    expect(String(errorNotifications[0][0])).toContain('codex_reauth.proxy_rejected');
+    expect(String(errorNotifications[0][0])).toBe(`${expectedKey} ${detail}`);
     expect(
       mocks.showNotification.mock.calls.some(([, type]) => type === 'success')
     ).toBe(false);
+
+    await act(async () => {
+      renderer.unmount();
+    });
+  });
+
+  it('回调后会话报错（如登录账号与目标不一致）→ 轮询显示会话错误原文，不显示成功', async () => {
+    const sessionError = 'logged-in codex account does not match auth_name target';
+    const onSuccess = vi.fn();
+    mocks.startAuth.mockResolvedValue({ url: 'https://auth.example/login', state: 'st-1' });
+    mocks.getAuthStatus.mockResolvedValue({ status: 'error', error: sessionError });
+
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <CodexReauthDialog open target={buildTarget()} onClose={() => {}} onSuccess={onSuccess} />
+      );
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(textOf(renderer)).toContain('codex_reauth.waiting');
+
+    // 推进一个轮询周期（3s），拿到会话 error。
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+
+    const text = textOf(renderer);
+    expect(mocks.getAuthStatus).toHaveBeenCalledWith('st-1');
+    expect(text).toContain(sessionError);
+    expect(text).not.toContain('codex_reauth.success');
+    expect(text).not.toContain('codex_reauth.waiting');
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(mocks.showNotification).toHaveBeenCalledWith(sessionError, 'error');
+    expect(
+      mocks.showNotification.mock.calls.some(([, type]) => type === 'success')
+    ).toBe(false);
+
+    // 报错后停止轮询，不会再被后续状态覆盖成成功。
+    mocks.getAuthStatus.mockResolvedValue({ status: 'ok' });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(9000);
+    });
+    expect(mocks.getAuthStatus).toHaveBeenCalledTimes(1);
+    expect(textOf(renderer)).not.toContain('codex_reauth.success');
 
     await act(async () => {
       renderer.unmount();
