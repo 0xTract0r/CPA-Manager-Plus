@@ -28,7 +28,7 @@ import { InspectionConfigDrawer } from '@/features/monitoring/components/Inspect
 import { InspectionConfigFields } from '@/features/monitoring/components/InspectionConfigFields';
 import { CodexReauthDialog } from '@/features/oauth/CodexReauthDialog';
 import {
-  createCodexReauthTargetFromAuthFile,
+  createCodexReauthTargetFromInspectionRecord,
   type CodexReauthTarget,
 } from '@/features/oauth/codexReauthModel';
 import { formatPercent } from '@/features/monitoring/components/accountOverviewPresentation';
@@ -1208,14 +1208,7 @@ export function ServerCodexInspectionPage() {
         accountId: item.accountId,
         provider: item.provider,
       });
-      const identityTarget = authFile ? createCodexReauthTargetFromAuthFile(authFile) : null;
-      setCodexReauthTarget({
-        ...identityTarget,
-        account: identityTarget?.account || item.displayAccount || item.accountId || item.fileName,
-        fileName: item.fileName,
-        authIndex: item.authIndex ?? null,
-        accountId: item.accountId ?? null,
-      });
+      setCodexReauthTarget(createCodexReauthTargetFromInspectionRecord(item, authFile));
     },
     [authFiles]
   );

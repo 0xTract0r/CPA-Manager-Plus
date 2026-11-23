@@ -37,6 +37,22 @@ const getErrorMessage = (error: unknown): string => {
   return typeof error === 'string' ? error : '';
 };
 
+const getErrorStatus = (error: unknown): number | undefined =>
+  isRecord(error) && typeof error.status === 'number' ? error.status : undefined;
+
+// core 对带 auth_name 的取链接请求返回 400 时，错误体是 {"error": "<原因>"}，按原因分类提示：
+//  - 代理类：`auth_name target has no usable proxy_url (...)`
+//  - 目标不存在 / 类型不对：`auth_name target not found` / `auth_name must reference a codex auth file`
+//  - 其他（如 `invalid auth_name`）：通用「请求被拒绝」并附原文
+const resolveCodexReauthRejectionKey = (detail: string) => {
+  const lower = detail.toLowerCase();
+  if (lower.includes('proxy_url')) return 'codex_reauth.proxy_rejected';
+  if (lower.includes('not found') || lower.includes('must reference a codex auth file')) {
+    return 'codex_reauth.target_not_found';
+  }
+  return 'codex_reauth.request_rejected';
+};
+
 export function CodexReauthDialog({
   open,
   target,
@@ -72,6 +88,7 @@ export function CodexReauthDialog({
         : '',
     [target]
   );
+  const targetFileName = target?.fileName?.trim() ?? '';
 
   const clearPolling = useCallback(() => {
     if (pollingTimerRef.current !== null) {
@@ -156,8 +173,19 @@ export function CodexReauthDialog({
     setCallbackError('');
     setCopiedTarget(null);
     setLinkRefreshed(false);
+    // 反关联：必须带目标账号文件名（auth_name），core 才会用该账号自己的 proxy_url
+    // 换 token；不带则会走全局出口，把目标账号和共享出口关联起来。
+    const authName = targetFileName;
+    if (!authName) {
+      // 缺目标文件名时 fail-closed：不发起无目标的 OAuth。
+      const message = t('codex_reauth.missing_target');
+      setStatus('error');
+      setError(message);
+      showNotification(message, 'error');
+      return;
+    }
     try {
-      const response = await oauthApi.startAuth('codex');
+      const response = await oauthApi.startAuth('codex', { authName });
       if (!response.state) {
         const message = t('codex_reauth.missing_state');
         setAuthUrl(response.url);
@@ -173,12 +201,18 @@ export function CodexReauthDialog({
       }
       startPolling(response.state);
     } catch (err: unknown) {
-      const message = getErrorMessage(err) || t('codex_reauth.error');
+      const detail = getErrorMessage(err);
+      // core 对带 auth_name 的取链接请求，在目标账号不存在、代理为空或非法时返回 400
+      // （fail-closed，不回退全局出口）。按原因给出明确指引，并附上后端原文便于排查。
+      const message =
+        getErrorStatus(err) === 400
+          ? [t(resolveCodexReauthRejectionKey(detail)), detail].filter(Boolean).join(' ')
+          : detail || t('codex_reauth.error');
       setStatus('error');
       setError(message);
       showNotification(message, 'error');
     }
-  }, [clearPolling, showNotification, showTemporaryFeedback, startPolling, t]);
+  }, [clearPolling, showNotification, showTemporaryFeedback, startPolling, t, targetFileName]);
 
   useEffect(() => {
     if (!open || !target) {

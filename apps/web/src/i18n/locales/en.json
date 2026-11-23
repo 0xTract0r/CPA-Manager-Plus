@@ -3980,6 +3980,10 @@
     "success": "Re-login succeeded",
     "error": "Re-login failed",
     "missing_state": "The OAuth login link is missing its state value. Refresh the link and try again.",
+    "missing_target": "The target account's auth file name is missing, so re-login cannot use that account's proxy. Refresh the page and try again.",
+    "proxy_rejected": "This account has no valid proxy configured, so it cannot be re-authenticated. Set a proxy in the account settings first.",
+    "target_not_found": "This Codex account could not be found (it may have been renamed or deleted). Refresh the list and try again.",
+    "request_rejected": "The re-login request was rejected:",
     "callback_required": "Paste the callback URL first.",
     "same_account_hint": "Use the target account to complete OAuth login. CPA saves Codex credentials by the logged-in account; the same account usually overwrites the matching credential.",
     "rerun_hint": "Re-login is complete. Run the inspection again to refresh the account status."
