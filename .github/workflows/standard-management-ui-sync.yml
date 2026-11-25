@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - codex/official-cpamp-dcfa8bc0
+      - codex/standard-management-ui-20261122
 
 permissions:
   contents: read
@@ -26,6 +27,7 @@ jobs:
           npm --workspace apps/web run test --
           src/features/authFiles/components/OAuthEditorModals.test.tsx
           src/components/ui/Drawer.test.tsx
+          src/services/api/providers.vertexIdentity.test.ts
           src/features/monitoring/model/analyticsAdapters.test.ts
           src/features/monitoring/components/RealtimeEventsPanel.test.tsx
       - name: 验证普通 OAuth 取消、切换管理连接和迟到回调
