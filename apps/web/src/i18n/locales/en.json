@@ -1396,6 +1396,15 @@
     "health_check_error_provider_missing": "Provider configuration no longer exists"
   },
   "accounts": {
+    "refresh_title": "Automatic refresh",
+    "refresh_hint": "Allow this credential to refresh automatically. Actual refresh still depends on credential availability; other settings are unchanged.",
+    "refresh_unsupported": "This server does not support revision-protected automatic refresh settings.",
+    "refresh_load_error": "Could not load automatic refresh settings. Your existing form is available.",
+    "refresh_save_error": "Save could not be confirmed. Reload these settings before trying again.",
+    "refresh_readback_error": "The change was submitted, but readback failed. Reload to confirm the saved value.",
+    "refresh_quota": "Refresh quota",
+    "refresh_history": "Refresh history",
+
     "title": "Credential Management",
     "subtitle": "Manage login credentials, availability, remaining allowance, and inspection results in one place.",
     "tabs_label": "Credential management views",
@@ -2105,6 +2114,8 @@
     "value_source_recent": "Recent requests"
   },
   "auth_files": {
+    "file_size": "Size",
+    "file_modified": "Modified",
     "upload_button": "Upload File",
     "paste_button": "Paste JSON",
     "paste_title": "Paste Auth JSON",

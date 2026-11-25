@@ -18,6 +18,8 @@ import {
   type AuthFileConfigurationErrorKey,
   type XaiRoutingMode,
 } from '@/features/authFiles/model/authFileConfiguration';
+import { formatModified } from '@/features/authFiles/constants';
+import { formatFileSize } from '@/utils/format';
 import { useAuthStore } from '@/stores/useAuthStore';
 import styles from '@/features/accounts/AccountsPage.module.scss';
 
@@ -52,6 +54,7 @@ export function AccountConfigurationTab({
   const capabilities = getAuthFileConfigurationCapabilities(state?.providerKey || row.provider);
   const providerLabel = getProviderLabel(state?.providerKey || row.provider, t);
   const disabled =
+    editor.refreshSettings?.saving ||
     disableControls ||
     sharedSourceReadOnly ||
     Boolean(state?.error) ||
@@ -182,6 +185,47 @@ export function AccountConfigurationTab({
         </div>
       </div>
 
+      {editor.refreshSettings?.state ? (
+        <section className={styles.configurationSection} aria-label={t('accounts.refresh_title')}>
+          <h3 className={styles.configurationSectionTitle}>{t('accounts.refresh_title')}</h3>
+          <p>{t('accounts.refresh_hint')}</p>
+          {editor.refreshSettings.state.status === 'unsupported' ? (
+            <p role="note">{t('accounts.refresh_unsupported')}</p>
+          ) : null}
+          {editor.refreshSettings.state.error ? (
+            <p role="alert">{t(editor.refreshSettings.state.error)}</p>
+          ) : null}
+          {editor.refreshSettings.state.status === 'ready' ? (
+            <div className={styles.configurationToggleRow}>
+              <ToggleSwitch
+                checked={Boolean(editor.refreshSettings.state.saved?.refresh_enabled)}
+                onChange={(enabled) => {
+                  void editor.refreshSettings?.update(enabled);
+                }}
+                disabled={
+                  editor.refreshSettings.locked ||
+                  editor.refreshSettings.saving ||
+                  editor.refreshSettings.state.needsReload
+                }
+                ariaLabel={t('accounts.refresh_title')}
+              />
+            </div>
+          ) : null}
+          {editor.refreshSettings.state.status === 'loading' ? (
+            <p role="status">{t('common.loading')}</p>
+          ) : null}
+          {editor.refreshSettings.state.needsReload &&
+          editor.refreshSettings.state.status !== 'unsupported' ? (
+            <Button
+              variant="secondary"
+              disabled={editor.refreshSettings.locked || editor.refreshSettings.saving}
+              onClick={() => void editor.refreshSettings?.reload()}
+            >
+              {t('common.retry')}
+            </Button>
+          ) : null}
+        </section>
+      ) : null}
       {sharedSourceReadOnly ? (
         <div className={styles.configurationReadOnlyNotice} role="note">
           {t('accounts.config_shared_source_read_only', { count: sourceMemberCount })}
@@ -468,6 +512,14 @@ export function AccountConfigurationTab({
             <div>
               <dt>{t('auth_files.paste_file_name_label')}</dt>
               <dd>{state.fileName}</dd>
+            </div>
+            <div>
+              <dt>{t('auth_files.file_size')}</dt>
+              <dd>{typeof row.raw.size === 'number' ? formatFileSize(row.raw.size) : '—'}</dd>
+            </div>
+            <div>
+              <dt>{t('auth_files.file_modified')}</dt>
+              <dd>{formatModified(row.raw)}</dd>
             </div>
             <div>
               <dt>{t('accounts.col_provider')}</dt>

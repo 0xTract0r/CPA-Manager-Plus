@@ -1394,6 +1394,15 @@
     "health_check_error_provider_missing": "提供商配置已不存在"
   },
   "accounts": {
+    "refresh_title": "自动刷新",
+    "refresh_hint": "允许此凭证自动刷新；实际刷新仍受凭证可用状态限制，不修改其他设置。",
+    "refresh_unsupported": "当前服务不支持带修订保护的自动刷新设置。",
+    "refresh_load_error": "自动刷新设置读取失败，原有表单仍可使用。",
+    "refresh_save_error": "未能确认保存结果，请重新读取设置后再试。",
+    "refresh_readback_error": "设置已提交，但读回失败，请重新读取以确认保存值。",
+    "refresh_quota": "刷新额度",
+    "refresh_history": "刷新历史",
+
     "title": "凭证管理",
     "subtitle": "统一管理登录凭证、可用状态、剩余额度和巡检结果。",
     "tabs_label": "凭证管理视图",
@@ -2103,6 +2112,8 @@
     "value_source_recent": "最近请求"
   },
   "auth_files": {
+    "file_size": "大小",
+    "file_modified": "修改时间",
     "upload_button": "上传文件",
     "paste_button": "粘贴 JSON",
     "paste_title": "粘贴认证 JSON",

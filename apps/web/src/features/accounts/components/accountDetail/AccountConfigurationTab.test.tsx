@@ -372,3 +372,19 @@ describe('AccountConfigurationTab', () => {
     }
   });
 });
+
+it('renders ordinary file metadata for zero, missing and invalid values', () => {
+  for (const [size, expected] of [[0, '0 B'], [undefined, '—'], [Infinity, '—']] as const) {
+    const row = makeRow();
+    row.raw = { ...row.raw, size, modtime: 'not-a-date' };
+    const renderer = renderTab(row, makeEditor('codex'));
+    const valueFor = (label: string) => {
+      const term = renderer.root.findAllByType('dt').find(node => readText(node.props.children) === label);
+      expect(term).toBeDefined();
+      return readText(term!.parent!.findByType('dd').props.children);
+    };
+    expect(valueFor('auth_files.file_size')).toBe(expected);
+    expect(valueFor('auth_files.file_modified')).toBe('-');
+    act(() => renderer.unmount());
+  }
+});

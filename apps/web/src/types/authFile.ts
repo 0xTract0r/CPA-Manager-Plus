@@ -51,3 +51,11 @@ export interface AuthFilesResponse {
   files: AuthFileItem[];
   total?: number;
 }
+
+/** Revision-protected settings for one physical credential. */
+export interface OrdinaryRefreshSettings {
+  auth_index: string;
+  revision: string;
+  refresh_enabled: boolean;
+  editable_fields: string[];
+}

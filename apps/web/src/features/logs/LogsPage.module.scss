@@ -442,7 +442,7 @@
 
 .logRow {
   display: grid;
-  grid-template-columns: 170px 1fr;
+  grid-template-columns: minmax(30ch, max-content) minmax(0, 1fr);
   gap: $spacing-md;
   padding: 10px 12px;
   border-bottom: 1px solid var(--border-color);
@@ -460,7 +460,6 @@
   }
 
   @include tablet {
-    grid-template-columns: 140px 1fr;
     gap: $spacing-sm;
     padding: 8px 10px;
     font-size: 12px;
@@ -715,7 +714,6 @@
   .logRow {
     padding: 6px 8px;
     font-size: 11px;
-    grid-template-columns: 130px 1fr;
     gap: $spacing-xs;
   }
 
