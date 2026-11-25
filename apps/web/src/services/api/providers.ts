@@ -1238,14 +1238,39 @@ export const providersApi = {
     ),
 
   updateVertexConfig: (original: ProviderKeyConfig, value: ProviderKeyConfig) =>
-    mutateLatestProviderList('vertex-api-key', (latestItems) =>
-      replaceLatestProviderRecord(
+    mutateLatestProviderList('vertex-api-key', (latestItems) => {
+      // Vertex列表可含派生auth-index，但/config原始列表不含；只用唯一的原始密钥+URL对齐。
+      const apiKey = String(original.apiKey ?? '').trim();
+      const baseUrl = String(original.baseUrl ?? '').trim();
+      const originalIndex = String(original.authIndex ?? '').trim();
+      const matchesRawIdentity = (record: Record<string, unknown>) =>
+        Boolean(apiKey) &&
+        getStringField(record, ['api-key', 'apiKey']) === apiKey &&
+        getStringField(record, ['base-url', 'baseUrl', 'base_url']) === baseUrl;
+      // 先对原始身份计数，不能用index冲突先筛掉重复项后误认唯一。
+      const candidates = latestItems.filter(
+        (item): item is Record<string, unknown> => isRecord(item) && matchesRawIdentity(item)
+      );
+      if (candidates.length !== 1) {
+        throw new Error('Provider configuration changed; refresh and try again.');
+      }
+      const [target] = candidates;
+      const latestIndex = getStringField(target, AUTH_INDEX_FIELDS);
+      if (originalIndex && latestIndex && originalIndex !== latestIndex) {
+        throw new Error('Provider configuration changed; refresh and try again.');
+      }
+      return replaceLatestProviderRecord(
         latestItems,
-        (record) => matchesProviderConfig(record, original),
-        serializeVertexKey(value),
-        (raw, payload) => mergeProviderKeyPayload(raw, payload, VERTEX_KEY_FIELDS)
-      )
-    ),
+        (record) => record === target,
+        serializeVertexKey({ ...value, authIndex: undefined }),
+        (raw, payload) => {
+          const updated = mergeProviderKeyPayload(raw, payload, VERTEX_KEY_FIELDS);
+          // 列表可返回运行时生成的索引；编辑表单只保留原配置实际存储的索引。
+          preserveOmittedRawField(raw, payload, updated, AUTH_INDEX_FIELDS);
+          return updated;
+        }
+      );
+    }),
 
   deleteVertexConfig: (apiKey: string, baseUrl?: string) =>
     apiClient.delete(`/vertex-api-key${buildProviderDeleteQuery(apiKey, baseUrl)}`),
