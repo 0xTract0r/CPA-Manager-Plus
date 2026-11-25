@@ -2,7 +2,11 @@ import { HTTP_METHODS, type HttpMethod, type LogLevel, type ParsedLogLine } from
 
 const HTTP_METHOD_REGEX = new RegExp(`\\b(${HTTP_METHODS.join('|')})\\b`);
 
-const LOG_TIMESTAMP_REGEX = /^\[?(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?)\]?/;
+// 空格分隔的时区只属于成对方括号内的 Core 前缀；裸日期后的文字保留在正文。
+const TIMESTAMP = String.raw`\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?`;
+const OFFSET = String.raw`[+-]\d{2}:\d{2}`;
+const CORE_TIMESTAMP_REGEX = new RegExp(String.raw`^\[(${TIMESTAMP} ${OFFSET})\]`);
+const LOG_TIMESTAMP_REGEX = new RegExp(String.raw`^\[?(${TIMESTAMP}(?:(?:Z|${OFFSET})(?=\]|\s|$))?)\]?`);
 const LOG_LEVEL_REGEX = /^\[?(trace|debug|info|warn|warning|error|fatal)\s*\]?(?=\s|\[|$)\s*/i;
 const LOG_SOURCE_REGEX = /^\[([^\]]+)\]/;
 const LOG_LATENCY_REGEX =
@@ -102,7 +106,7 @@ export const parseLogLine = (raw: string): ParsedLogLine => {
   let remaining = raw.trim();
 
   let timestamp: string | undefined;
-  const tsMatch = remaining.match(LOG_TIMESTAMP_REGEX);
+  const tsMatch = remaining.match(CORE_TIMESTAMP_REGEX) ?? remaining.match(LOG_TIMESTAMP_REGEX);
   if (tsMatch) {
     timestamp = tsMatch[1];
     remaining = remaining.slice(tsMatch[0].length).trim();
