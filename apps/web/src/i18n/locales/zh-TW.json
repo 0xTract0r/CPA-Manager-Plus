@@ -1394,6 +1394,15 @@
     "health_check_error_provider_missing": "提供商設定已不存在"
   },
   "accounts": {
+    "refresh_title": "自動重新整理",
+    "refresh_hint": "允許此憑證自動重新整理；實際操作仍受憑證可用狀態限制，不修改其他設定。",
+    "refresh_unsupported": "目前服務不支援具修訂保護的自動重新整理設定。",
+    "refresh_load_error": "無法讀取自動重新整理設定，原有表單仍可使用。",
+    "refresh_save_error": "無法確認儲存結果，請重新讀取設定後再試。",
+    "refresh_readback_error": "設定已提交，但讀回失敗，請重新讀取以確認儲存值。",
+    "refresh_quota": "刷新額度",
+    "refresh_history": "刷新歷史",
+
     "title": "憑證管理",
     "subtitle": "統一管理登入憑證、可用狀態、剩餘額度和巡檢結果。",
     "tabs_label": "憑證管理視圖",

@@ -28,6 +28,9 @@ jobs:
           src/features/authFiles/components/OAuthEditorModals.test.tsx
           src/components/ui/Drawer.test.tsx
           src/services/api/providers.vertexIdentity.test.ts
+          src/services/api/ordinaryAccountSettings.test.ts
+          src/features/authFiles/hooks/useOrdinaryRefreshSettings.test.tsx
+          src/features/accounts/components/accountDetail/AccountConfigurationTab.test.tsx
           src/features/monitoring/model/analyticsAdapters.test.ts
           src/features/monitoring/components/RealtimeEventsPanel.test.tsx
       - name: 验证普通 OAuth 取消、切换管理连接和迟到回调

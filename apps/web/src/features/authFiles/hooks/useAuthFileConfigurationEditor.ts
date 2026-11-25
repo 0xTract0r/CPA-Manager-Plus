@@ -1,3 +1,7 @@
+import {
+  useOrdinaryRefreshSettings,
+  type OrdinaryRefreshEditor,
+} from './useOrdinaryRefreshSettings';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
@@ -61,6 +65,7 @@ export type UseAuthFileConfigurationEditorResult = {
   rawDataText: string;
   sourceMemberCount: number;
   sharedSourceReadOnly: boolean;
+  refreshSettings?: OrdinaryRefreshEditor;
   updateField: <K extends keyof AuthFileConfigurationDraft>(
     field: K,
     value: AuthFileConfigurationDraft[K]
@@ -473,12 +478,34 @@ export function useAuthFileConfigurationEditor(
     t,
   ]);
 
+  const refreshSettings = useOrdinaryRefreshSettings({
+    target: {
+      name: file?.name ?? '',
+      authIndex: String(file?.authIndex ?? file?.auth_index ?? '').trim(),
+    },
+    connectionKey: normalizedConnectionKey,
+    requestScope,
+    enabled:
+      enabled &&
+      Boolean(file) &&
+      Boolean(requestScope) &&
+      normalizedSourceMemberCount <= 1 &&
+      file?.runtimeOnly !== true &&
+      file?.runtime_only !== true,
+    locked:
+      disableControls || dirty || sharedSourceReadOnly || Boolean(state?.loading || state?.saving),
+    onSaved: () => {
+      void load();
+    },
+  });
+
   return {
+    refreshSettings,
     state,
     draft: state?.draft ?? null,
     errors: patchResult.errors,
     dirty,
-    canSave,
+    canSave: canSave && !refreshSettings.saving,
     rawDataText,
     sourceMemberCount: normalizedSourceMemberCount,
     sharedSourceReadOnly,
