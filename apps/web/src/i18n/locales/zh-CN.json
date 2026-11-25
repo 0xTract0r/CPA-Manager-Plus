@@ -2112,6 +2112,8 @@
     "value_source_recent": "最近请求"
   },
   "auth_files": {
+    "file_size": "大小",
+    "file_modified": "修改时间",
     "upload_button": "上传文件",
     "paste_button": "粘贴 JSON",
     "paste_title": "粘贴认证 JSON",

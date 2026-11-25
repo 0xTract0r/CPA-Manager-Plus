@@ -2118,6 +2118,8 @@
     "value_source_recent": "Недавние запросы"
   },
   "auth_files": {
+    "file_size": "Размер",
+    "file_modified": "Изменён",
     "upload_button": "Загрузить файл",
     "paste_button": "Вставить JSON",
     "paste_title": "Вставить JSON авторизации",

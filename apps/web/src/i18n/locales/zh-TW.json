@@ -2112,6 +2112,8 @@
     "value_source_recent": "最近請求"
   },
   "auth_files": {
+    "file_size": "大小",
+    "file_modified": "修改時間",
     "upload_button": "上傳檔案",
     "paste_button": "貼上 JSON",
     "paste_title": "貼上驗證 JSON",

@@ -295,10 +295,13 @@ export const formatModified = (item: AuthFileItem): string => {
   const raw = item['modtime'] ?? item.modified;
   if (!raw) return '-';
   const asNumber = Number(raw);
+  if (asNumber === 0) return '-';
   const date =
     Number.isFinite(asNumber) && !Number.isNaN(asNumber)
       ? new Date(asNumber < 1e12 ? asNumber * 1000 : asNumber)
       : (parseTimestamp(raw) ?? new Date(String(raw)));
+  // A zero Go time in file metadata represents an unknown modification date.
+  if (date.getTime() === Date.parse('0001-01-01T00:00:00Z')) return '-';
   return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString();
 };
 

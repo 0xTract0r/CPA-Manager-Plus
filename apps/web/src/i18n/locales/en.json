@@ -2114,6 +2114,8 @@
     "value_source_recent": "Recent requests"
   },
   "auth_files": {
+    "file_size": "Size",
+    "file_modified": "Modified",
     "upload_button": "Upload File",
     "paste_button": "Paste JSON",
     "paste_title": "Paste Auth JSON",
